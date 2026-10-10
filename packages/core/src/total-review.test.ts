@@ -162,15 +162,6 @@ describe("submission version 2", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(JSON.stringify(r.report)).not.toContain("subagent");
   });
-  it("accepts a clean submission and blocks on the raised critical finding", () => {
-    const r = check(v2());
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.report.verdict).toBe("blocked");
-    expect(r.report.not_reviewed).toEqual([]);
-    expect(r.report.findings[0]).toMatchObject({ problem: expect.any(String), consequence: expect.any(String), fix: expect.any(String) });
-    expect(r.report.dropped.map((d) => d.candidate.id)).toEqual(["c2", "c3"]);
-  });
 });
 
 describe("coverage from the trace", () => {

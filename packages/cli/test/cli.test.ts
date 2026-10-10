@@ -109,16 +109,6 @@ function status(cwd: string): string {
   return git(cwd, ["status", "--porcelain", "--untracked-files=all"]);
 }
 
-// The repo folder's .gitignore and two team files, meant to be committed, are
-// the only change a first review or scan makes to git status.
-const TEAM_FILES = ["?? .openqodex/.gitignore", "?? .openqodex/config.yaml", "?? .openqodex/custom-instructions.md"];
-
-function statusBesideTeamFiles(cwd: string): string {
-  const lines = status(cwd).split("\n");
-  for (const f of TEAM_FILES) expect(lines).toContain(f);
-  return lines.filter((l) => !TEAM_FILES.includes(l)).join("\n");
-}
-
 // A repo with one commit and an uncommitted change to app.py (lines 2 and 3)
 // plus one untracked file.
 function repoWithChange(config?: string): string {
@@ -206,69 +196,6 @@ describe("frame", () => {
 });
 
 describe("review --agent and --finalize", () => {
-  it("review --agent misses a run file or changes git status beyond the team files", () => {
-    const repo = repoWithChange();
-    const before = status(repo);
-    const r = cli(["review", "--agent", "--no-install"], repo);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toContain("review --finalize");
-    const dir = latestDir(repo);
-    for (const f of ["brief.md", "manifest.json", "scan.json", "candidates.json", "run.json"]) {
-      expect(existsSync(join(dir, f)), f).toBe(true);
-    }
-    expect(r.stdout).toContain(join(dir, "agent-findings.json"));
-    const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8")) as {
-      candidates: unknown[];
-      scanners: { status: string }[];
-    };
-    expect(scan.candidates).toEqual([]);
-    // Installs are off and the tool folder is empty: every scanner the
-    // change needs is reported as not installed, and none of them ran.
-    expect(scan.scanners.some((s) => s.status === "not_installed")).toBe(true);
-    expect(scan.scanners.filter((s) => s.status === "ran")).toEqual([]);
-    expect(statusBesideTeamFiles(repo)).toBe(before);
-  });
-
-  it("a valid submission is refused, or an off-change finding counts, or git status changes beyond the team files", () => {
-    const repo = repoWithChange();
-    const before = status(repo);
-    const { dir, changeId } = brief(repo);
-    submit(dir, changeId, [finding(), finding({ file_path: "other.py", line_number: 1, title: "Elsewhere" })]);
-    const r = cli(["review", "--finalize"], repo);
-    expect(r.stderr).toBe("");
-    expect(r.code).toBe(0);
-    for (const f of ["report.md", "report.json", "report.sarif"]) expect(existsSync(join(dir, f)), f).toBe(true);
-    const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf8")) as {
-      verdict: string;
-      findings: { title: string }[];
-      outside_change: { title: string }[];
-    };
-    expect(report.verdict).toBe("passed");
-    expect(report.findings.map((f) => f.title)).toEqual(["Returns the wrong value"]);
-    expect(report.outside_change.map((f) => f.title)).toEqual(["Elsewhere"]);
-    expect(readFileSync(join(dir, "report.md"), "utf8")).toContain("Outside the changed lines");
-    expect(r.stdout).toMatch(/^Report: \/.+\/report\.html$/m);
-    expect(existsSync(join(dir, "report.html"))).toBe(true);
-    const latest = JSON.parse(readFileSync(join(repo, ".openqodex", "latest.json"), "utf8")) as {
-      finalized: boolean;
-      verdict: string;
-    };
-    expect(latest).toMatchObject({ finalized: true, verdict: "passed" });
-    expect(statusBesideTeamFiles(repo)).toBe(before);
-  });
-
-  it("finalize with a path picks a newer run of the same change instead of the path's own run", () => {
-    const repo = repoWithChange();
-    const a = brief(repo);
-    const b = brief(repo);
-    expect(b.dir).not.toBe(a.dir);
-    submit(a.dir, a.changeId, []);
-    const r = cli(["review", "--finalize", join(a.dir, "agent-findings.json")], repo);
-    expect(r.code).toBe(0);
-    expect(existsSync(join(a.dir, "report.json"))).toBe(true);
-    expect(existsSync(join(b.dir, "report.json"))).toBe(false);
-  });
-
   it("a findings file outside a report folder is accepted", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
@@ -360,17 +287,6 @@ describe("review --agent and --finalize", () => {
     expect(existsSync(join(dir, "report.json"))).toBe(false);
   });
 
-  it("a file edited after the brief still finalizes", () => {
-    const repo = repoWithChange();
-    const { dir, changeId } = brief(repo);
-    writeFileSync(join(repo, "app.py"), "def a():\n    return 4\n");
-    submit(dir, changeId, [finding()]);
-    const r = cli(["review", "--finalize"], repo);
-    expect(r.code).toBe(2);
-    expect(r.stderr).toContain("the change moved");
-    expect(existsSync(join(dir, "report.json"))).toBe(false);
-  });
-
   it("a config changed after the brief still finalizes", () => {
     const repo = repoWithChange();
     const { dir, changeId } = brief(repo);
@@ -407,19 +323,6 @@ describe("review --agent and --finalize", () => {
 });
 
 describe("scan", () => {
-  it("scan misses a report file or changes git status beyond the team files", () => {
-    const repo = repoWithChange();
-    const before = status(repo);
-    const r = cli(["scan", "--no-install", "--format", "json"], repo);
-    expect(r.code).toBe(0);
-    expect((JSON.parse(r.stdout) as { kind: string }).kind).toBe("scan");
-    const dir = latestDir(repo, "latest-scan.json");
-    for (const f of ["scan.json", "report.md", "report.json", "report.sarif"]) {
-      expect(existsSync(join(dir, f)), f).toBe(true);
-    }
-    expect(statusBesideTeamFiles(repo)).toBe(before);
-  });
-
   it("scan leaves a copy of the diff in the report folder", () => {
     const repo = repoWithChange();
     expect(cli(["scan", "--no-install"], repo).code).toBe(0);

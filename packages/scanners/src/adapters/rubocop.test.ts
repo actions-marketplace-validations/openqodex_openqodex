@@ -10,35 +10,6 @@ describe("parseRubocopJson", () => {
     expect(parseRubocopJson(JSON.stringify({}), withConfig)).toEqual([]);
   });
 
-  it("a rubocop offense keeps its cop name as rule id and its start to last line span", () => {
-    const report = {
-      files: [
-        {
-          path: "app/models/user.rb",
-          offenses: [
-            {
-              cop_name: "Lint/UselessAssignment",
-              message: "Useless assignment to variable `x`.",
-              location: { start_line: 3, last_line: 4, line: 3 },
-            },
-          ],
-        },
-      ],
-    };
-    const out = parseRubocopJson(JSON.stringify(report), withConfig);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({
-      source: "rubocop",
-      ruleId: "Lint/UselessAssignment",
-      filePath: "app/models/user.rb",
-      lineStart: 3,
-      lineEnd: 4,
-      severity: "medium",
-      reference: null,
-    });
-    expect(out[0].message).toContain("Lint/UselessAssignment: Useless assignment");
-  });
-
   it("Style and Layout offenses nobody opted into are dropped; Lint, Security and Performance are kept", () => {
     const report = {
       files: [

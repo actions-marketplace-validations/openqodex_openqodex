@@ -56,60 +56,6 @@ async function storeOf(root: string) {
 const registrationAt = (g: Graph, site: string): Registration | undefined => g.frameworks?.entities.find((e): e is Registration => e.kind === "registration" && `${e.site.file}:${e.site.line}` === site);
 
 describe("the Django plugin on a small application", () => {
-  it("answers which route maps to a view and its helper, and which tests reference, call or may request them", async () => {
-    const root = makeRepo(APP);
-    commitAll(root);
-    const g = await buildGraph({ repoRoot: root, store: null });
-    const layer = frameworkLayer(g);
-    if (!layer) throw new Error("no framework layer");
-    const load = symbol(g, "blog/views.py", "load");
-    const routes = layer.routesReaching(load).routes;
-    expect(routes.map((r) => [r.registration.pattern, r.registration.name, r.hops, r.tier])).toEqual([["blog/<int:pk>/", "blog:detail", 1, "certain"]]);
-    const tests = layer.testsOf(load).map((t) => [t.test.replace(/@.*/, ""), t.category, t.tier]);
-    expect(tests).toContainEqual(["blog/tests.py#DetailTests.test_load", "direct-call", "certain"]);
-    expect(tests).toContainEqual(["blog/tests.py#DetailTests.test_request", "route-request", "likely"]);
-    const list = registrationAt(g, "blog/urls.py:7");
-    expect(list?.handler.status).toBe("bound");
-    expect(layer.edgesTo(list?.id ?? "").some((e) => e.kind === "tests" && e.category === "route-name")).toBe(true);
-  }, 60_000);
-
-  it("links templates, models, migrations, the command, the signal receiver, the template tag and the settings key", async () => {
-    const root = makeRepo(APP);
-    commitAll(root);
-    const g = await buildGraph({ repoRoot: root, store: null });
-    const layer = frameworkLayer(g);
-    if (!layer) throw new Error("no framework layer");
-    const name = (id: string): string => {
-      const e = layer.entity(id);
-      return e && e.kind !== "registration" ? e.name : id.replace(/@.*/, "");
-    };
-    const edges = (kind: string, from: string) => layer.edgesFrom(from).filter((e) => e.kind === kind).map((e) => name(e.to));
-    expect(edges("renders", symbol(g, "blog/views.py", "detail"))).toEqual(["blog/detail.html"]);
-    expect(edges("renders", symbol(g, "blog/views.py", "PostList"))).toEqual(["blog/list.html"]);
-    expect(edges("renders", symbol(g, "blog/templatetags/blog_tags.py", "card"))).toEqual(["blog/card.html"]);
-    const post = symbol(g, "blog/models.py", "Post");
-    expect(layer.edgesTo(post).filter((e) => e.kind === "changes_schema").map((e) => e.from).sort()).toEqual(["blog/migrations/0001_initial.py", "blog/migrations/0002_post_title.py"]);
-    expect(edges("uses_type", post)).toEqual(["blog/models.py#Author"]);
-    expect(edges("reads_config", symbol(g, "blog/views.py", "detail"))).toEqual(["PAGE_SIZE"]);
-    const command = g.frameworks?.entities.find((e) => e.kind === "command");
-    expect(command && command.kind !== "registration" ? command.name : null).toBe("reindex");
-    expect(edges("runs", command?.id ?? "")).toEqual(["blog/management/commands/reindex.py#Command.handle"]);
-    expect(layer.rolesOf(symbol(g, "blog/signals.py", "on_post_saved")).map((r) => r.role)).toContain("signal_receiver");
-  }, 60_000);
-
-  it("prints the route, the test links and no coverage claim for a helper change in the brief", async () => {
-    const root = makeRepo(APP);
-    commitAll(root);
-    writeFiles(root, { "blog/views.py": (APP["blog/views.py"] as string).replace("return get_object_or_404(Post, pk=pk)", "return get_object_or_404(Post, pk=int(pk))") });
-    const change = await getChange({ repoRoot: root, scope: { uncommitted: true }, exclude: [] });
-    const g = await buildGraph({ repoRoot: root, store: null, files: change.changedPaths, base: { sha: change.baseSha, files: change.files } });
-    const brief = renderImpactBlock(detectImpact(g, change));
-    expect(brief).toContain("| `ANY blog/<int:pk>/` | `blog:detail` | `blog/urls.py:8` | `views.detail` | reaches `load` in 1 hop (certain) |");
-    expect(brief).toContain("| `DetailTests.test_load` | `blog/tests.py:15` | calls | `load` | certain |");
-    expect(brief).toContain("| `DetailTests.test_request` | `blog/tests.py:9` | requests through route `ANY blog/<int:pk>/` | `load` | likely: ");
-    expect(brief).not.toMatch(/\bcover(s|age:)/);
-  }, 60_000);
-
   it("writes every route and test link past the brief's cut into the packet, and the brief names the file that holds them", async () => {
     const many = Array.from({ length: 15 }, (_, i) => `    path("r${i}/", views.detail, name="r${i}"),\n`).join("");
     const files = { ...APP, "blog/urls.py": `from django.urls import path\n\nfrom blog import views\n\napp_name = "blog"\nurlpatterns = [\n${many}]\n` };

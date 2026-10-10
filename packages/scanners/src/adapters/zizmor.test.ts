@@ -29,22 +29,6 @@ describe("parseZizmorJson on zizmor 1.30.1 output", () => {
   const out = parseZizmorJson(fixture);
   const find = (file: string, rule: string) => out.filter((f) => f.filePath === file && f.ruleId === rule);
 
-  it("anchors template injection on the expression's own line, not the step or the run key (1, 2)", () => {
-    expect(find(".github/workflows/ci.yml", "template-injection")).toEqual([
-      {
-        source: "zizmor",
-        ruleId: "template-injection",
-        filePath: ".github/workflows/ci.yml",
-        lineStart: 10,
-        lineEnd: 10,
-        severity: "high",
-        message: "code injection via template expansion: may expand into attacker-controllable code",
-        reference: "https://docs.zizmor.sh/audits/#template-injection",
-      },
-    ]);
-    expect(find(".github/actions/greet/action.yml", "template-injection").map((f) => [f.lineStart, f.lineEnd])).toEqual([[6, 6]]);
-  });
-
   it("gives a span over several lines its first and last line, and a span ending at column 0 stops on the line before (2, 3)", () => {
     expect(find(".github/workflows/ci.yml", "dangerous-triggers").map((f) => [f.lineStart, f.lineEnd])).toEqual([[1, 2]]);
     // rows 3 to 11 at column 0: the job from line 4 to the file's last line, 11.

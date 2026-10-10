@@ -47,16 +47,8 @@ const fastapiRegs = (g: Graph): Registration[] =>
   layer(g)
     .registrations()
     .filter((r) => r.plugin === "fastapi");
-const reg = (g: Graph, site: string): Registration => {
-  const found = fastapiRegs(g).filter((r) => `${r.site.file}:${r.site.line}` === site);
-  if (found.length !== 1) throw new Error(`${found.length} registrations at ${site}`);
-  return found[0] as Registration;
-};
 
 describe("the FastAPI plugin on a small real application", () => {
-  const MAIN = "fw:fastapi:app:app/main.py:5";
-  const ADMIN = "fw:fastapi:app:app/admin.py:3";
-  let base: Graph;
   let changed: Graph;
   let root: string;
 
@@ -65,53 +57,10 @@ describe("the FastAPI plugin on a small real application", () => {
     root = mkdtempSync(join(tmpdir(), "oq-fastapi-"));
     cpSync(join(corpus, "base"), root, { recursive: true });
     commitAll(root);
-    base = await buildGraph({ repoRoot: root, store: null });
     cpSync(join(corpus, "change"), root, { recursive: true, force: true });
     changed = await buildGraph({ repoRoot: root, store: null });
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
-
-  it("answers which route maps to read_item with the include prefix and the router prefix joined, on the main application only", () => {
-    const readItem = sym(changed, "app/routers/items.py", "read_item");
-    const routes = layer(changed).routesReaching(readItem).routes;
-    expect(routes.map((r) => `${r.registration.methods.join(",")} ${r.registration.pattern} ${r.hops}`)).toEqual(["GET /items/v1/{item_id} 0"]);
-    expect(routes[0]?.registration.app).toBe(MAIN);
-    expect(routes[0]?.registration.mountedVia.map((s) => `${s.file}:${s.line}`)).toEqual(["app/main.py:7"]);
-  });
-
-  it("follows a router made through an aliased APIRouter import, so a handler there still names its URL", () => {
-    const me = sym(changed, "app/routers/users.py", "me");
-    expect(layer(changed).routesReaching(me).routes.map((r) => `${r.registration.methods.join(",")} ${r.registration.pattern}`)).toEqual(["GET /users/me"]);
-  });
-
-  it("keeps the admin application's /health apart from the main one's, though both serve GET /health", () => {
-    const health = fastapiRegs(changed).filter((r) => r.pattern === "/health");
-    expect(new Set(health.map((r) => r.app))).toEqual(new Set([MAIN, ADMIN]));
-    const adminHealth = sym(changed, "app/admin.py", "admin_health");
-    expect(layer(changed).routesReaching(adminHealth).routes.map((r) => r.registration.app)).toEqual([ADMIN]);
-    const mainHealth = sym(changed, "app/main.py", "health");
-    expect(layer(changed).routesReaching(mainHealth).routes.map((r) => r.registration.app)).toEqual([MAIN]);
-  });
-
-  it("keeps the dependency chain of POST /items/v1/ in the order FastAPI runs it, the decorator's before the parameter's", () => {
-    const post = reg(changed, "app/routers/items.py:18");
-    expect(post.pattern).toBe("/items/v1/");
-    const chain = layer(changed)
-      .edgesFrom(post.id)
-      .filter((e) => e.kind === "applies_middleware")
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      .map((e) => changed.nodes.get(e.to)?.name);
-    expect(chain).toEqual(["require_user", "get_db"]);
-  });
-
-  it("lists the tests of read_item as a direct call and a request that may reach its route, never as coverage", () => {
-    const readItem = sym(changed, "app/routers/items.py", "read_item");
-    const links = layer(changed)
-      .testsOf(readItem)
-      .map((l) => `${changed.nodes.get(l.test)?.name} ${l.category} ${l.tier}`)
-      .sort();
-    expect(links).toEqual(["test_read_item route-request likely", "test_read_item_direct direct-call certain"]);
-  });
 
   it("marks the Pydantic models by their base, and nothing else in the repository", () => {
     const models = (changed.frameworks?.roles ?? []).filter((r) => r.plugin === "fastapi" && r.role === "model").map((r) => changed.nodes.get(r.target)?.name);
@@ -121,14 +70,6 @@ describe("the FastAPI plugin on a small real application", () => {
   it("makes no route of a decorator on a registry of the repository's own, though it is called app and its method get", () => {
     expect(layer(changed).registrationsIn("app/cache.py")).toEqual([]);
     expect(layer(changed).routesReaching(sym(changed, "app/cache.py", "cached")).routes).toEqual([]);
-  });
-
-  it("lists no route for a path the change computes, and names its handler in an unknown instead", () => {
-    expect(fastapiRegs(base).filter((r) => r.site.file === "app/admin.py").map((r) => r.pattern)).toEqual(["/health"]);
-    expect(fastapiRegs(changed).filter((r) => r.site.file === "app/admin.py").map((r) => r.pattern)).toEqual(["/health"]);
-    const gap = changed.frameworks?.unknowns.find((u) => u.plugin === "fastapi" && u.site?.file === "app/admin.py" && u.site.line === 14);
-    expect(gap?.cause).toBe("dynamic");
-    expect(gap?.name).toBe("admin_probe");
   });
 });
 

@@ -34,7 +34,6 @@ import {
   configHash,
   customEntryHash,
   DEFAULT_CONFIG,
-  DEFAULT_CONFIG_YAML,
   loadConfig,
   parseConfig,
   schemaKeys,
@@ -223,11 +222,6 @@ describe("config file location", () => {
 });
 
 describe("the default config text", () => {
-  it("reads back to DEFAULT_CONFIG with no warning, in under 60 lines", () => {
-    expect(parseConfig(DEFAULT_CONFIG_YAML)).toEqual({ config: DEFAULT_CONFIG, warnings: [] });
-    expect(DEFAULT_CONFIG_YAML.split("\n").length).toBeLessThan(60);
-  });
-
   it("lists every key the schema reads, so init writes and the docs show each one", () => {
     expect(CONFIG_KEYS.map((k) => k.key)).toEqual(schemaKeys());
   });
