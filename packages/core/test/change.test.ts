@@ -9,7 +9,10 @@
 // 7. A binary file change does not move the change id.
 // 8. A path with spaces or non-ASCII characters comes back C-quoted.
 // 9. A repo with no commits fails instead of diffing against the empty tree.
-// 10. Exclude globs leak into files, coverage, the diff or the stats.
+// 10. Exclude globs leak into files, coverage, the diff or the stats; or a
+//     rename across the exclude line keeps its excluded side: the removed
+//     lines of a file renamed out of an excluded folder reach the diff
+//     (issue 92), or a file renamed into one drops the admitted file's removal.
 // 11. The id moves between two runs on the same content, or does not move
 //     after an edit, including an edit to a file past the 5 MB diff cap.
 // 12. Coverage counts context lines or old-side lines as changed.
@@ -279,6 +282,41 @@ describe("getChange", () => {
     expect(c.diff).not.toContain("vendor/");
     expect(c.diff).not.toContain("app.min.js");
     expect(c.stats).toEqual({ files: 1, additions: 1, deletions: 0 });
+  });
+
+  it("10. judges each side of a rename on its own: renamed out of an excluded folder is a plain addition, renamed into one a plain deletion (issue 92)", async () => {
+    const repo = seeded();
+    write(repo, "vendor/lib.ts", lines(20, "lib"));
+    write(repo, "src/moved.ts", lines(20, "keep"));
+    commitAll(repo, "vendor and src");
+    git(repo, "mv", "vendor/lib.ts", "src/lib.ts");
+    write(repo, "src/lib.ts", lines(19, "lib"));
+    git(repo, "mv", "src/moved.ts", "vendor/moved.ts");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: ["vendor/**"] });
+    expect(c.files.find((f) => f.path === "src/lib.ts")).toMatchObject({ status: "added", oldPath: null });
+    expect(c.files.find((f) => f.path === "src/moved.ts")).toMatchObject({ status: "deleted", oldPath: null });
+    expect(paths(c)).toEqual(["src/lib.ts", "src/moved.ts"]);
+    expect(c.coverage.get("src/lib.ts")).toEqual(new Set(Array.from({ length: 19 }, (_, i) => i + 1)));
+    expect(c.deletionPoints.has("src/lib.ts")).toBe(false);
+    expect(c.diff).not.toContain("vendor/");
+    expect(c.diff).not.toMatch(/^-lib /m);
+    expect(c.stats).toEqual({ files: 2, additions: 19, deletions: 20 });
+  });
+
+  it("10. an excluded file renamed away while an admitted folder of the same name appears keeps that folder's files in the change", async () => {
+    const repo = seeded();
+    write(repo, "cache", lines(20, "cached"));
+    commitAll(repo, "cache file");
+    mkdirSync(join(repo, "src"));
+    git(repo, "mv", "cache", "src/legacy.ts");
+    write(repo, "cache/new.ts", "fresh\n");
+    const c = await getChange({ repoRoot: repo, scope: {}, exclude: ["cache"] });
+    expect(paths(c)).toEqual(["cache/new.ts", "src/legacy.ts"]);
+    expect(c.files.find((f) => f.path === "src/legacy.ts")).toMatchObject({ status: "added", oldPath: null });
+    expect(c.coverage.get("cache/new.ts")).toEqual(new Set([1]));
+    expect(c.coverage.get("src/legacy.ts")?.size).toBe(20);
+    expect(c.diff).toContain("+fresh");
+    expect(c.diff).not.toMatch(/^-cached /m);
   });
 
   it("still works when the repo's own .gitignore lists .openqodex and the folder exists", async () => {
