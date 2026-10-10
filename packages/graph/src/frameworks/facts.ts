@@ -59,6 +59,8 @@ export function frameworkReaders(root: Node, lang: Lang, source: string, plugins
       return false;
     };
     visitors.push({
+      ...(v.types ? { types: v.types } : {}),
+      ...(v.keep ? { keep: v.keep } : {}),
       enter: (node, type, field, depth, up, upType) => {
         if (s.failed !== null) return false;
         try {

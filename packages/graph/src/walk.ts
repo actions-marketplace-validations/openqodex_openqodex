@@ -2,8 +2,11 @@
 // (extract.ts) and the framework plugins' fact readers' at once. Each used
 // to walk the tree with its own cursor, and on a JavaScript repository the
 // walks cost more than the readers' own work. Here the cursor moves once,
-// each node's type is read once, a named node is made once, and its field
-// name and its ancestors are read once and handed to every reader.
+// each node's type is read once, and its field name and its ancestors are
+// read once and handed to every reader. A node object is made only for a
+// node whose type the core or a reader asked for, or that a reader reads as
+// an ancestor: making one for every named node cost more than the readers'
+// own work too.
 //
 // Ways it could fail, written before the code (shared-walk.test.ts):
 // 1. A reader sees other nodes, or the same nodes in another order, than
@@ -18,12 +21,18 @@
 //    core skips the children of a node the readers still read (an import,
 //    a type alias), and walks into a region the parser could not read,
 //    which the readers never enter.
+// 6. A reader that names its types is entered for another node, or not
+//    for one of its types, or reads an ancestor the walk did not make as
+//    null or as another node.
 //
 // The walk keeps no step back up the parents: a node's ancestors come from
 // the path it keeps as it enters and leaves nodes, never from a node's
 // `parent`, which tree-sitter finds by descending from the root again (a
-// lookup per node would make a deeply nested file quadratic).
-import type { Node } from "web-tree-sitter";
+// lookup per node would make a deeply nested file quadratic). The one
+// exception is an ancestor a reader reads through `up` that the walk did
+// not make (a type the reader did not name in `keep`): it is found from
+// the nearest node made below it, once, and kept on the path.
+import type { Language, Node } from "web-tree-sitter";
 
 // The node's ancestors: `up(1)` its parent, `up(2)` the one above.
 export type Up = (k: number) => Node | null;
@@ -36,12 +45,20 @@ export type TreeVisitor = {
   // this call; `depth` is the node's depth (the root is 0).
   // False: none of the node's descendants is shown to this reader.
   enter(node: Node, type: string, field: () => string | null, depth: number, up: Up, upType: UpType): boolean | void;
-  // The walk leaves a node at `depth`, named or not, after its descendants.
+  // The walk leaves a node at `depth`, after its descendants: every node,
+  // named or not, or, for a reader that names its `types`, each node it
+  // was entered for.
   leave?(depth: number): void;
   // A region the parser could not read (an ERROR or a missing node) starts
   // at `line`. It is never entered: the language would not run such a
   // file, so nothing in it is a fact.
   broken?(line: number): void;
+  // The named node types `enter` is called for; absent: every named node.
+  types?: ReadonlySet<string>;
+  // The types of the ancestors the reader reads as nodes through `up`: the
+  // walk makes them as it passes them. Any other ancestor `up` gives is
+  // found from the nearest node made below it: the same node, slower.
+  keep?: ReadonlySet<string>;
 };
 
 // The core extractor's visit: called for every node whose type is in
@@ -54,24 +71,92 @@ export type CoreVisitor = {
   visit(node: Node): (() => void) | false | void;
 };
 
+// What the walk does at a node of one type, worked out once per type id.
+type Plan = {
+  type: string;
+  error: boolean; // an ERROR node: a region the parser could not read
+  named: boolean;
+  core: boolean; // the core visits it
+  enters: boolean[]; // by reader: entered here
+  keep: boolean; // some reader reads it as an ancestor
+};
+
+// A node type's name and whether it is named, by type id, per grammar: both
+// are properties of the type (the cursor's own `nodeType` is the name of
+// its `nodeTypeId`), read from the grammar once rather than per node.
+const ERROR_ID = 0xffff;
+const namedByLanguage = new WeakMap<Language, boolean[]>();
+
 export function walkTree(root: Node, visitors: readonly TreeVisitor[], core: CoreVisitor | null = null): void {
   const n = visitors.length;
   if (n === 0 && core === null) return;
+  const language = root.tree.language;
+  let namedById = namedByLanguage.get(language);
+  if (!namedById) namedByLanguage.set(language, (namedById = []));
+  const named = namedById;
+  const typed = visitors.map((v) => v.types !== undefined);
+  const plans: (Plan | undefined)[] = [];
+  let errorPlan: Plan | null = null;
+  const planOf = (id: number): Plan => {
+    const type = id === ERROR_ID ? "ERROR" : language.types[id] || "ERROR";
+    const error = type === "ERROR";
+    let isNamed = false;
+    if (!error) {
+      const known = named[id];
+      isNamed = known ?? (named[id] = language.nodeTypeIsNamed(id));
+    }
+    return {
+      type,
+      error,
+      named: isNamed,
+      core: core !== null && core.interesting.has(type),
+      enters: visitors.map((v) => isNamed && (v.types === undefined || v.types.has(type))),
+      keep: isNamed && visitors.some((v) => v.keep?.has(type) === true),
+    };
+  };
+  // A tree with no error holds no missing node: no node needs the test.
+  const missing = root.hasError;
   // The depth below which each reader skips the nodes, or -1.
   const skipBelow: number[] = Array.from({ length: n }, () => -1);
+  // For a reader that names its types: the depths of the nodes it was
+  // entered for and has not left.
+  const entered: number[][] = visitors.map(() => []);
   // The depth below which the core skips the nodes, or -1.
   let coreSkip = -1;
   const leaves: { depth: number; fn: () => void }[] = [];
-  const path: Node[] = [];
+  // The current node's ancestors as made (null: not made), and their types.
+  const path: (Node | null)[] = [];
   const types: string[] = [];
   let depth = 0;
-  const up: Up = (k) => (depth - k >= 0 ? (path[depth - k] ?? null) : null);
+  const cursor = root.walk();
+  let node: Node | null = null;
+  const make = (): Node => {
+    if (node === null) {
+      node = cursor.currentNode;
+      path[depth] = node;
+    }
+    return node;
+  };
+  const up: Up = (k) => {
+    const at = depth - k;
+    if (at < 0) return null;
+    const known = path[at];
+    if (known) return known;
+    // An ancestor not made: climb to it from the nearest node made below it.
+    let below = at + 1;
+    while (below < depth && !path[below]) below++;
+    let cur: Node | null = below >= depth ? make() : (path[below] as Node);
+    for (let d = below - 1; d >= at && cur; d--) {
+      cur = cur.parent;
+      path[d] = cur;
+    }
+    return path[at] ?? null;
+  };
   const upType: UpType = (k) => (depth - k >= 0 ? (types[depth - k] ?? null) : null);
   const shown = (i: number): boolean => {
     const s = skipBelow[i] as number;
     return s < 0 || depth <= s;
   };
-  const cursor = root.walk();
   // The current node's field, read from the cursor once, when a reader asks.
   let fieldRead = false;
   let fieldName: string | null = null;
@@ -84,14 +169,16 @@ export function walkTree(root: Node, visitors: readonly TreeVisitor[], core: Cor
   };
   try {
     for (;;) {
+      const id = cursor.nodeTypeId;
+      let plan: Plan;
+      if (id === ERROR_ID) plan = errorPlan ??= planOf(id);
+      else plan = plans[id] ??= planOf(id);
+      node = null;
       let descend = false;
-      const cursorType = cursor.nodeType;
-      let node: Node | null = null;
       if (core !== null && coreSkip < 0) {
         descend = true;
-        if (core.interesting.has(cursorType)) {
-          node = cursor.currentNode;
-          const result = core.visit(node);
+        if (plan.core) {
+          const result = core.visit(make());
           if (result === false) {
             coreSkip = depth;
             descend = false;
@@ -99,28 +186,34 @@ export function walkTree(root: Node, visitors: readonly TreeVisitor[], core: Cor
         }
       }
       if (n > 0) {
-        if (cursorType === "ERROR" || cursor.nodeIsMissing) {
-          const line = cursor.startPosition.row + 1;
+        if (plan.error || (missing && cursor.nodeIsMissing)) {
+          let line = 0;
           for (let i = 0; i < n; i++) {
-            if (!shown(i)) continue;
+            // Entering a node, a reader is shown it exactly when it skips nothing.
+            if ((skipBelow[i] as number) >= 0) continue;
+            line ||= cursor.startPosition.row + 1;
             visitors[i]?.broken?.(line);
             skipBelow[i] = depth;
           }
-        } else if (cursor.nodeIsNamed) {
-          node ??= cursor.currentNode;
-          const type = cursorType;
+        } else if (plan.named) {
           fieldRead = false;
           path[depth] = node;
-          types[depth] = type;
+          types[depth] = plan.type;
+          if (plan.keep) make();
           for (let i = 0; i < n; i++) {
-            if (!shown(i)) continue;
-            if (visitors[i]?.enter(node, type, field, depth, up, upType) === false) skipBelow[i] = depth;
+            if ((skipBelow[i] as number) >= 0) continue;
+            if (!plan.enters[i]) {
+              descend = true;
+              continue;
+            }
+            if (typed[i]) (entered[i] as number[]).push(depth);
+            if (visitors[i]?.enter(make(), plan.type, field, depth, up, upType) === false) skipBelow[i] = depth;
             else descend = true;
           }
         } else {
           // An unnamed node (a keyword or punctuation) is entered by no reader;
           // its children, if any, still are, as each reader's own walk did.
-          for (let i = 0; i < n && !descend; i++) if (shown(i)) descend = true;
+          for (let i = 0; i < n && !descend; i++) if ((skipBelow[i] as number) < 0) descend = true;
         }
       }
       if (descend && cursor.gotoFirstChild()) {
@@ -130,7 +223,15 @@ export function walkTree(root: Node, visitors: readonly TreeVisitor[], core: Cor
       for (;;) {
         while (leaves.length > 0 && (leaves[leaves.length - 1] as { depth: number }).depth === depth) (leaves.pop() as { fn: () => void }).fn();
         if (coreSkip === depth) coreSkip = -1;
-        for (let i = 0; i < n; i++) if (shown(i)) visitors[i]?.leave?.(depth);
+        for (let i = 0; i < n; i++) {
+          if (typed[i]) {
+            const open = entered[i] as number[];
+            if (open.length > 0 && open[open.length - 1] === depth) {
+              open.pop();
+              visitors[i]?.leave?.(depth);
+            }
+          } else if (shown(i)) visitors[i]?.leave?.(depth);
+        }
         // Leaving the node a reader skipped below: it sees the nodes again.
         for (let i = 0; i < n; i++) if (skipBelow[i] === depth) skipBelow[i] = -1;
         if (cursor.gotoNextSibling()) break;

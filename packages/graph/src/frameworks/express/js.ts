@@ -13,7 +13,7 @@
 // walk over a tree is one pass with no step back up the parents.
 import type { Node } from "web-tree-sitter";
 import { assembledText } from "../shared/kept.js";
-import type { TreeVisitor, Up } from "../../walk.js";
+import type { TreeVisitor, Up, UpType } from "../../walk.js";
 
 // The largest file a JavaScript plugin reads, in bytes. A larger file gets
 // one fact of kind "too-large" and nothing else; resolve turns it into an
@@ -395,27 +395,31 @@ function read(node: Node | null, depth: number, budget: { left: number }): Expr 
   }
 }
 
-// A reader of the one depth-first pass over a tree's named nodes that the
-// plugins share (walk.ts). `visit` gets each node, the line of the
-// innermost function around it (0 at module level), `up`, which gives the
-// node's ancestors (`up(1)` its parent, `up(2)` the one above), and the
-// node's type, read once. The function lines come from a stack kept as the
-// walk enters and leaves nodes, never from a node's `parent`. `visit`
-// returns false to skip the children of a node.
+// A reader of the one depth-first pass over a tree that the core extractor
+// and the plugins share (walk.ts). `visit` gets each node of `types` and of
+// the function types, the line of the innermost function around it (0 at
+// module level), `up`, which gives the node's ancestors (`up(1)` its
+// parent, `up(2)` the one above), the node's type, read once, and
+// `upType`, the ancestors' types. The function lines come from a stack kept
+// as the walk enters and leaves nodes, never from a node's `parent`.
+// `visit` returns false to skip the children of a node. `keep` names the
+// types of the ancestors `visit` reads as nodes (walk.ts).
 //
 // A region the parser could not read (an ERROR node) is never visited: the
 // language would not run such a file, so nothing in it is a fact. `broken`
 // is told the line of each such region.
-export type { Up } from "../../walk.js";
+export type { Up, UpType } from "../../walk.js";
 
-export type ScopedVisit = (node: Node, scope: number, up: Up, type: string) => boolean | void;
+export type ScopedVisit = (node: Node, scope: number, up: Up, type: string, upType: UpType) => boolean | void;
 
 // `visit` as one reader of a shared walk (walk.ts).
-export function scopedVisitor(visit: ScopedVisit, broken?: (line: number) => void): TreeVisitor {
+export function scopedVisitor(visit: ScopedVisit, broken: ((line: number) => void) | undefined, types: ReadonlySet<string>, keep?: ReadonlySet<string>): TreeVisitor {
   const scopes: { depth: number; line: number }[] = [];
   return {
-    enter(node, type, _field, depth, up) {
-      const descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0, up, type) !== false;
+    types: new Set([...types, ...SCOPE_TYPES]),
+    ...(keep ? { keep } : {}),
+    enter(node, type, _field, depth, up, upType) {
+      const descend = visit(node, scopes.length > 0 ? (scopes[scopes.length - 1] as { line: number }).line : 0, up, type, upType) !== false;
       if (descend && SCOPE_TYPES.has(type)) scopes.push({ depth, line: node.startPosition.row + 1 });
       return descend;
     },
@@ -446,11 +450,11 @@ export const JS_RUNNERS: readonly string[] = ["vitest", "jest", "mocha", "ava", 
 
 // Whether a declaration sits under an `export` statement: its declaration
 // statement's parent, three steps up at most, read from the walk's stack.
-export function exported(up: Up): boolean {
+export function exported(upType: UpType): boolean {
   for (let k = 1; k <= 3; k++) {
-    const p = up(k);
-    if (!p || p.type === "program" || p.type === "statement_block") return false;
-    if (p.type === "export_statement") return true;
+    const p = upType(k);
+    if (p === null || p === "program" || p === "statement_block") return false;
+    if (p === "export_statement") return true;
   }
   return false;
 }

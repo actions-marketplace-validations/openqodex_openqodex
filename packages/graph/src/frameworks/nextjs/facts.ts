@@ -30,6 +30,8 @@ export function wants(): boolean {
 }
 
 const MAX_MATCHERS = 64;
+// The node types the reader is entered for (the function types besides, scopedVisitor).
+const TYPES: ReadonlySet<string> = new Set(["function_declaration", "arrow_function", "function_expression", "function", "variable_declarator"]);
 const DIRECTIVES = new Set(["use client", "use server"]);
 
 // The directives of a statement list's prologue: the string statements
@@ -62,7 +64,7 @@ export function reader(root: Node): FactReader<NextFact> {
   let broken = 0;
   let firstBroken = 0;
   const visitor = scopedVisitor(
-    (node, _scope, up, type) => {
+    (node, _scope, up, type, upType) => {
       switch (type) {
         case "function_declaration":
         case "arrow_function":
@@ -74,7 +76,7 @@ export function reader(root: Node): FactReader<NextFact> {
           let name: string | null = null;
           const own = node.childForFieldName("name");
           if (type === "function_declaration" && own) name = identifierName(own.text);
-          else if (up(1)?.type === "variable_declarator" && up(1)?.childForFieldName("value")?.id === node.id) {
+          else if (upType(1) === "variable_declarator" && up(1)?.childForFieldName("value")?.id === node.id) {
             const n = up(1)?.childForFieldName("name");
             if (n?.type === "identifier") name = identifierName(n.text);
           }
@@ -84,7 +86,7 @@ export function reader(root: Node): FactReader<NextFact> {
         case "variable_declarator": {
           const n = node.childForFieldName("name");
           if (n?.type !== "identifier" || identifierName(n.text) !== "config" || node.hasError) return;
-          if (up(2)?.type !== "export_statement") return;
+          if (upType(2) !== "export_statement") return;
           const value = readExpr(node.childForFieldName("value"));
           if (value.t !== "object") return;
           const m = value.props.find((p) => p.key === "matcher");
@@ -108,6 +110,7 @@ export function reader(root: Node): FactReader<NextFact> {
     (line) => {
       if (broken++ === 0) firstBroken = line;
     },
+    TYPES,
   );
   const finish = (): NextFact[] => {
     if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });

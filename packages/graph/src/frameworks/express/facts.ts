@@ -64,6 +64,12 @@ export function wants(): boolean {
 
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
 
+// The node types the reader is entered for (the function types besides,
+// scopedVisitor), and those of the ancestors it reads as nodes: what holds
+// a variable declarator, and what holds a parameter list.
+const TYPES: ReadonlySet<string> = new Set(["class_declaration", "catch_clause", "call_expression", "variable_declarator", "assignment_expression", "required_parameter", "optional_parameter"]);
+const KEEP: ReadonlySet<string> = new Set(["lexical_declaration", "variable_declaration", "function_signature", "method_signature", "abstract_method_signature", "call_signature", "construct_signature", "function_type", "constructor_type"]);
+
 export function readFacts(root: Node): ExpressFact[] {
   return readAlone(root, reader(root));
 }
@@ -85,7 +91,7 @@ export function reader(root: Node): FactReader<ExpressFact> {
       else s.names.add(n);
     }
   };
-  const visit: ScopedVisit = (node, scope, up, type): void => {
+  const visit: ScopedVisit = (node, scope, up, type, upType): void => {
     if (FN_TYPES.has(type) || type === "function_declaration" || type === "generator_function_declaration" || type === "method_definition") {
       const own = node.startPosition.row + 1;
       if (!scopes.has(own)) scopes.set(own, { parent: scope, names: new Set(), all: false });
@@ -114,19 +120,24 @@ export function reader(root: Node): FactReader<ExpressFact> {
         // A call the parser had to repair (a missing parenthesis) is no fact.
         if (node.hasError) return;
         const fn = node.childForFieldName("function");
-        const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment");
+        // The arguments, read only for a call the reader keeps a fact of.
+        let list: Node[] | null = null;
+        const args = (): Node[] => (list ??= (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type !== "comment"));
         if (fn?.type === "member_expression") {
           const prop = fn.childForFieldName("property");
           const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
           if (name !== null && WATCHED.has(name)) {
-            const fact: ExpressFact = { kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope };
-            if (args.length > MAX_ITEMS) fact.more = args.length - MAX_ITEMS;
+            const fact: ExpressFact = { kind: "call", ...pos(node), recv: readExpr(fn.childForFieldName("object")), prop: name, args: args().slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope };
+            if (args().length > MAX_ITEMS) fact.more = args().length - MAX_ITEMS;
             out.push(fact);
           }
+          // A member callee's name path ends in this name and holds two or
+          // more: it can only make a createServer fact.
+          if (name !== "createServer") return;
         }
         const path = namePath(fn);
-        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args.slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
-        if (path && path.length === 1 && TEST_FNS.has(path[0] as string)) out.push({ kind: "test-block", ...pos(node), fn: path[0] as string, name: stringValue(args[0] ?? null) });
+        if (path && path[path.length - 1] === "createServer") out.push({ kind: "server", ...pos(node), fn: path, args: args().slice(0, MAX_ITEMS).map((a) => readExpr(a)), scope });
+        if (path && path.length === 1 && TEST_FNS.has(path[0] as string)) out.push({ kind: "test-block", ...pos(node), fn: path[0] as string, name: stringValue(args()[0] ?? null) });
         return;
       }
       case "variable_declarator": {
@@ -139,7 +150,7 @@ export function reader(root: Node): FactReader<ExpressFact> {
         if (id === null || !value || node.hasError) return;
         const holder = up(1);
         const decl = holder?.type === "variable_declaration" ? "var" : holder?.childForFieldName("kind")?.text === "let" ? "let" : "const";
-        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && up(2)?.type !== "for_statement", exported: exported(up), decl });
+        out.push({ kind: "value", ...pos(node), name: id, value: readExpr(value), scope, top: scope === 0 && upType(2) !== "for_statement", exported: exported(upType), decl });
         return;
       }
       case "assignment_expression": {
@@ -181,9 +192,14 @@ export function reader(root: Node): FactReader<ExpressFact> {
       }
     }
   };
-  const visitor = scopedVisitor(visit, (line) => {
-    if (broken++ === 0) firstBroken = line;
-  });
+  const visitor = scopedVisitor(
+    visit,
+    (line) => {
+      if (broken++ === 0) firstBroken = line;
+    },
+    TYPES,
+    KEEP,
+  );
   const finish = (): ExpressFact[] => {
     if (broken > 0) out.push({ kind: "syntax-error", line: firstBroken, column: 1, regions: broken });
     // First, so the core's per-file fact cap drops calls and values before
