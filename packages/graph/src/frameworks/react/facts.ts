@@ -4,13 +4,14 @@
 // createContext, and the test blocks. Nothing here knows which import is
 // React: that is decided in resolve, from the file's imports.
 //
-// One pass over the tree with a stack of frames (functions, classes and
-// return positions), kept by depth as the walk enters and leaves them; no
-// step climbs the parents, so a deeply nested file stays linear.
+// One pass over the tree with a stack of frames (functions and classes),
+// kept by depth as the walk enters and leaves them; whether an element is
+// returned is read from the types of its ancestors, which the walk keeps.
+// No step climbs the parents, so a deeply nested file stays linear.
 import type { Node } from "web-tree-sitter";
 import type { FactReader, FrameworkFactBase } from "../plugin.js";
-import { readAlone } from "../shared/walk.js";
-import type { TreeVisitor } from "../shared/walk.js";
+import { readAlone } from "../../walk.js";
+import type { TreeVisitor, UpType } from "../../walk.js";
 import { exported, identifierName, MAX_SOURCE_BYTES, namePath, pos } from "../express/js.js";
 
 export type ReactFact =
@@ -49,6 +50,11 @@ const FN_TYPES = new Set(["arrow_function", "function_expression", "function", "
 const CLASS_TYPES = new Set(["class_declaration", "class"]);
 const JSX_TYPES = new Set(["jsx_element", "jsx_self_closing_element"]);
 const TEST_FNS = new Set(["describe", "it", "test", "suite"]);
+// What an element may sit in and still be what a return hands back:
+// `return (<X />)`, `cond ? <A /> : <B />`, `ok && <X />`.
+const PASS_THROUGH = new Set(["parenthesized_expression", "ternary_expression", "binary_expression"]);
+// The node types the reader is entered for.
+const TYPES: ReadonlySet<string> = new Set([...FN_TYPES, ...CLASS_TYPES, "variable_declarator", ...JSX_TYPES, "jsx_fragment", "jsx_opening_element", "call_expression"]);
 
 const isUpper = (c: number): boolean => c >= 65 && c <= 90;
 const isDigit = (c: number): boolean => c >= 48 && c <= 57;
@@ -64,10 +70,7 @@ export function isHookName(name: string): boolean {
 // A component's name starts with an upper-case letter.
 export const isComponentName = (name: string): boolean => name.length > 0 && isUpper(name.charCodeAt(0));
 
-type Frame =
-  | { t: "fn"; depth: number; line: number; fact: number | null; locals: string[]; render: boolean }
-  | { t: "class"; depth: number; fact: number }
-  | { t: "return"; depth: number; owner: Frame | null };
+type Frame = { t: "fn"; depth: number; line: number; fact: number | null; locals: string[]; render: boolean } | { t: "class"; depth: number; fact: number };
 
 // The names a binding pattern declares: `x`, `{ a, b: c }`, `[d, ...e]`.
 function patternNames(node: Node | null, out: string[], budget = { left: 64 }): void {
@@ -104,7 +107,7 @@ export function readFacts(root: Node): ReactFact[] {
   return readAlone(root, reader(root));
 }
 
-// The facts of one file as one reader of a shared walk (shared/walk.ts).
+// The facts of one file as one reader of a shared walk (walk.ts).
 export function reader(root: Node): FactReader<ReactFact> {
   if (root.endIndex > MAX_SOURCE_BYTES) return { visitor: null, finish: () => [{ kind: "too-large", line: 1, column: 1, bytes: root.endIndex }] };
   const out: ReactFact[] = [];
@@ -114,12 +117,23 @@ export function reader(root: Node): FactReader<ReactFact> {
   // Names declared by the functions on the stack, with how many frames declare each.
   const locals = new Map<string, number>();
   const topFn = (): (Frame & { t: "fn" }) | null => fnFrames[fnFrames.length - 1] ?? null;
-  // The innermost frame that is a function or a class; a return marker above
-  // it says the walk is in a returned position of that function.
-  const returned = (): boolean => {
-    const top = frames[frames.length - 1];
-    if (!top || top.t !== "return") return false;
-    return top.owner !== null && top.owner === topFn();
+  // Whether the node entered is what the innermost function returns: an
+  // arrow function's expression body, or, for an element, one under a
+  // return statement or such a body through nothing but PASS_THROUGH nodes
+  // and other elements. A function, a class, or any other node between
+  // them ends the returned position (`return () => <X />` returns a
+  // function; `return f(<X />)` the call's value).
+  const returned = (type: string, field: () => string | null, upType: UpType): boolean => {
+    if (topFn() === null) return false;
+    if (upType(1) === "arrow_function" && type !== "statement_block" && field() === "body") return true;
+    if (!JSX_TYPES.has(type)) return false;
+    for (let k = 1; ; k++) {
+      const t = upType(k);
+      if (t === null) return false;
+      // An arrow function holds a node from these types only as its body.
+      if (t === "return_statement" || (upType(k + 1) === "arrow_function" && t !== "statement_block")) return !FN_TYPES.has(t);
+      if (!PASS_THROUGH.has(t) && !JSX_TYPES.has(t)) return false;
+    }
   };
   const pop = (depth: number) => {
     while (frames.length > 0 && (frames[frames.length - 1] as Frame).depth >= depth) {
@@ -139,23 +153,12 @@ export function reader(root: Node): FactReader<ReactFact> {
 
   let broken = 0;
   let firstBroken = 0;
-  // A region the parser could not read is never entered (shared/walk.ts):
+  // A region the parser could not read is never entered (walk.ts):
   // the language would not run such a file, so nothing in it is a fact.
   const visitor: TreeVisitor = {
+    types: TYPES,
     enter(node, type, field, depth, up, upType) {
       const parentType = upType(1);
-      const parent = up(1);
-      // A return position: a return statement, or an arrow function's expression body.
-      const top = frames[frames.length - 1];
-      if (type === "return_statement" || (parentType === "arrow_function" && type !== "statement_block" && field() === "body")) {
-        frames.push({ t: "return", depth, owner: topFn() });
-      } else if (type === "parenthesized_expression" || type === "ternary_expression" || type === "binary_expression") {
-        // `return (<X />)`, `cond ? <A /> : <B />`, `ok && <X />` keep the position.
-      } else if (top && top.t === "return" && top.owner !== null && !JSX_TYPES.has(type)) {
-        // Anything else under a return ends the returned position for what it holds.
-        frames.push({ t: "return", depth, owner: null });
-      }
-
       if (FN_TYPES.has(type)) {
         let name: string | null = null;
         let line = node.startPosition.row + 1;
@@ -164,18 +167,19 @@ export function reader(root: Node): FactReader<ReactFact> {
         if (type === "function_declaration" || type === "generator_function_declaration") {
           const n = node.childForFieldName("name");
           name = n ? identifierName(n.text) : null;
-          isExported = exported(up);
+          isExported = exported(upType);
           // A nested function's name is a local of the function around it.
           if (name !== null) declare(name);
         } else if (type === "method_definition") {
           name = null;
         } else if (parentType === "variable_declarator" && field() === "value") {
-          const n = (parent as Node).childForFieldName("name");
+          const parent = up(1) as Node;
+          const n = parent.childForFieldName("name");
           if (n?.type === "identifier") {
             name = identifierName(n.text);
-            line = (parent as Node).startPosition.row + 1;
-            column = (parent as Node).startPosition.column + 1;
-            isExported = exported((k) => up(k + 1));
+            line = parent.startPosition.row + 1;
+            column = parent.startPosition.column + 1;
+            isExported = exported((k) => upType(k + 1));
           }
         }
         // Only a top-level function (or one directly in an exported binding) is a component.
@@ -206,7 +210,7 @@ export function reader(root: Node): FactReader<ReactFact> {
         const ext = heritage?.namedChildren.find((c) => c.type === "extends_clause") ?? null;
         const baseNode = ext ? (ext.childForFieldName("value") ?? ext.firstNamedChild) : (heritage?.firstNamedChild ?? null);
         if (name && isComponentName(name) && topFn() === null) {
-          out.push({ kind: "component", ...pos(node), name, form: "class", returnsJsx: false, base: namePath(baseNode), exported: exported(up) });
+          out.push({ kind: "component", ...pos(node), name, form: "class", returnsJsx: false, base: namePath(baseNode), exported: exported(upType) });
           frames.push({ t: "class", depth, fact: out.length - 1 });
         }
       } else if (type === "variable_declarator") {
@@ -224,24 +228,31 @@ export function reader(root: Node): FactReader<ReactFact> {
         const nameNode = type === "jsx_element" ? (node.childForFieldName("open_tag")?.childForFieldName("name") ?? null) : node.childForFieldName("name");
         const name = namePath(nameNode);
         const fn = topFn();
-        if (fn && returned() && fn.fact !== null) {
+        if (fn && returned(type, field, upType) && fn.fact !== null) {
           const f = out[fn.fact];
           if (f && f.kind === "component") f.returnsJsx = true;
         }
         if (name && !node.hasError && (name.length > 1 || isComponentName(name[0] as string))) {
           let render: string[] | null = null;
-          const call = up(2);
-          if (parentType === "arguments" && parent?.firstNamedChild?.id === node.id && call?.type === "call_expression") render = namePath(call.childForFieldName("function"));
+          if (parentType === "arguments" && upType(2) === "call_expression" && up(1)?.firstNamedChild?.id === node.id) render = namePath((up(2) as Node).childForFieldName("function"));
           out.push({ kind: "element", ...pos(node), name, local: (locals.get(name[0] as string) ?? 0) > 0, render });
         }
       } else if (type === "jsx_fragment" || (type === "jsx_opening_element" && node.childForFieldName("name") === null)) {
         const fn = topFn();
-        if (fn && returned() && fn.fact !== null) {
+        if (fn && returned(type, field, upType) && fn.fact !== null) {
           const f = out[fn.fact];
           if (f && f.kind === "component") f.returnsJsx = true;
         }
       } else if (type === "call_expression" && !node.hasError) {
-        const callee = namePath(node.childForFieldName("function"));
+        const fn = node.childForFieldName("function");
+        // A member callee's name path ends in its property and holds two or
+        // more names: it can only be a hook's (`React.useState`).
+        if (fn?.type === "member_expression") {
+          const prop = fn.childForFieldName("property");
+          const name = prop?.type === "property_identifier" ? identifierName(prop.text) : null;
+          if (name === null || !isHookName(name)) return;
+        }
+        const callee = namePath(fn);
         const last = callee ? (callee[callee.length - 1] as string) : null;
         if (callee && last && isHookName(last) && callee.length <= 2) out.push({ kind: "hook-call", ...pos(node), name: callee, scope: topFn()?.line ?? 0, local: (locals.get(callee[0] as string) ?? 0) > 0 });
         // A test block is counted, never named: its title may hold any literal, and the cached facts keep none they do not read.

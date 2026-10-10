@@ -75,6 +75,9 @@ export function relTo(root: string, file: string): string | null {
 
 export class RailsWorld {
   readonly paths: ReadonlySet<string>;
+  // The Ruby files of the capture, sorted.
+  readonly rubyPaths: readonly string[];
+  private readonly appCache = new Map<string, App | null>();
   readonly classesByName = new Map<string, ClassInfo[]>();
   private readonly classesByFile = new Map<string, ClassInfo[]>();
   private readonly viewsCache = new Map<string, Map<string, string[]>>();
@@ -88,6 +91,7 @@ export class RailsWorld {
     readonly apps: readonly App[],
   ) {
     this.paths = new Set(index.paths());
+    this.rubyPaths = [...this.paths].filter((p) => p.endsWith(".rb")).sort();
     for (const file of index.paths()) {
       if (!file.endsWith(".rb")) continue;
       const facts = index.languageFacts(file);
@@ -118,13 +122,17 @@ export class RailsWorld {
     return this.index.factsOf(file) as readonly RailsFact[];
   }
 
-  // The application whose root holds the file: the deepest one.
+  // The application whose root holds the file: the deepest one. Asked
+  // for every file by several rules, so kept per file.
   appOf(file: string): App | null {
+    const kept = this.appCache.get(file);
+    if (kept !== undefined) return kept;
     let best: App | null = null;
     for (const a of this.apps) {
       if (relTo(a.root, file) === null) continue;
       if (!best || a.root.length > best.root.length || (a.root.length === best.root.length && a.kind === "application" && best.kind === "engine")) best = a;
     }
+    this.appCache.set(file, best);
     return best;
   }
 
