@@ -122,6 +122,7 @@ const TYPES = [
   "ReviewChangeInput",
   "ReviewChangeOptions",
   "ReviewResult",
+  "ReviewScope",
   "ReviewStatus",
   "ResultFinding",
   "Disposition",
@@ -411,9 +412,7 @@ process.stdout.write(JSON.stringify({ status: result.status, reason: result.reas
 `;
 
 describe("a bundled server worker with openqodex external", () => {
-  // Skipped until step 3's reviewChange is merged into the library branch
-  // and exported from the package; the integrator unskips it then.
-  it.skip("runs one review with a model reviewer and gets a complete review with a model completion record", async () => {
+  it("runs one review with a model reviewer and gets a complete review with a model completion record", async () => {
     const tsup = dirname(require.resolve("tsup/package.json"));
     const esbuild = createRequire(join(tsup, "package.json"))("esbuild") as { build: (options: Record<string, unknown>) => Promise<unknown> };
     const source = join(project, "review-worker.mjs");

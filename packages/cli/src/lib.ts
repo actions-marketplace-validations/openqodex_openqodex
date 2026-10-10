@@ -129,6 +129,7 @@ export type {
   ReviewChangeInput,
   ReviewChangeOptions,
   ReviewResult,
+  ReviewScope,
   ReviewStatus,
   ResultFinding,
   Disposition,
