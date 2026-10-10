@@ -81,10 +81,16 @@
 //     case is taken for the snapshot, or a link so named is taken as
 //     evidence that case is ignored; or on one that ignores case, the
 //     snapshot named in other case ends the review.
+// 35. A read of the output Claude Code saved for this session under its
+//     configuration folder (its tool-results folder) ends the review as a
+//     read outside the snapshot (issue 80); or a read of anything else in
+//     that folder (another session's output, a transcript, the login)
+//     completes.
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
@@ -531,6 +537,91 @@ describe("34. case in a path is compared as the snapshot's volume compares it", 
     };
     expect(await review(repo(), fake([answer]))).toBe(0);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
+  });
+});
+
+describe("35. the reviewer's own saved tool output", () => {
+  // The stream of a real Claude Code 2.1.296 run with the driver's flags: a
+  // Grep whose output was too large, which Claude Code saved under its
+  // configuration folder and pointed the model to; the model's Read of that
+  // file, which dontAsk refused; the answer. Paths are __SNAPSHOT__,
+  // __CONFIG__ and __PROJECT__ (Claude Code's name for the working folder).
+  const recorded = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures/claude-stream-spool.jsonl"), "utf8");
+  const session = "6b257666-0130-4ba8-8bbb-292c3c846b2e";
+  // The model provider stand-in, started by the real driver: answers detect,
+  // then replays the recorded run with the answer replaced by a submission
+  // for this brief. `session` is the folder the Read names, as recorded or another.
+  function standIn(readSession: string): string {
+    const dir = tempDir("oq-spool-bin-");
+    const template = submission("`change_id`: `000000000000`");
+    writeFileSync(
+      join(dir, "claude"),
+      [
+        `#!${process.execPath}`,
+        "const { mkdirSync, realpathSync, writeFileSync } = require('node:fs');",
+        "const { join } = require('node:path');",
+        "const argv = process.argv.slice(2);",
+        "if (argv.includes('--version')) { console.log('2.1.296 (Claude Code)'); process.exit(0); }",
+        "if (argv[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
+        "const snapshot = realpathSync(process.cwd());",
+        "const config = process.env.CLAUDE_CONFIG_DIR;",
+        "const project = snapshot.replace(/[^A-Za-z0-9]/g, '-');",
+        `const saved = join(config, 'projects', project, ${JSON.stringify(session)}, 'tool-results');`,
+        "mkdirSync(saved, { recursive: true });",
+        "writeFileSync(join(saved, 'toolu_01ReGzL1ywcwshVJvEbzxZyr.txt'), 'line 0 needle\\n');",
+        "let buf = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buf += chunk;",
+        "  if (!buf.includes('\\n')) return;",
+        "  const brief = JSON.parse(buf.slice(0, buf.indexOf('\\n'))).message.content;",
+        "  buf = '';",
+        "  const id = /`change_id`: `([0-9a-f]{12})`/.exec(brief)[1];",
+        `  const text = ${JSON.stringify(recorded)}.split('__PROJECT__').join(project).split('__CONFIG__').join(config).split('__SNAPSHOT__').join(snapshot);`,
+        "  for (const line of text.split('\\n').filter((l) => l !== '')) {",
+        "    const e = JSON.parse(line);",
+        `    if (e.type === 'assistant') for (const c of e.message.content) if (c.type === 'tool_use' && c.input.file_path) c.input.file_path = c.input.file_path.split(${JSON.stringify(session)}).join(${JSON.stringify(readSession)});`,
+        `    if (e.type === 'result') e.result = ${JSON.stringify(template)}.split('000000000000').join(id);`,
+        "    process.stdout.write(JSON.stringify(e) + '\\n');",
+        "  }",
+        "});",
+        "process.stdin.on('end', () => process.exit(0));",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(dir, "claude"), 0o755);
+    return dir;
+  }
+  function claudeReview(readSession: string): Promise<number> {
+    vi.stubEnv("PATH", `${standIn(readSession)}:${process.env.PATH ?? ""}`);
+    const { global } = parseFlags(["--cwd", repo(), "--no-color", "--format", "json"], {});
+    return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [claudeDriver] });
+  }
+
+  it("a read of the output Claude Code saved for this session keeps the run complete; one of another session's output, a transcript or the login does not", async () => {
+    const config = tempDir("oq-claude-config-");
+    vi.stubEnv("CLAUDE_CONFIG_DIR", config);
+    const code = await claudeReview(session);
+    const report = JSON.parse(out) as Report;
+    expect(report.completion?.missing).toEqual([]);
+    expect(report.completion?.outside_reads).toEqual([]);
+    expect(code).toBe(0);
+
+    out = "";
+    expect(await claudeReview("f0000000-0000-4000-8000-000000000000")).toBe(2);
+    const other = JSON.parse(out) as Report;
+    expect(other.completion?.outside_reads).toEqual([expect.stringMatching(/\/f0000000-0000-4000-8000-000000000000\/tool-results\/toolu_01ReGzL1ywcwshVJvEbzxZyr\.txt$/)]);
+
+    const snapshot = tempDir("oq-spool-snap-");
+    const own = { configDir: config, sessionId: session };
+    const saved = join(config, "projects", "-x", session);
+    for (const path of [join(saved, "..", `${session}.jsonl`), join(config, ".credentials.json"), `${saved}/tool-results/../../other/tool-results/t.txt`]) {
+      expect(classify(snapshot, readOf(path), own), path).toMatchObject({ inside: false });
+      expect(classify(snapshot, readOf(path), own).own, path).toBeUndefined();
+    }
+    // A listing of the saved output is the agent's own too; one that may reach another session's is not.
+    expect(classify(snapshot, glob(`${saved}/tool-results/*.txt`), own)).toMatchObject({ inside: false, own: true });
+    expect(classify(snapshot, glob(`${config}/projects/*/${session}/tool-results/*.txt`), own).own).toBeUndefined();
   });
 });
 

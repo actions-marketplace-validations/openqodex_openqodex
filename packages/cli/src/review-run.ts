@@ -37,6 +37,7 @@ import {
   getTreeChange,
   getWholeRepo,
   openReportDir,
+  outsideSnapshot,
   readCoverage,
   redactSecrets,
   redactSecretsKeepingLines,
@@ -474,14 +475,14 @@ async function converse(args: {
       } finally {
         clearTimeout(timer);
       }
-      c.trace.push(...turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) })));
+      c.trace.push(...turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call, turn.own ?? null) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) })));
       c.usage = turn.usage;
       if (turn.failure !== null) {
         c.failure = turn.failure;
         break;
       }
       // An attempt outside the snapshot ends the review: it never completes.
-      if (args.traced && c.trace.some((t) => t.inside !== true)) break;
+      if (args.traced && c.trace.some(outsideSnapshot)) break;
       const parsed = parseAnswer(turn.finalText);
       const result = "error" in parsed ? { report: null, errors: [`1. ${parsed.error}`], unread: [] as Hunk[], required: c.required, disposed: 0 } : args.check(parsed.value, c.trace, c.delivered);
       if ("value" in parsed) c.submission = parsed.value;
