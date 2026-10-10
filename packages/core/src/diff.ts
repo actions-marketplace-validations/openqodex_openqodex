@@ -139,3 +139,50 @@ export function createCoverageParser(): {
   };
   return { push, result: () => out, deletionPoints: () => deleted };
 }
+
+// What one file's diff removed at each deletion point: the runs of removed
+// lines with no added line beside them. `after` is the new side's line just
+// before the run (0 at the top of the file), as the zero-context diff names
+// it for the deletion point; `lines` is the removed text without its `-`.
+// Read from the diff the change already holds (Change.diffs), the text the
+// brief carries, so a deletion can be shown where the brief had no room.
+export function removedRuns(fileDiff: string): { after: number; lines: string[] }[] {
+  const runs: { after: number; lines: string[] }[] = [];
+  let inHunk = false;
+  // The new side's next line number.
+  let next = 0;
+  let run: { after: number; lines: string[] } | null = null;
+  let added = false;
+  const close = (): void => {
+    if (run !== null && !added) runs.push(run);
+    run = null;
+    added = false;
+  };
+  for (const line of fileDiff.split("\n")) {
+    if (line.startsWith("@@")) {
+      close();
+      const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      inHunk = m !== null;
+      // An empty new side names the line before it, as in the parser above.
+      if (m) next = m[2] === "0" ? Number(m[1]) + 1 : Number(m[1]);
+    } else if (!inHunk || line.startsWith("\\")) {
+      // A header, or the "\ No newline at end of file" sentinel.
+    } else if (line.startsWith("-")) {
+      run ??= { after: next - 1, lines: [] };
+      run.lines.push(line.slice(1));
+    } else if (line.startsWith("+")) {
+      // Lines replaced, not only removed: no deletion point.
+      added = true;
+      next++;
+    } else if (line.startsWith(" ")) {
+      close();
+      next++;
+    } else {
+      // The next block's "diff --git" line, or the end.
+      close();
+      inHunk = false;
+    }
+  }
+  close();
+  return runs;
+}
