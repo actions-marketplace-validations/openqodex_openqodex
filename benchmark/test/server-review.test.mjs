@@ -253,8 +253,7 @@ describe("a model id that boards.json neither records as probed nor maps as an a
 
 // A settings file for a deployment's endpoint: a loopback address, so no
 // call could leave this machine, and a key made for this test.
-function endpointSettings(dir, baseUrl = "http://127.0.0.1:9/openai/v1/") {
-  const key = `test-endpoint-key-${createHash("sha256").update(dir).digest("hex").slice(0, 24)}`;
+function endpointSettings(dir, baseUrl = "http://127.0.0.1:9/openai/v1/", key = `test-endpoint-key-${createHash("sha256").update(dir).digest("hex").slice(0, 24)}`) {
   const file = join(dir, "azure.env");
   writeFileSync(file, `AZURE_OPENAI_BASE_URL=${baseUrl}\nAZURE_OPENAI_KEY=${key}\n`);
   return { file, key, baseUrl, env: { OPENQODEX_BENCH_MODEL_ENV: file } };
@@ -325,27 +324,52 @@ describe("the manifest names the model the run asked for as the one that answere
   });
 });
 
+// Every piece of a text at least `n` characters long.
+const pieces = (text, n = 4) => Array.from({ length: Math.max(0, text.length - n + 1) }, (_, i) => text.slice(i, i + n));
+
 describe("a resume reaches another endpoint than the run's", () => {
-  it("records the endpoint as the sha256 of its base URL, never the URL or the key, and refuses a resume on another", () => {
+  // Two base URLs and two keys, every pairing of them in a settings file.
+  const URL_A = "http://127.0.0.1:9/openai/v1/";
+  const URL_B = "http://localhost:9/openai/v1";
+  const KEY_A = "key-for-endpoint-one";
+  const KEY_B = "key-for-endpoint-two";
+  const records = () => {
     const dir = tempDir("oq-server-endpoint-");
-    for (const d of ["a", "b"]) mkdirSync(join(dir, d));
-    const a = endpointSettings(join(dir, "a"), "http://127.0.0.1:9/openai/v1/");
-    const b = endpointSettings(join(dir, "b"), "http://localhost:9/openai/v1");
     const resolved = resolveModelReviewer("model:gpt-6.1-sol");
-    const one = createModelReviewer(resolved, { env: a.env }).record;
-    const again = createModelReviewer(resolved, { env: a.env }).record;
-    const other = createModelReviewer(resolved, { env: b.env }).record;
-    expect(one.endpoint).toBe(createHash("sha256").update("http://127.0.0.1:9/openai/v1").digest("hex"));
+    const make = (name, url, key) => {
+      mkdirSync(join(dir, name));
+      return createModelReviewer(resolved, { env: endpointSettings(join(dir, name), url, key).env }).record;
+    };
+    return { name: resolved.name, one: make("one", URL_A, KEY_A), again: make("again", URL_A, KEY_A), otherUrl: make("url", URL_B, KEY_A), otherKey: make("key", URL_A, KEY_B) };
+  };
+
+  it("keeps the endpoint as an identity the key alone can check: it changes with the URL or the key, and holds nothing of either", () => {
+    const { one, again, otherUrl, otherKey } = records();
+    expect(one.endpoint).toMatch(/^[0-9a-f]{64}$/);
+    expect(again.endpoint).toBe(one.endpoint);
+    expect(otherUrl.endpoint).not.toBe(one.endpoint);
+    expect(otherKey.endpoint).not.toBe(one.endpoint);
+    // Anyone who guesses the URL cannot match it: it is not the URL's own hash, with or without its trailing slash.
+    for (const url of [URL_A, URL_A.replace(/\/+$/, "")]) expect(one.endpoint).not.toBe(createHash("sha256").update(url).digest("hex"));
+    for (const r of [one, otherUrl, otherKey]) {
+      // The identity holds no piece of either; the record holds neither, nor a host.
+      for (const secret of [URL_A, URL_B, KEY_A, KEY_B]) for (const piece of pieces(secret)) expect(r.endpoint, piece).not.toContain(piece);
+      const text = JSON.stringify(r);
+      for (const secret of [URL_A, URL_A.replace(/\/+$/, ""), URL_B, KEY_A, KEY_B, "127.0.0.1", "localhost"]) expect(text).not.toContain(secret);
+    }
     expect(one.requestedModel).toBe("gpt-6.1-sol");
     expect(one.model).toBeNull();
-    for (const text of [JSON.stringify(one), JSON.stringify(other)]) {
-      for (const secret of [a.key, b.key, "127.0.0.1", "localhost"]) expect(text).not.toContain(secret);
+  });
+
+  it("accepts a resume on the same URL and key, and refuses one on another URL or key with a line that names neither", () => {
+    const { name, one, again, otherUrl, otherKey } = records();
+    expect(resumeProblems({ reviewers: { [name]: one } }, { reviewers: { [name]: again } })).toEqual([]);
+    for (const other of [otherUrl, otherKey]) {
+      const problems = resumeProblems({ reviewers: { [name]: one } }, { reviewers: { [name]: other } });
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/endpoint/);
+      for (const secret of [URL_A, URL_B, KEY_A, KEY_B, "127.0.0.1", "localhost", one.endpoint, other.endpoint]) expect(problems[0]).not.toContain(secret);
     }
-    expect(resumeProblems({ reviewers: { [resolved.name]: one } }, { reviewers: { [resolved.name]: again } })).toEqual([]);
-    const problems = resumeProblems({ reviewers: { [resolved.name]: one } }, { reviewers: { [resolved.name]: other } });
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatch(/endpoint/);
-    for (const secret of ["127.0.0.1", "localhost", one.endpoint, other.endpoint]) expect(problems[0]).not.toContain(secret);
   });
 });
 
