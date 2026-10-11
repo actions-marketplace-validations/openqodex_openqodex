@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { checkSubmission, DEFAULT_CONFIG } from "../../packages/core/dist/index.js";
 import { hashFolder } from "../lib/index.mjs";
+import { buildCase, caseHash } from "../lib/cases.mjs";
+import { CLASSES } from "../lib/classes.mjs";
 import { replayRun, replaySubmission } from "../loop/replay.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -32,14 +34,50 @@ function savedRun(findingsByRepeat, { savedBrief = brief, argsFor = input, inven
     write(join(dir, "report", "brief.md"), savedBrief);
     if (inventory !== null) write(join(dir, "report", "inventory.json"), inventory);
     write(join(dir, "report", "manifest.json"), manifest);
-    write(join(dir, "report", "scan.json"), scan);
-    write(join(dir, "report", "submission.json"), submission(findings));
-    const checked = checkSubmission(argsFor(findings));
+    const args = argsFor(findings);
+    write(join(dir, "report", "scan.json"), args.scan);
+    write(join(dir, "report", "submission.json"), args.submission);
+    const checked = checkSubmission(args);
     expect(checked.ok).toBe(true);
     write(join(dir, "report", "report.json"), { ...checked.report, completion: { status: "complete" } });
   }
   return { root, run };
 }
+
+function plantedSource(run) {
+  const root = join(run, "cases");
+  const dir = join(root, "division");
+  for (const folder of ["base", "change"]) mkdirSync(join(dir, folder, "tests"), { recursive: true });
+  write(join(dir, "case.json"), { ...spec, bugs: spec.bugs.map((b) => ({ ...b, class: CLASSES[0], tags: [], evidence: [] })) });
+  write(join(dir, "base", "a.py"), "# context\nreturn 1\n# context\n");
+  write(join(dir, "change", "a.py"), "# context\nreturn 1 / 0\n# context\n");
+  write(join(dir, "base", "tests", "test_money.py"), "assert True\n".repeat(30));
+  return root;
+}
+
+it("checks a dropped candidate without a saved length against the rebuilt head file", () => {
+  const candidate = { id: "c1", token: "bandit:B101", source: "bandit", ruleId: "B101", filePath: "a.py", lineStart: 2, lineEnd: 2, severity: "low", message: "An assert." };
+  const dropped = { candidate: "c1", file_path: "tests/test_money.py", line_number: 30, reason: "The test uses an assert correctly." };
+  const argsFor = (fs) => ({ ...input(fs), scan: { ...scan, candidates: [candidate] }, submission: { ...submission(fs), dropped: [dropped] }, lineCount: () => 30 });
+  const { run } = savedRun([[f()]], { argsFor, inventory: null });
+  const root = plantedSource(run);
+  const built = buildCase("division", join(tempDir("oq-replay-built-"), "repo"), root);
+  const headHash = hashFolder(built.dir, ["a.py", "tests/test_money.py"]).listHash;
+  for (const hash of [null, headHash, caseHash("division", root)]) {
+    write(join(run, "manifest.json"), { version: 1, cases: ["division"], configs: ["claude-graph-off"], repeat: 1, ...(hash ? { caseHashes: { division: hash } } : {}) });
+    for (const mode of ["threshold", "union", "floor"]) expect(replayRun(run, { mode }).unresolved).toHaveLength(0);
+  }
+  write(join(run, "samples", "division", "claude-graph-off", "1", "report", "submission.json"), { ...submission([f()]), dropped: [{ ...dropped, line_number: 31 }] });
+  expect(() => replayRun(run)).toThrow(/has 30 lines/);
+});
+
+it("refuses a case by name when its content differs from the recorded specs", () => {
+  const { run } = savedRun([[f()]], { inventory: null });
+  const root = plantedSource(run);
+  write(join(run, "manifest.json"), { version: 1, cases: ["division"], configs: ["claude-graph-off"], repeat: 1, caseHashes: { division: caseHash("division", root) } });
+  write(join(root, "division", "change", "a.py"), "# context\nreturn 2 / 0\n# context\n");
+  expect(() => replayRun(run)).toThrow(/division.*content differs/);
+});
 
 it("a replay applies a check other than the product's", () => {
   for (const invalid of [f({ line_number: 1 }), f({ problem: "word ".repeat(21) }), f({ source: "lens:unknown" })]) {
@@ -95,20 +133,42 @@ it("uses saved file lengths for ranges beyond a zero-context diff", () => {
   expect(() => replayRun(run)).toThrow(/has 10 lines/);
 });
 
-it("reports findings without saved file lengths as unresolved", () => {
-  const { run } = savedRun([[f({ line_end: 5 })]], { argsFor: (fs) => ({ ...input(fs), lineCount: () => 10 }), inventory: null });
+it("uses the saved brief's file list when lengths were not saved, as core does", () => {
+  const { run } = savedRun([[f({ confidence: 1, line_end: 5 })]], { argsFor: (fs) => ({ ...input(fs), lineCount: () => 10 }), inventory: null });
   // A recorded read range is not the file's length either.
   write(join(run, "samples", "division", "claude-graph-off", "1", "report", "trace.json"), [{ tool: "Read", ok: true, inside: true, path: "a.py", range: [1, 2] }]);
   for (const mode of ["threshold", "floor"]) {
     const replay = replayRun(run, { mode });
-    expect(replay.rows.every((r) => r.findings === 0)).toBe(true);
-    expect(replay.unresolved).toHaveLength(1);
-    expect(replay.unresolved[0]).toMatchObject({ finding: f({ line_end: 5 }), reason: "no saved file length for a.py" });
+    expect(replay.rows.every((r) => r.findings === 1)).toBe(true);
+    expect(replay.unresolved).toHaveLength(0);
   }
   const result = spawnSync(process.execPath, [cli, "threshold", run], { encoding: "utf8" });
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain("Unresolved");
-  expect(result.stdout).toContain("no saved file length for a.py");
+  expect(result.stdout).toContain("Unresolved: 0");
+});
+
+it("replays accepted submissions with missing dropped citations as unresolved and scores the rest", () => {
+  const candidate = { id: "c1", token: "bandit:B101", source: "bandit", ruleId: "B101", filePath: "a.py", lineStart: 2, lineEnd: 2, severity: "low", message: "An assert." };
+  const dropped = { candidate: "c1", file_path: "tests/test_money.py", line_number: 21, reason: "The test uses an assert correctly." };
+  const missingFinding = f({ file_path: "missing.py", title: "Missing divisor check" });
+  const argsFor = (fs) => {
+    const args = input(fs);
+    return { ...args, change: { ...args.change, files: [...args.change.files, { path: "missing.py" }], coverage: new Map([...args.change.coverage, ["missing.py", new Set([2])]]) }, scan: { ...scan, candidates: [candidate] }, submission: { ...submission(fs), dropped: [dropped] }, lineCount: (path) => path === "tests/test_money.py" ? 30 : 3 };
+  };
+  const { run } = savedRun([[f({ confidence: 1 }), missingFinding], [f({ confidence: 1 }), missingFinding]], { argsFor });
+  const before = hashFolder(run);
+  for (const mode of ["threshold", "union", "floor"]) {
+    const replay = replayRun(run, { mode });
+    expect(replay.rows.every((r) => r.hits === (mode === "union" ? 1 : 2))).toBe(true);
+    expect(replay.unresolved).toHaveLength(4);
+    expect(replay.unresolved).toContainEqual(expect.objectContaining({ finding: missingFinding, reason: "no saved file length for missing.py; no planted source folders or pinned build commit" }));
+    expect(replay.unresolved).toContainEqual(expect.objectContaining({ dropped, reason: "no saved file length for tests/test_money.py; no planted source folders or pinned build commit" }));
+  }
+  const result = spawnSync(process.execPath, [cli, "threshold", run], { encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("dropped c1");
+  expect(result.stdout).toContain("no saved file length for tests/test_money.py");
+  expect(hashFolder(run)).toEqual(before);
 });
 
 it("uses core's saved deletion anchors for deletion-only hunks", () => {
@@ -139,7 +199,8 @@ it("preserves core's emptied and deleted file metadata", () => {
       expect(() => replayRun(run)).toThrow(/has 0 lines/);
     } else {
       expect(checkSubmission(argsFor([f({ line_number: 1 })])).ok).toBe(true);
-      expect(replayRun(run).unresolved).toHaveLength(1);
+      expect(replayRun(run).rows[0].findings).toBe(1);
+      expect(replayRun(run).unresolved).toHaveLength(0);
     }
   }
 });

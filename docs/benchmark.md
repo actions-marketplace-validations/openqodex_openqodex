@@ -175,6 +175,10 @@ node benchmark/loop/replay.mjs floor benchmark/results/<run>
 
 Each command accepts more runs; `--specs <folder>` follows the run it applies to.
 
+Saved inventory lengths take priority. Missing lengths come from `buildCase` in `lib/cases.mjs`, using the supplied specs and source folders pinned to the run's build commit (or source folders saved beside the specs). The replay builds each planted case once per run in a temporary folder outside any repository and removes that folder afterwards. It hashes the built head files by path and content, without modes, and compares them with a reference built from the recorded case. It computes both legacy case hash rules, with and without executable modes, when checking the manifest. A missing manifest hash uses the pinned source as the reference. Scoring amendments and mode changes are accepted when built content matches; different content refuses the case by name.
+
+Line counts follow `snapshot.ts`'s `lineCounter`: count LF bytes and add one for a nonempty final line without LF, for files up to 5 MiB. That helper is not exported. In core's `finalize.ts`, `citesChange` and `checkSubmission` consume these counts to check findings and dropped citations. A pull request case stays unresolved with a reason because this branch has no pull request builder through the clone cache.
+
 ## Scanner-only runs
 
 ```
