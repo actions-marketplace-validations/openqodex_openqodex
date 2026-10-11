@@ -137,11 +137,22 @@ const PACKS = (sha) => [
 ];
 const SHA_A = "0f73d6aaf812385878f945dad0fa829fe4fb5a934d4c4ae674ce2b1bd8ff66ed";
 const SHA_B = "1f73d6aaf812385878f945dad0fa829fe4fb5a934d4c4ae674ce2b1bd8ff66ed";
+// The same rules as PACKS, as an edge that serves p/default's YAML form
+// records them: one sha256 of the rules, another raw size.
+const PACKS_YAML = (sha) => PACKS(sha).map((p) => (p.pack === "p/default" ? { ...p, bytes: 2423491 } : p));
 const withPacks = (rules) => ({ ...scanOf([]), scanners: [{ ...ran("semgrep"), ...(rules ? { rules } : {}) }] });
+const named = (packs) => packs.map(({ pack, sha256 }) => ({ pack, sha256 })).sort((a, b) => (a.pack < b.pack ? -1 : 1));
 
 describe("a run whose samples consumed different Semgrep rule packs is accepted", () => {
-  it("names the packs when every sample consumed the same bytes", () => {
-    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks(PACKS(SHA_A))])).toEqual([...PACKS(SHA_A)].sort((a, b) => (a.pack < b.pack ? -1 : 1)));
+  it("names the packs when every sample consumed the same rules", () => {
+    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks(PACKS(SHA_A))])).toEqual(named(PACKS(SHA_A)));
+  });
+
+  it("takes two samples whose packs have one sha256 and other sizes, the JSON and YAML forms of one rule set, as one rule set", () => {
+    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks(PACKS_YAML(SHA_A))])).toEqual(named(PACKS(SHA_A)));
+    expect(semgrepPacksOf([withPacks(PACKS_YAML(SHA_A)), withPacks(PACKS(SHA_A))])).toEqual(named(PACKS(SHA_A)));
+    expect(semgrepPacksOf([withPacks([...PACKS(SHA_A), PACKS_YAML(SHA_A)[0]])])).toEqual(named(PACKS(SHA_A)));
+    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks(PACKS_YAML(SHA_B))])).toBe("mixed");
   });
 
   it("marks the run mixed when two samples consumed different bytes of one pack, and unknown when a sample's packs were not recorded", () => {
@@ -179,9 +190,9 @@ describe("a run whose samples consumed different Semgrep rule packs is accepted"
 const OSV = candidate("c6", "osv-scanner", "GHSA-35jh-r3h4-6jhm", "package-lock.json", 11, 11, "lodash@4.17.15: GHSA-35jh-r3h4-6jhm (CVE-2021-23337). Command Injection in lodash");
 const OSV_NEW = candidate("c7", "osv-scanner", "GHSA-xxxx-yyyy-zzzz", "package-lock.json", 11, 11, "lodash@4.17.15: GHSA-xxxx-yyyy-zzzz. A new advisory in lodash");
 const trailOf = (cands) => cands.map((c) => ({ token: c.token, file: c.filePath, lineStart: c.lineStart, lineEnd: c.lineEnd, severity: c.severity, stage: "kept", id: c.id }));
-const demoScan = ({ osv = [OSV], sha = SHA_A, shell = SC2115 } = {}) => {
+const demoScan = ({ osv = [OSV], sha = SHA_A, shell = SC2115, packs = PACKS } = {}) => {
   const cands = [shell, ...osv];
-  return { ...scanOf(cands, [{ ...ran("semgrep"), rules: PACKS(sha) }, ran("shellcheck"), ran("osv-scanner")]), trail: trailOf(cands) };
+  return { ...scanOf(cands, [{ ...ran("semgrep"), rules: packs(sha) }, ran("shellcheck"), ran("osv-scanner")]), trail: trailOf(cands) };
 };
 
 // The other files run.mjs saves in a sample, as a real scan of the demo
@@ -260,11 +271,17 @@ describe("two scanner-only runs differ and nobody notices", () => {
     expect(comparePasses(first, savePass(root, "two-pass", demoScan())).identical).toBe(true);
   });
 
-  it("reads other Semgrep rule pack bytes as an input change", () => {
+  it("reads other Semgrep rules as an input change", () => {
     const root = tempDir("oq-bench-identical-");
     const result = comparePasses(savePass(root, "one", demoScan()), savePass(root, "two", demoScan({ sha: SHA_B })));
     expect(result.identical).toBe(false);
     expect(result.cause).toBe("input");
     expect(result.inputs.join("\n")).toMatch(/Semgrep rule packs/);
+  });
+
+  it("finds two passes identical when the registry served one rule set in two forms of other sizes", () => {
+    const root = tempDir("oq-bench-identical-");
+    const result = comparePasses(savePass(root, "one", demoScan()), savePass(root, "two", demoScan({ packs: PACKS_YAML })));
+    expect(result).toMatchObject({ identical: true, cause: null, differences: [], inputs: [] });
   });
 });
