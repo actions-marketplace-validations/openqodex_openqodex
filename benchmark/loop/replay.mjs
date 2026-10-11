@@ -7,10 +7,10 @@
 // Counts use the planted matching diagnostic in lib/score.mjs, without
 // adjudication. --specs follows its run; otherwise its own cases are used.
 // Saved runs are read only. Exit 0 printed, 2 invalid input or output path.
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkSubmission, DEFAULT_CONFIG, GLOBAL_CONFIDENCE_FLOOR, parseDiffCoverage, removedRuns, unquoteDiffPath } from "../../packages/core/dist/index.js";
+import { checkSubmission, DEFAULT_CONFIG, GLOBAL_CONFIDENCE_FLOOR, parseDiffCoverage, unquoteDiffPath } from "../../packages/core/dist/index.js";
 import { mergeFindings } from "../../packages/review/dist/index.js";
 import { fileList, resultsRoot } from "../lib/index.mjs";
 import { groupBy, scoreSample, shownFindings, summarize } from "../lib/score.mjs";
@@ -28,21 +28,34 @@ const inFolder = (folder, path) => {
   return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 };
 
-// A canonical path even when the output does not exist: resolve the nearest
-// existing parent, so a symlink cannot put --out back inside a saved run.
-function canonicalPath(path) {
-  if (existsSync(path)) return realpathSync(path);
+// Resolve every link, including dangling links and links in parent folders.
+function canonicalPath(path, links = new Set()) {
   const parent = dirname(path);
-  if (parent === path) throw new Error(`cannot resolve ${path}`);
-  return join(canonicalPath(parent), basename(path));
+  if (parent === path) return realpathSync(path);
+  const target = join(canonicalPath(parent, links), basename(path));
+  let entry;
+  try { entry = lstatSync(target); } catch (error) {
+    if (error.code === "ENOENT") return target;
+    throw error;
+  }
+  if (!entry.isSymbolicLink()) return target;
+  if (links.has(target)) throw new Error(`cannot resolve cyclic symlink ${target}`);
+  links.add(target);
+  try { return canonicalPath(resolve(dirname(target), readlinkSync(target)), links); }
+  finally { links.delete(target); }
 }
 
 function checkOutput(path, folders) {
   const target = canonicalPath(resolve(path));
   const saved = folders.map((f) => realpathSync(f));
+  for (let folder = dirname(target); ; folder = dirname(folder)) {
+    if (existsSync(join(folder, "manifest.json"))) throw new Error(`--out cannot write into a run folder: ${folder}`);
+    if (dirname(folder) === folder) break;
+  }
   // Protect any saved run under the standard store, including one not being
   // replayed. An existing hard link to an input also aliases its contents.
-  if (inFolder(canonicalPath(resultsRoot), target) || saved.some((f) => inFolder(f, target))) throw new Error("--out cannot write into a run folder");
+  const protectedFolder = [canonicalPath(resolve(resultsRoot)), ...saved].find((f) => inFolder(f, target));
+  if (protectedFolder) throw new Error(`--out cannot write into a run folder: ${protectedFolder}`);
   if (existsSync(target)) {
     const out = statSync(target);
     for (const folder of saved) for (const file of fileList(folder)) {
@@ -56,15 +69,16 @@ function checkOutput(path, folders) {
 // Adapt the recorded diff to Change, never the current case's source tree.
 // core's coverage parser includes context when given a contextual diff, so
 // remove those context positions before passing it to checkSubmission.
-// Line limits are conservative: the highest line actually present in a hunk
-// or a successful recorded read. No full snapshot was saved in legacy runs.
-function savedChange(brief, manifest, report, trace) {
+function savedChange(brief, manifest, report, inventory) {
   const blocks = [...brief.matchAll(/^```diff\r?\n([\s\S]*?)^```\s*$/gm)];
   if (blocks.length === 0) throw new Error("the saved brief has no diff; the change cannot be replayed");
   const diff = blocks.map((m) => m[1]).join("\n");
   const coverage = parseDiffCoverage(diff);
-  const limits = new Map();
-  const observe = (path, line) => limits.set(path, Math.max(limits.get(path) ?? 0, line));
+  // report/inventory.json is the product's saved snapshot listing, written
+  // by commands/review.ts with buildInventory's exact per-file `lines`.
+  // Legacy change reviews did not save lengths. A diff or read range cannot
+  // supply them, so findings without this metadata remain unresolved.
+  const limits = new Map((inventory ?? []).filter((f) => Number.isSafeInteger(f.lines) && f.lines >= 0).map((f) => [f.path, f.lines]));
   let path = null;
   let next = null;
   let left = 0;
@@ -73,10 +87,10 @@ function savedChange(brief, manifest, report, trace) {
     if (left > 0 || right > 0) {
       if (line.startsWith(" ")) {
         coverage.get(path)?.delete(next);
-        observe(path, next++);
+        next++;
         left--; right--;
       } else if (line.startsWith("+")) {
-        observe(path, next++);
+        next++;
         right--;
       } else if (line.startsWith("-")) left--;
       continue;
@@ -94,17 +108,23 @@ function savedChange(brief, manifest, report, trace) {
       }
     }
   }
-  for (const t of trace ?? []) if (t.tool === "Read" && t.ok && t.inside === true && Array.isArray(t.range)) observe(t.path, t.range[1]);
+  // brief.md's Changed files and Deleted lines sections are emitted by
+  // core's changedFilesBlock and deletionsBlock. Copy the recorded anchors,
+  // including line 1 for emptied/deleted files; never compute new anchors.
+  const section = (name) => brief.split(/^## /m).find((s) => s.startsWith(`${name}\n`) || s.startsWith(`${name}\r\n`)) ?? "";
+  const files = [...section("Changed files").matchAll(/^\| (added|modified|deleted|renamed from .+?)(, binary)? \| (.*?) \|\r?$/gm)].map((m) => ({ path: m[3].replace(/\\\|/g, "|"), status: m[1].startsWith("renamed from ") ? "renamed" : m[1], oldPath: m[1].startsWith("renamed from ") ? m[1].slice(13) : null, binary: Boolean(m[2]) }));
+  for (const p of coverage.keys()) if (!files.some((f) => f.path === p)) files.push({ path: p, status: "modified", oldPath: null, binary: false });
   const deletionPoints = new Map();
-  for (const block of diff.split(/(?=^diff --git )/m)) {
-    const files = [...parseDiffCoverage(block).keys()];
-    if (files.length !== 1) continue;
-    const file = files[0];
-    const count = limits.get(file) ?? 0;
-    deletionPoints.set(file, removedRuns(block).map((r) => ({ after: r.after, lines: r.lines.length, anchors: [r.after, r.after + 1].filter((n) => n >= 1 && n <= count) })));
+  for (const line of section("Deleted lines").split(/\r?\n/)) {
+    const removed = /^- (\d+) lines? deleted (?:after line (\d+) of|at the top of) (.+) \(cite line (\d+(?: or \d+)*)\)$/.exec(line);
+    const deleted = /^- (.+) was deleted \(cite line (\d+(?: or \d+)*)\)$/.exec(line);
+    if (!removed && !deleted) continue;
+    const file = removed ? removed[3] : deleted[1];
+    const points = deletionPoints.get(file) ?? [];
+    points.push({ after: removed ? Number(removed[2] ?? 0) : 0, lines: removed ? Number(removed[1]) : 0, anchors: (removed ? removed[4] : deleted[2]).split(" or ").map(Number) });
+    deletionPoints.set(file, points);
   }
-  const files = [...coverage.keys()].map((p) => ({ path: p, status: "modified", oldPath: null, binary: false }));
-  const change = { id: manifest.change_id, shortId: manifest.change_id.slice(0, 12), repoRoot: ".", baseRef: report.base?.ref ?? "saved", baseSha: report.base?.sha ?? "saved", files, changedPaths: files.map((f) => f.path), coverage, deletionPoints, diff, notReviewed: report.not_reviewed_paths ?? [], stats: report.stats };
+  const change = { id: manifest.change_id, shortId: manifest.change_id.slice(0, 12), repoRoot: ".", baseRef: report.base?.ref ?? "saved", baseSha: report.base?.sha ?? "saved", files, changedPaths: files.filter((f) => f.status !== "deleted").map((f) => f.path), coverage, deletionPoints, diff, notReviewed: report.not_reviewed_paths ?? [], stats: report.stats };
   return { change, lineCount: (p) => limits.get(p) ?? null };
 }
 
@@ -115,7 +135,9 @@ function inputsOf(folder, a) {
   const manifest = readJson(join(dir, "manifest.json"));
   const scan = { ...a.scan, secretFingerprints: a.scan.secretFingerprints ?? [] };
   const settings = { ...DEFAULT_CONFIG, blockOnSeverity: a.report.block_on_severity ?? null };
-  return { ...savedChange(a.brief, manifest, a.report, a.trace), manifest, scan, config: settings, submission: a.submission };
+  const inventoryPath = join(dir, "inventory.json");
+  const inventory = existsSync(inventoryPath) ? readJson(inventoryPath) : null;
+  return { ...savedChange(a.brief, manifest, a.report, inventory), manifest, scan, config: settings, submission: a.submission };
 }
 
 const counts = (scores) => {
@@ -130,6 +152,15 @@ export function replayRun(folder, { mode = "threshold", specsDir = null, floors 
   if (run.manifest.mode && run.manifest.mode !== "review") throw new Error("replays need reviewer submissions, not a scanner-only run");
   const firsts = run.attempts.filter((a) => a.attempt === 1);
   const checked = firsts.map((a) => ({ ...a, args: inputsOf(folder, a) }));
+  const unresolved = [];
+  for (const a of checked) {
+    const pending = a.args.submission.findings.filter((f) => a.args.lineCount(f.file_path) === null);
+    for (const finding of pending) unresolved.push({ case: a.case, config: a.config, repeat: a.repeat, finding, reason: `no saved file length for ${finding.file_path}` });
+    // A pending finding still disposes its candidate in the saved submission.
+    // Remove both from this partial check, so it cannot count as a replay hit.
+    const candidates = new Set(pending.map((f) => f.candidate).filter(Boolean));
+    a.args = { ...a.args, scan: { ...a.args.scan, candidates: a.args.scan.candidates.filter((c) => !candidates.has(c.id)) }, submission: { ...a.args.submission, findings: a.args.submission.findings.filter((f) => !pending.includes(f)) } };
+  }
   const reportAt = (a, settings = {}) => {
     const check = replaySubmission(a.args, settings);
     if (!check.ok) throw new Error(`${a.case}/${a.config}/${a.repeat}: core rejected the saved submission:\n${check.errors.join("\n")}`);
@@ -168,17 +199,18 @@ export function replayRun(folder, { mode = "threshold", specsDir = null, floors 
       } else for (const floor of floors) rows.push({ config, samples: samples.length, floor, ...counts(samples.map((a) => score(a, reportAt(a, { floor })))) });
     }
   }
-  return { run: basename(folder), mode, specsFrom: run.specsFrom ?? "the run's own cases/", rows };
+  return { run: basename(folder), mode, specsFrom: run.specsFrom ?? "the run's own cases/", rows, unresolved };
 }
 
 const table = (head, rows) => [`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`, ...rows.map((r) => `| ${r.join(" | ")} |`)].join("\n");
 function render(runs) {
-  const out = ["# Saved-run replays", "", "No reviewer calls. Counts use the planted matching diagnostic, without adjudication. False means unlisted under that diagnostic; counted non-hits also include near misses and wrong kinds.", "", "Checks: built core checkSubmission and built review mergeFindings. Legacy citation limits use observed diff and read ranges, not a full snapshot. Lens floors still apply. Threshold and floor replays use every first attempt; union uses repeats 1 and 2 only.", ""];
+  const out = ["# Saved-run replays", "", "No reviewer calls. Counts use the planted matching diagnostic, without adjudication. False means unlisted under that diagnostic; counted non-hits also include near misses and wrong kinds.", "", "Checks: built core checkSubmission and built review mergeFindings, with saved inventory lengths and core's recorded deletion anchors. Findings without saved file lengths are unresolved and excluded from counts. Lens floors still apply. Threshold and floor replays use every first attempt; union uses repeats 1 and 2 only.", ""];
   for (const r of runs) {
     out.push(`## ${r.run}: ${r.mode}`, "", `Specs: ${r.specsFrom}.`, "");
     if (r.mode === "threshold") out.push(table(["Configuration", "Samples", "Minor hits", "Info hits", "Added hits", "Minor tests", "Info tests", "Added tests", "False at info", "Counted non-hits at info"], r.rows.map((x) => [x.config, x.samples, `${x.beforeHits}/${x.of}`, `${x.hits}/${x.of}`, x.addedHits, x.beforeTestRequests, x.testRequests, x.addedTestRequests, x.false, x.nonHits])), "");
     else if (r.mode === "union") out.push(table(["Configuration", "Repeat 1 hits", "Union hits", "Repeat 1 non-hits", "Union non-hits", "Union findings", "Status"], r.rows.map((x) => [x.config, x.status === "replayed" ? `${x.beforeHits}/${x.of}` : "n/a", x.status === "replayed" ? `${x.hits}/${x.of}` : "n/a", x.beforeNonHits ?? "n/a", x.nonHits ?? "n/a", x.findings ?? "n/a", x.status])), "");
     else out.push(table(["Configuration", "Samples", "Floor", "Hits", "False", "Counted non-hits", "Test requests"], r.rows.map((x) => [x.config, x.samples, x.floor.toFixed(1), `${x.hits}/${x.of}`, x.false, x.nonHits, x.testRequests])), "");
+    if (r.unresolved.length > 0) out.push(`Unresolved: ${r.unresolved.length} findings.`, "", ...r.unresolved.map((u) => `- ${u.case}/${u.config}/${u.repeat}: ${u.finding.title}: ${u.reason}`), "");
   }
   return out.join("\n");
 }
