@@ -51,7 +51,11 @@
 // 22. A round's check errors are lost, so a rejected finding reads as never
 //     raised: the result's rounds lack a correction round's errors, the
 //     answer they judged, or the changed ranges the round carried.
-import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+// 23. The result's timings are read before the scratch folder is removed, so
+//     a review that filled large scanner caches reports a total_ms that
+//     misses the cleanup reviewChange still waits for; or the JSON report's
+//     timings differ from the result's.
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,11 +90,22 @@ const SUBTRACTION: Finding = {
   candidate: null,
 };
 
-type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[] };
+type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[]; wallMs: number };
+
+// `count` small files in `dir`, a hundred to a folder: what a Go or Cargo
+// cache leaves in the scratch folder.
+function fillFolder(dir: string, count: number): void {
+  for (let d = 0; d < count / 100; d++) {
+    mkdirSync(join(dir, `d${d}`), { recursive: true });
+    for (let f = 0; f < 100; f++) writeFileSync(join(dir, `d${d}`, `f${f}`), "x");
+  }
+}
 
 // `tmp`: a folder TMPDIR names while reviewChange runs, made read-only for
 // that time, so any write to the system temp folder fails the review.
-async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number; tmp?: string } = {}): Promise<Run> {
+// `fill`: that many small files already in the scratch folder's cache, which
+// the review removes with the rest of its scratch.
+async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number; tmp?: string; fill?: number } = {}): Promise<Run> {
   const repo = changeRepo({ big: opts.big });
   const workDir = tempDir("oq-rc-work-");
   const installRoot = tempDir("oq-rc-install-");
@@ -117,9 +132,11 @@ async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: n
     vi.stubEnv("TMPDIR", opts.tmp);
     chmodSync(opts.tmp, 0o500);
   }
+  if (opts.fill !== undefined) fillFolder(join(workDir, "scratch", "cache", "filled"), opts.fill);
   try {
+    const started = Date.now();
     const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
-    return { result, model, asked, workDir, clone: repo.dir, lines };
+    return { result, model, asked, workDir, clone: repo.dir, lines, wallMs: Date.now() - started };
   } finally {
     if (opts.tmp !== undefined) chmodSync(opts.tmp, 0o700);
     vi.unstubAllEnvs();
@@ -530,6 +547,26 @@ describe("what a host gets and gives", () => {
     const big = model.requests.length;
     await expect(reviewChange({ ...input, instructions: "x".repeat(32 * 1024 + 1) }, model, options)).rejects.toThrow(/over the 32 KB limit; they are refused, never cut/);
     expect(model.requests).toHaveLength(big);
+  });
+});
+
+describe("the result's timings", () => {
+  it("23. total_ms covers the scratch folder's removal, and the JSON report holds the result's timings", async () => {
+    // How long removing that many files takes here, measured on a copy: the
+    // case proves nothing on a machine where it is quick.
+    const FILES = 20_000;
+    const probe = join(tempDir("oq-rc-fill-"), "cache");
+    fillFolder(probe, FILES);
+    const removing = Date.now();
+    rmSync(probe, { recursive: true, force: true });
+    const removeMs = Date.now() - removing;
+    expect(removeMs, "removing the filled cache is too quick to measure here").toBeGreaterThanOrEqual(200);
+    const r = await run({ fill: FILES });
+    expect(r.result.status).toBe("complete");
+    expect(readdirSync(r.workDir)).toEqual([]);
+    const timings = r.result.timings!;
+    expect(timings.total_ms, JSON.stringify({ timings, wallMs: r.wallMs, removeMs })).toBeGreaterThan(r.wallMs - removeMs / 2);
+    expect(JSON.parse(r.result.render.json()).timings).toEqual(timings);
   });
 });
 

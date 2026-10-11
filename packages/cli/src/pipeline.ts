@@ -23,7 +23,7 @@ import {
   renderTerminal,
   writeRepoFile,
 } from "@openqodex/core";
-import type { Change, ChangeScope, Config, Display, HotSpot, ImpactSummary, Report, ScannerSource } from "@openqodex/core";
+import type { Change, ChangeScope, Config, Display, HotSpot, ImpactSummary, PhaseClock, Report, ScannerSource } from "@openqodex/core";
 import { openStore } from "@openqodex/graph";
 import type { GraphStore } from "@openqodex/graph";
 import { buildGraphRun as reviewGraphRun, buildHotSpots as reviewHotSpots, nothingToReviewLine, redactWith, scanChange as reviewScan } from "@openqodex/review";
@@ -59,16 +59,23 @@ export async function loadRepo(flags: GlobalFlags, checkoutSettings = true): Pro
   return { repoRoot, config: loaded.config };
 }
 
+// `clock`: the run's phase clock, given the change and the scan; neither
+// runs on after this returns.
 export async function runPipeline(args: {
   scope: ChangeScope;
   flags: GlobalFlags;
   only?: ScannerSource[];
   skip?: ScannerSource[];
   checkoutSettings?: boolean;
+  clock?: PhaseClock;
 }): Promise<PipelineResult> {
   const { repoRoot, config } = await loadRepo(args.flags, args.checkoutSettings);
+  args.clock?.enter("change");
   const change = await getChange({ repoRoot, scope: args.scope, exclude: config.exclude, defaultBase: config.defaultBase });
-  return scanChange({ ...args, repoRoot, config, change });
+  args.clock?.enter("scan");
+  const p = await scanChange({ ...args, repoRoot, config, change });
+  args.clock?.enter(null);
+  return p;
 }
 
 // The scan's parts from the flags: scanners resolved from the pinned table,

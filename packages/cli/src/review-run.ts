@@ -18,7 +18,7 @@
 // The developer's files are never written. A tool failure, an incomplete
 // review and a missing reviewer all exit 2.
 import { join, relative, resolve } from "node:path";
-import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
+import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
 import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
 import { DEPTH_ENV, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
 import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
@@ -176,6 +176,8 @@ function runFolder(o: ReviewOptions, repoRoot: string, shortId: string, reportWr
 
 export async function runReview(o: ReviewOptions): Promise<number> {
   if (process.env[DEPTH_ENV]) throw new OpenQodexError("openqodex review cannot run inside an openqodex reviewer");
+  // The report's timings run from here; the core times each phase on it.
+  const clock = phaseClock(Date.now);
   const say = progress(o.flags);
   const loaded = await loadRepo(o.flags, o.reportDir === undefined);
   const repoRoot = loaded.repoRoot;
@@ -338,6 +340,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
       { repoRoot, config, scope: o.scope, all: o.all, target: o.target, overlay: o.overlay, only, skip, noGraph: o.noGraph, reviewer: choice, web, timeoutMs: o.timeoutMs, runtimeVersion: __OPENQODEX_VERSION__ },
       {
         ...parts,
+        clock,
         onEvent: (e) => {
           if (e.type === "progress") say(e.line);
           else if (e.type === "warning") warn(e.line);

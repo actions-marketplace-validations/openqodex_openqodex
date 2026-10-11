@@ -102,6 +102,7 @@ const TYPES = [
   "ResolveTool",
   "ReviewerRecord",
   "RunScannersResult",
+  "RunTimings",
   "ScannerRunSummary",
   "ScannerSource",
   "ScanResult",
