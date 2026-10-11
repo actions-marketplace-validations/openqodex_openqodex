@@ -13,21 +13,26 @@
 //    lines: on one call that holds a SQL injection and a path traversal, a
 //    person's ruling that the SQL finding is the listed truth item finds
 //    that item, and the path traversal finding on the same line stays
-//    unresolved and never finds it.
+//    unresolved and never finds it. Two legacy findings with one title on
+//    one line, whose descriptions name the two issues, are two findings too.
 // 3. Two findings are merged into one issue without a person's consolidate
 //    line: findings on the same lines with different words stay two issues
 //    until a person signs a consolidate line, and then one issue ruling
 //    applies to both.
 // 4. A ruling without a person's name changes a score: a line with no
-//    `by`, an empty one, or a model's or an agent's name is ignored and
-//    reported, and `decide` refuses to write it.
+//    `by`, an empty one, a model's or an agent's name, or any name not in
+//    the queue's people.json is ignored and reported, and `decide` refuses
+//    to write it. A later line under such a name never overrides a
+//    person's ruling or signs a consolidation.
 // 5. A blind sheet names the run, the build, the configuration or how often
 //    a finding recurred, so the person rules on what they expect: the sheet
 //    shows the case, the finding, the code and the truth item only, every
-//    text through the shared redactor, in a seeded order it records.
+//    text through the shared redactor with the full and the short build
+//    commit, in a seeded order it records.
 // 6. A status from the adjudication file is refused or dropped: `decide`
-//    writes every status of the file's shape, and the scorer reads each one
-//    back without ignoring it.
+//    writes every status of the file's shape, the reviewer part's
+//    spec-candidate-accepted and spec-candidate-rejected included, and the
+//    scorer reads each one back with its effect.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -65,6 +70,7 @@ const HASH = "cd".repeat(32);
 const CASE_ID = `planted/files@${HASH.slice(0, 8)}`;
 const CONFIG = "claude-graph-on";
 const BUILD = "abcdef1";
+const COMMIT = `${BUILD}9f8e7d6c5b4a39281706f5e4d3c2b1a0f`;
 
 const finding = (line, category, title, extra = {}) => ({ origin: "agent", severity: "major", category, confidence: 0.8, file_path: "app/files.py", line_number: line, line_end: line, title, description: title, suggested_change: null, source: null, candidate: null, notes: [], problem: `${title}.`, consequence: "Users lose data.", fix: "Fix it.", ...extra });
 const report = (findings) => ({ version: 1, kind: "review", verdict: "passed", findings, outside_change: [], dropped: [], scanners: [], impact: { status: "ok" }, completion: { status: "complete", missing: [], reviewer: { duration_ms: 1000, rounds: 1, usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 } } } });
@@ -117,7 +123,7 @@ async function savedRun({ name = "run", repeat, reports }) {
   const jobs = planned(repeat);
   const manifest = runManifest({
     startedAt: "2026-10-10T10:00:00.000Z",
-    settings: { build: { commit: `${BUILD}${"0".repeat(33)}`, short: BUILD, dirty: false, cliVersion: "0.14.0" }, reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } }, cases: ["files"], caseIds: [CASE_ID], caseHashes: { files: HASH }, configs: [CONFIG], repeat },
+    settings: { build: { commit: COMMIT, short: BUILD, dirty: false, cliVersion: "0.14.0" }, reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } }, cases: ["files"], caseIds: [CASE_ID], caseHashes: { files: HASH }, configs: [CONFIG], repeat },
     jobs,
   });
   await executeRun({ out, manifest, jobs, copies: [[join(root, "files.json"), "cases/files.json"]], runJob: async (job) => {
@@ -128,6 +134,13 @@ async function savedRun({ name = "run", repeat, reports }) {
     write(join(dir, "report", "brief.md"), BRIEF);
   } });
   return out;
+}
+
+// A queue folder whose people file names the one person who rules here.
+function queueDir() {
+  const q = tempDir("oq-queue-");
+  write(join(q, "people.json"), JSON.stringify({ v: 1, people: ["Sid"] }));
+  return q;
 }
 
 // Scores a run with the adjudication file given, and reads back what score.mjs wrote.
@@ -146,7 +159,7 @@ const writeLines = (path, lines) => write(path, lines.map((l) => `${JSON.stringi
 describe("a repeated unresolved finding raises precision", () => {
   it("counts an unlisted finding seen in every repeat as unresolved each time, queues it once with every occurrence, and moves no bound", async () => {
     const run = await savedRun({ repeat: 3, reports: [1, 2, 3].map(() => report([HIT, LEAK])) });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     const decisions = join(q, "decisions.jsonl");
     const first = scored(run, decisions);
     const c = first.score.byConfig[CONFIG];
@@ -178,7 +191,7 @@ describe("a repeated unresolved finding raises precision", () => {
 describe("a ruling on one finding transfers to a different issue on the same lines", () => {
   it("lets a person's same-issue ruling make the SQL injection finding find its truth item, and leaves the path traversal on the same call unresolved", async () => {
     const run = await savedRun({ repeat: 2, reports: [report([SQLI, PATH]), report([PATH])] });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     const decisions = join(q, "decisions.jsonl");
     const before = scored(run, decisions);
     // Both sit on the truth item's line and neither names its words: location matches, nothing more.
@@ -210,12 +223,28 @@ describe("a ruling on one finding transfers to a different issue on the same lin
     expect(last.outcomes.find((o) => o.findingId === sqliId)).toMatchObject({ outcome: "hit", evidenceKind: "ruling" });
     expect(last.outcomes.filter((o) => o.findingId === pathId).map((o) => o.outcome)).toEqual(["ruled-false", "ruled-false"]);
   });
+
+  it("gives two legacy findings that differ only in their description two ids, so a ruling on the SQL injection stays off the path traversal", async () => {
+    // A report from before the structured prose fields: title, description and suggested_change only.
+    const legacy = (description, fix) => ({ origin: "agent", severity: "major", category: "security", confidence: 0.8, file_path: "app/files.py", line_number: 12, line_end: 12, title: "Unsafe file lookup", description, suggested_change: fix, source: null, candidate: null, notes: [] });
+    const run = await savedRun({ repeat: 1, reports: [report([legacy("The name is pasted into the SELECT text: SQL injection.", "Bind the name."), legacy("The stored path is opened unchecked: path traversal.", "Check the path.")])] });
+    const q = queueDir();
+    const decisions = join(q, "decisions.jsonl");
+    const before = scored(run, decisions);
+    const [sql, path] = before.outcomes.map((o) => o.findingId);
+    expect(sql).not.toBe(path);
+    expect(queue("add", run, "--queue", q).status).toBe(0);
+    expect(readJsonl(join(q, "planted.jsonl"))).toHaveLength(2);
+    writeLines(decisions, [line({ kind: "finding", findingId: sql }, "true", "Sid")]);
+    const after = scored(run, decisions);
+    expect(after.outcomes.map((o) => o.outcome)).toEqual(["ruled-true", "unresolved"]);
+  });
 });
 
 describe("two findings are merged into one issue without a person's consolidate line", () => {
   it("keeps two wordings on one line two issues until a person signs a consolidate line, then applies one issue ruling to both", async () => {
     const run = await savedRun({ repeat: 1, reports: [report([FORM_A, FORM_B])] });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     const decisions = join(q, "decisions.jsonl");
     const before = scored(run, decisions);
     const c = before.score.byConfig[CONFIG];
@@ -262,7 +291,7 @@ describe("two findings are merged into one issue without a person's consolidate 
 describe("a ruling without a person's name changes a score", () => {
   it("ignores and reports a line with no name, an empty one, or a model's or an agent's, and decide refuses to write one", async () => {
     const run = await savedRun({ repeat: 1, reports: [report([HIT, LEAK, SQLI])] });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     const decisions = join(q, "decisions.jsonl");
     const base = scored(run, decisions);
     const leak = base.outcomes[1].findingId;
@@ -278,7 +307,7 @@ describe("a ruling without a person's name changes a score", () => {
     expect(after.score.decisionsHash).toMatch(/^[0-9a-f]{64}$/);
     // decide refuses the same names and writes nothing.
     expect(queue("add", run, "--queue", q).status).toBe(0);
-    const fresh = tempDir("oq-queue-");
+    const fresh = queueDir();
     expect(queue("add", run, "--queue", fresh).status).toBe(0);
     for (const by of [[], ["--by", ""], ["--by", "Claude"], ["--by", "gpt-6.1-sol"], ["--by", "session"]]) {
       const r = queue("decide", "true", leak.slice(0, 12), ...by, "--queue", fresh);
@@ -287,14 +316,40 @@ describe("a ruling without a person's name changes a score", () => {
     }
     expect(existsSync(join(fresh, "decisions.jsonl"))).toBe(false);
   });
+
+  it("counts a ruling only from a name in people.json, so a later true under ChatGPT or an unlisted name never overrides Sid's false or signs a consolidation", async () => {
+    const run = await savedRun({ repeat: 1, reports: [report([LEAK, FORM_A, FORM_B])] });
+    const q = queueDir();
+    const decisions = join(q, "decisions.jsonl");
+    const base = scored(run, decisions);
+    const [leak, a, b] = base.outcomes.map((o) => o.findingId);
+    writeLines(decisions, [
+      line({ kind: "finding", findingId: leak }, "false", "Sid"),
+      line({ kind: "finding", findingId: leak }, "true", "ChatGPT"),
+      line({ kind: "finding", findingId: leak }, "true", "Alex"),
+      line({ kind: "issue", issueId: `${CASE_ID}#I1`, members: [a, b] }, "consolidate", "ChatGPT"),
+      line({ kind: "issue", issueId: `${CASE_ID}#I2`, members: [a, b] }, "consolidate", "Alex"),
+    ]);
+    const after = scored(run, decisions);
+    expect(after.outcomes.map((o) => [o.outcome, o.issueId])).toEqual([["ruled-false", null], ["unresolved", null], ["unresolved", null]]);
+    expect(after.score.rulings.ignored.map((x) => x.line)).toEqual([2, 3, 4, 5]);
+    for (const x of after.score.rulings.ignored) expect(x.why).toMatch(/people\.json/);
+    expect(queue("add", run, "--queue", q).status).toBe(0);
+    for (const by of ["ChatGPT", "Alex"]) {
+      const r = queue("decide", "consolidate", a.slice(0, 12), b.slice(0, 12), "--by", by, "--queue", q);
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/people\.json/);
+    }
+    expect(readJsonl(decisions)).toHaveLength(5);
+  });
 });
 
 describe("a blind sheet names the run, the build, the configuration or how often a finding recurred", () => {
   it("shows the case, the finding, the code and the truth item only, through the shared redactor, in a seeded order it records", async () => {
     const runId = `2026-10-10-${BUILD}-planted-review-laptop`;
-    const quoting = finding(12, "security", "Path traversal through the stored path", { problem: `Seen in ${runId} under ${CONFIG} at ${BUILD}.` });
+    const quoting = finding(12, "security", "Path traversal through the stored path", { problem: `Seen in ${runId} under ${CONFIG} at ${BUILD}.`, consequence: `Built from ${COMMIT}.` });
     const run = await savedRun({ name: runId, repeat: 3, reports: [1, 2, 3].map(() => report([quoting, LEAK, FORM_A])) });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     scored(run, join(q, "decisions.jsonl"));
     expect(queue("add", run, "--queue", q).status).toBe(0);
     const json = queue("sheet", "planted", "--seed", "7", "--json", "--queue", q);
@@ -307,7 +362,8 @@ describe("a blind sheet names the run, the build, the configuration or how often
     const md = queue("sheet", "planted", "--seed", "7", "--queue", q);
     expect(md.status).toBe(0);
     for (const text of [json.stdout, md.stdout]) {
-      for (const forbidden of [runId, BUILD, CONFIG, "graph-on", "claude", "occurrence", "repeat", "laptop"]) expect(text.toLowerCase()).not.toContain(forbidden.toLowerCase());
+      // The full commit and its tail too: the short form alone would leave the rest of the hash naming the build.
+      for (const forbidden of [runId, BUILD, COMMIT, COMMIT.slice(BUILD.length), CONFIG, "graph-on", "claude", "occurrence", "repeat", "laptop"]) expect(text.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
     expect(md.stdout).toMatch(/planted@7/);
     // The same seed gives the same order; the order is not the queue's.
@@ -321,7 +377,7 @@ describe("a blind sheet names the run, the build, the configuration or how often
 describe("a status from the adjudication file is refused or dropped", () => {
   it("writes every status of the file through decide, and the scorer reads each one back", async () => {
     const run = await savedRun({ repeat: 1, reports: [report([SQLI, PATH, LEAK, FORM_A, FORM_B])] });
-    const q = tempDir("oq-queue-");
+    const q = queueDir();
     const decisions = join(q, "decisions.jsonl");
     const base = scored(run, decisions);
     expect(queue("add", run, "--queue", q).status).toBe(0);
@@ -357,5 +413,35 @@ describe("a status from the adjudication file is refused or dropped", () => {
     expect(after.score.rulings).toMatchObject({ read: steps.length, ignored: [] });
     expect(after.score.perBug[CONFIG][CASE_ID].sqli.ruling).toBe("disputed");
     expect(after.outcomes.map((o) => o.outcome)).toEqual(["hit", "ruled-false", "ruled-true", "ruled-false", "ruled-false"]);
+  });
+
+  it("takes the reviewer part's names for a spec candidate, spec-candidate-accepted and spec-candidate-rejected, with the effects of true and false", async () => {
+    const run = await savedRun({ repeat: 1, reports: [report([PATH, LEAK, FORM_A, FORM_B])] });
+    const q = queueDir();
+    const decisions = join(q, "decisions.jsonl");
+    const base = scored(run, decisions);
+    expect(queue("add", run, "--queue", q).status).toBe(0);
+    const [path, leak, a, b] = base.outcomes.map((o) => o.findingId.slice(0, 12));
+    // Each named status comes after the opposite ruling, so its own effect shows.
+    const steps = [
+      ["false", leak],
+      ["spec-candidate-accepted", leak],
+      ["true", path],
+      ["spec-candidate-rejected", path],
+      ["consolidate", a, b],
+      ["false", `${CASE_ID}#I1`],
+      ["spec-candidate-accepted", `${CASE_ID}#I1`],
+    ];
+    for (const step of steps) {
+      const r = queue("decide", ...step, "--by", "Sid", "--queue", q);
+      expect(r.status, `${step.join(" ")}: ${r.stderr}`).toBe(0);
+    }
+    const lines = readJsonl(decisions);
+    expect(lines.map((l) => [l.status, l.target.kind])).toEqual([["false", "finding"], ["spec-candidate-accepted", "finding"], ["true", "finding"], ["spec-candidate-rejected", "finding"], ["consolidate", "issue"], ["false", "issue"], ["spec-candidate-accepted", "issue"]]);
+    const after = scored(run, decisions);
+    expect(after.score.rulings).toMatchObject({ read: steps.length, ignored: [] });
+    expect(after.outcomes.map((o) => o.outcome)).toEqual(["ruled-false", "ruled-true", "ruled-true", "ruled-true"]);
+    expect(after.score.byConfig[CONFIG].precision.lower).toMatchObject({ hit: 3, of: 4 });
+    expect(after.score.byConfig[CONFIG].precision.upper).toMatchObject({ hit: 3, of: 4 });
   });
 });

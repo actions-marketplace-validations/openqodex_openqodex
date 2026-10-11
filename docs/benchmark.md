@@ -187,16 +187,16 @@ node benchmark/queue.mjs sheet <suite> [--seed S]    # the blind sheet, as markd
 node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <text>] [--sheet <id>]
 ```
 
-- A finding is the same finding across runs only when its case, its lines and its words (title, problem, consequence, fix) are the same; its id is their sha256. Two findings become one issue only when a person consolidates them. A shared line, category, rule or recurrence never groups findings and never carries a ruling from one to another.
+- A finding is the same finding across runs only when its case, its lines and its words (title, problem, consequence, fix) are the same; its id is their sha256. A finding from before those fields existed adds its description and suggested change. Two findings become one issue only when a person consolidates them. A shared line, category, rule or recurrence never groups findings and never carries a ruling from one to another.
 - An unresolved finding within one line of a truth item's lines is a location match: `outcomes.jsonl` names the item with `evidenceKind: "location-only"`, and it finds the item only when a person rules it the same issue.
 - The queue keeps one item per finding: its words, the code at its lines and the change around them as the reviewer's brief showed them (only the code's sha256 when the case's licence is not permissive), the truth item it sits on, and every run, configuration and review it appeared in. `add` refuses a held-out run and drops every question a ruling has answered.
 - The sheet shows the case, the finding, the code and the truth item, in an order drawn from the seed it prints. It shows no run, build, configuration or count, and its text goes through the drop audit's redactor.
-- `decide` appends one line to `benchmark/review-queue/decisions.jsonl`, the adjudication file: the target, the status, the person's name, the time, the note and the code the person read. It refuses a line without a person's name, or with a model's or an agent's name: a model never rules. The scorer ignores such a line too and lists it.
+- `decide` appends one line to `benchmark/review-queue/decisions.jsonl`, the adjudication file: the target, the status, the person's name, the time, the note and the code the person read. It refuses a name that `benchmark/review-queue/people.json` does not list, and any name with a word that names a model, an agent or a tool: a model never rules. The scorer ignores such a line too and lists it. A person adds a name to `people.json` by hand, in a reviewed pull request.
 
 | Status | Target | Effect on the score |
 |---|---|---|
 | `same-issue`, `different-issue` | a finding and the truth item it sits on | same-issue: the finding finds that item, in recall and precision; different-issue: it never does |
-| `true`, `false` | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
+| `true`, `false` (or `spec-candidate-accepted`, `spec-candidate-rejected`) | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
 | `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
 | `confirmed`, `disputed` | a truth item of a case | labelled in the score's per-bug results; recall is unchanged, since a wrong truth item is fixed by a new case version |
 | `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |

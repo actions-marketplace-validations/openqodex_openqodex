@@ -538,12 +538,17 @@ export const caseSetHash = (ids) => sha256([...ids].sort().join("\n"));
 
 // The identity of a finding across runs: the case, the cited lines and the
 // whitespace-normalised text. The same text on the same lines of the same
-// case is the same finding; anything else is a different one.
+// case is the same finding; anything else is a different one. A finding
+// from before the structured prose fields (no problem, consequence or fix)
+// says what it is in its description and suggested change, so those are
+// its text; a finding with the structured fields keeps the id it had.
 export const normText = (s) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "");
 export function findingId(caseId, f) {
   const start = Number.isInteger(f.line_number) ? f.line_number : null;
   const end = start === null ? null : Math.max(f.line_end ?? start, start);
-  return sha256(JSON.stringify([caseId, normPath(f.file_path), start, end, normText(f.title), normText(f.problem), normText(f.consequence), normText(f.fix)]));
+  const prose = [normText(f.problem), normText(f.consequence), normText(f.fix)];
+  const legacy = prose.every((p) => p === "") ? [normText(f.description), normText(f.suggested_change)] : [];
+  return sha256(JSON.stringify([caseId, normPath(f.file_path), start, end, normText(f.title), ...prose, ...legacy]));
 }
 
 // Format 3's outcome from classify()'s: on a clean case every finding is
@@ -806,14 +811,15 @@ export function summarizeJobs(jobs, retries = []) {
 // first attempt. `attempts` are { case, config, repeat, attempt, row,
 // report, brief, sample } (sample: the attempt scored by format 2),
 // `specs` the specs by case name, and `decisions` the lines of the
-// adjudication file (lib/rulings.mjs readDecisions).
-export function scoreAttempts({ manifest, attempts, specs, decisions = [] }) {
+// adjudication file with `people`, the names in people.json beside it
+// (lib/rulings.mjs readDecisions).
+export function scoreAttempts({ manifest, attempts, specs, decisions = [], people = [] }) {
   const suite = manifest.suite ?? "planted";
   const origin = originOf(suite);
   if (origin === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
   const pop = population(manifest, attempts);
   if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
-  const rulings = resolveRulings(decisions);
+  const rulings = resolveRulings(decisions, people);
   const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null, rulings }));
   const configs = [...new Set(jobs.map((j) => j.config))].sort();
   const byConfig = {};
@@ -859,7 +865,7 @@ export function scoreAttempts({ manifest, attempts, specs, decisions = [] }) {
     perBug,
     briefFailures,
     outcomes,
-    rulings: { read: rulings.read, ignored: rulings.ignored },
+    rulings: { read: rulings.read, ignored: rulings.ignored, people: rulings.people },
   };
 }
 
@@ -971,8 +977,9 @@ const RULES_BLOCK = {
   precision: PRECISION,
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue and findings a person's consolidate line groups; any other finding is its own issue, by findingId. Overlap, category, rule id and recurrence never group findings. An issue counts correct or wrong when all its findings do, else unresolved.",
+  identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
-  rulings: "A ruling counts only from a line of the adjudication file whose by names a person (lib/rulings.mjs); the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged.",
+  rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged.",
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });

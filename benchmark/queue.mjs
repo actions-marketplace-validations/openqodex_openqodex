@@ -19,13 +19,15 @@
 // decide's statuses and targets:
 //   true | false <ref>                         the finding is a real issue the truth does not list, or not
 //   true | false <case id>#I<n>                the same for an issue a person consolidated
+//     (spec-candidate-accepted and spec-candidate-rejected are true and false)
 //   same-issue | different-issue <ref>         the finding is, or is not, the truth item it sits on
 //   consolidate <ref> <ref>...                 these findings of one case are one issue in different words
 //   confirmed | disputed <case id> --bug <id>  a truth item of the case is right, or wrong
 //   clean | not-clean <case id>                a candidate clean control has no issue, or has one
 // <ref> is the start of a findingId, 8 hex or more, as the sheet prints it.
-// --by names the person who made the ruling. A model or an agent never
-// rules: the session may draft rulings, and a person records them.
+// --by names the person who made the ruling, as people.json in the queue
+// folder lists them. A model or an agent never rules: the session may draft
+// rulings, and a person records them.
 //
 // Exit codes: 0 done; 2 refused, with nothing written.
 //
@@ -43,8 +45,9 @@
 //    how often a finding recurred, or its order cannot be drawn again: it
 //    carries the case, the finding, the code and the truth item only, every
 //    text through the shared redactor (lib/drops.mjs) fed with every run,
-//    build and configuration the items were seen in, in a seeded shuffle
-//    (lib/drops.mjs drawAudit) whose seed it prints.
+//    build (its full commit and its short form) and configuration the items
+//    were seen in, in a seeded shuffle (lib/drops.mjs drawAudit) whose seed
+//    it prints.
 // 7. A held-out run's findings enter the committed queue: add refuses items
 //    from a test split.
 // 8. A crash halfway through add leaves half a queue: the new file is
@@ -55,7 +58,7 @@ import { fileURLToPath } from "node:url";
 import { benchRoot } from "./lib/cases.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { mergeQueue, openAsks } from "./lib/queue.mjs";
-import { STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
+import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
 
 export const queueRoot = join(benchRoot, "review-queue");
 const DECISIONS = "decisions.jsonl";
@@ -83,7 +86,8 @@ export function add(path, { queue = queueRoot } = {}) {
   const items = readJsonl(file);
   const heldOut = items.filter((i) => i.split === "test");
   if (heldOut.length > 0) throw new Error(`refused: ${file} holds ${heldOut.length} findings of a held-out (test split) run, whose per-case detail stays in the run's asset`);
-  const R = resolveRulings(readDecisions(join(queue, DECISIONS)).lines);
+  const d = readDecisions(join(queue, DECISIONS));
+  const R = resolveRulings(d.lines, d.people);
   mkdirSync(queue, { recursive: true });
   const out = [];
   for (const suite of [...new Set(items.map((i) => i.suite))].sort()) {
@@ -112,7 +116,8 @@ export function blindSheet(items, { suite, seed }) {
   for (const i of items) {
     for (const o of i.occurrences ?? []) {
       known.push({ kind: "run", value: o.run }, { kind: "configuration", value: o.config });
-      if (o.build) known.push({ kind: "build", value: o.build });
+      // The full commit and its short form: either alone names the build.
+      for (const value of [o.commit, o.build]) if (value) known.push({ kind: "build", value });
     }
   }
   const redact = redactor(known);
@@ -179,7 +184,8 @@ export function sheetMarkdown(s) {
 }
 
 export function sheet(suite, { seed, queue = queueRoot } = {}) {
-  const R = resolveRulings(readDecisions(join(queue, DECISIONS)).lines);
+  const d = readDecisions(join(queue, DECISIONS));
+  const R = resolveRulings(d.lines, d.people);
   const open = [];
   for (const item of readJsonl(join(queue, `${suite}.jsonl`))) {
     const asks = openAsks(item, R);
@@ -214,11 +220,11 @@ const evidenceOf = (f) => (f.evidence ? { text: f.evidence.text ?? null, lines: 
 
 // The ruling line for one decide call, checked; throws when it is refused.
 export function rulingLine(status, targets, { by, bug = null, note = "", sheet: fromSheet = null, queue = queueRoot, now = new Date() } = {}) {
-  if (!isPersonName(by)) throw new Error(`refused: --by must name the person who made this ruling, not ${JSON.stringify(by ?? null)}. A model or an agent never rules; the session may draft rulings, and a person records them.`);
+  const { lines, people } = readDecisions(join(queue, DECISIONS));
+  if (!isPersonName(by, people)) throw new Error(`refused: --by must name the person who made this ruling, as ${join(queue, "people.json")} lists them, not ${JSON.stringify(by ?? null)}. A model or an agent never rules; the session may draft rulings, and a person records them.`);
   const kinds = Object.entries(STATUSES).filter(([, s]) => s.includes(status)).map(([k]) => k);
   if (kinds.length === 0) throw new Error(`refused: ${status} is not a status; use one of ${[...new Set(Object.values(STATUSES).flat())].join(", ")}`);
-  const { lines } = readDecisions(join(queue, DECISIONS));
-  const R = resolveRulings(lines);
+  const R = resolveRulings(lines, people);
   const known = knownFindings(queue, lines);
   const one = () => {
     if (targets.length !== 1) throw new Error(`refused: ${status} takes one target, not ${targets.length}`);
@@ -244,12 +250,12 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     const prefix = `${caseId}#I`;
     const used = lines.filter((l) => typeof l?.target?.issueId === "string" && l.target.issueId.startsWith(prefix)).map((l) => Number(l.target.issueId.slice(prefix.length))).filter(Number.isInteger);
     target = { kind: "issue", issueId: `${prefix}${Math.max(0, ...used) + 1}`, members: ids };
-  } else if ((status === "true" || status === "false") && /#I\d+$/.test(one())) {
+  } else if (REAL[status] && /#I\d+$/.test(one())) {
     const issueId = one();
     if (!R.grouped.has(issueId)) throw new Error(`refused: no person consolidated ${issueId}; consolidate its findings first`);
     caseId = issueId.slice(0, issueId.lastIndexOf("#I"));
     target = { kind: "issue", issueId, members: [...R.members].filter(([, i]) => i === issueId).map(([f]) => f).sort() };
-  } else if (status === "true" || status === "false") {
+  } else if (REAL[status]) {
     found = findingOf(one(), known);
     caseId = found.caseId;
     target = { kind: "finding", findingId: found.findingId };
@@ -260,7 +266,7 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     target = { kind: "match", findingId: found.findingId, truthId: found.truth.id };
   }
   const line = { v: 1, caseId, ...(found?.specsFrom ? { specsFrom: found.specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
-  const problems = rulingProblems(line);
+  const problems = rulingProblems(line, people);
   if (problems.length > 0) throw new Error(`refused: ${problems.join("; ")}`);
   return line;
 }

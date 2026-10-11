@@ -306,7 +306,7 @@ describe("a rule constant changes without a version bump, and old and new scores
   const KNOWN_RULES = {
     3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
     // A person's rulings and the location match of an unlisted finding. Version 4 is pull request 122's.
-    5: "9640ef4a5c29ca5631175d691ef8d4838e73e1bdc7d07eff805b9440882b8add",
+    5: "fde661b26cd22110b020596b09866b9dc65f29acf63b04b97d312e8f15dafd0c",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

@@ -13,11 +13,20 @@
 //   { kind: "issue", issueId, members }    consolidate | true | false
 //   { kind: "match", findingId, truthId }  same-issue | different-issue
 //   { kind: "case" }                       clean | not-clean
+// On a finding or an issue, spec-candidate-accepted and
+// spec-candidate-rejected (the reviewer part's names for a spec candidate)
+// are true and false.
+//
+// Who may rule: people.json beside the adjudication file, { v: 1, people:
+// [names] }, written by hand and reviewed like any other change.
 //
 // Failure list, written before the code:
 // 1. A ruling without a person's name changes a score: a line whose `by` is
-//    missing, empty, or names a model, an agent or a tool is ignored, and
-//    reported with its line number and the reason.
+//    missing, empty, names a model, an agent or a tool, or is not a name in
+//    people.json is ignored, and reported with its line number and the
+//    reason. A name that passes a word list alone (ChatGPT, or any made-up
+//    name) is not enough: the name must be on the list of people, and the
+//    word list still refuses a model's name put on that list.
 // 2. Two findings become one issue by overlap, category, rule or
 //    recurrence: only a person's consolidate line makes an issue, and only
 //    of the findings it names; an issue ruling with no such line before it
@@ -33,31 +42,38 @@
 //    ruling: it is ignored and reported.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+// Whether a finding or an issue is a real issue, by each status that says so.
+export const REAL = Object.freeze({ true: "true", false: "false", "spec-candidate-accepted": "true", "spec-candidate-rejected": "false" });
 
 export const STATUSES = Object.freeze({
   bug: ["confirmed", "disputed"],
-  finding: ["true", "false"],
-  issue: ["consolidate", "true", "false"],
+  finding: Object.keys(REAL),
+  issue: ["consolidate", ...Object.keys(REAL)],
   match: ["same-issue", "different-issue"],
   case: ["clean", "not-clean"],
 });
 
 // Words that name a model, an agent or a tool, never a person.
-export const NOT_A_PERSON = ["agent", "ai", "anonymous", "anthropic", "assistant", "astra", "bot", "builder", "ci", "claude", "cline", "codex", "copilot", "cursor", "fable", "gemini", "gpt", "haiku", "judge", "llm", "luna", "model", "none", "null", "openai", "opus", "script", "scripted", "session", "sol", "sonnet", "terra", "undefined", "unknown"];
+export const NOT_A_PERSON = ["agent", "ai", "anonymous", "anthropic", "assistant", "astra", "bot", "builder", "chatgpt", "ci", "claude", "cline", "codex", "copilot", "cursor", "fable", "gemini", "gpt", "haiku", "judge", "llm", "luna", "model", "none", "null", "openai", "opus", "script", "scripted", "session", "sol", "sonnet", "terra", "undefined", "unknown"];
 
-// A person's name: at least one word of letters, and no word that names a
-// model, an agent or a tool.
-export function isPersonName(by) {
+// A person who may rule: a name on the list of people (people.json), with
+// no word that names a model, an agent or a tool.
+export function isPersonName(by, people = []) {
   if (typeof by !== "string") return false;
   const words = by.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
-  return words.length > 0 && words.every((w) => !NOT_A_PERSON.includes(w));
+  if (words.length === 0 || words.some((w) => NOT_A_PERSON.includes(w))) return false;
+  const name = by.trim().toLowerCase();
+  return people.some((p) => typeof p === "string" && p.trim().toLowerCase() === name);
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const isText = (s) => typeof s === "string" && s.trim() !== "";
 
 // What keeps one line from being a ruling, as reasons; empty when it is one.
-export function rulingProblems(l) {
+// `people` are the names in people.json.
+export function rulingProblems(l, people = []) {
   if (!l || typeof l !== "object" || Array.isArray(l)) return ["it is not a JSON object"];
   const p = [];
   if (l.v !== 1) p.push("v must be 1");
@@ -75,26 +91,28 @@ export function rulingProblems(l) {
     const members = Array.isArray(t.members) ? t.members : [];
     if (l.status === "consolidate" && !(members.length >= 2 && members.every((m) => HEX64.test(String(m))) && new Set(members).size === members.length)) p.push("a consolidate line names two or more distinct findingIds as members");
   }
-  if (!isPersonName(l.by)) p.push(`by must name the person who ruled, not ${JSON.stringify(l.by ?? null)}: a model or an agent never rules`);
+  if (!isPersonName(l.by, people)) p.push(`by must name a person listed in people.json beside the adjudication file, not ${JSON.stringify(l.by ?? null)}: a model or an agent never rules`);
   if (typeof l.at !== "string" || Number.isNaN(Date.parse(l.at))) p.push("at must be a time");
   return p;
 }
 
 // The rulings in force, from the file's lines in order (each a parsed line,
-// or null for a line that is not JSON): the latest ruling per target, the
-// issue each finding belongs to, and every ignored line with its reason.
-export function resolveRulings(lines = []) {
-  const R = { read: 0, ignored: [], findings: new Map(), issues: new Map(), members: new Map(), grouped: new Set(), matches: new Map(), bugs: new Map(), cases: new Map() };
+// or null for a line that is not JSON) and the names in people.json: the
+// latest ruling per target, the issue each finding belongs to, and every
+// ignored line with its reason. A finding or issue ruling is kept as true
+// or false, whichever name it was written under.
+export function resolveRulings(lines = [], people = []) {
+  const R = { read: 0, ignored: [], people: [...people], findings: new Map(), issues: new Map(), members: new Map(), grouped: new Set(), matches: new Map(), bugs: new Map(), cases: new Map() };
   for (const [i, l] of lines.entries()) {
     const n = i + 1;
     R.read++;
-    const problems = l === null ? ["it is not JSON"] : rulingProblems(l);
+    const problems = l === null ? ["it is not JSON"] : rulingProblems(l, people);
     if (problems.length > 0) {
       R.ignored.push({ line: n, why: problems.join("; ") });
       continue;
     }
     const t = l.target;
-    const at = { status: l.status, n };
+    const at = { status: REAL[l.status] ?? l.status, n };
     if (t.kind === "finding") R.findings.set(t.findingId, at);
     else if (t.kind === "match") {
       if (!R.matches.has(t.findingId)) R.matches.set(t.findingId, new Map());
@@ -138,10 +156,23 @@ export function sameIssueAs(findingId, ids, R) {
 // A person's ruling on a truth item of a case (confirmed or disputed), or null.
 export const bugRuling = (caseId, bugId, R) => R.bugs.get(`${caseId}\0${bugId}`)?.status ?? null;
 
-// The file's lines, parsed (null for one that is not JSON), and its sha256
-// (null when there is no file yet).
+// The names in the people.json of a folder: { v: 1, people: [names] }.
+// None when the file is missing or not that shape, so no ruling counts.
+export function readPeople(folder) {
+  try {
+    const doc = JSON.parse(readFileSync(join(folder, "people.json"), "utf8"));
+    return doc?.v === 1 && Array.isArray(doc.people) ? doc.people.filter((p) => typeof p === "string" && p.trim() !== "") : [];
+  } catch {
+    return [];
+  }
+}
+
+// The file's lines, parsed (null for one that is not JSON), its sha256
+// (null when there is no file yet), and the people who may rule, from the
+// people.json beside it.
 export function readDecisions(path) {
-  if (!existsSync(path)) return { hash: null, lines: [] };
+  const people = readPeople(dirname(path));
+  if (!existsSync(path)) return { hash: null, lines: [], people };
   const bytes = readFileSync(path);
   const raw = bytes.toString("utf8").split("\n");
   if (raw.at(-1) === "") raw.pop();
@@ -152,5 +183,5 @@ export function readDecisions(path) {
       return null;
     }
   };
-  return { hash: createHash("sha256").update(bytes).digest("hex"), lines: raw.map(parse) };
+  return { hash: createHash("sha256").update(bytes).digest("hex"), lines: raw.map(parse), people };
 }

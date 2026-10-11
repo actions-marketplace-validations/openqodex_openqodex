@@ -223,10 +223,10 @@ function repoGroups(origin, jobs, specs) {
 // adjudication file's lines, lib/rulings.mjs readDecisions): `score` is
 // score.json, `outcomes` the lines of outcomes.jsonl, `unresolved` those of
 // unresolved.jsonl, `jobs` the scored jobs (for a comparison).
-export function scoreRun(run, { decisionsHash = null, decisions = [] } = {}) {
+export function scoreRun(run, { decisionsHash = null, decisions = [], people = [] } = {}) {
   const m = run.manifest;
   // The scoring itself, attempt selection and rulings included, is lib/score.mjs scoreAttempts, which the rules hash covers.
-  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs, decisions });
+  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs, decisions, people });
   // The intervals are seeded from the run id, the folder's name, never its
   // path, so a copy elsewhere draws the same intervals.
   const perCase = caseSums(s.perCase, s.jobs);
@@ -259,7 +259,7 @@ export function scoreRun(run, { decisionsHash = null, decisions = [] } = {}) {
     perBug: s.perBug,
     briefFailures: s.briefFailures,
   };
-  const unresolved = unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
+  const unresolved = unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
   return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs };
 }
 
@@ -429,8 +429,8 @@ function main() {
     }
     if (against) older = loadRun(resolve(against));
     const d = readDecisions(resolve(decisionsFile));
-    scored = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines });
-    if (older) olderScored = scoreRun(older, { decisionsHash: d.hash, decisions: d.lines });
+    scored = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
+    if (older) olderScored = scoreRun(older, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
   } catch (error) {
     console.error(error.message);
     process.exit(2);

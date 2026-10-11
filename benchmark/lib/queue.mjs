@@ -11,7 +11,7 @@
 //     category, severity, text: { title, problem, consequence, fix },
 //     evidence: { lines, text, context, sha256, from, missing },
 //     truth: { id, file, lines, text } | null, asks: ["real", "match"],
-//     occurrences: [{ run, build, config, repeat, outcome }] }
+//     occurrences: [{ run, build, commit, config, repeat, outcome }] }
 //
 // Failure list, written before the code:
 // 1. An item lacks what a person needs to rule: it keeps the finding's own
@@ -135,7 +135,7 @@ export function evidenceOf({ diff, file, start, end, permissive = true, clean = 
 // still asks a question (lib/score.mjs asksOf), one item per findingId, with
 // each occurrence. `jobs` and `suite` come from scoreAttempts, `attempts`
 // and `specs` from the loaded run.
-export function unresolvedItems({ runId, build = null, suite, split = "dev", specsFrom = null, jobs, attempts, specs }) {
+export function unresolvedItems({ runId, build = null, commit = null, suite, split = "dev", specsFrom = null, jobs, attempts, specs }) {
   const items = new Map();
   for (const j of jobs) {
     const first = attempts.find((a) => a.case === j.case && a.config === j.config && a.repeat === j.repeat && a.attempt === 1);
@@ -174,7 +174,7 @@ export function unresolvedItems({ runId, build = null, suite, split = "dev", spe
         };
         items.set(f.findingId, item);
       }
-      item.occurrences.push({ run: runId, build, config: j.config, repeat: j.repeat, outcome: f.outcome });
+      item.occurrences.push({ run: runId, build, commit, config: j.config, repeat: j.repeat, outcome: f.outcome });
     }
   }
   return [...items.values()];
