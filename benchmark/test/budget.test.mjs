@@ -19,16 +19,22 @@
 // 5. A run stopped by budget is accepted as a full run.
 // 6. A model run on a machine without Ruby or Go is accepted as having every
 //    scanner.
-import { spawn } from "node:child_process";
+// From the review of the first version: a dead process's lock taken over by
+// two processes at once; the manifest saying judge calls are inside the cap
+// while judge.mjs sends them outside it; calls still reserved and sent after
+// one overran its worst case; a scanner switched off by offline mode counted
+// as present; an index entry accepted after a budget stop or without every
+// scanner; and the Ruby and Go case tested with Ruby and Go still on PATH.
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { callModel, MODEL_SYSTEM } from "../../packages/review/dist/index.js";
 import { buildCase, repoRoot } from "../lib/cases.mjs";
-import { buildEntry } from "../lib/index.mjs";
-import { BudgetRefused, estimateRun, meteredComplete, openLedger, openRunLedger, readLedger, runBudget, startRefusals, worstCaseUsd } from "../lib/budget.mjs";
+import { buildEntry, entryProblems } from "../lib/index.mjs";
+import { BudgetRefused, estimateRun, manifestBudget, meteredComplete, openLedger, openRunLedger, readLedger, runBudget, startRefusals, worstCaseUsd } from "../lib/budget.mjs";
 import { createOpenAIReviewer } from "../lib/openai-reviewer.mjs";
 import { attemptDir, executeRun, planJobs, preflightRefusals, runManifest, sampleRecord, scannerPreflight } from "../lib/runner.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
@@ -211,6 +217,45 @@ describe("two concurrent reviews both authorise against the same remaining budge
     expect(readLedger(dir).peakUsd).toBeLessThanOrEqual(1);
   });
 
+  it("lets exactly one of the processes that find a dead process's lock take it over, so no two hold the ledger at once", async () => {
+    // Several trials, each a lock left by a process that has ended and six
+    // processes that start together; each holds the ledger for 15 ms and
+    // logs when it enters and leaves. Every hold must end before the next.
+    for (let trial = 0; trial < 6; trial++) {
+      const dir = tempDir("oq-bench-stale-");
+      const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+      writeFileSync(join(dir, "budget.lock"), `${dead}\n`);
+      const go = join(dir, "go");
+      const log = join(dir, "holds.log");
+      const child = () =>
+        new Promise((finished) => {
+          const code = `
+            import { appendFileSync, existsSync } from "node:fs";
+            import { openLedger } from ${JSON.stringify(budgetModule)};
+            const ledger = openLedger(${JSON.stringify(dir)}, { maxUsd: 1, reviewMaxUsd: 0.6 });
+            while (!existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 1));
+            ledger.step(() => {
+              appendFileSync(${JSON.stringify(log)}, "in " + process.pid + "\\n");
+              const until = Date.now() + 15;
+              while (Date.now() < until) {}
+              appendFileSync(${JSON.stringify(log)}, "out " + process.pid + "\\n");
+            });
+          `;
+          const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+          let stderr = "";
+          p.stderr.on("data", (d) => (stderr += d));
+          p.on("close", () => finished(stderr));
+        });
+      const runs = Array.from({ length: 6 }, child);
+      await new Promise((wake) => setTimeout(wake, 300));
+      writeFileSync(go, "");
+      for (const stderr of await Promise.all(runs)) expect(stderr).toBe("");
+      const holds = readFileSync(log, "utf8").trim().split("\n");
+      expect(holds).toHaveLength(12);
+      for (let i = 0; i < holds.length; i += 2) expect([holds[i], holds[i + 1]]).toEqual([holds[i], holds[i].replace(/^in /, "out ")]);
+    }
+  });
+
   it("holds two reviews' calls inside one run cap when both run at once against a slow provider", async () => {
     const fake = await provider({ delayMs: 50 });
     const out = tempDir("oq-bench-two-");
@@ -259,6 +304,31 @@ describe("the worst-case token count is below the real count", () => {
     review.close();
   });
 
+  it("refuses every later reservation and every unsent call once a call reserved at 0.10 reports 0.20 inside a 0.60 envelope, the judge's included", async () => {
+    const dir = tempDir("oq-bench-overrun-");
+    const ledger = openLedger(dir, { maxUsd: 2, reviewMaxUsd: 0.6 });
+    const review = ledger.openReview({ jobId: "j" });
+    expect(review.reserveCall("primary-1", 0.1)).not.toBeNull();
+    // Reserved before the overrun, not sent yet.
+    expect(review.reserveCall("primary-2", 0.1)).not.toBeNull();
+    review.settleCall("primary-1", 0.2);
+    expect(readLedger(dir).overruns).toHaveLength(1);
+    // The envelope has room left (0.20 spent, 0.10 held of 0.60), and still nothing more is reserved or sent.
+    expect(review.reserveCall("primary-3", 0.05)).toBeNull();
+    let sent = 0;
+    const provider = { kind: "model", model: "gpt-6.1-sol", maxOutputTokens: 100, complete: async () => (sent++, { message: { text: "x", toolCalls: [] }, usage: { model: "gpt-6.1-sol", inputTokens: 1, outputTokens: 1, costUsd: 0.00001 } }) };
+    const call = (callId) => ({ callId, attempt: 1, purpose: "brief", messages: messages("x"), tools: [], maxOutputTokens: 100 });
+    await expect(review.wrap(provider).complete(call("primary-2"))).rejects.toThrow(/worst case/);
+    expect(ledger.reserve({ usd: 0.01, kind: "judge" })).toBeNull();
+    await expect(meteredComplete(ledger, provider, call("judge-1"), { prices: PRICES })).rejects.toThrow(BudgetRefused);
+    expect(ledger.openReview({ jobId: "k" })).toMatchObject({ ok: false, wait: false });
+    expect(sent).toBe(0);
+    review.close();
+    // The unsent call gave its reservation back; only what was billed counts as spent.
+    expect(readLedger(dir)).toMatchObject({ reservedUsd: 0 });
+    expect(readLedger(dir).spentUsd).toBeCloseTo(0.2, 9);
+  });
+
   it("stops the run when a call costs more than its worst case, since the bound is wrong", async () => {
     const fake = await provider({ inflate: 4 });
     const { out, jobs, manifest, copies } = runInputs({ cases: 2, budget: hard(5, 2) });
@@ -293,28 +363,60 @@ describe("judge calls are left out of the run cap", () => {
   });
 });
 
+// A laptop run stopped by its forecast on --max-usd 0.3: 0.12 a review, so
+// two start and three never do. Its saved manifest and its score.
+async function stoppedRun() {
+  const { out, jobs, manifest, copies } = runInputs({ cases: 5, reviewers: ["claude"], budget: hard(0.3, null) });
+  const estimate = estimateRun({ jobs, suite: "planted", path: "laptop", concurrency: 1, index: [] });
+  const budget = runBudget({ dir: out, caps: { maxUsd: 0.3 }, forecast: { maxMinutes: 60 }, estimate, path: "laptop", prices: PRICES });
+  const runJob = async (job, attempt) => {
+    saveAttempt(out, job, attempt, report("complete"), { cost_usd: 0.12, input_tokens: 1000, output_tokens: 100 });
+    budget.recordReview({ jobId: job.jobId, usd: 0.12, tokens: 1100, wallMs: 1000 });
+  };
+  const { ended } = await executeRun({ out, manifest, jobs, copies, budget, runJob });
+  const saved = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+  const { score } = scoreRun(loadRun(out));
+  return { ended, saved, score };
+}
+
+describe("judge calls are left out of the run cap, while the manifest says they are in", () => {
+  it("records judgeIncluded true only when benchmark/judge.mjs sends its calls through the run's ledger", () => {
+    const judge = readFileSync(new URL("../judge.mjs", import.meta.url), "utf8");
+    const usesLedger = /import\s*\{[^}]*\bmeteredComplete\b[^}]*\}\s*from\s*"\.\/lib\/budget\.mjs"/.test(judge);
+    expect(manifestBudget({ caps: { maxUsd: 1, reviewMaxUsd: null }, forecast: { maxMinutes: 10 }, estimate: null }).judgeIncluded).toBe(usesLedger);
+  });
+});
+
 describe("a run stopped by budget is accepted as a full run", () => {
   it("records a forecast stop as ended budget in the manifest, the index entry and the score, with the reviews never started counted", async () => {
-    const { out, jobs, manifest, copies } = runInputs({ cases: 5, reviewers: ["claude"], budget: hard(0.3, null) });
-    const estimate = estimateRun({ jobs, suite: "planted", path: "laptop", concurrency: 1, index: [] });
-    const budget = runBudget({ dir: out, caps: { maxUsd: 0.3 }, forecast: { maxMinutes: 60 }, estimate, path: "laptop", prices: PRICES });
-    const runJob = async (job, attempt) => {
-      saveAttempt(out, job, attempt, report("complete"), { cost_usd: 0.12, input_tokens: 1000, output_tokens: 100 });
-      budget.recordReview({ jobId: job.jobId, usd: 0.12, tokens: 1100, wallMs: 1000 });
-    };
-    const { ended } = await executeRun({ out, manifest, jobs, copies, budget, runJob });
+    const { ended, saved, score } = await stoppedRun();
     // 0.12 + 0.12 spent; a third at the median would pass 0.3, so none starts.
     expect(ended).toMatchObject({ how: "budget", limit: "max-usd", limitKind: "forecast", reviewsWithAnAttempt: 2 });
     expect(ended.spentUsd).toBeCloseTo(0.24, 9);
-    const saved = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
     expect(saved.ended.how).toBe("budget");
-    const { score } = scoreRun(loadRun(out));
     expect(score.byConfig["claude-graph-on"].population).toMatchObject({ planned: 5, unstarted: 3 });
     const entry = buildEntry({ runId: "2026-10-11-abcdef0", manifest: saved, resumes: [], score, asset: null, privateListHash: null });
     expect(entry.ended.how).toBe("budget");
     expect(entry.ended.how).not.toBe("finished");
   });
+
+  it("rejects an index entry marked accepted that ended by its budget, or without every scanner, and takes one that finished with all of them", async () => {
+    const { saved, score } = await stoppedRun();
+    const entry = buildEntry({ runId: "2026-10-11-abcdef0", manifest: saved, resumes: [], score, asset: null, privateListHash: null });
+    const accepted = { ...entry, accepted: true, acceptedAt: "2026-10-11T12:00:00.000Z", acceptedBy: "Sid" };
+    const about = (e, re) => entryProblems(e).filter((p) => re.test(p));
+    expect(about({ ...accepted, ended: { how: "budget", why: "forecast stop --max-usd $0.3" }, scannersComplete: true }, /finished/)).toHaveLength(1);
+    expect(about({ ...accepted, ended: { how: "finished", why: null }, scannersComplete: false }, /scanner/)).toHaveLength(1);
+    expect(about({ ...accepted, ended: { how: "finished", why: null }, scannersComplete: null }, /scanner/)).toHaveLength(1);
+    const full = { ...accepted, ended: { how: "finished", why: null }, scannersComplete: true };
+    expect(about(full, /finished|scanner/)).toEqual([]);
+    // Not accepted, a stopped run is a sound entry: it is listed, never a baseline.
+    expect(about({ ...entry, scannersComplete: false }, /finished|scanner/)).toEqual([]);
+  });
 });
+
+// Where git lives on this machine, to put it alone on a bare PATH.
+const gitPath = () => (process.env.PATH ?? "").split(":").map((d) => join(d, "git")).find((p) => existsSync(p));
 
 describe("a model run on a machine without Ruby or Go is accepted as having every scanner", () => {
   it("finds the Ruby and Go scanners a Rails and a Go case need missing, refuses the run, and with --allow-missing-scanners records it incomplete", () => {
@@ -324,16 +426,25 @@ describe("a model run on a machine without Ruby or Go is accepted as having ever
     const home = join(root, "home");
     mkdirSync(home);
     const repos = ["rails-controller-model", "go-http-handler"].map((c) => ({ case: c, dir: buildCase(c, join(root, c, "repo")).dir }));
-    // A tools folder with nothing installed: what a machine without Ruby or Go has for brakeman, rubocop and golangci-lint.
-    const env = { ...process.env, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0" };
+    // A real machine without Ruby or Go: a PATH that holds node and git and
+    // nothing else (no system, rvm or Homebrew ruby, no go), none of the
+    // Ruby variables, and an empty tools folder.
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    symlinkSync(process.execPath, join(bin, "node"));
+    symlinkSync(gitPath(), join(bin, "git"));
+    const env = { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, PATH: bin, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0" };
+    expect(spawnSync("ruby", ["--version"], { env }).error?.code).toBe("ENOENT");
+    expect(spawnSync("go", ["version"], { env }).error?.code).toBe("ENOENT");
     const preflight = scannerPreflight({ cli, repos, env });
     expect(preflight.complete).toBe(false);
-    const missing = (c) => preflight.missing.filter((m) => m.case === c).map((m) => m.scanner);
-    expect(missing("rails-controller-model")).toEqual(expect.arrayContaining(["brakeman", "rubocop"]));
-    expect(missing("go-http-handler")).toContain("golangci");
+    const state = (c, s) => preflight.missing.find((m) => m.case === c && m.scanner === s)?.state;
+    expect(state("rails-controller-model", "brakeman")).toBe("needs_runtime");
+    expect(state("rails-controller-model", "rubocop")).toBe("needs_runtime");
+    expect(state("go-http-handler", "golangci")).toBe("needs_runtime");
     expect(preflight.needed["rails-controller-model"]).toEqual(expect.arrayContaining(["brakeman", "rubocop"]));
     const refusals = preflightRefusals(preflight, { allowMissing: false });
-    expect(refusals.join("\n")).toMatch(/brakeman/);
+    expect(refusals.join("\n")).toMatch(/brakeman, which is missing its runtime/);
     expect(refusals.join("\n")).toMatch(/--allow-missing-scanners/);
     expect(preflightRefusals(preflight, { allowMissing: true })).toEqual([]);
     // Let through, the run says so in its manifest and its index entry.
@@ -341,5 +452,20 @@ describe("a model run on a machine without Ruby or Go is accepted as having ever
     expect(manifest.scannersComplete).toBe(false);
     const entry = buildEntry({ runId: "2026-10-11-abcdef0", manifest, resumes: [], score: { byConfig: {} }, asset: null, privateListHash: null });
     expect(entry.scannersComplete).toBe(false);
+  });
+
+  it("counts a scanner the case calls for as missing when offline mode switches it off (OPENQODEX_OFFLINE=1, osv-scanner)", () => {
+    const cli = join(repoRoot, "packages/cli/dist/bin.js");
+    const root = tempDir("oq-bench-offline-");
+    const home = join(root, "home");
+    mkdirSync(home);
+    // demo-polyglot holds a lockfile, so its files call for osv-scanner.
+    const repos = [{ case: "demo-polyglot", dir: buildCase("demo-polyglot", join(root, "demo-polyglot", "repo")).dir }];
+    const env = { ...process.env, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0", OPENQODEX_OFFLINE: "1" };
+    const preflight = scannerPreflight({ cli, repos, env });
+    expect(preflight.needed["demo-polyglot"]).toContain("osv-scanner");
+    expect(preflight.missing.find((m) => m.scanner === "osv-scanner")).toMatchObject({ case: "demo-polyglot", state: "offline" });
+    expect(preflight.complete).toBe(false);
+    expect(preflightRefusals(preflight, { allowMissing: false }).join("\n")).toMatch(/osv-scanner, which offline mode switches off/);
   });
 });

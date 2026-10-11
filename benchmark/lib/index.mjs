@@ -26,6 +26,9 @@
 // 6. Entries scored under different rules are read as comparable: every
 //    entry of a format 3 score carries the rules version and the rules hash
 //    it was scored with (lib/score.mjs rulesDifferences compares them).
+// 7. A run stopped by its budget, or one that lacked a scanner its cases
+//    need, is marked accepted and becomes a baseline: an accepted entry must
+//    have ended finished with scannersComplete true.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -287,6 +290,9 @@ export function entryProblems(e) {
   need(typeof e.accepted === "boolean", "accepted must be true or false");
   need(e.accepted || (e.acceptedAt === null && e.acceptedBy === null), "an entry that is not accepted has no acceptedAt or acceptedBy");
   need(!e.accepted || (typeof e.acceptedAt === "string" && typeof e.acceptedBy === "string" && e.acceptedBy !== ""), "an accepted entry names when it was accepted and the person who accepted it");
+  // A baseline is a full run: one its budget, a halt or a person stopped is listed, never accepted (failure 7).
+  need(!e.accepted || e.ended?.how === "finished", `an accepted entry must have finished; this one ended "${e.ended?.how ?? "unknown"}"`);
+  need(!e.accepted || e.scannersComplete === true, "an accepted entry must record every scanner its cases need as installed (scannersComplete true)");
   need(typeof e.legacy === "boolean", "legacy must be true or false");
   if (e.legacy === false) {
     // A run scored with format 3: its rules, its rulings and its case set.

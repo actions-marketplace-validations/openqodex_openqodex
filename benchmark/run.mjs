@@ -132,7 +132,7 @@ import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
-import { estimateRun, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
+import { estimateRun, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight } from "./lib/runner.mjs";
 
@@ -461,7 +461,7 @@ async function main() {
     changeId: o.change,
     // Hard caps apart from forecast stops; on the laptop path --max-usd can
     // only be held as a forecast, and the end record says which stopped it.
-    budget: { hardCaps: caps, forecastStops: { ...forecast, estimate }, judgeIncluded: true, allowOver: o.allowOver },
+    budget: manifestBudget({ caps, forecast, estimate, allowOver: o.allowOver }),
     // Whether every scanner the cases call for was installed (failure 18).
     scannersComplete: preflight.complete,
     scannersMissing: preflight.missing.map((m) => ({ case: m.case, scanner: m.scanner })),

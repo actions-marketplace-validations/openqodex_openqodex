@@ -47,8 +47,9 @@
 // 14. A run on a machine that lacks a scanner its cases need is taken for a
 //    run with every scanner: scannerPreflight asks the real CLI's doctor, in
 //    each case's own repository, which scanners the case calls for and
-//    whether each is installed; a run with one missing is refused unless
-//    --allow-missing-scanners, and then records scannersComplete false.
+//    whether each is installed and not switched off by offline mode; a run
+//    with one missing is refused unless --allow-missing-scanners, and then
+//    records scannersComplete false.
 // 15. Repeats added to a finished run are scored as unplanned, or replace
 //    the plan the first reviews ran under: --add-repeats keeps every planned
 //    job, writes the longer plan into the manifest before any added review
@@ -453,42 +454,57 @@ export { codexModelFrom } from "./reviewers.mjs";
 
 // ---------- the scanner preflight ----------
 
+// The doctor's report on one case repository, run with `env`.
+function doctorReport(cli, name, dir, env) {
+  let stdout;
+  try {
+    stdout = execFileSync(process.execPath, [cli, "doctor", "--json", "--cwd", dir], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    // The doctor exits 2 when git or the folder is wrong, after printing its report.
+    stdout = error.stdout ?? "";
+  }
+  let report;
+  try {
+    report = JSON.parse(stdout);
+  } catch {
+    throw new Error(`${name}: openqodex doctor --json gave no report to read the scanners from`);
+  }
+  if (!Array.isArray(report.selection)) throw new Error(`${name}: openqodex doctor could not say which scanners the case's files call for (${report.config ?? "no config line"})`);
+  return report;
+}
+
 // Which scanners each case's repository calls for, and which of those this
 // machine has not installed, as the real CLI's doctor reports them in that
 // repository (failure 14). `repos`: [{ case, dir }], each a built case
 // repository; `env`: the environment the reviews get, so the doctor reads
-// the same tools folder. Throws when the doctor gives no answer to read.
+// the same tools folder. What a case calls for is read with offline mode
+// off: a scanner its files call for that the reviews' offline mode
+// (OPENQODEX_OFFLINE=1) switches off is missing too, with state "offline".
+// Throws when the doctor gives no answer to read.
 export function scannerPreflight({ cli, repos, env = process.env }) {
   const needed = {};
   const missing = [];
+  const online = { ...env };
+  delete online.OPENQODEX_OFFLINE;
   for (const { case: name, dir } of repos) {
-    let stdout;
-    try {
-      stdout = execFileSync(process.execPath, [cli, "doctor", "--json", "--cwd", dir], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    } catch (error) {
-      // The doctor exits 2 when git or the folder is wrong, after printing its report.
-      stdout = error.stdout ?? "";
-    }
-    let report;
-    try {
-      report = JSON.parse(stdout);
-    } catch {
-      throw new Error(`${name}: openqodex doctor --json gave no report to read the scanners from`);
-    }
-    if (!Array.isArray(report.selection)) throw new Error(`${name}: openqodex doctor could not say which scanners the case's files call for (${report.config ?? "no config line"})`);
+    const report = doctorReport(cli, name, dir, online);
     needed[name] = report.selection.filter((s) => s.wanted).map((s) => s.scanner);
+    const off = env.OPENQODEX_OFFLINE === "1" ? new Map(doctorReport(cli, name, dir, env).selection.filter((s) => !s.wanted && needed[name].includes(s.scanner)).map((s) => [s.scanner, s.line])) : new Map();
     for (const scanner of needed[name]) {
       const status = (report.scanners ?? []).find((s) => s.scanner === scanner);
-      if (status?.state !== "ready") missing.push({ case: name, scanner, state: status?.state ?? "unknown", detail: status?.detail ?? null });
+      if (off.has(scanner)) missing.push({ case: name, scanner, state: "offline", detail: off.get(scanner) });
+      else if (status?.state !== "ready") missing.push({ case: name, scanner, state: status?.state ?? "unknown", detail: status?.detail ?? null });
     }
   }
   return { complete: missing.length === 0, needed, missing };
 }
 
+const MISSING_WORDS = { needs_runtime: "is missing its runtime", will_install: "is not installed yet", offline: "offline mode switches off" };
+
 // Why a run cannot start with the scanners this machine has; empty when it
 // can, or when --allow-missing-scanners lets it go as incomplete.
 export function preflightRefusals(preflight, { allowMissing }) {
   if (preflight.complete || allowMissing) return [];
-  const lines = preflight.missing.map((m) => `${m.case} needs ${m.scanner}, which is ${m.state === "needs_runtime" ? `missing its runtime${m.detail ? ` (${m.detail})` : ""}` : m.state === "will_install" ? "not installed yet" : m.state}`);
+  const lines = preflight.missing.map((m) => `${m.case} needs ${m.scanner}, which ${MISSING_WORDS[m.state] ?? `is ${m.state}`}${m.state === "needs_runtime" && m.detail ? ` (${m.detail})` : ""}`);
   return [...lines, "Install them first (node packages/cli/dist/bin.js doctor --install --all-scanners), or run with --allow-missing-scanners: the run then records scannersComplete false and is never accepted."];
 }

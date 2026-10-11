@@ -41,15 +41,20 @@
 // 2. Two concurrent reviews both authorise against the same remaining
 //    budget: each step reads every line other processes appended, decides
 //    and appends under one lock, so two reservations never see the same
-//    room; a review that finds no room while others hold theirs waits for
-//    one to end instead of starting.
+//    room; the lock is made by an exclusive create, and a dead process's
+//    lock is replaced by exactly one taker; a review that finds no room
+//    while others hold theirs waits for one to end instead of starting.
 // 3. The worst-case token count is below the real count: input is counted
 //    at 3 bytes per character of the request, never at one token per
-//    character; a call reported above its worst case is an overrun, which
-//    stops the run, since the bound it relied on is wrong.
+//    character; a call reported above its worst case is an overrun, after
+//    which nothing more is reserved or sent, the judge's calls and calls
+//    reserved earlier included, and the run stops, since the bound it relied
+//    on is wrong.
 // 4. Judge calls are left out of the run cap: meteredComplete reserves a
 //    judge's call against the run's ledger, which openRunLedger opens from
-//    the run folder with the run's own caps, from any process.
+//    the run folder with the run's own caps, from any process; and until
+//    benchmark/judge.mjs sends its calls that way, the manifest says
+//    judgeIncluded false.
 // 5. A call reports no cost, or throws after the provider may have billed
 //    it: it keeps its whole reservation as spent.
 // 6. A process dies with reservations open: the next process to take the
@@ -58,10 +63,9 @@
 // 7. A forecast stop is read as a hard cap, or the reverse: every stop names
 //    its limit and whether it is hard or a forecast.
 import { randomBytes } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runsRoot } from "./index.mjs";
-import { takeOverStale } from "./runner.mjs";
 
 export const LEDGER_FILE = "budget.jsonl";
 export const LEDGER_LOCK = "budget.lock";
@@ -109,31 +113,72 @@ const alive = (pid) => {
   }
 };
 
-// Takes the ledger's lock for this process, waiting while another live
-// process holds it; a lock whose process has ended is taken over. Returns
-// the function that gives it back.
+// The lock file as one open file: its inode and the process it names, or
+// null when there is none.
+function readLock(path) {
+  let fd;
+  try {
+    fd = openSync(path, "r");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const { dev, ino } = fstatSync(fd);
+    return { dev, ino, text: readFileSync(fd, "utf8").trim() };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Replaces a lock whose process has ended with this process's own, and only
+// in one process. The taker first makes the takeover guard for that very
+// file (its device and inode) by an exclusive create, so one process at a
+// time may replace it; a process taking the lock the usual way never
+// replaces a file, so while the stale file is there only the guard's holder
+// changes it. The holder checks the lock is still that file with that dead
+// owner, then renames a lock it wrote in full into place. True when this
+// process now holds the lock.
+function replaceStale(path, seen) {
+  const guard = `${path}.takeover-${seen.dev}-${seen.ino}`;
+  try {
+    writeFileSync(guard, `${process.pid}\n`, { flag: "wx" });
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    const now = readLock(path);
+    if (now === null || now.dev !== seen.dev || now.ino !== seen.ino || now.text !== seen.text || alive(Number(now.text))) return false;
+    const mine = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
+    writeFileSync(mine, `${process.pid}\n`);
+    renameSync(mine, path);
+    return true;
+  } finally {
+    rmSync(guard, { force: true });
+  }
+}
+
+// Takes the ledger's lock for this process by an exclusive create, waiting
+// while another live process holds it; a lock whose process has ended is
+// replaced by exactly one taker (replaceStale). Returns the function that
+// gives it back.
 function takeLock(path, waitMs = 30_000) {
   const until = Date.now() + waitMs;
+  const release = () => {
+    if (readLock(path)?.text === String(process.pid)) rmSync(path, { force: true });
+  };
   for (;;) {
     try {
       writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
-      return () => {
-        if (existsSync(path) && readFileSync(path, "utf8").trim() === String(process.pid)) rmSync(path, { force: true });
-      };
+      return release;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
-    let text = "";
-    try {
-      text = readFileSync(path, "utf8").trim();
-    } catch {
-      // given back since
-    }
-    if (/^\d+$/.test(text) && !alive(Number(text))) {
-      takeOverStale(path, Number(text));
-      continue;
-    }
-    if (Date.now() > until) throw new Error(`the budget ledger's lock ${path} has been held by process ${text || "unknown"} for ${waitMs / 1000} s; if no run is going, move it away by hand`);
+    const seen = readLock(path);
+    if (seen === null) continue;
+    if (/^\d+$/.test(seen.text) && !alive(Number(seen.text)) && replaceStale(path, seen)) return release;
+    if (Date.now() > until) throw new Error(`the budget ledger's lock ${path} has been held by process ${seen.text || "unknown"} for ${waitMs / 1000} s; if no run is going, move it, and any ${LEDGER_LOCK}.takeover-* file beside it, away by hand`);
     Atomics.wait(pause, 0, 0, 2);
   }
 }
@@ -183,6 +228,10 @@ function apply(fold, e) {
   } else throw new Error(`the budget ledger holds an event it does not know: ${e.op}`);
   fold.peak = Math.max(fold.peak, fold.spent + reserved(fold));
 }
+
+// Why nothing more is reserved or sent once a call cost more than its worst
+// case: the bound every hard cap relies on was wrong for it.
+const overrunWhy = (o) => `a call (${o.what ?? o.id}) cost ${money(o.spentUsd)}, more than its worst case ${money(o.reservedUsd)}; the bound the hard caps rely on is wrong, so nothing more is reserved or sent`;
 
 function summary(fold) {
   return { spentUsd: dollars(fold.spent), reservedUsd: dollars(reserved(fold)), peakUsd: dollars(fold.peak), overruns: fold.overruns, launched: fold.launched, tokens: fold.tokens, reviews: fold.reviews };
@@ -284,7 +333,7 @@ class Ledger {
   reserve({ usd, kind = "judge", what = null }) {
     const nano = up(usd);
     return this.step((fold, emit) => {
-      if (fold.spent + reserved(fold) + nano > this.max) return null;
+      if (fold.overruns.length > 0 || fold.spent + reserved(fold) + nano > this.max) return null;
       const id = `${kind}:${randomBytes(6).toString("hex")}`;
       emit({ op: "reserve", id, kind, nano, usd: dollars(nano), what, pid: process.pid });
       return id;
@@ -316,16 +365,22 @@ class Ledger {
     this.step((fold, emit) => emit({ op: "launch", jobId }));
   }
 
+  /** Why nothing more may be reserved or sent (a call cost more than its worst case), or null. */
+  halted() {
+    return this.step((fold) => (fold.overruns.length > 0 ? overrunWhy(fold.overruns[0]) : null));
+  }
+
   /**
    * Holds one model review's whole cap (--review-max-usd) against the run's
    * cap. The review's meter when it fits; else `wait` when reviews running
    * now hold the room it needs, or a stop when even an empty run could not
-   * hold it.
+   * hold it, or a call overran its worst case.
    */
   openReview({ jobId, prices = null }) {
     if (this.reviewMax === null) throw new Error("a model review needs --review-max-usd, the most one review may spend");
     const need = this.reviewMax;
     return this.step((fold, emit) => {
+      if (fold.overruns.length > 0) return { ok: false, wait: false, why: overrunWhy(fold.overruns[0]) };
       const held = reserved(fold);
       if (fold.spent + held + need <= this.max) {
         const id = `review:${jobId}:${randomBytes(6).toString("hex")}`;
@@ -371,6 +426,10 @@ class ReviewMeter {
     return this.ledger.step((fold, emit) => {
       const env = fold.open.get(this.id);
       if (!env) return null;
+      if (fold.overruns.length > 0) {
+        this.refusals.push(overrunWhy(fold.overruns[0]));
+        return null;
+      }
       if (env.spentWithin + env.heldWithin + nano > env.nano) {
         this.refusals.push(`hard cap --review-max-usd: ${callId} may cost up to ${money(dollars(nano))}, and the review has ${money(dollars(env.nano - env.spentWithin - env.heldWithin))} left`);
         return null;
@@ -397,6 +456,12 @@ class ReviewMeter {
       complete: async (request) => {
         const c = this.calls.get(request.callId);
         if (!c || c.sent || c.settled) throw new Error(`no budget reservation for the call ${request.callId}; nothing was sent`);
+        // A call reserved before another overran is not sent: its reservation goes back.
+        const halted = this.ledger.halted();
+        if (halted !== null) {
+          this.settleCall(request.callId, 0);
+          throw new Error(`${halted}; ${request.callId} was not sent`);
+        }
         c.sent = true;
         let answer;
         try {
@@ -458,6 +523,7 @@ export async function meteredComplete(ledger, reviewer, request, { prices = load
   const id = ledger.reserve({ usd, kind: "judge", what });
   if (id === null) {
     const s = ledger.state();
+    if (s.overruns.length > 0) throw new BudgetRefused(overrunWhy(s.overruns[0]));
     throw new BudgetRefused(`hard cap --max-usd ${money(ledger.caps.maxUsd)}: this call may cost up to ${money(usd)}, and ${money(s.spentUsd)} is spent and ${money(s.reservedUsd)} held`);
   }
   let answer;
@@ -470,6 +536,20 @@ export async function meteredComplete(ledger, reviewer, request, { prices = load
   const cost = answer?.usage?.costUsd;
   ledger.settle(id, typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null);
   return answer;
+}
+
+// ---------- the manifest's record ----------
+
+// Whether benchmark/judge.mjs sends its model calls through the run's ledger
+// (meteredComplete). It does not yet: it still asks Claude Code, so the
+// manifest says judgeIncluded false. The task that moves the judge to
+// GPT-5.2 (P1-T7) routes it through meteredComplete and sets this true; a
+// test holds the two together.
+export const JUDGE_HELD_BY_LEDGER = false;
+
+/** The manifest's `budget`: the hard caps apart from the forecast stops, with the estimate. */
+export function manifestBudget({ caps, forecast, estimate, allowOver = false }) {
+  return { hardCaps: caps, forecastStops: { ...forecast, estimate }, judgeIncluded: JUDGE_HELD_BY_LEDGER, allowOver };
 }
 
 // ---------- estimates and forecast stops ----------
@@ -569,7 +649,7 @@ export function runBudget({ dir, caps, forecast = {}, estimate = null, path = "l
   const started = now();
   let running = 0;
   const stop = (limit, limitKind, why) => ({ how: "budget", limit, limitKind, why });
-  const overrun = (o) => stop("worst-case", "hard", `a call (${o.what ?? o.id}) cost ${money(o.spentUsd)}, more than its worst case ${money(o.reservedUsd)}; the bound the hard caps rely on is wrong, so nothing more starts`);
+  const overrun = (o) => stop("worst-case", "hard", overrunWhy(o));
   const perReview = (s, config) => {
     const est = estimate?.perConfig?.[config] ?? null;
     return {
