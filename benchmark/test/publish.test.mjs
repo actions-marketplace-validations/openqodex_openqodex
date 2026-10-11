@@ -218,11 +218,23 @@ describe("nothing private or third-party leaves in an asset", () => {
     expect(refused(second.run, { OPENQODEX_BENCH_CACHE: cache2 })).toMatch(new RegExp(`samples/${name}/model-gpt-6\\.1-sol/1/report/report\\.json:1: a line of ${name}'s code`));
   });
 
-  it("refuses a copyleft line shorter than any length cutoff, such as the body of a short function", () => {
+  it("refuses a copyleft line shorter than any length cutoff, such as the body of a short function, read whole or behind a search's file name", () => {
     const cache = tempDir("oq-bench-cache-");
     const { run, name } = realCaseRun(cache);
     addSample(run, name, "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"tool","content":"    return x * 3\\n"}\n` });
     expect(refused(run, { OPENQODEX_BENCH_CACHE: cache })).toMatch(new RegExp(`transcript\\.jsonl:1: a line of ${name}'s code`));
+    const cache2 = tempDir("oq-bench-cache-");
+    const second = realCaseRun(cache2);
+    addSample(second.run, name, "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"tool","content":"ledger/fees.py:2:     return x * 3\\n"}\n` });
+    expect(refused(second.run, { OPENQODEX_BENCH_CACHE: cache2 })).toMatch(new RegExp(`transcript\\.jsonl:1: a line of ${name}'s code`));
+  });
+
+  it("publishes a copyleft run whose repository has common short lines (`import os`, `} else {`, `return None`) that the run's prose also holds", () => {
+    const cache = tempDir("oq-bench-cache-");
+    const { run, name } = realCaseRun(cache, { "ledger/util.py": "import os\nif ready:\n    pass\n} else {\nreturn None\n" });
+    addSample(run, name, "model-gpt-6.1-sol", { "receipt.txt": "The handler may return None when the order is missing; import os is unused; } else { closes the branch.\n" });
+    const asset = packageRun(run, { out: tempDir("oq-publish-out-"), env: { OPENQODEX_BENCH_CACHE: cache } });
+    expect(asset.files).toBeGreaterThan(10);
   });
 
   it("publishes a copyleft run whose repository has one-token lines, such as `1,` in a list, that the run's own JSON also holds", () => {

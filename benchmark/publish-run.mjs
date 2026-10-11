@@ -44,9 +44,11 @@
 //    ($OPENQODEX_BENCH_CACHE/cases/<case hash>.git). The search is for each
 //    line anywhere in the decoded text, whitespace normalised, so a line
 //    behind a file name and line number, after a diff marker or inside a
-//    sentence is found, and no line is too short to count (a line of one
-//    bare token counts as a whole line only). A hit, or a missing
-//    repository, refuses the publish.
+//    sentence is found, and no line is too short to count (a line under 24
+//    characters, or one bare name, counts as a whole decoded line only,
+//    with a search, line-number or diff prefix removed, since inside other
+//    text it would match unrelated words). A hit, or a missing repository,
+//    refuses the publish.
 // 5. A legacy run is published from a folder that is not the committed one:
 //    every file must match the blob the recipe's commit holds.
 // 6. A legacy run is published without the scorer that wrote its numbers:
@@ -276,11 +278,19 @@ export function carriesNoCode(line) {
   return word !== null && KEYWORDS.has(word[1].toLowerCase());
 }
 
-// A line that is one bare name with trailing commas or semicolons (`name,`,
-// `x`) still counts, but only as a whole line of the packaged text: found
-// anywhere inside other text, it would match nearly every file and refuse
-// every publish.
-export const oneToken = (line) => /^[A-Za-z0-9_$.]+[,;:]*$/.test(line);
+// A line of at least SUBSTRING_MIN characters, not one bare name, is looked
+// for anywhere in the text. A shorter one (`import os`, `} else {`,
+// `return x * 3`) or one bare name (`name,`) still counts, but only as the
+// whole of a decoded line, as is or once a search's `path:line:` prefix, a
+// reader's line number or a diff marker is removed: found inside other text
+// it would match unrelated prose and code and refuse nearly every publish.
+export const SUBSTRING_MIN = 24;
+export const wholeOnly = (line) => line.length < SUBSTRING_MIN || /^[A-Za-z0-9_$.]+[,;:]*$/.test(line);
+const LINE_PREFIX = /^(?:\S+:\d+:\s?|\d+(?:\t|:|\s*\|)\s?|[+-]\s?)/;
+const wholeForms = (t) => {
+  const s = t.replace(/^\s+/, "");
+  return [normalise(s), normalise(s.replace(LINE_PREFIX, ""))];
+};
 
 const WORD = /[A-Za-z0-9_$]/;
 
@@ -381,7 +391,7 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
     .filter((c) => c.licence !== "permissive")
     .map((c) => {
       const lines = [...codeLines(c, env)];
-      return { c, find: substringMatcher(lines.filter((l) => !oneToken(l))), whole: new Set(lines.filter(oneToken)) };
+      return { c, find: substringMatcher(lines.filter((l) => !wholeOnly(l))), whole: new Set(lines.filter(wholeOnly)) };
     });
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
@@ -402,7 +412,7 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
       // Anywhere in the decoded text: behind a file name and line number as
       // a search prints it, after a diff marker, inside a sentence.
       for (const { c, find, whole } of code) {
-        if (texts.some((t) => whole.has(normalise(t)) || find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
+        if (texts.some((t) => wholeForms(t).some((w) => whole.has(w)) || find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
       }
     });
   }
