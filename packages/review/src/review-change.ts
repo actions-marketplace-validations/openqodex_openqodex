@@ -79,7 +79,7 @@ import type { ReviewerDriver, ReviewerSession } from "./agents/driver.js";
 import { checkContext, useContext } from "./context.js";
 import type { ContextItem } from "./context.js";
 import { converse, deliverRanges, redactSnapshot } from "./conversation.js";
-import type { Conversation, Speaker } from "./conversation.js";
+import type { Conversation, CorrectionRound, Speaker } from "./conversation.js";
 import { modelSession, modelToolEntry } from "./model-loop.js";
 import type { ModelSession } from "./model-loop.js";
 import { modelEvidence } from "./evidence.js";
@@ -100,7 +100,7 @@ import { admitted } from "./scopes.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
 import type { ToolBox } from "./tools/index.js";
 import { usageTotals } from "./usage.js";
-import type { CallRecord, ModelReviewEvidence, ToolLogEntry, UsageTotals } from "./usage.js";
+import type { CallRecord, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
 // A frozen copy of the state under review: `tree` is the folder the
 // scanners and the reviewer read; `folder` holds it and whatever the maker
@@ -185,7 +185,9 @@ export type ReviewEvent =
   // The brief and what goes with it, before the reviewer starts.
   | { type: "brief"; manifest: RunManifest; scan: ScanResult; brief: string; impact: ImpactSummary }
   // The reviewer started.
-  | { type: "started"; driver: string; version: string; pid: number | null };
+  | { type: "started"; driver: string; version: string; pid: number | null }
+  // A correction round, as it is sent, redacted with the scan's secrets.
+  | { type: "round"; round: CorrectionRound };
 
 export type ReviewDeps = {
   // The drivers `auto` tries, in order, after the agent running the host.
@@ -264,6 +266,8 @@ export type ReviewCoreResult =
   // made for it: `report` is the checked report without one, and `evidence`
   // is what the model completion record is built from (model-record.ts).
   // `usage`: one record per model attempt, the second reviewer's included.
+  // `rounds`: every correction round, the second reviewer's after the
+  // primary's, as the "round" events carried them.
   // `second`: the second reviewer's run, when one ran. `context`: the context
   // items as the manifest lists them, when any were given.
   | {
@@ -275,6 +279,7 @@ export type ReviewCoreResult =
       scan: ScanResult;
       secrets: string[];
       usage: { calls: CallRecord[]; totals: UsageTotals };
+      rounds: CorrectionRound[];
       second?: SecondRun;
       context?: NonNullable<RunManifest["context"]>;
     };
@@ -603,6 +608,14 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       return { report: r.ok ? r.report : null, errors: r.ok ? [] : r.errors, unread, required: r.required, disposed: r.disposed };
     };
     const deliver: Parameters<typeof converse>[0]["deliver"] = (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets, change });
+    // Every correction round, redacted as the report is (an answer or a
+    // check error can quote a secret), kept and sent to the host at once.
+    const rounds: CorrectionRound[] = [];
+    const onRound = (by: ReviewerRole) => (round: Omit<CorrectionRound, "by">): void => {
+      const kept = redactStored({ by, ...round }, p.secrets);
+      rounds.push(kept);
+      deps.onEvent({ type: "round", round: kept });
+    };
     // The second reviewer, once the primary is done: on the same brief,
     // snapshot, tools, checks, deadline and budget. Not after a budget
     // refusal, which has ended the review, and not when the primary was not
@@ -621,7 +634,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           session = s;
           say(`Second reviewer: model ${reviewer.model} started`);
         },
-        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver }),
+        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver, onRound: onRound("second") }),
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
@@ -635,6 +648,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       now: deps.now,
       check,
       deliver,
+      onRound: onRound("primary"),
     }).finally(async () => {
       await session?.close();
     });
@@ -652,7 +666,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       // reads it again once it has finished the report.
       const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), impact, timings: clock.timings() };
       const calls = [...evidence.attempts, ...(second?.evidence.attempts ?? [])];
-      return await finish({ ended: "model-reviewed", report, evidence, submission: talk.report ? talk.submission : (talk.checked?.submission ?? talk.submission), change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
+      return await finish({ ended: "model-reviewed", report, evidence, submission: talk.report ? talk.submission : (talk.checked?.submission ?? talk.submission), change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
     }
 
     const reviewer: ReviewerRecord | null = session === null ? null : {
@@ -778,6 +792,7 @@ function stoppedResult(status: "complete" | "incomplete", reason: string, scope:
     scannerVersions: {},
     trace: [],
     usage: { calls: [], totals: usageTotals([]) },
+    rounds: [],
     evidence: null,
     completion: null,
     notes,
@@ -1013,6 +1028,7 @@ async function reviewInScope(
     scannerVersions: Object.fromEntries(r.scan.scanners.map((s) => [s.scanner, s.version])),
     trace: [...r.evidence.toolLog, ...(second?.evidence.toolLog ?? [])],
     usage: r.usage,
+    rounds: r.rounds,
     evidence: r.evidence,
     completion,
     notes: report.notes ?? [],

@@ -13,6 +13,7 @@
 // shown and what was used come from the brain's own records.
 import type { Category, Config, ContextItem, Coverage, Disagreement, ModelCompletionRecord, RunManifest, RunTimings, Severity } from "@openqodex/core";
 import type { ReviewerDriver, Turn } from "./agents/driver.js";
+import type { CorrectionRound } from "./conversation.js";
 import type { ReviewScope } from "./incremental.js";
 import type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
@@ -246,6 +247,8 @@ export type Disposition = {
 // run manifest lists it, with why the brief left one out. `scope`: whether
 // the obligation was the delta since the previous review or the whole
 // change, and why; null when a proof failed before the decision.
+// `rounds`: every correction round sent, the second reviewer's after the
+// primary's (conversation.ts CorrectionRound), redacted like the report.
 // `timings`: how long each phase took, from the call to the result
 // (RunTimings); the JSON report of a review a reviewer was given holds the
 // same object.
@@ -260,6 +263,7 @@ export type ReviewResult = {
   scannerVersions: Record<string, string | null>;
   trace: ToolLogEntry[];
   usage: { calls: CallRecord[]; totals: UsageTotals };
+  rounds: CorrectionRound[];
   evidence: ModelReviewEvidence | null;
   completion: ModelCompletionRecord | null;
   notes: string[];

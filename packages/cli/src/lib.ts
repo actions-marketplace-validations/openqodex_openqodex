@@ -136,6 +136,7 @@ export type {
   ReviewStatus,
   ResultFinding,
   Disposition,
+  CorrectionRound,
   // usage and the brain's evidence
   CallRecord,
   UsageTotals,

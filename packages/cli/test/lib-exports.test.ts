@@ -131,6 +131,7 @@ const TYPES = [
   "ReviewStatus",
   "ResultFinding",
   "Disposition",
+  "CorrectionRound",
   "CallRecord",
   "UsageTotals",
   "ModelPurpose",
