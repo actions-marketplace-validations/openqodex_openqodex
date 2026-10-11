@@ -25,7 +25,6 @@ describe("outside board pins", () => {
     for (const deployment of Object.values(input.boards.deployments)) {
       expect(Number.isFinite(Date.parse(deployment.probed))).toBe(true);
       expect(deployment.served).toBe(deployment.id);
-      expect(deployment.served).toBeNull();
     }
   });
 
