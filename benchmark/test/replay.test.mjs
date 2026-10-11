@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
-import { checkSubmission, DEFAULT_CONFIG } from "../../packages/core/dist/index.js";
+import { buildReviewerBrief, checkSubmission, DEFAULT_CONFIG } from "../../packages/core/dist/index.js";
 import { hashFolder } from "../lib/index.mjs";
 import { buildCase, caseHash } from "../lib/cases.mjs";
 import { CLASSES } from "../lib/classes.mjs";
@@ -54,6 +54,44 @@ function plantedSource(run) {
   write(join(dir, "base", "tests", "test_money.py"), "assert True\n".repeat(30));
   return root;
 }
+
+it("replays a saved brief whose diff contains three backticks with matching fences", () => {
+  for (const backticks of [3, 5]) {
+    const diff = brief.match(/```diff\n([\s\S]*?)```\n/)[1].replace("+return 1 / 0", `+return 1 / 0 # ${"`".repeat(backticks)}`);
+    const change = { ...input([]).change, changedPaths: ["a.py"], diff };
+    const { text: savedBrief } = buildReviewerBrief({ change, scan, lenses: [], config: DEFAULT_CONFIG, secrets: [] });
+    const fence = "`".repeat(backticks + 1);
+    expect(savedBrief).toContain(`${fence}diff\n`);
+    const { run } = savedRun([[f()]], { savedBrief });
+    const replay = replayRun(run);
+    expect(replay.unresolved).toHaveLength(0);
+    expect(replay.rows[0].hits).toBe(1);
+    const path = join(run, "samples", "division", "claude-graph-off", "1", "report", "brief.md");
+    for (const length of [backticks, backticks + 2]) {
+      write(path, savedBrief.replace(`\n${fence}\n`, `\n${"`".repeat(length)}\n`));
+      expect(() => replayRun(run)).toThrow(/saved brief has no diff/);
+    }
+  }
+});
+
+it("replays and scores a finding on an omitted file's saved changed ranges", () => {
+  for (const withShownDiff of [true, false]) {
+    const omitted = { path: "a.py", text: `diff --git a/a.py b/a.py\n${"+x\n".repeat(120_000)}` };
+    const shown = { path: "b.py", text: "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-old\n+new\n" };
+    const change = { ...input([]).change, changedPaths: ["a.py"], coverage: new Map([["a.py", new Set([2, 3, 5])]]), diffs: withShownDiff ? [shown, omitted] : [omitted] };
+    const { text: savedBrief, diffFiles } = buildReviewerBrief({ change, scan, lenses: [], config: DEFAULT_CONFIG, secrets: [] });
+    expect(diffFiles.has("a.py")).toBe(false);
+    expect(savedBrief).toContain("- a.py: lines 2-3, 5");
+    const argsFor = (fs) => ({ ...input(fs), change, lineCount: () => 5 });
+    const { run } = savedRun([[f(), f({ line_number: 3, title: "Zero at three" }), f({ line_number: 5, title: "Zero at five" })]], { savedBrief, argsFor, inventory: [{ path: "a.py", lines: 5 }] });
+    const replay = replayRun(run);
+    expect(replay.unresolved).toHaveLength(0);
+    expect(replay.rows[0].hits).toBe(1);
+    expect(replay.rows[0].findings).toBe(3);
+    write(join(run, "samples", "division", "claude-graph-off", "1", "report", "submission.json"), submission([f({ line_number: 4 })]));
+    expect(() => replayRun(run)).toThrow(/not a line this change/);
+  }
+});
 
 it("checks a dropped candidate without a saved length against the rebuilt head file", () => {
   const candidate = { id: "c1", token: "bandit:B101", source: "bandit", ruleId: "B101", filePath: "a.py", lineStart: 2, lineEnd: 2, severity: "low", message: "An assert." };

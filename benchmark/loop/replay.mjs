@@ -75,10 +75,22 @@ function checkOutput(path, folders) {
 // core's coverage parser includes context when given a contextual diff, so
 // remove those context positions before passing it to checkSubmission.
 function savedChange(brief, manifest, report, inventory) {
-  const blocks = [...brief.matchAll(/^```diff\r?\n([\s\S]*?)^```\s*$/gm)];
-  if (blocks.length === 0) throw new Error("the saved brief has no diff; the change cannot be replayed");
-  const diff = blocks.map((m) => m[1]).join("\n");
+  const blocks = [...brief.matchAll(/^(`{3,})diff\r?\n([\s\S]*?)^\1[ \t]*\r?$/gm)];
+  const diff = blocks.map((m) => m[2]).join("\n");
   const coverage = parseDiffCoverage(diff);
+  const section = (name) => brief.split(/^## /m).find((s) => s.startsWith(`${name}\n`) || s.startsWith(`${name}\r\n`)) ?? "";
+  // core's diffBlockV2 records coverage for files outside the diff budget
+  // as "- path: lines 3-5, 9", before any deletion-only anchor text.
+  const omitted = section("Diff").split(/^These files changed but their diff is not in this brief\..*$/m)[1] ?? "";
+  for (const m of omitted.matchAll(/^- (.+): lines (\d+(?:-\d+)?(?:, \d+(?:-\d+)?)*)(?:;[^\r\n]*)?\r?$/gm)) {
+    const lines = coverage.get(m[1]) ?? new Set();
+    for (const range of m[2].split(", ")) {
+      const [start, end = start] = range.split("-").map(Number);
+      for (let line = start; line <= end; line++) lines.add(line);
+    }
+    coverage.set(m[1], lines);
+  }
+  if (blocks.length === 0 && coverage.size === 0) throw new Error("the saved brief has no diff; the change cannot be replayed");
   // report/inventory.json is the product's saved snapshot listing, written
   // by commands/review.ts with buildInventory's exact per-file `lines`.
   // Legacy change reviews did not save lengths. A diff or read range cannot
@@ -116,7 +128,6 @@ function savedChange(brief, manifest, report, inventory) {
   // brief.md's Changed files and Deleted lines sections are emitted by
   // core's changedFilesBlock and deletionsBlock. Copy the recorded anchors,
   // including line 1 for emptied/deleted files; never compute new anchors.
-  const section = (name) => brief.split(/^## /m).find((s) => s.startsWith(`${name}\n`) || s.startsWith(`${name}\r\n`)) ?? "";
   const files = [...section("Changed files").matchAll(/^\| (added|modified|deleted|renamed from .+?)(, binary)? \| (.*?) \|\r?$/gm)].map((m) => ({ path: m[3].replace(/\\\|/g, "|"), status: m[1].startsWith("renamed from ") ? "renamed" : m[1], oldPath: m[1].startsWith("renamed from ") ? m[1].slice(13) : null, binary: Boolean(m[2]) }));
   for (const p of coverage.keys()) if (!files.some((f) => f.path === p)) files.push({ path: p, status: "modified", oldPath: null, binary: false });
   const deletionPoints = new Map();
