@@ -82,10 +82,14 @@ jobs:
     timeout-minutes: 20
     steps:
       # The scanners' install root, and the folder the artifact is made of.
+      # The runs lie inside the checkout (benchmark/results is ignored by
+      # git) because a score names its run folder relative to the repository
+      # only when the folder is in it; outside it the score holds the
+      # runner's home path, and publish-run.mjs refuses to package it.
       - name: Name the folders
         run: |
           echo "OPENQODEX_HOME=$RUNNER_TEMP/openqodex-bench-home" >> "$GITHUB_ENV"
-          echo "BENCH=$RUNNER_TEMP/bench-scan" >> "$GITHUB_ENV"
+          echo "BENCH=$GITHUB_WORKSPACE/benchmark/results/bench-scan" >> "$GITHUB_ENV"
       # The pull request's own head, not the merge commit GitHub makes: the
       # run's build commit becomes the commit of an index entry when the run
       # is accepted, and a merge commit is not kept once the pull request
@@ -145,6 +149,6 @@ jobs:
         if: ${{ !cancelled() && env.RUN_ID != '' }}
         with:
           name: bench-scan-${{ env.RUN_ID }}
-          path: ${{ runner.temp }}/bench-scan
+          path: benchmark/results/bench-scan
           retention-days: 14
           if-no-files-found: error
