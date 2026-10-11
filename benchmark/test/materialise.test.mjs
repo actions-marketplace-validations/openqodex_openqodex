@@ -1,8 +1,9 @@
 // Materialising a pull request case (benchmark/lib/materialise.mjs) into the
 // repository a review reads, through the clone cache. Every test builds a
 // real upstream repository in a temp folder and fetches it over file://, the
-// way the materialiser fetches GitHub, so nothing here fakes git. Seven
-// failures are guarded:
+// way the materialiser fetches GitHub, so nothing here fakes git (a file
+// URL is allowed only because each test asks for it). These failures are
+// guarded:
 //
 // 1. The built head differs from the pull request head, so AACR's lines
 //    point at other code (line endings renormalised, an export-ignore file
@@ -22,13 +23,22 @@
 // 9. Finding the merge base downloads the trees and files of every commit
 //    between the tips (FreeCAD/FreeCAD#19411 took 1.7 GB before it was
 //    stopped).
+// 10. A clone URL that is not the named repository on its pull request's
+//    host (user info, another host, another path, plain http, a local
+//    path) is fetched.
+// 11. A server that ignores the commits-only filter turns the commits cache
+//    into a full clone without a word.
+// 12. A damaged case repository counts as built.
+// 13. A checkout on a case-folding file system keeps one of two files whose
+//    names differ only in case, and the shape is still handed out.
+// 14. A held-out case is built with no record of the access.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { git, gitEnv, listCases, readLock } from "../lib/cases.mjs";
-import { materialisePr } from "../lib/materialise.mjs";
+import { materialisePr, prRefusal, verifyCaseRepo } from "../lib/materialise.mjs";
 import { materialise, readCase } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -150,7 +160,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const up = sharedUpstream();
     const cache = tempDir("oq-mat-cache-");
     const c = prCase(up);
-    const got = materialisePr(c, into(), { shape: "server", cache });
+    const got = materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true });
     const record = JSON.parse(readFileSync(join(cache, "cases", `${c.hash}.git`, "materialised.json"), "utf8"));
     expect(record.upstream.headTree).toBe(up.headTree);
     expect(record.upstream.mergeBaseTree).toBe(up.baseTree);
@@ -171,19 +181,19 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const up = sharedUpstream();
     const cache = tempDir("oq-mat-cache-");
     const c = prCase(up);
-    const server = materialisePr(c, into(), { shape: "server", cache });
+    const server = materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true });
     expect(server.mergeBaseSha).toBe(up.mergeBase);
     expect(out(server.dir, "rev-parse", "HEAD~1^{tree}")).not.toBe(out(up.dir, "rev-parse", `${up.baseSha}^{tree}`));
     expect(lines(out(server.dir, "diff", "--name-only", "HEAD~1", "HEAD"))).toEqual(PR_FILES);
-    const laptop = materialisePr(c, into(), { shape: "laptop", cache });
+    const laptop = materialisePr(c, into(), { shape: "laptop", cache, allowFileUrl: true });
     expect(existsSync(join(laptop.dir, "main-later.txt"))).toBe(false);
     expect(readFileSync(join(laptop.dir, "a.txt"), "utf8")).toMatch(/^line 1\n/);
     // A frozen merge base that is not the merge base (here the target's
     // tip) is refused, never built.
     const frozenTip = prCase(up, { mergeBaseSha: up.baseSha });
-    expect(() => materialisePr(frozenTip, into(), { shape: "server", cache })).toThrow(/is not the merge base/);
+    expect(() => materialisePr(frozenTip, into(), { shape: "server", cache, allowFileUrl: true })).toThrow(/is not the merge base/);
     const frozenRight = prCase(up, { mergeBaseSha: up.mergeBase });
-    expect(materialisePr(frozenRight, into(), { shape: "server", cache }).mergeBaseSha).toBe(up.mergeBase);
+    expect(materialisePr(frozenRight, into(), { shape: "server", cache, allowFileUrl: true }).mergeBaseSha).toBe(up.mergeBase);
   });
 
   it("never hands a shallow or partial clone to a review, though the cache itself is shallow", () => {
@@ -191,7 +201,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const cache = tempDir("oq-mat-cache-");
     const c = prCase(up);
     for (const shape of ["laptop", "server"]) {
-      const { dir } = materialisePr(c, into(), { shape, cache });
+      const { dir } = materialisePr(c, into(), { shape, cache, allowFileUrl: true });
       expect(out(dir, "rev-parse", "--is-shallow-repository")).toBe("false");
       expect(existsSync(join(dir, ".git", "objects", "info", "alternates"))).toBe(false);
       const promisor = spawnSync("git", ["config", "--get-regexp", "promisor|partialclone"], { cwd: dir, env: gitEnv(), encoding: "utf8" });
@@ -208,7 +218,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
   it("laptop shape: the base committed and the whole change in the working tree, a deleted file deleted and new files untracked", () => {
     const up = sharedUpstream();
     const cache = tempDir("oq-mat-cache-");
-    const { dir, base, head } = materialisePr(prCase(up), into(), { shape: "laptop", cache });
+    const { dir, base, head } = materialisePr(prCase(up), into(), { shape: "laptop", cache, allowFileUrl: true });
     expect(out(dir, "rev-parse", "HEAD")).toBe(base);
     expect(out(dir, "rev-list", "--count", "HEAD")).toBe("1");
     expect(out(dir, "rev-parse", "HEAD^{tree}")).toBe(up.baseTree);
@@ -221,7 +231,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
   it("server shape: exactly two commits, the base then the head, and nothing uncommitted", () => {
     const up = sharedUpstream();
     const cache = tempDir("oq-mat-cache-");
-    const { dir, base, head } = materialisePr(prCase(up), into(), { shape: "server", cache });
+    const { dir, base, head } = materialisePr(prCase(up), into(), { shape: "server", cache, allowFileUrl: true });
     expect(out(dir, "rev-list", "--count", "HEAD")).toBe("2");
     expect(out(dir, "rev-parse", "HEAD")).toBe(head);
     expect(out(dir, "rev-parse", "HEAD^")).toBe(base);
@@ -234,10 +244,10 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const cache = tempDir("oq-mat-cache-");
     const unknown = { ...MIT, spdx: "NOASSERTION", chosen: null, class: "unknown", excerpts: "omit" };
     const none = { ...MIT, spdx: null, chosen: null, class: "none", file: null, excerpts: "omit" };
-    expect(() => materialisePr(prCase(up, { licence: unknown }), into(), { cache })).toThrow(/licence unknown/);
-    expect(() => materialisePr(prCase(up, { licence: none }), into(), { cache })).toThrow(/licence none/);
-    expect(() => materialisePr(prCase(up, { licence: null }), into(), { cache })).toThrow(/licence none/);
-    expect(() => materialisePr(prCase(up, { status: "excluded" }), into(), { cache })).toThrow(/excluded/);
+    expect(() => materialisePr(prCase(up, { licence: unknown }), into(), { cache, allowFileUrl: true })).toThrow(/licence unknown/);
+    expect(() => materialisePr(prCase(up, { licence: none }), into(), { cache, allowFileUrl: true })).toThrow(/licence none/);
+    expect(() => materialisePr(prCase(up, { licence: null }), into(), { cache, allowFileUrl: true })).toThrow(/licence none/);
+    expect(() => materialisePr(prCase(up, { status: "excluded" }), into(), { cache, allowFileUrl: true })).toThrow(/excluded/);
     expect(existsSync(join(cache, "repos"))).toBe(false);
     expect(existsSync(join(cache, "cases"))).toBe(false);
   });
@@ -256,7 +266,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     expect(spawnSync("git", ["cat-file", "-e", `${up.headSha}^{commit}`], { cwd: up.dir, env: gitEnv() }).status).not.toBe(0);
     const cache = tempDir("oq-mat-cache-");
     const c = prCase(up);
-    expect(() => materialisePr(c, into(), { shape: "server", cache })).toThrow(/is gone from .* now points at/);
+    expect(() => materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true })).toThrow(/is gone from .* now points at/);
     expect(existsSync(join(cache, "cases", `${c.hash}.git`))).toBe(false);
     // It stops before any tree is downloaded.
     expect(existsSync(join(cache, "repos", "acme__widget.git"))).toBe(false);
@@ -265,7 +275,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
   it("finds the merge base on commits alone and downloads the trees of the merge base and the head only", () => {
     const up = sharedUpstream();
     const cache = tempDir("oq-mat-cache-");
-    materialisePr(prCase(up), into(), { shape: "server", cache });
+    materialisePr(prCase(up), into(), { shape: "server", cache, allowFileUrl: true });
     const types = (repo) => lines(out(repo, "cat-file", "--batch-all-objects", "--batch-check=%(objecttype)")).reduce((n, t) => ({ ...n, [t]: (n[t] ?? 0) + 1 }), {});
     const commits = types(join(cache, "repos", "acme__widget.commits.git"));
     expect(Object.keys(commits)).toEqual(["commit"]);
@@ -279,7 +289,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const up = upstream();
     const cache = tempDir("oq-mat-cache-");
     const c = prCase(up);
-    const first = materialisePr(c, into(), { shape: "server", cache });
+    const first = materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true });
     expect(first.built).toBe(true);
     const recordPath = join(cache, "cases", `${c.hash}.git`, "materialised.json");
     const bytes = readFileSync(recordPath, "utf8");
@@ -288,7 +298,7 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     const fetchedAt = statSync(fetchHead).mtimeMs;
     renameSync(up.dir, `${up.dir}-gone`);
     for (const shape of ["server", "laptop"]) {
-      const again = materialisePr(c, into(), { shape, cache });
+      const again = materialisePr(c, into(), { shape, cache, allowFileUrl: true });
       expect(again.built).toBe(false);
       expect(again.base).toBe(first.base);
       expect(again.head).toBe(first.head);
@@ -299,7 +309,113 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     // The same pull request under a new case hash builds from the cache's
     // fetched commits, so it needs no upstream either.
     const rehashed = { ...c, hash: "c".repeat(64), id: "aacr/acme__widget-7@cccccccc" };
-    expect(materialisePr(rehashed, into(), { shape: "server", cache }).head).toBe(first.head);
+    expect(materialisePr(rehashed, into(), { shape: "server", cache, allowFileUrl: true }).head).toBe(first.head);
+  });
+
+  it("refuses a clone URL that is not the named repository on its pull request's host, before any fetch", () => {
+    const up = sharedUpstream();
+    const cache = tempDir("oq-mat-cache-");
+    const withUrl = (cloneUrl) => prCase(up, { cloneUrl });
+    for (const [url, why] of [
+      ["https://github.com@attacker.example/acme/widget.git", /user name or password/],
+      ["https://user:secret@github.com/acme/widget.git", /user name or password/],
+      ["https://attacker.example/acme/widget.git", /is on attacker\.example, not on github\.com/],
+      ["https://github.com/other/widget.git", /is not the repository acme\/widget/],
+      ["https://github.com/acme/widget.git/../../other/x", /is not the repository acme\/widget/],
+      ["http://github.com/acme/widget.git", /is not https/],
+      [`file://${up.dir}`, /local path/],
+      ["--upload-pack=touch /tmp/x", /is not a URL/],
+    ]) {
+      expect(prRefusal(withUrl(url)), url).toMatch(why);
+      expect(() => materialisePr(withUrl(url), into(), { cache })).toThrow(why);
+    }
+    expect(prRefusal(withUrl("https://github.com/acme/widget.git"))).toBeNull();
+    expect(prRefusal(withUrl("https://github.com/acme/widget"))).toBeNull();
+    expect(prRefusal(withUrl(`file://${up.dir}`), { allowFileUrl: true })).toBeNull();
+    expect(existsSync(join(cache, "repos"))).toBe(false);
+  });
+
+  it("refuses a server that ignores the commits-only filter, rather than letting the commits cache become a full clone", () => {
+    const up = upstream();
+    git(up.dir, "config", "uploadpack.allowFilter", "false");
+    const cache = tempDir("oq-mat-cache-");
+    const c = prCase(up);
+    expect(() => materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true })).toThrow(/filtering not recognized by server/);
+    // The refusal stays: a later call does not build from what was fetched.
+    expect(() => materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true })).toThrow(/filtering not recognized by server/);
+    expect(existsSync(join(cache, "cases", `${c.hash}.git`))).toBe(false);
+  });
+
+  it("counts a case repository as built only with its checked record, and finds a damaged pack", () => {
+    const up = sharedUpstream();
+    const cache = tempDir("oq-mat-cache-");
+    const c = prCase(up);
+    materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true });
+    const repo = join(cache, "cases", `${c.hash}.git`);
+    const recordPath = join(repo, "materialised.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8"));
+    expect(record.fsck).toMatch(/^git fsck --no-dangling: no problems/);
+    expect(verifyCaseRepo(c, { cache, allowFileUrl: true }).headTree).toBe(up.headTree);
+    // A record without its check is not a built case.
+    writeFileSync(recordPath, JSON.stringify({ ...record, fsck: undefined }));
+    expect(() => materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true })).toThrow(/damaged/);
+    writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+    // A damaged pack keeps readable commits and tree ids, and only fsck sees it.
+    const pack = readdirSync(join(repo, "objects", "pack")).find((n) => n.endsWith(".pack"));
+    const bytes = readFileSync(join(repo, "objects", "pack", pack));
+    for (let i = Math.floor(bytes.length / 2); i < Math.floor(bytes.length / 2) + 64; i++) bytes[i] ^= 0xff;
+    chmodSync(join(repo, "objects", "pack", pack), 0o644);
+    writeFileSync(join(repo, "objects", "pack", pack), bytes);
+    expect(() => verifyCaseRepo(c, { cache, allowFileUrl: true })).toThrow(/fsck/);
+  });
+
+  it("refuses a checkout that loses a file on a case-folding file system, in both shapes, naming the colliding paths", () => {
+    const dir = join(tempDir("oq-mat-up-"), "fold");
+    mkdirSync(dir);
+    git(dir, "init", "-q");
+    git(dir, "config", "uploadpack.allowFilter", "true");
+    writeFileSync(join(dir, "a.txt"), "base\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "Base");
+    const baseSha = out(dir, "rev-parse", "HEAD");
+    for (const [name, text] of [["Readme.md", "one\n"], ["README.md", "two\n"]]) {
+      const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, env: gitEnv(), input: text, encoding: "utf8" }).trim();
+      git(dir, "update-index", "--add", "--cacheinfo", `100644,${blob},${name}`);
+    }
+    git(dir, "commit", "-q", "-m", "Two names that differ only in case");
+    const headSha = out(dir, "rev-parse", "HEAD");
+    git(dir, "update-ref", "refs/pull/7/head", headSha);
+    git(dir, "reset", "-q", "--hard", baseSha);
+    const up = { dir, baseSha, headSha };
+    const cache = tempDir("oq-mat-cache-");
+    const probe = tempDir("oq-mat-fold-");
+    writeFileSync(join(probe, "x"), "");
+    const folds = existsSync(join(probe, "X"));
+    for (const shape of ["laptop", "server"]) {
+      const build = () => materialisePr(prCase(up), into(), { shape, cache, allowFileUrl: true });
+      if (folds) expect(build).toThrow(/README\.md and Readme\.md/);
+      else expect(readdirSync(build().dir).filter((n) => n.toLowerCase() === "readme.md").sort()).toEqual(["README.md", "Readme.md"]);
+    }
+  });
+
+  it("records every build of a held-out case, and refuses one it cannot record", () => {
+    const up = sharedUpstream();
+    const cache = tempDir("oq-mat-cache-");
+    const c = prCase(up, { split: "test" });
+    expect(() => materialisePr(c, into(), { cache, allowFileUrl: true })).toThrow(/held out/);
+    materialisePr(c, into(), { shape: "server", cache, allowFileUrl: true, heldOut: true });
+    materialisePr(c, into(), { shape: "laptop", cache, allowFileUrl: true, heldOut: true });
+    const log = lines(readFileSync(join(cache, "held-out-access.log"), "utf8")).map((l) => JSON.parse(l));
+    expect(log.map((l) => l.caseId)).toEqual([c.id, c.id]);
+    for (const l of log) {
+      expect(Number.isNaN(Date.parse(l.at))).toBe(false);
+      expect(l.cwd).toBe(process.cwd());
+      expect(l).toHaveProperty("argv1");
+    }
+    const unwritable = tempDir("oq-mat-cache-");
+    mkdirSync(join(unwritable, "held-out-access.log"));
+    expect(() => materialisePr(c, into(), { cache: unwritable, allowFileUrl: true, heldOut: true })).toThrow(/cannot be recorded/);
+    expect(existsSync(join(unwritable, "repos"))).toBe(false);
   });
 });
 

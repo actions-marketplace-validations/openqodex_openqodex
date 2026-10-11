@@ -67,9 +67,29 @@
 //    on git's own lock: each cache repository is taken by one process at a
 //    time (a lock file naming the process; a dead process's lock is taken
 //    over), and a case repository appears only by a rename once complete.
-import { execFileSync } from "node:child_process";
+// 11. A clone URL that is not the named repository on its pull request's
+//    host is fetched (user info such as https://github.com@attacker.example,
+//    another host or path, plain http, a local path): the URL is parsed and
+//    bound to the case's repository and its pull request link's host; a
+//    file URL only when the caller asks (the tests).
+// 12. A server that ignores the commits-only filter (git warns "filtering
+//    not recognized by server" and sends trees and files) turns the commits
+//    cache into a full clone: the warning refuses the case, and a mark in
+//    that cache keeps refusing until a person moves it away.
+// 13. A damaged case repository counts as built: the build runs a full
+//    fsck, and the record holds its result beside the tree ids; a record
+//    without it is refused, and verifyCaseRepo (materialise.mjs --check)
+//    runs fsck again.
+// 14. A checkout on a case-folding file system keeps one of two files whose
+//    names differ only in case: both shapes prove the working tree holds
+//    the head, and a refusal names the colliding paths.
+// 15. A held-out case is built with no record: every build through any
+//    entry point appends { at, caseId, argv1, cwd } to
+//    <cache>/held-out-access.log first, and a line that cannot be written
+//    refuses the build.
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gitEnv } from "./cases.mjs";
@@ -83,7 +103,10 @@ const LOCK_WAIT_MS = 30 * 60 * 1000;
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const URL_ALLOWED = /^(https:\/\/|file:\/\/)/;
+// Left in the commits cache when its server ignored the commits-only
+// filter; the cache is then never used until a person moves it away.
+const FILTER_REFUSED = "openqodex-filter-refused";
+const FSCK = "git fsck --no-dangling";
 
 // Every attribute that makes a file's bytes in the working tree differ from
 // its blob, turned off in each attempt's repository (.git/info/attributes
@@ -110,7 +133,35 @@ const said = (error) => (`${error.stderr ?? ""}`.trim() || error.message).split(
 
 // Why this case may not be materialised here, or null. Nothing is fetched
 // before this answers (failure 6).
-export function prRefusal(c, { heldOut = false } = {}) {
+// Why the case's clone URL may not be fetched, or null. It must be the
+// named repository on the host the case's pull request link names: https,
+// no user name or password, path /<owner>/<name> with or without .git, no
+// query (failure 11). A file URL (a local upstream) only when the caller
+// asks for it, as the tests do.
+function cloneUrlRefusal(c, { allowFileUrl }) {
+  const raw = c.materialise.cloneUrl;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return `the clone URL ${JSON.stringify(raw)} is not a URL`;
+  }
+  if (url.protocol === "file:") return allowFileUrl ? null : `the clone URL ${raw} is a local path, which only a test may use`;
+  if (url.protocol !== "https:") return `the clone URL ${raw} is not https`;
+  if (url.username !== "" || url.password !== "") return `the clone URL ${raw} carries a user name or password`;
+  let host = null;
+  try {
+    host = new URL(c.source?.prUrl ?? "").host;
+  } catch {
+    // no pull request link
+  }
+  if (!host) return "the case names no pull request link, so the host its clone URL must be on is unknown";
+  if (url.host !== host) return `the clone URL ${raw} is on ${url.host}, not on ${host}, where the pull request is`;
+  if (url.search !== "" || url.hash !== "" || (url.pathname !== `/${c.source.repo}` && url.pathname !== `/${c.source.repo}.git`)) return `the clone URL ${raw} is not the repository ${c.source.repo}`;
+  return null;
+}
+
+export function prRefusal(c, { heldOut = false, allowFileUrl = false } = {}) {
   const m = c?.materialise;
   if (m?.kind !== "pr") return `${c?.id ?? "the case"} is not a pull request case`;
   if (c.status !== "usable") return `${c.id} is excluded (${c.excludedWhy ?? "no reason recorded"}), so it is never fetched`;
@@ -119,7 +170,8 @@ export function prRefusal(c, { heldOut = false } = {}) {
   if (c.split === "test" && !heldOut) return `${c.id} is held out: it is materialised only by a release run or by run.mjs --materialise-only, which log the access`;
   if (!REPO.test(c.source?.repo ?? "") || c.source.repo.includes("..")) return `${c.id}: the repository name ${JSON.stringify(c.source?.repo)} is not <owner>/<name>`;
   if (!HASH.test(c.hash ?? "")) return `${c.id}: the case hash ${JSON.stringify(c.hash)} is not a sha256`;
-  if (!URL_ALLOWED.test(m.cloneUrl ?? "")) return `${c.id}: the clone URL ${JSON.stringify(m.cloneUrl)} is not an https or file URL`;
+  const url = cloneUrlRefusal(c, { allowFileUrl });
+  if (url !== null) return `${c.id}: ${url}`;
   if (!/^refs\/pull\/\d+\/head$/.test(m.prRef ?? "")) return `${c.id}: the pull request ref ${JSON.stringify(m.prRef)} is not refs/pull/<number>/head`;
   for (const k of ["baseSha", "headSha"]) if (!SHA.test(m[k] ?? "")) return `${c.id}: ${k} ${JSON.stringify(m[k])} is not a full commit id`;
   if (m.mergeBaseSha !== null && m.mergeBaseSha !== undefined && !SHA.test(m.mergeBaseSha)) return `${c.id}: mergeBaseSha ${JSON.stringify(m.mergeBaseSha)} is not a full commit id`;
@@ -199,7 +251,21 @@ function findMergeBases(repo, c) {
   const env = commitsEnv();
   initBare(repo, [["core.repositoryformatversion", "1"], ["extensions.partialClone", "origin"], ["remote.origin.url", cloneUrl], ["remote.origin.promisor", "true"], ["remote.origin.partialclonefilter", "tree:0"]]);
   if (g(repo, ["config", "remote.origin.url"], env) !== cloneUrl) g(repo, ["config", "remote.origin.url", cloneUrl], env);
-  const fetch = (args, wants) => g(repo, ["fetch", "-q", "--no-tags", "--no-recurse-submodules", "--filter=tree:0", ...args, "--end-of-options", "origin", ...wants], env);
+  const refused = join(repo, FILTER_REFUSED);
+  if (existsSync(refused)) throw new Error(`${c.id}: ${readFileSync(refused, "utf8").trim()}`);
+  // git only warns, and fetches everything, when the server ignores the
+  // filter (failure 12), so its words are read on success too.
+  const fetch = (args, wants) => {
+    const r = spawnSync("git", [...FLAGS, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--filter=tree:0", ...args, "--end-of-options", "origin", ...wants], { cwd: repo, env, encoding: "utf8", maxBuffer: 1 << 30 });
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw Object.assign(new Error(`git fetch exited ${r.status}`), { stderr: r.stderr });
+    const warning = r.stderr.split("\n").find((l) => /filtering not recognized by server/i.test(l));
+    if (warning) {
+      const why = `${cloneUrl} ignored the commits-only filter (git: "${warning.trim()}") and sent trees and files, so ${repo} is no longer commits only; it is not used until a person moves it to the Trash`;
+      writeFileSync(refused, `${why}\n`);
+      throw new Error(`${c.id}: ${why}`);
+    }
+  };
   // The head first: when the server no longer has it, the case stops
   // before any tree is downloaded (failure 8).
   let headWant = headSha;
@@ -207,6 +273,7 @@ function findMergeBases(repo, c) {
     try {
       fetch(["--depth=1"], [headSha]);
     } catch (bySha) {
+      if (existsSync(refused)) throw bySha;
       // A server may serve a pull request's head only through its pull
       // request ref: fetch the ref when its tip is the head.
       const tip = (tryG(repo, ["ls-remote", "--end-of-options", cloneUrl, prRef], env) ?? "").split(/\s/)[0] || null;
@@ -274,9 +341,35 @@ function checkedRecord(path, c) {
   const record = JSON.parse(readFileSync(join(path, "materialised.json"), "utf8"));
   const problems = [];
   if (record.upstream?.headSha !== c.materialise.headSha || record.upstream?.baseSha !== c.materialise.baseSha) problems.push(`it was built from ${record.upstream?.baseSha?.slice(0, 12)}...${record.upstream?.headSha?.slice(0, 12)}, not this case's commits`);
+  if (typeof record.fsck !== "string" || !record.fsck.startsWith(`${FSCK}: no problems`)) problems.push("its record holds no passed fsck, so the build never finished");
   if (tryG(path, ["rev-parse", `${record.head}^{tree}`]) !== record.headTree || tryG(path, ["rev-parse", `${record.base}^{tree}`]) !== record.baseTree) problems.push("its commits no longer hold the trees its record names");
   if (problems.length > 0) throw new Error(`${c.id}: the case repository ${path} is damaged: ${problems.join("; ")}. Move it to the Trash and materialise again`);
   return record;
+}
+
+// A full fsck of the case repository: every object read back and its id
+// checked, every link followed. Throws with git's words.
+function fsckCaseRepo(path) {
+  const r = spawnSync("git", [...FLAGS, "fsck", "--no-dangling", "--no-progress"], { cwd: path, env: gitEnv(), encoding: "utf8", maxBuffer: 1 << 30 });
+  if (r.error) throw r.error;
+  const said = `${r.stdout}${r.stderr}`.trim();
+  if (r.status !== 0 || said !== "") throw new Error(`${FSCK} in ${path} found problems: ${said.split("\n").slice(0, 5).join("; ") || `exit ${r.status}`}`);
+  return `${FSCK}: no problems`;
+}
+
+// Checks a built case repository again (materialise.mjs --check): its
+// record, its trees, and a full fsck. Returns the record.
+export function verifyCaseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl = false } = {}) {
+  const why = prRefusal(c, { heldOut, allowFileUrl });
+  if (why !== null) throw new Error(why);
+  const path = caseRepoPath(cache, c);
+  if (!existsSync(join(path, "materialised.json"))) throw new Error(`${c.id}: no case repository is built at ${path}`);
+  try {
+    fsckCaseRepo(path);
+  } catch (error) {
+    throw new Error(`${c.id}: the case repository is damaged: ${error.message}. Move it to the Trash and materialise again`);
+  }
+  return checkedRecord(path, c);
 }
 
 // Builds cases/<case hash>.git from the cache: B and H are commits of the
@@ -306,8 +399,8 @@ function buildCaseRepo(cache, c, repo, mergeBaseSha) {
     // Copy every object B and H name out of the cache, then cut the link.
     g(temp, ["repack", "-a", "-d", "-q"]);
     rmSync(join(temp, "objects", "info", "alternates"));
-    g(temp, ["fsck", "--connectivity-only", "--no-dangling", "--no-progress"]);
-    const record = { v: 1, caseId: c.id, name: c.name, hash: c.hash, repo: c.source.repo, base, head, baseTree: g(temp, ["rev-parse", `${base}^{tree}`]), headTree: g(temp, ["rev-parse", `${head}^{tree}`]), upstream };
+    const fsck = fsckCaseRepo(temp);
+    const record = { v: 1, caseId: c.id, name: c.name, hash: c.hash, repo: c.source.repo, base, head, baseTree: g(temp, ["rev-parse", `${base}^{tree}`]), headTree: g(temp, ["rev-parse", `${head}^{tree}`]), fsck, upstream };
     if (record.baseTree !== upstream.mergeBaseTree || record.headTree !== upstream.headTree) throw new Error(`${c.id}: the built trees differ from upstream's (base ${record.baseTree} for ${upstream.mergeBaseTree}, head ${record.headTree} for ${upstream.headTree})`);
     writeFileSync(join(temp, "materialised.json"), `${JSON.stringify(record, null, 2)}\n`);
     renameSync(temp, final);
@@ -317,11 +410,24 @@ function buildCaseRepo(cache, c, repo, mergeBaseSha) {
   }
 }
 
+// Appends one line to <cache>/held-out-access.log for a held-out case,
+// before anything is fetched or read; refuses when it cannot (failure 15).
+function recordHeldOut(cache, c) {
+  const line = `${JSON.stringify({ at: new Date().toISOString(), caseId: c.id, argv1: process.argv[1] ?? null, cwd: process.cwd() })}\n`;
+  try {
+    mkdirSync(cache, { recursive: true });
+    appendFileSync(join(cache, "held-out-access.log"), line);
+  } catch (error) {
+    throw new Error(`${c.id} is held out, and its access cannot be recorded in ${join(cache, "held-out-access.log")} (${error.message}), so it is not built`);
+  }
+}
+
 // The case repository of a pull request case, built once: { path, record,
 // built }, built false when it was already there and nothing was fetched.
-export function caseRepo(c, { cache = cacheRoot(), heldOut = false } = {}) {
-  const why = prRefusal(c, { heldOut });
+export function caseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl = false } = {}) {
+  const why = prRefusal(c, { heldOut, allowFileUrl });
   if (why !== null) throw new Error(why);
+  if (c.split === "test") recordHeldOut(cache, c);
   const path = caseRepoPath(cache, c);
   if (existsSync(join(path, "materialised.json"))) return { path, record: checkedRecord(path, c), built: false };
   const repo = repoCachePath(cache, c);
@@ -356,9 +462,9 @@ export function seenTree(dir) {
 // shape asked and returns { dir, shape, base, head, mergeBaseSha, headSha,
 // caseRepo, built }: base and head are B and H, the commits a server review
 // names; mergeBaseSha and headSha are upstream's.
-export function materialisePr(c, into, { shape = "laptop", cache = cacheRoot(), heldOut = false } = {}) {
+export function materialisePr(c, into, { shape = "laptop", cache = cacheRoot(), heldOut = false, allowFileUrl = false } = {}) {
   if (shape !== "laptop" && shape !== "server") throw new Error(`the shape is laptop or server, not ${JSON.stringify(shape)}`);
-  const { path, record, built } = caseRepo(c, { cache, heldOut });
+  const { path, record, built } = caseRepo(c, { cache, heldOut, allowFileUrl });
   mkdirSync(into, { recursive: true });
   if (readdirSync(into).length > 0) throw new Error(`${c.id}: ${into} is not empty`);
   g(dirname(into), ["clone", "-q", "--no-checkout", path, into]);
@@ -368,13 +474,26 @@ export function materialisePr(c, into, { shape = "laptop", cache = cacheRoot(), 
   // The machine's global ignore file would hide new files from the review.
   g(into, ["config", "core.excludesFile", "/dev/null"]);
   g(into, ["reset", "-q", "--hard", record.head]);
-  if (shape === "laptop") {
-    g(into, ["reset", "-q", record.base]);
-    const seen = seenTree(into);
-    if (seen !== record.headTree) {
-      const differ = g(into, ["diff-tree", "-r", "--name-only", seen, record.headTree]).split("\n").filter(Boolean);
-      throw new Error(`${c.id}: the laptop shape does not show the pull request exactly (the working tree differs from the head at ${differ.length} paths: ${differ.slice(0, 10).join(", ")}${differ.length > 10 ? ", ..." : ""}); the server shape is unaffected`);
+  if (shape === "laptop") g(into, ["reset", "-q", record.base]);
+  // Either shape: the working tree must hold the head exactly (failures 4
+  // and 14). Two head paths that differ only in case land on one file where
+  // the file system folds case, which git's own check can miss when the two
+  // files are the same size, so they are looked for first.
+  const byFolded = new Map();
+  for (const p of g(into, ["ls-tree", "-r", "--name-only", "-z", record.head]).split("\0").filter(Boolean)) byFolded.set(p.toLowerCase(), [...(byFolded.get(p.toLowerCase()) ?? []), p]);
+  const oneFile = (a, b) => {
+    try {
+      return lstatSync(join(into, a)).ino === lstatSync(join(into, b)).ino;
+    } catch {
+      return true;
     }
+  };
+  const collide = [...byFolded.values()].filter((ps) => ps.length > 1 && ps.slice(1).some((p) => oneFile(ps[0], p))).map((ps) => ps.sort().join(" and "));
+  if (collide.length > 0) throw new Error(`${c.id}: the ${shape} shape cannot hold the pull request's head exactly: this file system folds case, so ${collide.slice(0, 5).join("; ")}${collide.length > 5 ? "; ..." : ""} are one file`);
+  const seen = seenTree(into);
+  if (seen !== record.headTree) {
+    const differ = g(into, ["diff-tree", "-r", "-z", "--name-only", seen, record.headTree]).split("\0").filter(Boolean);
+    throw new Error(`${c.id}: the ${shape} shape cannot hold the pull request's head exactly: the working tree differs from the head at ${differ.length} paths: ${differ.slice(0, 10).join(", ")}${differ.length > 10 ? ", ..." : ""}`);
   }
   return { dir: into, shape, base: record.base, head: record.head, mergeBaseSha: record.upstream.mergeBaseSha, headSha: record.upstream.headSha, caseRepo: path, built };
 }

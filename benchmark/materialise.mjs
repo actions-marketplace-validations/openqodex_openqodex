@@ -8,8 +8,9 @@
 //       committed and the change uncommitted; server: the base and the
 //       change as two commits.
 //   node benchmark/materialise.mjs --check <case>...
-//       builds each case in both shapes in temp folders, prints what it
-//       proved, and removes the folders; exit 1 when a check fails
+//       builds each case in both shapes in temp folders, runs a full fsck
+//       of each case repository again, prints what it proved, and removes
+//       the folders; exit 1 when a check fails
 //   node benchmark/materialise.mjs --prune
 //       lists the clone cache's folders and sizes; nothing is removed, a
 //       person moves what to free to the Trash
@@ -27,7 +28,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { git, listCases as plantedNames } from "./lib/cases.mjs";
 import { cacheRoot } from "./lib/licence.mjs";
-import { cacheListing, caseRepo, prRefusal, seenTree } from "./lib/materialise.mjs";
+import { cacheListing, prRefusal, seenTree, verifyCaseRepo } from "./lib/materialise.mjs";
 import { listCases, materialise, readCase, readSuite, realCaseId } from "./lib/suites.mjs";
 
 const USAGE = "usage: node benchmark/materialise.mjs <case> [folder] [--shape laptop|server]\n       node benchmark/materialise.mjs --check <case>...\n       node benchmark/materialise.mjs --prune";
@@ -69,12 +70,14 @@ function check(c) {
     const laptop = materialise(c, join(temp, "laptop", "repo"), { shape: "laptop" });
     const server = materialise(c, join(temp, "server", "repo"), { shape: "server" });
     if (c.materialise.kind === "pr") {
-      const { record } = caseRepo(c);
+      // Reads every object of the case repository again (a full fsck).
+      const record = verifyCaseRepo(c);
       const u = record.upstream;
+      expect(true, `case repository: ${record.fsck}`);
       said.unshift(`${c.id}: ${c.changeLines ?? "?"} changed lines; head ${short(u.headSha)}, merge base ${short(u.mergeBaseSha)} (from ${u.mergeBaseFrom}; the dataset's base ${short(u.baseSha)}${u.baseSha === u.mergeBaseSha ? " is the merge base" : " is not"})`);
       expect(record.headTree === u.headTree && git(server.dir, "rev-parse", "HEAD^{tree}").trim() === u.headTree, `head tree ${u.headTree} is upstream's`);
       expect(record.baseTree === u.mergeBaseTree && git(server.dir, "rev-parse", "HEAD~1^{tree}").trim() === u.mergeBaseTree, `base tree ${u.mergeBaseTree} is the upstream merge base's`);
-      said.push(`  ${laptop.built ? "fetched and built" : "already in the cache"}; both shapes in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+      said.push(`  case repository ${laptop.built ? "built now" : "already built"}; both shapes in ${((Date.now() - started) / 1000).toFixed(1)} s`);
     } else {
       said.unshift(`${c.id}: planted`);
     }
