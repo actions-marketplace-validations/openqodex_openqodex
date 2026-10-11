@@ -488,11 +488,17 @@ function readReport(path: string): { text: string } | { error: string } | null {
   }
 }
 
-function skippedAdapter(source: ScannerSource, reason: string): CustomAdapter {
+// The changed files an entry's `paths` globs match; all of them without globs.
+function matcher(entry: CustomScanner): (paths: string[]) => string[] {
+  return (paths) => (entry.paths === null ? paths : paths.filter((p) => entry.paths!.some((glob) => matchesGlob(p, glob))));
+}
+
+function skippedAdapter(entry: CustomScanner, reason: string): CustomAdapter {
+  const source: ScannerSource = `custom:${entry.name}`;
   return {
     source,
     skipped: { scanner: source, status: "untrusted", version: null, rawCount: 0, keptCount: 0, durationMs: 0, reason },
-    wants: () => false,
+    paths: matcher(entry),
     run: async () => ({ findings: [], error: null, version: null }),
   };
 }
@@ -500,12 +506,11 @@ function skippedAdapter(source: ScannerSource, reason: string): CustomAdapter {
 function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapter {
   const source: ScannerSource = `custom:${entry.name}`;
   const version = record.artifact.version;
-  const matching = (paths: string[]) =>
-    entry.paths === null ? paths : paths.filter((p) => entry.paths!.some((glob) => matchesGlob(p, glob)));
+  const matching = matcher(entry);
   return {
     source,
     skipped: null,
-    wants: (changedPaths) => matching(changedPaths).length > 0,
+    paths: matching,
     async run({ repoDir, changedPaths, scratch }) {
       const tokens = splitCommand(entry.run);
       const usesReport = tokens.some((t) => t.includes("{report}"));
@@ -566,6 +571,6 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
 // branch or a pull request is a temporary checkout, not that repository.
 export function customAdapters(approvalRoot: string, config: Config): CustomAdapter[] {
   return assess(approvalRoot, config).map(({ entry, state, record, reason }) =>
-    state === "trusted" && record ? trustedAdapter(entry, record) : skippedAdapter(`custom:${entry.name}`, reason ?? NOT_APPROVED),
+    state === "trusted" && record ? trustedAdapter(entry, record) : skippedAdapter(entry, reason ?? NOT_APPROVED),
   );
 }

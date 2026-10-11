@@ -16,7 +16,7 @@ export function filterToChangedLines(
   return findings.filter((f) => overlapsCoverage(f, coverage));
 }
 
-function overlapsCoverage(f: StaticFinding, coverage: DiffCoverage): boolean {
+export function overlapsCoverage(f: StaticFinding, coverage: DiffCoverage): boolean {
   const lines = coverage.get(f.filePath);
   if (!lines || lines.size === 0) return false;
   // Walk the changed lines, not the span: a scanner's report can carry any

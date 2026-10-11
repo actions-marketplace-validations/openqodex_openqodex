@@ -166,7 +166,7 @@ function finding(over: Partial<StaticFinding>): StaticFinding {
 }
 
 function custom(over: Partial<CustomAdapter> & Pick<CustomAdapter, "run">): CustomAdapter {
-  return { source: "custom:demo", skipped: null, wants: () => true, ...over };
+  return { source: "custom:demo", skipped: null, paths: (changedPaths) => changedPaths, ...over };
 }
 
 describe("runScanners", () => {

@@ -7,7 +7,9 @@
 // parallel, then one pipeline: paths rebased to repo-relative, the
 // changed-line filter, the fixture filter, `disabled_rules`, one fixed
 // order, cross-scanner dedup, a severity sort, candidate ids. Custom
-// scanners join after the builtins through the same pipeline.
+// scanners join after the builtins through the same pipeline. Every raw
+// finding leaves one entry in the scan's trail: the stage that dropped it,
+// or the candidate it became (trailOf).
 //
 // Nothing a scanner does can reject this function: a missing tool, a
 // failed install, a timeout, bad JSON or a thrown error all become a status
@@ -35,31 +37,36 @@ import type {
   ResolveTool,
   ScanResult,
   ScannerRunSummary,
+  ScannerSelection,
   ScannerSeverity,
   ScannerSource,
+  ScannerStages,
   StaticFinding,
+  TrailEntry,
+  TrailStage,
 } from "@openqodex/core";
 import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
-import { DISABLED_REASON, selectScanners, type ScannerChoice } from "./select.js";
+import { DISABLED_REASON, NOTHING_TO_CHECK, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
 import type { SettingsReader } from "./shared-settings.js";
 import { readRepoFile, repoFileOrReason, scannerInputs } from "./adapters/read.js";
 import type { Adapter } from "./adapters/index.js";
-import { dropFixtureFindings, filterToChangedLines } from "./filter.js";
+import { dropFixtureFindings, overlapsCoverage } from "./filter.js";
 import { laptopScratch, scratchAt, type Scratch } from "./scratch.js";
 import { SEMGREP_MAX_TARGET_BYTES } from "./adapters/semgrep.js";
 import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
 // entry must not run (untrusted, changed since approval); the runner then
-// records that summary and never calls `run`. `scratch`: where the run may
-// write (scratch.ts); the laptop's places when left out.
+// records that summary and never calls `run`. `paths`: the changed files its
+// `paths` globs match; it runs only when there is one. `scratch`: where the
+// run may write (scratch.ts); the laptop's places when left out.
 export type CustomAdapter = {
   source: ScannerSource;
   skipped: ScannerRunSummary | null;
-  wants(changedPaths: string[]): boolean;
+  paths(changedPaths: string[]): string[];
   run(args: { repoDir: string; changedPaths: string[]; scratch?: Scratch }): Promise<AdapterResult & { version: string | null }>;
 };
 
@@ -118,9 +125,12 @@ export async function runScanners(args: {
   // their own checks.
   // A refused file a scanner would have checked is named in its reason.
   const { inputs, refused } = scannerInputs(args.repoDir, args.changedPaths);
-  const choices = new Map(
-    selectScanners({ repoDir: args.repoDir, paths: inputs, config: args.config, facts }).map((c) => [c.scanner, c]),
-  );
+  const chosen = selectScanners({ repoDir: args.repoDir, paths: inputs, config: args.config, facts });
+  const choices = new Map(chosen.map((c) => [c.scanner, c]));
+  const selection: ScannerSelection[] = [
+    ...chosen.map(({ scanner, wanted, paths, projects, skip }) => ({ scanner, wanted, paths, projects, skip })),
+    ...(args.custom ?? []).map((c) => customSelection(c, args.changedPaths)),
+  ];
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
     guard(adapter.source, async () => {
       const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs, scratch });
@@ -142,10 +152,19 @@ export async function runScanners(args: {
   // path is rebased onto the repo root first.
   const inScope = new Set(args.changedPaths);
   const coverage = args.coverage;
-  let merged = outcomes.flatMap((o) => {
-    const rebased = toRunDirRelative(o.findings, args.repoDir);
-    return coverage ? filterToChangedLines(rebased, coverage) : rebased.filter((f) => inScope.has(f.filePath));
+  const raw = outcomes.flatMap((o) => toRunDirRelative(o.findings, args.repoDir));
+  // The stage that dropped each finding one did: the trail's record of it.
+  const dropped = new Map<StaticFinding, TrailStage>();
+  const lineStage = (f: StaticFinding): TrailStage | null => {
+    if (coverage ? overlapsCoverage(f, coverage) : inScope.has(f.filePath)) return null;
+    return inScope.has(f.filePath) ? "changed-lines" : "outside-change";
+  };
+  let merged = raw.filter((f) => {
+    const stage = lineStage(f);
+    if (stage !== null) dropped.set(f, stage);
+    return stage === null;
   });
+  let own: StaticFinding[] = [];
   if (coverage) {
     // A changed settings file and an added suppression comment silence their
     // scanner in every later run, so --only and --skip, which pick scanners
@@ -154,16 +173,16 @@ export async function runScanners(args: {
     const wanted = (s: BuiltinScanner) => !args.config.disabledScanners.includes(s);
     // concat, not push(...): a spread of many thousands of candidates as
     // arguments overflows the call stack.
-    merged = merged.concat(
+    own = (
       await settingsFindings({
         repoDir: args.repoDir,
         changedPaths: args.changedPaths,
         coverage,
         baseText: args.baseText,
         wanted,
-      }),
-      await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted, facts }),
-    );
+      })
+    ).concat(await suppressionFindings({ repoDir: args.repoDir, changedPaths: args.changedPaths, coverage, wanted, facts }));
+    merged = merged.concat(own);
   }
 
   // Fixture, mock and snapshot files hold throwaway data shaped like the
@@ -177,17 +196,21 @@ export async function runScanners(args: {
   let fixturesDropped = 0;
   if (!args.config.includeFixtures) {
     const settings = new Set(merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f)));
-    const dropped = dropFixtureFindings(merged.filter((f) => !settings.has(f)));
-    postFixture = [...dropped.kept, ...settings];
-    fixturesDropped = dropped.droppedCount;
+    const fixtures = dropFixtureFindings(merged.filter((f) => !settings.has(f)));
+    postFixture = [...fixtures.kept, ...settings];
+    fixturesDropped = fixtures.droppedCount;
+    const survived = new Set(postFixture);
+    for (const f of merged) if (!survived.has(f)) dropped.set(f, "fixture");
   }
 
   const postRules =
     args.config.disabledRules.length === 0
       ? postFixture
-      : postFixture.filter(
-          (f) => !args.config.disabledRules.some((glob) => matchesGlob(`${f.source}:${f.ruleId}`, glob)),
-        );
+      : postFixture.filter((f) => {
+          const off = args.config.disabledRules.some((glob) => matchesGlob(`${f.source}:${f.ruleId}`, glob));
+          if (off) dropped.set(f, "disabled-rule");
+          return !off;
+        });
 
   // One fixed order, whatever order the scanners printed in (checkov on
   // Linux prints its framework reports as they finish, issue #89): by
@@ -197,19 +220,26 @@ export async function runScanners(args: {
   // the candidates, and so their ids, the order severity, scanner, file,
   // line start, line end, rule id, message.
   const ensemble = [...ADAPTERS.map((a) => a.source), ...(args.custom ?? []).map((c) => c.source)];
-  const ordered = [...postRules].sort(placeOrder(ensemble));
+  const order = placeOrder(ensemble);
+  const ordered = [...postRules].sort(order);
   const mergedInto = new Map<StaticFinding, string[]>();
-  const deduped = dedupByRuleClass(ordered, mergedInto);
+  const absorbed = new Map<StaticFinding, StaticFinding>();
+  const deduped = dedupByRuleClass(ordered, mergedInto, absorbed);
   deduped.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
-  const candidates: Candidate[] = deduped.map((f, i) => ({
-    ...f,
-    message: redactCut(f.message, secrets),
-    id: `c${i + 1}`,
-    token: `${f.source}:${f.ruleId}`,
-    reviewSeverity: mapScannerSeverity(f.severity),
-    ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
-  }));
+  const ids = new Map<StaticFinding, string>();
+  const candidates: Candidate[] = deduped.map((f, i) => {
+    ids.set(f, `c${i + 1}`);
+    return {
+      ...f,
+      message: redactCut(f.message, secrets),
+      id: `c${i + 1}`,
+      token: `${f.source}:${f.ruleId}`,
+      reviewSeverity: mapScannerSeverity(f.severity),
+      ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
+    };
+  });
+  const { trail, omitted, stages } = trailOf(raw.concat(own), { dropped, absorbed, ids, order });
 
   const kept = new Map<ScannerSource, number>();
   for (const c of candidates) kept.set(c.source, (kept.get(c.source) ?? 0) + 1);
@@ -217,6 +247,7 @@ export async function runScanners(args: {
     ...o.summary,
     keptCount: kept.get(o.summary.scanner) ?? 0,
     reason: o.summary.reason === null ? null : oneLine(redactCut(o.summary.reason, secrets)),
+    stages: stages.get(o.summary.scanner) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 },
   }));
   args.onProgress?.(stageLine(scanners, candidates.length));
 
@@ -233,10 +264,72 @@ export async function runScanners(args: {
       fixturesDropped,
       secretFingerprints: fingerprintSecrets(secrets),
       projects: projectsOf(args.changedPaths, facts),
+      selection,
+      trail,
+      trailOmitted: omitted,
     },
     secrets,
     checked,
   };
+}
+
+// The most entries a scan's trail holds. A whole-repository run of a large
+// repository can raise many thousands of findings; past this the trail
+// counts them instead.
+const TRAIL_MAX = 5000;
+
+// Kept and merged first: past TRAIL_MAX the trail loses the findings
+// farthest from the change, never a candidate or what dedup folded into one.
+const TRAIL_ORDER: readonly TrailStage[] = ["kept", "merged", "disabled-rule", "fixture", "changed-lines", "outside-change"];
+
+// One trail entry per finding, a scanner's or OpenQodex's own: the stage
+// that dropped it, the candidate it became (`id`), or the candidate dedup
+// folded it into (`into`). And per scanner, how many each stage dropped,
+// over every finding, written or not. Never the message: it can quote a
+// secret.
+function trailOf(
+  findings: StaticFinding[],
+  at: {
+    dropped: Map<StaticFinding, TrailStage>;
+    absorbed: Map<StaticFinding, StaticFinding>;
+    ids: Map<StaticFinding, string>;
+    order: (a: StaticFinding, b: StaticFinding) => number;
+  },
+): { trail: TrailEntry[]; omitted: number; stages: Map<ScannerSource, ScannerStages> } {
+  const stages = new Map<ScannerSource, ScannerStages>();
+  const COUNTED: Partial<Record<TrailStage, keyof ScannerStages>> = {
+    "outside-change": "changedLines",
+    "changed-lines": "changedLines",
+    fixture: "fixtures",
+    "disabled-rule": "rules",
+    merged: "merged",
+  };
+  const staged = findings.map((f) => {
+    const stage: TrailStage = at.dropped.get(f) ?? (at.absorbed.has(f) ? "merged" : "kept");
+    const field = COUNTED[stage];
+    if (field !== undefined) {
+      const counts = stages.get(f.source) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 };
+      counts[field] += 1;
+      stages.set(f.source, counts);
+    }
+    return { f, stage };
+  });
+  staged.sort((a, b) => TRAIL_ORDER.indexOf(a.stage) - TRAIL_ORDER.indexOf(b.stage) || at.order(a.f, b.f));
+  const trail = staged.slice(0, TRAIL_MAX).map(({ f, stage }): TrailEntry => {
+    const entry: TrailEntry = { token: `${f.source}:${f.ruleId}`, file: f.filePath, lineStart: f.lineStart, lineEnd: f.lineEnd, severity: f.severity, stage };
+    if (stage === "kept") entry.id = at.ids.get(f);
+    if (stage === "merged") entry.into = at.ids.get(at.absorbed.get(f)!);
+    return entry;
+  });
+  return { trail, omitted: staged.length - trail.length, stages };
+}
+
+// A custom scanner as the selector would list it: the changed files its
+// globs match, and why it does not run when it does not.
+function customSelection(custom: CustomAdapter, changedPaths: string[]): ScannerSelection {
+  const paths = custom.paths(changedPaths);
+  if (custom.skipped) return { scanner: custom.source, wanted: false, paths, projects: [], skip: custom.skipped.reason ?? custom.skipped.status };
+  return { scanner: custom.source, wanted: paths.length > 0, paths, projects: [], skip: paths.length > 0 ? null : NOTHING_TO_CHECK };
 }
 
 // The projects the changed files belong to, with their frameworks, for the
@@ -406,9 +499,12 @@ async function runBuiltin(
   if (!choice.wanted) return skippedOutcome(source, "disabled", choice.skip, started);
 
   let tool = null;
+  let resolveMs = 0;
   if (!IN_PROCESS.has(source)) {
+    const asked = Date.now();
     const resolution = await args.resolveTool(source);
-    if (!resolution.ok) return skippedOutcome(source, resolution.status, resolution.reason, started);
+    resolveMs = Date.now() - asked;
+    if (!resolution.ok) return skippedOutcome(source, resolution.status, resolution.reason, started, { resolveMs, files: 0 });
     // The tool's own environment on the laptop; on a scratch root, the
     // scratch's variables on top and a Go or Cargo tool's caches moved into
     // it (scratch.ts).
@@ -424,7 +520,7 @@ async function runBuiltin(
     facts,
     scratch: args.scratch,
   });
-  return ranOutcome(source, result, tool?.version ?? null, ranFrom);
+  return ranOutcome(source, result, tool?.version ?? null, ranFrom, { resolveMs, files: choice.paths.length });
 }
 
 async function runCustom(
@@ -432,12 +528,14 @@ async function runCustom(
   args: { repoDir: string; changedPaths: string[]; scratch: Scratch },
 ): Promise<Outcome> {
   const started = Date.now();
-  if (custom.skipped) return { summary: custom.skipped, findings: [], secrets: [] };
-  if (!custom.wants(args.changedPaths)) {
+  if (custom.skipped) return { summary: { ...custom.skipped, ...NOT_RUN }, findings: [], secrets: [] };
+  const paths = custom.paths(args.changedPaths);
+  if (paths.length === 0) {
     return skippedOutcome(custom.source, "no_matching_files", null, started);
   }
   const result = await custom.run({ repoDir: args.repoDir, changedPaths: args.changedPaths, scratch: args.scratch });
-  return ranOutcome(custom.source, result, result.version, started);
+  // Its binary was fetched and checked when it was approved: nothing to resolve.
+  return ranOutcome(custom.source, result, result.version, started, { resolveMs: 0, files: paths.length });
 }
 
 // A scanner whose run threw is recorded as failed; the throw never escapes.
@@ -451,14 +549,20 @@ async function guard(source: ScannerSource, run: () => Promise<Outcome>): Promis
   }
 }
 
+// The time a scanner's tool took to resolve and how many changed files it
+// was handed.
+type Cost = { resolveMs: number; files: number };
+const NOT_RUN: Cost = { resolveMs: 0, files: 0 };
+
 function skippedOutcome(
   scanner: ScannerSource,
   status: ScannerRunSummary["status"],
   reason: string | null,
   started: number,
+  cost: Cost = NOT_RUN,
 ): Outcome {
   return {
-    summary: { scanner, status, version: null, rawCount: 0, keptCount: 0, durationMs: Date.now() - started, reason },
+    summary: { scanner, status, version: null, rawCount: 0, keptCount: 0, durationMs: Date.now() - started, ...cost, reason },
     findings: [],
     secrets: [],
   };
@@ -474,8 +578,9 @@ function ranOutcome(
   result: AdapterResult,
   version: string | null,
   started: number,
+  cost: Cost,
 ): Outcome {
-  if (result.skipped) return skippedOutcome(scanner, "disabled", result.skipped, started);
+  if (result.skipped) return skippedOutcome(scanner, "disabled", result.skipped, started, cost);
   const failed = result.error !== null && result.findings.length === 0;
   return {
     summary: {
@@ -485,6 +590,7 @@ function ranOutcome(
       rawCount: result.findings.length,
       keptCount: 0,
       durationMs: Date.now() - started,
+      ...cost,
       reason: result.error ?? result.note ?? null,
       ...(result.rules ? { rules: result.rules } : {}),
     },
@@ -721,9 +827,15 @@ const WORD_CLASSED: ReadonlySet<string> = new Set<BuiltinScanner>([
 //
 // `merged`, when given, receives for each finding kept the tokens
 // ("<source>:<ruleId>") of the other scanners' findings merged into it, in
-// input order, so the report can say who else reported it.
+// input order, so the report can say who else reported it. `absorbed`, when
+// given, receives for each finding dropped the one it was folded into: the
+// winner for another scanner's finding, the hit kept for a repeat.
 // Exported for unit tests.
-export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticFinding, string[]>): StaticFinding[] {
+export function dedupByRuleClass(
+  findings: StaticFinding[],
+  merged?: Map<StaticFinding, string[]>,
+  absorbed?: Map<StaticFinding, StaticFinding>,
+): StaticFinding[] {
   const groups = new Map<string, StaticFinding[]>();
   for (const f of findings) {
     const key = `${f.filePath}::${f.lineStart}::${f.lineEnd}::${ruleClassFor(f)}`;
@@ -750,6 +862,9 @@ export function dedupByRuleClass(findings: StaticFinding[], merged?: Map<StaticF
     }
     for (const f of kept.values()) emitted.add(f);
     if (merged && others.length > 0) merged.set(winner, others);
+    if (absorbed) {
+      for (const f of bucket) if (!emitted.has(f)) absorbed.set(f, f.source === winner.source ? kept.get(f.ruleId)! : winner);
+    }
   }
   // Walk the input once so survivors keep their input order.
   return findings.filter((f) => emitted.has(f));

@@ -324,7 +324,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 11,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "sqllint",
@@ -333,7 +341,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "squawk",
@@ -342,7 +358,15 @@
       "rawCount": 4,
       "keptCount": 4,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "sqlfluff",
@@ -351,7 +375,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "cargo-deny",
@@ -360,7 +392,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "actionlint",
@@ -369,7 +409,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "zizmor",
@@ -378,7 +426,15 @@
       "rawCount": 1,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 1
+      }
     },
     {
       "scanner": "hadolint",
@@ -387,7 +443,15 @@
       "rawCount": 7,
       "keptCount": 7,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "trivy",
@@ -396,7 +460,15 @@
       "rawCount": 3,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 2,
+      "reason": null,
+      "stages": {
+        "changedLines": 2,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "checkov",
@@ -405,7 +477,15 @@
       "rawCount": 3,
       "keptCount": 3,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 2,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "tflint",
@@ -414,7 +494,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "kube-linter",
@@ -423,7 +511,15 @@
       "rawCount": 2,
       "keptCount": 2,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "kubeconform",
@@ -432,7 +528,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "shellcheck",
@@ -441,7 +545,15 @@
       "rawCount": 4,
       "keptCount": 4,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "ruff",
@@ -450,7 +562,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 3,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "brakeman",
@@ -459,7 +579,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "rubocop",
@@ -468,7 +596,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "bandit",
@@ -477,7 +613,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 3,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "oxlint",
@@ -486,7 +630,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "golangci",
@@ -495,7 +647,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     }
   ],
   "fixturesDropped": 0,
@@ -510,5 +670,465 @@
       "root": "",
       "frameworks": []
     }
-  ]
+  ],
+  "selection": [
+    {
+      "scanner": "semgrep",
+      "wanted": true,
+      "paths": [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "app/config.py",
+        "app/search.py",
+        "app/server.py",
+        "db/migrations/002_index_item_names.sql",
+        "deploy/deployment.yaml",
+        "infra/main.tf",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "gitleaks",
+      "wanted": true,
+      "paths": [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "app/config.py",
+        "app/search.py",
+        "app/server.py",
+        "db/migrations/002_index_item_names.sql",
+        "deploy/deployment.yaml",
+        "infra/main.tf",
+        "package-lock.json",
+        "package.json",
+        "scripts/deploy.sh"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "sqllint",
+      "wanted": true,
+      "paths": [
+        "db/migrations/002_index_item_names.sql"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "squawk",
+      "wanted": true,
+      "paths": [
+        "db/migrations/002_index_item_names.sql"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "sqlfluff",
+      "wanted": true,
+      "paths": [
+        "db/migrations/002_index_item_names.sql"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "osv-scanner",
+      "wanted": true,
+      "paths": [
+        "package-lock.json"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "cargo-deny",
+      "wanted": false,
+      "paths": [],
+      "projects": [],
+      "skip": "nothing to check"
+    },
+    {
+      "scanner": "actionlint",
+      "wanted": true,
+      "paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "zizmor",
+      "wanted": true,
+      "paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "hadolint",
+      "wanted": true,
+      "paths": [
+        "Dockerfile"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "trivy",
+      "wanted": true,
+      "paths": [
+        "deploy/deployment.yaml",
+        "infra/main.tf"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "checkov",
+      "wanted": true,
+      "paths": [
+        "deploy/deployment.yaml",
+        "infra/main.tf"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "tflint",
+      "wanted": true,
+      "paths": [
+        "infra/main.tf"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "kube-linter",
+      "wanted": true,
+      "paths": [
+        "deploy/deployment.yaml"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "kubeconform",
+      "wanted": true,
+      "paths": [
+        "deploy/deployment.yaml"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "shellcheck",
+      "wanted": true,
+      "paths": [
+        "scripts/deploy.sh"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "ruff",
+      "wanted": true,
+      "paths": [
+        "app/config.py",
+        "app/search.py",
+        "app/server.py"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "brakeman",
+      "wanted": false,
+      "paths": [],
+      "projects": [],
+      "skip": "nothing to check"
+    },
+    {
+      "scanner": "rubocop",
+      "wanted": false,
+      "paths": [],
+      "projects": [],
+      "skip": "nothing to check"
+    },
+    {
+      "scanner": "bandit",
+      "wanted": true,
+      "paths": [
+        "app/config.py",
+        "app/search.py",
+        "app/server.py"
+      ],
+      "projects": [],
+      "skip": null
+    },
+    {
+      "scanner": "oxlint",
+      "wanted": false,
+      "paths": [],
+      "projects": [],
+      "skip": "nothing to check"
+    },
+    {
+      "scanner": "golangci",
+      "wanted": false,
+      "paths": [],
+      "projects": [],
+      "skip": "nothing to check"
+    }
+  ],
+  "trail": [
+    {
+      "token": "gitleaks:stripe-access-token",
+      "file": "app/config.py",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c1"
+    },
+    {
+      "token": "squawk:prefer-robust-stmts",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c18"
+    },
+    {
+      "token": "squawk:require-concurrent-index-creation",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c8"
+    },
+    {
+      "token": "squawk:require-lock-timeout",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c19"
+    },
+    {
+      "token": "squawk:require-statement-timeout",
+      "file": "db/migrations/002_index_item_names.sql",
+      "lineStart": 2,
+      "lineEnd": 2,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c20"
+    },
+    {
+      "token": "actionlint:expression",
+      "file": ".github/workflows/ci.yml",
+      "lineStart": 17,
+      "lineEnd": 17,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c2"
+    },
+    {
+      "token": "hadolint:DL3007",
+      "file": "Dockerfile",
+      "lineStart": 1,
+      "lineEnd": 1,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c9"
+    },
+    {
+      "token": "hadolint:DL3008",
+      "file": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c10"
+    },
+    {
+      "token": "hadolint:DL3009",
+      "file": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c21"
+    },
+    {
+      "token": "hadolint:DL3014",
+      "file": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c11"
+    },
+    {
+      "token": "hadolint:DL3015",
+      "file": "Dockerfile",
+      "lineStart": 3,
+      "lineEnd": 3,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c22"
+    },
+    {
+      "token": "hadolint:DL3020",
+      "file": "Dockerfile",
+      "lineStart": 6,
+      "lineEnd": 6,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c3"
+    },
+    {
+      "token": "hadolint:DL3042",
+      "file": "Dockerfile",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c12"
+    },
+    {
+      "token": "trivy:AWS-0107",
+      "file": "infra/main.tf",
+      "lineStart": 28,
+      "lineEnd": 28,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c4"
+    },
+    {
+      "token": "checkov:CKV_K8S_16",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 42,
+      "lineEnd": 42,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c13"
+    },
+    {
+      "token": "checkov:CKV_K8S_20",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 43,
+      "lineEnd": 43,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c14"
+    },
+    {
+      "token": "checkov:CKV_AWS_24",
+      "file": "infra/main.tf",
+      "lineStart": 28,
+      "lineEnd": 28,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c15"
+    },
+    {
+      "token": "kube-linter:privileged-container",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 42,
+      "lineEnd": 42,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c5"
+    },
+    {
+      "token": "kube-linter:privilege-escalation-container",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 43,
+      "lineEnd": 43,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c6"
+    },
+    {
+      "token": "shellcheck:SC2086",
+      "file": "scripts/deploy.sh",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c23"
+    },
+    {
+      "token": "shellcheck:SC2115",
+      "file": "scripts/deploy.sh",
+      "lineStart": 7,
+      "lineEnd": 7,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c16"
+    },
+    {
+      "token": "shellcheck:SC2045",
+      "file": "scripts/deploy.sh",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "high",
+      "stage": "kept",
+      "id": "c7"
+    },
+    {
+      "token": "shellcheck:SC2086",
+      "file": "scripts/deploy.sh",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "severity": "low",
+      "stage": "kept",
+      "id": "c24"
+    },
+    {
+      "token": "bandit:B608",
+      "file": "app/search.py",
+      "lineStart": 14,
+      "lineEnd": 14,
+      "severity": "medium",
+      "stage": "kept",
+      "id": "c17"
+    },
+    {
+      "token": "zizmor:template-injection",
+      "file": ".github/workflows/ci.yml",
+      "lineStart": 17,
+      "lineEnd": 17,
+      "severity": "high",
+      "stage": "merged",
+      "into": "c2"
+    },
+    {
+      "token": "trivy:KSV-0001",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 35,
+      "lineEnd": 35,
+      "severity": "medium",
+      "stage": "changed-lines"
+    },
+    {
+      "token": "trivy:KSV-0017",
+      "file": "deploy/deployment.yaml",
+      "lineStart": 35,
+      "lineEnd": 35,
+      "severity": "high",
+      "stage": "changed-lines"
+    }
+  ],
+  "trailOmitted": 0
 }
