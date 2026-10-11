@@ -16,7 +16,7 @@
 //     for the same change, so a hosted run is scored on other numbers than a
 //     laptop run.
 import { createHash } from "node:crypto";
-import { cpSync } from "node:fs";
+import { cpSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ScanResult } from "@openqodex/core";
@@ -25,7 +25,7 @@ import { reviewChange } from "../../packages/cli/dist/lib.js";
 import type { ModelReviewer, ReviewResult } from "../../packages/cli/dist/lib.js";
 import { demo, generatedSecret, git, readJson, run, toolsHome } from "./support.js";
 import type { Result } from "./support.js";
-import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
+import { adoptTempDir, removeTempDirs, tempDir } from "../temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
@@ -73,10 +73,15 @@ describe("the library's result on the demo change", () => {
     scanned = run("library-scan-cli", dir, ["scan", "--report-dir", out]);
     cli = readJson<ScanResult>(join(out, "scan.json"));
 
-    // A short work folder: TFLint's socket goes in <workDir>/scratch/tmp.
+    // The work folder directly under /tmp, as docs/library.md asks of a
+    // host: TFLint's plugin socket goes in <workDir>/scratch/tmp, which must
+    // be 80 characters or fewer, and the test run's own temp folder is longer
+    // than that on macOS. A server run never moves the socket elsewhere.
+    const workDir = mkdtempSync("/tmp/oq-lw-");
+    adoptTempDir(workDir);
     result = await reviewChange({ clonePath: clone, mergeBaseSha: base, headSha: head }, model, {
       profile: "server",
-      workDir: tempDir("oq-lw-"),
+      workDir,
       installRoot: join(toolsHome, "tools"),
       budget: { authorize: async () => true, deadlineMs: 600_000 },
       tools: { web: false, shell: false },
