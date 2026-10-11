@@ -62,6 +62,24 @@ The report lists every selected scanner with one status. A scanner left out with
 
 A scanner problem never changes the exit code.
 
+## What scan.json records
+
+Every scan and every review writes `scan.json` next to its report. Besides the candidates, it records how each scanner was chosen for the change and what became of every finding it raised, so a finding a filter dropped or a merge folded away still counts for its scanner. None of it is printed.
+
+- `selection`: one entry per built-in scanner, then one per custom scanner, as the selector chose them: `scanner`, `wanted` (it runs for this change), `paths` (the changed files that call for it; for a custom scanner, the changed files its `paths` globs match), `projects` (the project folders that decide how it runs) and `skip` (why it does not run). `--only` and `--skip` do not change it.
+- `trail`: one entry per finding a scanner raised, and one per settings or suppression candidate OpenQodex raised about the change. Each entry has `token` (`<scanner>:<rule>`), `file`, `lineStart`, `lineEnd`, the scanner's `severity`, and `stage`, the step that dropped or kept it:
+  - `outside-change`: its file is not in the change.
+  - `changed-lines`: its file is in the change, but no line of its span changed.
+  - `fixture`: its file is a fixture, mock or snapshot, and `review.include_fixtures` is off.
+  - `disabled-rule`: `review.disabled_rules` names it.
+  - `merged`: it named the same problem on the same lines as a finding that was kept. `into` is that candidate's id.
+  - `kept`: it is the candidate `id`.
+
+  An entry never holds the finding's message, which can quote a secret. Entries come kept first, then merged, disabled-rule, fixture, changed-lines and outside-change, and within a stage by scanner, file, lines and rule. The trail holds at most 5,000 entries; `trailOmitted` counts the rest.
+- Each scanner's entry under `scanners`, in `scan.json` and `report.json`, also has `stages`: how many of its trail entries each step dropped (`changedLines` counts outside-change and changed-lines, then `fixtures`, `rules` and `merged`). `resolveMs` is the time spent finding, checking or installing its tool before it ran, and `files` is how many changed files it was handed.
+
+A scanner's trail entries, less OpenQodex's own settings and suppression candidates, number its `rawCount`. All of them number its `keptCount` plus its `stages`.
+
 ## Changed scanner settings
 
 Several scanners read settings or an ignore list from the repository, as OpenQodex runs them. At the repository root only: gitleaks `.gitleaks.toml`, `gitleaks.toml` and `.gitleaksignore`; semgrep `.semgrepignore`; hadolint `.hadolint.yaml` and `.hadolint.yml`; actionlint `.github/actionlint.yaml` and `.github/actionlint.yml`; zizmor `.github/zizmor.yml`, `.github/zizmor.yaml`, `zizmor.yml` and `zizmor.yaml`; squawk `.squawk.toml`; trivy `.trivyignore`. In any folder: ruff `ruff.toml` and `.ruff.toml`, and `pyproject.toml` when the change alters its `[tool.ruff]` table, or the `requires-python` that ruff reads as its target version beside that table; shellcheck `.shellcheckrc` and `shellcheckrc`; osv-scanner `osv-scanner.toml`; sqlfluff `.sqlfluff` and `.sqlfluffignore`, and `setup.cfg`, `tox.ini`, `pep8.ini` and `pyproject.toml` when the change alters the `[sqlfluff]` and `[sqlfluff:...]` sections of the first three (with their `[DEFAULT]` keys) or `[tool.sqlfluff]` of the last; cargo-deny `deny.exceptions.toml` and `.deny.exceptions.toml`. A change to one of them can hide that scanner's findings.
