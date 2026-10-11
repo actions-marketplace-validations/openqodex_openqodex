@@ -433,8 +433,8 @@ export function resumeProblems(earlier, now) {
     same(`${n} settings`, e?.settings, w?.settings);
     same(`${n} alias`, e?.alias, w?.alias);
     same(`${n} script`, e?.script?.sha256, w?.script?.sha256);
-    // The endpoint, as the sha256 of its base URL; the line names neither.
-    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL than when the run started`);
+    // The endpoint, as an HMAC-SHA256 of its base URL keyed with its key; the line names neither.
+    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL or another key than when the run started`);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);
