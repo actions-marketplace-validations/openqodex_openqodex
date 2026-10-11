@@ -32,6 +32,11 @@ describe("duplicates", () => {
     expect(out.matched.text).toBe("c5");
   });
 
+  it("a drop whose reason names a path that holds a candidate-like id is classed as a duplicate", () => {
+    const d = drop(candidate("c3", "semgrep:python.lang.security.audit.formatted-sql-query", "app/search.py", 14), "The query in app/c5.py contains only constants.");
+    expect(classifyDrop(d, { raised: [], frameworks: [] }).class).toBe("rule-fp");
+  });
+
   it("a drop whose reason names its own id is classed as a duplicate", () => {
     const d = drop(candidate("c3", "semgrep:python.lang.security.audit.formatted-sql-query", "app/search.py", 14), "c3 fires on a constant string with no input in it.");
     expect(classifyDrop(d, { raised: [], frameworks: [] }).class).toBe("rule-fp");
@@ -81,6 +86,18 @@ describe("test files and fixtures", () => {
   });
 });
 
+describe("paths are not words", () => {
+  it("a test-file drop whose reason names a fixtures path is classed as a fixture", () => {
+    const d = drop(candidate("c1", "bandit:B101", "tests/test_money.py", 21), "This assert checks app/fixtures.py.");
+    expect(classifyDrop(d, { raised: [], frameworks: [] })).toMatchObject({ class: "test", matched: { rule: "test-path" } });
+  });
+
+  it("a production file under a folder named like a spec file is classed as a test", () => {
+    const d = drop(candidate("c2", "semgrep:javascript.lang.security.audit.unsafe-formatstring", "src/openapi.spec.v3/client.js", 12), "The client builds the URL from a constant.");
+    expect(classifyDrop(d, { raised: [], frameworks: [] }).class).toBe("rule-fp");
+  });
+});
+
 describe("structure before words", () => {
   it("a suppression candidate is classed by the words of its reason", () => {
     const suppression = drop(candidate("c3", "bandit:openqodex.suppression-added", "tools/thumbs.py", 9), "The nosec comment hides the shell command injection, which finding c1 already reports on the same line.");
@@ -119,7 +136,7 @@ describe("the audit sheet", () => {
   const cli = join(repo, "benchmark", "drops.mjs");
 
   // A run folder laid out as run.mjs saves one: samples/<case>/<config>/<repeat>/report.
-  const runFolder = (name, cases) => {
+  const runFolder = (name, cases, reason = "Leftover apt lists only add image size.") => {
     const folder = join(tempDir("oq-drops-"), name);
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, "manifest.json"), JSON.stringify({ version: 1, build: { commit: "752b77f0000000000000000000000000000000aa", short: "752b77f" }, configs: ["claude-graph-on"] }));
@@ -127,7 +144,7 @@ describe("the audit sheet", () => {
       const dir = join(folder, "samples", c, "claude-graph-on", "1", "report");
       mkdirSync(dir, { recursive: true });
       const cands = Array.from({ length: 6 }, (_, i) => candidate(`c${i + 1}`, `hadolint:DL30${10 + i}`, "Dockerfile", i + 1));
-      writeFileSync(join(dir, "report.json"), JSON.stringify({ findings: [], outside_change: [], dropped: cands.map((x) => drop(x, "Leftover apt lists only add image size.")) }));
+      writeFileSync(join(dir, "report.json"), JSON.stringify({ findings: [], outside_change: [], dropped: cands.map((x) => drop(x, reason)) }));
       writeFileSync(join(dir, "scan.json"), JSON.stringify({ candidates: cands, projects: [{ root: "", frameworks: [] }] }));
     }
     return folder;
@@ -138,6 +155,16 @@ describe("the audit sheet", () => {
     const sheet = execFileSync(process.execPath, [cli, folder, "--audit", "5"], { encoding: "utf8" });
     expect(sheet.match(/^## /gm)).toHaveLength(5);
     for (const name of ["2026-10-08", "752b77f", "claude", "graph-on", "demo-polyglot", "flask-path-traversal", folder]) expect(sheet).not.toContain(name);
+  });
+
+  it("a reason that quotes a configuration, case, run or build prints it in the audit sheet", () => {
+    const folder = runFolder("2026-10-08-752b77f", ["demo-polyglot"], "Seen before in claude-graph-on of demo-polyglot, run 2026-10-08-752b77f at 752b77f0000000000000000000000000000000aa.");
+    const sheet = execFileSync(process.execPath, [cli, folder, "--audit", "3"], { encoding: "utf8" });
+    const json = execFileSync(process.execPath, [cli, folder, "--audit", "3", "--json"], { encoding: "utf8" });
+    expect(JSON.parse(json).items).toHaveLength(3);
+    for (const out of [sheet, json]) {
+      for (const name of ["752b77f", "2026-10-08", "claude-graph-on", "demo-polyglot"]) expect(out).not.toContain(name);
+    }
   });
 
   it("one seed draws a different audit sample on a second call", () => {

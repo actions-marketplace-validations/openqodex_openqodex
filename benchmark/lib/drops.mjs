@@ -63,9 +63,16 @@
 //    structure; on its own line the words decide.
 // 8. A word inside another word decides a class ("sizeable", "outsized",
 //    "covers" in "discovers"): every word is matched at word bounds.
+// 8a. A path the reason quotes decides a class (app/c5.py names "c5",
+//    app/fixtures.py says "fixtures"): words and ids are read with the
+//    quoted paths taken out.
+// 8b. A folder named like a test file (src/openapi.spec.v3/) makes its
+//    files tests: .test. and .spec. count only in the file's own name.
 // 9. An audit sheet that names the run, the build, the configuration or the
 //    case lets the person rule on what they expect, not what they read:
-//    the sheet shows only the rule, the place, the reason and the class.
+//    the sheet shows only the rule, the place, the reason and the class,
+//    and one redactor takes every known identifier out of every field of
+//    both formats, a reason that quotes one included.
 // 10. An audit that cannot be drawn again rules on a sample nobody can
 //    check: the draw is seeded and depends on nothing but the seed and the
 //    order of the drops.
@@ -98,7 +105,9 @@ const FIXTURE_WORDS = /\bfixtures?\b|\b(?:sample|example) data\b|\bmock(?:s|ed)?
 // The test paths: a tests or test folder, a spec or __tests__
 // folder, .test. and .spec. files, Go's _test.go, Python's test_*.py and
 // Ruby's *_spec.rb.
-const TEST_PATHS = [/(?:^|\/)tests?\//i, /(?:^|\/)spec\//i, /(?:^|\/)__tests__\//i, /\.test\./i, /\.spec\./i, /_test\.go$/i, /(?:^|\/)test_[^/]*\.py$/i, /_spec\.rb$/i];
+// A .test. or .spec. name counts only in the file's own name, never in a
+// folder's (src/openapi.spec.v3/client.js is not a test).
+const TEST_PATHS = [/(?:^|\/)tests?\//i, /(?:^|\/)spec\//i, /(?:^|\/)__tests__\//i, /(?:^|\/)[^/]*\.test\.[^/]*$/i, /(?:^|\/)[^/]*\.spec\.[^/]*$/i, /_test\.go$/i, /(?:^|\/)test_[^/]*\.py$/i, /_spec\.rb$/i];
 const TEST_WORDS = /\btests? (?:file|code|suite|helper)s?\b|\bassert(?:s|ion|ions)?\b/i;
 
 const CANDIDATE_ID = /\bc(\d+)\b/gi;
@@ -125,6 +134,13 @@ const FRAMEWORKS = [
   ["rails", /\bRails\b/],
 ];
 export const DETECTED_FRAMEWORKS = Object.freeze(FRAMEWORKS.map(([slug]) => slug));
+
+// Paths a reason quotes: any token with a slash, and a bare file name that
+// starts in lower case with a known extension (a capitalised name such as
+// Next.js is a name, not a file). Words and ids are read with these taken
+// out, so app/c5.py names no candidate and app/fixtures.py is no fixture.
+const PATH_TOKENS = /[^\s"'`()<>,;]*[/\\][^\s"'`()<>,;]*|(?<![\w.-])[a-z0-9_][\w.-]*\.(?:py|pyi|js|jsx|mjs|cjs|ts|tsx|rb|go|rs|java|kt|kts|php|cs|c|h|cc|cpp|hpp|swift|scala|sh|bash|zsh|sql|tf|tfvars|hcl|yaml|yml|json|toml|lock|ini|cfg|conf|env|xml|html?|css|scss|md|txt|gradle|properties)\b/g;
+export const withoutPaths = (reason) => String(reason ?? "").replace(PATH_TOKENS, " ");
 
 const testPath = (path) => TEST_PATHS.some((re) => re.test(path));
 const hit = (re, text) => {
@@ -164,20 +180,22 @@ export function classifyDrop(drop, { raised = [], frameworks = null } = {}) {
   // The tag is the reason's, whatever the class: a framework rule dropped as
   // a repeat still fired on a framework the change does not use.
   const present = new Set(frameworks ?? []);
-  const reason = String(drop?.reason ?? "");
-  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => !present.has(slug) && re.test(reason))) out.tags.push("framework-mismatch");
+  const words = withoutPaths(drop?.reason);
+  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => !present.has(slug) && re.test(words))) out.tags.push("framework-mismatch");
   return out;
 }
 
 function classOf(drop, raised) {
   const c = drop?.candidate ?? {};
-  const reason = String(drop?.reason ?? "");
+  const raw = String(drop?.reason ?? "");
+  // Every rule below reads the reason's words, never the paths it quotes.
+  const reason = withoutPaths(raw);
   const file = normPath(c.filePath);
   const own = String(c.id ?? "").toLowerCase();
   const decide = (cls, rule, text = null, tags = []) => ({ class: cls, tags, matched: { rule, text } });
 
   if (CONFIG_RULES.has(c.ruleId)) return decide("config-owned", "config-rule", c.ruleId);
-  if (REPO_INSTRUCTIONS.test(reason)) return decide("config-owned", "repo-instructions", "repo instructions:", ["repo-instructions"]);
+  if (REPO_INSTRUCTIONS.test(raw)) return decide("config-owned", "repo-instructions", "repo instructions:", ["repo-instructions"]);
 
   if (file !== "" && isFixturePath(file)) return decide("fixture", "fixture-path", file);
   const fixtureWord = hit(FIXTURE_WORDS, reason);
@@ -264,33 +282,63 @@ export function drawAudit(items, n, seed) {
 
 const lines = (start, end) => (end > start ? `lines ${start} to ${end}` : `line ${start}`);
 const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// The audit sheet: each drawn drop with its rule, place, cited line, the
-// reviewer's reason and the class, and a line for the person's ruling. It
-// names no run, build, configuration or case.
-export function auditSheet(drawn, { seed, of }) {
+// The one redactor for every field an audit prints: each known run, build,
+// configuration and case identifier becomes its kind in brackets ("[run]"),
+// whatever its case, the longest first so a run id goes before the build
+// inside it. `known` is [{ kind, value }].
+export function redactor(known) {
+  const byValue = new Map();
+  for (const k of known) if (typeof k.value === "string" && k.value !== "") byValue.set(k.value.toLowerCase(), k.kind);
+  if (byValue.size === 0) return (s) => String(s ?? "");
+  const re = new RegExp([...byValue.keys()].sort((a, b) => b.length - a.length).map(escapeRe).join("|"), "gi");
+  return (s) => String(s ?? "").replace(re, (m) => `[${byValue.get(m.toLowerCase())}]`);
+}
+
+// The drawn drops as both audit formats show them: the rule, the place, the
+// cited line, the reason and the class, every text through the redactor,
+// and nothing else of the sample.
+export function auditItems(drawn, redact = (s) => String(s ?? "")) {
+  return drawn.map((d, i) => {
+    const c = d.candidate ?? {};
+    return {
+      item: i + 1,
+      rule: redact(c.token ?? "unknown"),
+      file: redact(normPath(c.filePath)),
+      lineStart: c.lineStart ?? null,
+      lineEnd: Math.max(c.lineEnd ?? c.lineStart, c.lineStart),
+      cited: d.cited ? { file: redact(normPath(d.cited.file_path)), line: d.cited.line_number } : null,
+      reason: redact(oneLine(d.reason)),
+      class: d.class,
+      tags: d.tags.map((t) => redact(t)),
+      matched: { rule: d.matched.rule, text: d.matched.text === null ? null : redact(oneLine(d.matched.text)) },
+    };
+  });
+}
+
+// The audit sheet: each item with a line for the person's ruling.
+export function auditSheet(items, { seed, of }) {
   const out = [
     "# Drop audit",
     "",
-    `${drawn.length} dropped scanner candidates, drawn at random (seed ${seed}) from ${of}. For each, read the reason and the place, then write whether the class is right; when it is not, write the right class.`,
+    `${items.length} dropped scanner candidates, drawn at random (seed ${seed}) from ${of}. For each, read the reason and the place, then write whether the class is right; when it is not, write the right class.`,
     "",
     `Classes, first match wins: ${DROP_CLASSES.join(", ")}.`,
     "",
   ];
-  drawn.forEach((d, i) => {
-    const c = d.candidate ?? {};
-    const cited = d.cited ? `${normPath(d.cited.file_path)}:${d.cited.line_number}` : "none";
+  for (const x of items) {
     out.push(
-      `## ${i + 1}`,
+      `## ${x.item}`,
       "",
-      `- Rule: ${c.token ?? "unknown"}`,
-      `- Place: ${normPath(c.filePath)}, ${lines(c.lineStart, Math.max(c.lineEnd ?? c.lineStart, c.lineStart))}`,
-      `- Cited line: ${cited}`,
-      `- Reason: ${oneLine(d.reason)}`,
-      `- Class: ${d.class}${d.tags.length > 0 ? ` (${d.tags.join(", ")})` : ""}, by ${d.matched.rule}${d.matched.text ? ` "${oneLine(d.matched.text)}"` : ""}`,
+      `- Rule: ${x.rule}`,
+      `- Place: ${x.file}, ${lines(x.lineStart, x.lineEnd)}`,
+      `- Cited line: ${x.cited ? `${x.cited.file}:${x.cited.line}` : "none"}`,
+      `- Reason: ${x.reason}`,
+      `- Class: ${x.class}${x.tags.length > 0 ? ` (${x.tags.join(", ")})` : ""}, by ${x.matched.rule}${x.matched.text ? ` "${x.matched.text}"` : ""}`,
       "- Ruling: ",
       "",
     );
-  });
+  }
   return out.join("\n");
 }

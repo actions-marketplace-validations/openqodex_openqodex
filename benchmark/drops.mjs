@@ -18,7 +18,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resultsRoot } from "./lib/index.mjs";
-import { DROPS_VERSION, DROP_CLASSES, POINTS_AT, TAG_POINTS_AT, auditSheet, classifyReportDrops, countDrops, drawAudit } from "./lib/drops.mjs";
+import { DROPS_VERSION, DROP_CLASSES, POINTS_AT, TAG_POINTS_AT, auditItems, auditSheet, classifyReportDrops, countDrops, drawAudit, redactor } from "./lib/drops.mjs";
 
 const readJson = (path) => {
   try {
@@ -32,13 +32,26 @@ const dirs = (path) => (existsSync(path) ? readdirSync(path, { withFileTypes: tr
 // Every saved review of a run, in a fixed order, with its drops classed.
 // A sample with no report.json dropped nothing; one with no scan.json is
 // classed without the raised candidates' own lines or the frameworks.
+// `known` lists the run's own identifiers (its id and folder, its build,
+// configurations and cases) for the audit's redactor.
 export function loadRunDrops(folder) {
-  if (!existsSync(join(folder, "manifest.json"))) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
+  const manifest = readJson(join(folder, "manifest.json"));
+  if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
   const samples = join(folder, "samples");
   const drops = [];
   let reviews = 0;
+  const known = [
+    { kind: "run", value: basename(folder) },
+    { kind: "run", value: folder },
+    { kind: "build", value: manifest.build?.commit },
+    { kind: "build", value: manifest.build?.short },
+    ...(manifest.configs ?? []).map((value) => ({ kind: "configuration", value })),
+    ...(manifest.cases ?? []).map((value) => ({ kind: "case", value })),
+  ];
   for (const c of dirs(samples)) {
+    known.push({ kind: "case", value: c });
     for (const config of dirs(join(samples, c))) {
+      known.push({ kind: "configuration", value: config });
       for (const n of dirs(join(samples, c, config))) {
         const dir = join(samples, c, config, n, "report");
         const report = readJson(join(dir, "report.json"));
@@ -49,7 +62,7 @@ export function loadRunDrops(folder) {
       }
     }
   }
-  return { run: basename(folder), reviews, drops };
+  return { run: basename(folder), reviews, drops, known };
 }
 
 function parseArgs(argv) {
@@ -101,12 +114,10 @@ function main() {
   }
   if (o.audit !== null) {
     const pool = runs.flatMap((r) => r.drops);
-    const drawn = drawAudit(pool, o.audit, o.seed);
-    if (o.json) {
-      // Blind as the sheet is: no sample, run, build or configuration.
-      const items = drawn.map((d, i) => ({ item: i + 1, candidate: { token: d.candidate?.token ?? null, filePath: d.candidate?.filePath ?? null, lineStart: d.candidate?.lineStart ?? null, lineEnd: d.candidate?.lineEnd ?? null }, cited: d.cited, reason: d.reason, class: d.class, tags: d.tags, matched: d.matched }));
-      process.stdout.write(`${JSON.stringify({ version: DROPS_VERSION, seed: o.seed, of: pool.length, items }, null, 2)}\n`);
-    } else process.stdout.write(`${auditSheet(drawn, { seed: o.seed, of: pool.length })}\n`);
+    // Both formats print the same items, each text through one redactor.
+    const items = auditItems(drawAudit(pool, o.audit, o.seed), redactor(runs.flatMap((r) => r.known)));
+    if (o.json) process.stdout.write(`${JSON.stringify({ version: DROPS_VERSION, seed: o.seed, of: pool.length, items }, null, 2)}\n`);
+    else process.stdout.write(`${auditSheet(items, { seed: o.seed, of: pool.length })}\n`);
     return 0;
   }
   const tables = runs.map(table);
