@@ -20,10 +20,13 @@
 // - clocks (<TIMESTAMP>): created_at, generated_at, written_at, started_at,
 //   ended_at, createdAt and builtAt, as ISO strings or epoch milliseconds;
 // - durations (<DURATION_MS>): durationMs and duration_ms (scanner, graph
-//   build and reviewer wall time), predictedMs (the graph's estimate, made
-//   from the earlier builds' wall time), every value of a "stages" object
-//   (the graph build's time per stage) and every value of a "timings" object
-//   (report.json's time per phase of the run and its total_ms);
+//   build and reviewer wall time), resolveMs (a scanner's tool lookup),
+//   predictedMs (the graph's estimate, made from the earlier builds' wall
+//   time), every value of a "stages" object (the graph build's time per
+//   stage) and every value of a "timings" object (report.json's time per
+//   phase of the run and its total_ms). A scanner's "stages" object, the
+//   one that names changedLines, holds counts of findings, not times, and
+//   stays;
 // - the reviewer's process id (<REVIEWER_PID>), inside the reviewer record
 //   only: the operating system gives each review a new process.
 //
@@ -66,7 +69,7 @@ const PACKAGE_VERSION = JSON.parse(readFileSync(join(dirname(fileURLToPath(impor
 const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const CLOCK_KEYS = "created_at|generated_at|written_at|started_at|ended_at|createdAt|builtAt";
-const DURATION_KEYS = "durationMs|duration_ms|predictedMs";
+const DURATION_KEYS = "durationMs|duration_ms|resolveMs|predictedMs";
 const SECONDS = String.raw`\d+(?:\.\d+)? s`;
 
 export function normalize(name, raw, context) {
@@ -88,7 +91,7 @@ export function normalize(name, raw, context) {
   if (name.endsWith(".json") || name.endsWith(".sarif")) {
     text = text.replace(new RegExp(String.raw`("(?:${CLOCK_KEYS})"\s*:\s*)("\d{4}-\d{2}-\d{2}T[^"\n]+"|\d{13})`, "g"), '$1"<TIMESTAMP>"');
     text = text.replace(new RegExp(String.raw`("(?:${DURATION_KEYS})"\s*:\s*)\d+(?:\.\d+)?`, "g"), '$1"<DURATION_MS>"');
-    text = text.replace(/("(?:stages|timings)"\s*:\s*\{)([^{}]*)(\})/g, (_, open, inner, close) => `${open}${inner.replace(/(:\s*)\d+(?:\.\d+)?/g, '$1"<DURATION_MS>"')}${close}`);
+    text = text.replace(/("(?:stages|timings)"\s*:\s*\{)([^{}]*)(\})/g, (whole, open, inner, close) => (/"changedLines"\s*:/.test(inner) ? whole : `${open}${inner.replace(/(:\s*)\d+(?:\.\d+)?/g, '$1"<DURATION_MS>"')}${close}`));
     // Only a pid within the reviewer record, not arbitrary provider input.
     text = text.replace(/("reviewer"\s*:\s*\{[^{}]*?"pid"\s*:\s*)\d+/g, '$1"<REVIEWER_PID>"');
   }

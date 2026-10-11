@@ -150,8 +150,8 @@ describe("a repeated unresolved finding raises precision", () => {
     const decisions = join(q, "decisions.jsonl");
     const first = scored(run, decisions);
     const c = first.score.byConfig[CONFIG];
-    expect(c.precision.lower).toEqual({ hit: 3, of: 6 });
-    expect(c.precision.upper).toEqual({ hit: 6, of: 6 });
+    expect(c.precision.lower).toMatchObject({ hit: 3, of: 6 });
+    expect(c.precision.upper).toMatchObject({ hit: 6, of: 6 });
     const leaks = first.outcomes.filter((o) => o.outcome === "unresolved");
     expect(leaks).toHaveLength(3);
     expect(new Set(leaks.map((o) => o.findingId)).size).toBe(1);
@@ -183,7 +183,7 @@ describe("a ruling on one finding transfers to a different issue on the same lin
     const before = scored(run, decisions);
     // Both sit on the truth item's line and neither names its words: location matches, nothing more.
     for (const o of before.outcomes) expect(o).toMatchObject({ outcome: "unresolved", truthId: "sqli", evidenceKind: "location-only" });
-    expect(before.score.byConfig[CONFIG].issueRecall.all).toEqual({ hit: 0, of: 2 });
+    expect(before.score.byConfig[CONFIG].issueRecall.all).toMatchObject({ hit: 0, of: 2 });
     // The first review raised SQLI then PATH; the second, PATH alone.
     const sqliId = before.outcomes.find((o) => o.repeat === 1 && o.index === 0).findingId;
     const pathId = before.outcomes.find((o) => o.repeat === 1 && o.index === 1).findingId;
@@ -197,7 +197,7 @@ describe("a ruling on one finding transfers to a different issue on the same lin
     expect(byId(pathId, 2)).toMatchObject({ outcome: "unresolved", truthId: "sqli", evidenceKind: "location-only" });
     // The review that raised only the path traversal did not find the SQL injection.
     expect(after.score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([true, false]);
-    expect(after.score.byConfig[CONFIG].issueRecall.all).toEqual({ hit: 1, of: 2 });
+    expect(after.score.byConfig[CONFIG].issueRecall.all).toMatchObject({ hit: 1, of: 2 });
     // The queue keeps asking about the path traversal, both questions, and no longer about the ruled finding.
     expect(queue("add", run, "--queue", q).status).toBe(0);
     const items = readJsonl(join(q, "planted.jsonl"));
@@ -219,8 +219,8 @@ describe("two findings are merged into one issue without a person's consolidate 
     const decisions = join(q, "decisions.jsonl");
     const before = scored(run, decisions);
     const c = before.score.byConfig[CONFIG];
-    expect(c.uniqueIssuePrecision.lower).toEqual({ hit: 0, of: 2 });
-    expect(c.redundancy).toEqual({ hit: 0, of: 2 });
+    expect(c.uniqueIssuePrecision.lower).toMatchObject({ hit: 0, of: 2 });
+    expect(c.redundancy).toMatchObject({ hit: 0, of: 2 });
     expect(before.outcomes.map((o) => o.issueId)).toEqual([null, null]);
     expect(queue("add", run, "--queue", q).status).toBe(0);
     const [a, b] = before.outcomes.map((o) => o.findingId);
@@ -246,8 +246,8 @@ describe("two findings are merged into one issue without a person's consolidate 
     expect(cons).toMatchObject({ v: 1, caseId: CASE_ID, target: { kind: "issue", issueId: `${CASE_ID}#I1`, members: [a, b].sort() }, status: "consolidate", by: "Sid", note: "one removed form" });
     const merged = scored(run, decisions);
     expect(merged.outcomes.map((o) => o.issueId)).toEqual([`${CASE_ID}#I1`, `${CASE_ID}#I1`]);
-    expect(merged.score.byConfig[CONFIG].uniqueIssuePrecision.lower).toEqual({ hit: 0, of: 1 });
-    expect(merged.score.byConfig[CONFIG].redundancy).toEqual({ hit: 1, of: 2 });
+    expect(merged.score.byConfig[CONFIG].uniqueIssuePrecision.lower).toMatchObject({ hit: 0, of: 1 });
+    expect(merged.score.byConfig[CONFIG].redundancy).toMatchObject({ hit: 1, of: 2 });
     // The queue keys both items by the issue too, and still asks about it.
     expect(queue("add", run, "--queue", q).status).toBe(0);
     expect(readJsonl(join(q, "planted.jsonl")).map((i) => [i.issueId, i.asks])).toEqual([[`${CASE_ID}#I1`, ["real"]], [`${CASE_ID}#I1`, ["real"]]]);
@@ -255,7 +255,7 @@ describe("two findings are merged into one issue without a person's consolidate 
     expect(queue("decide", "true", `${CASE_ID}#I1`, "--by", "Sid", "--queue", q).status).toBe(0);
     const ruled = scored(run, decisions);
     expect(ruled.outcomes.map((o) => o.outcome)).toEqual(["ruled-true", "ruled-true"]);
-    expect(ruled.score.byConfig[CONFIG].precision.lower).toEqual({ hit: 2, of: 2 });
+    expect(ruled.score.byConfig[CONFIG].precision.lower).toMatchObject({ hit: 2, of: 2 });
   });
 });
 

@@ -75,10 +75,11 @@ describe("a test-split entry without a release is accepted", () => {
 
   it("refuses a held-out entry that names no release, accepted or not, and one that carries per-case detail", () => {
     const entry = scoredRun();
-    const heldOut = { ...entry, split: "test", perCase: null, release: null };
+    const heldOut = { ...entry, split: "test", perCase: null, perBug: null, release: null };
     expect(entryProblems(heldOut).join("\n")).toMatch(/held-out .*release/);
     expect(entryProblems({ ...heldOut, accepted: true, acceptedAt: "2026-10-11T09:00:00.000Z", acceptedBy: "Sid" }).join("\n")).toMatch(/held-out .*release/);
     expect(entryProblems({ ...heldOut, release: "0.14.0", perCase: entry.perCase }).join("\n")).toMatch(/per-case/);
+    expect(entryProblems({ ...heldOut, release: "0.14.0", perBug: entry.perBug }).join("\n")).toMatch(/perBug must be null/);
     expect(entryProblems({ ...heldOut, release: "0.14.0" })).toEqual([]);
   });
 
