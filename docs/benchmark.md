@@ -175,6 +175,28 @@ node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>
 
 This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
+## Replays
+
+Three replays use saved reviewer submissions without calling a reviewer:
+
+- `threshold` shows findings down to info severity at the product's confidence floor.
+- `union` merges repeats 1 and 2 for each case and configuration, counting each planted bug once. It needs more than one repeat: both repeats must be saved for every case, or it reports `insufficient repeats`.
+- `floor` compares confidence floors of 0.6, 0.7, 0.8 and 0.9. A lens's higher floor still applies.
+
+They import the product's own `checkSubmission` and `mergeFindings` from the built packages. Counts use the planted matching rules, without human rulings. They never write into a run folder: output is printed, and optional `--out <file>` must name a file outside the run folders.
+
+```
+node benchmark/loop/replay.mjs threshold benchmark/results/<run>
+node benchmark/loop/replay.mjs union benchmark/results/<run>
+node benchmark/loop/replay.mjs floor benchmark/results/<run>
+```
+
+Each command accepts more runs; `--specs <folder>` follows the run it applies to.
+
+Saved inventory lengths take priority. Missing lengths come from `buildCase` in `lib/cases.mjs`, using the supplied specs and source folders pinned to the run's build commit (or source folders saved beside the specs). The replay builds each planted case once per run in a temporary folder outside any repository and removes that folder afterwards. It hashes the built head files by path and content, without modes, and compares them with a reference built from the recorded case. It computes both legacy case hash rules, with and without executable modes, when checking the manifest. A missing manifest hash uses the pinned source as the reference. Scoring amendments and mode changes are accepted when built content matches; different content refuses the case by name.
+
+Line counts follow `snapshot.ts`'s `lineCounter`: count LF bytes and add one for a nonempty final line without LF, for files up to 5 MiB. That helper is not exported. In core's `finalize.ts`, `citesChange` and `checkSubmission` consume these counts to check findings and dropped citations. A pull request case stays unresolved with a reason because this branch has no pull request builder through the clone cache.
+
 ## Scanner-only runs
 
 ```
@@ -190,11 +212,11 @@ Each candidate a scan hands the reviewer is scored against the case's spec by it
 
 A pull request case (`--suite aacr`, with `--subset` or `--cases`, as for model reviews) is built from the clone cache in the shape a developer has before a push, and removed after its scan. Its comments name no scanner and no words, so no candidate finds one: a candidate on a comment's lines is unresolved, and the number to read is the location diagnostic, AACR's line rule, as recall over the accepted comments. Pull request cases need their dataset files in the cache (`node benchmark/ingest/aacr.mjs` fetches them); a run never fetches them itself.
 
-The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by sha256 and size), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different bytes of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
+The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by name and the sha256 of their rules, as `scanners` documents), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different rules of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
 
 Every Monday, `.github/workflows/bench-weekly.yml` scans AACR-Bench's `dev-smoke` pull requests twice in CI, with every scanner installed (the same setup as the `bench-scan` job, `.github/actions/bench-setup`). It compares the run with the accepted scanner-only run of its group, writes the trend table with each run's location recall into the job summary, and keeps the run folders and the run's index entry as an artifact for 14 days. The clone cache and AACR-Bench's two data files (`node benchmark/ingest/aacr.mjs --data-only`, which fetches nothing else and writes nothing in the repository) are kept in the Actions cache, keyed on the suite, its split and the board pins. The job has an hour: every step before the trend has its own limit (the dev-smoke scan 12 minutes, the full pass 14), so at least 8 minutes stay for the trend, the summary and the artifact, which run after a cancel too. A manual run (`gh workflow run bench-weekly.yml -f full-dev=true`) also scans every development pull request in one pass, scored in the summary and neither compared nor indexed. Until a person accepts the first AACR scanner-only entry from the artifact, the trend step fails: a group with nothing accepted cannot be judged.
 
-`--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
+`--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. Each Semgrep pack's raw size is left out too: the registry serves one rule set as JSON or as YAML, and the sha256 of the rules is compared instead. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
 
 `--scanner-config <file>` passes `--config <file>` to every scan. The run first runs `openqodex trust --yes` with that file in its own home, for the one repository path each case is built at in turn, and does not start when the trust step fails. The manifest records the file's sha256 and every custom scanner the step approved.
 
@@ -227,6 +249,28 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
 A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+
+## What each scanner contributed
+
+```
+node benchmark/scanners.mjs <run> [--specs <folder>] [--out <folder>] [--json]
+node benchmark/scanners.mjs <run> --against <baseline> [--specs <folder>] [--input-change pin-bump:<scanner>|semgrep-packs]
+```
+
+A script reads each planned job's first attempt that saved a `scan.json`, in a review run or a scanner-only run, and prints six tables: each scanner (what it raised, what each filter and the reviewer did with it, the truth it found), each rule, the drop classes above, the gaps by language and class, the time, and what the ensemble loses without each scanner. It writes them to `scanners.json` in the run folder, or in the folder `--out` names. A legacy run's folder is the published original, so its `scanners.json` is written only with `--out`. `--specs` applies to the run named before it, as in `causes.mjs`.
+
+- A scanner finds a truth item when one of its candidates sits on the item's lines and either the spec expects that scanner or the candidate's rule or message names the item's words. This is the scanner-only scorer's rule. A finding that dedup merged into another scanner's candidate counts for its own scanner, at the lines the scan's trail recorded for it. Where the scan saved no trail, it is placed at the candidate's lines, and the tables say how many were placed so. A candidate on the lines that names nothing of the item is a location match: shown in its own column, never counted as finding it.
+- Counts are (sample, truth item) pairs. Every ratio is summed hits over summed checks, never an average of ratios, and every time carries its sample count.
+- Unique: a scanner found the item and no other scanner did. Leave one out: the items only that scanner found, and its candidates that absorbed no other scanner's finding.
+- The remit is the files the scan handed the scanner (the scan's `selection`), for items on lines the change touched. A miss is an item in the remit of a scanner that ran and did not find it. An item in the remit of a scanner that did not run (not installed, failed, disabled) is an infra miss, counted apart. A scan saved before the selection existed leaves the remit unknown, and the table says so rather than guess.
+- A rule meets the default-off bar with at least 30 kept candidates, at least 90% of them dropped, from at least 3 repositories, and no truth item found. Evidence from planted cases alone is provisional.
+- A language is a gap when it has at least 10 reachable truth items (or 5% of the run's) and no scanner but semgrep or gitleaks has any in its remit, or those scanners find under 30% of the ones in their remit.
+
+Runs saved before the scan recorded `selection`, `trail`, `stages` and `timings` still print. The script names what they lack first, and reads the scanner stage's time as the slowest scanner's.
+
+`--against <baseline>` judges the run as a change to the scanners. It exits 2, and judges nothing, when either run is from the test split, when the runs differ in suite or mode, when their Semgrep rule packs or scanner toolchains differ or are not recorded, when a scanner did not run where truth lies or may lie in its remit (a scanner a scan names no status for, in a scan that recorded no selection, counts as one that did not run), or when a planned scan is missing. One input may differ: the one the change under test names with `--input-change`, either a version bump of one scanner (`pin-bump:<scanner>`) or the pack list (`semgrep-packs`). A pin bump is checked entry by entry: the script reads the toolchain table and lock files of each run's build commit with git, checks that they hash to the toolchain hash the run recorded, and refuses when any entry or lock file other than the named scanner's differs. Otherwise it applies the first clause of the keep rule, K1. K1 holds when every truth item the baseline found is still found in every sample. A location match on a lost item's lines does not keep it. The script exits 1 when K1 fails and names each lost item, and 0 when K1 holds. The other clauses (a gain, the guards, and a review run when a candidate on a truth item changed) belong to the acceptance rule in `benchmark/loop/decide.mjs`, which is not built yet.
+
+A test-split run prints its tables only with `--release <version>` naming its own release, and is never judged.
 
 ## The review queue
 
@@ -281,6 +325,41 @@ For a miss, the first cause that holds wins:
 | judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it. Each part must be on record (a complete trace or the brief for the lines, `submission.json`, and `rounds.json` when the review took correction rounds); a file the review did not save makes the miss unresolved, never judged wrong |
 
 A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
+
+## The acceptance rule
+
+A change to the reviewer is kept only when the benchmark shows it is better at what it set out to do and loses no more than it said it might on everything else. Three scripts apply the rule. None of them calls a model.
+
+```
+node benchmark/loop/compare.mjs <parent run> <candidate run> [--config <c>] [--parent-repeats 1] [--candidate-repeats 2] [--specs <folder>]
+node benchmark/loop/decide.mjs --change <RC-id> --pair <parent run>=<candidate run> [--pair ...] [--stage 1|2|3] [--aa <run a>=<run b>]
+node benchmark/loop/validate.mjs --run <saved run> [--specs <folder>]
+```
+
+`compare.mjs` scores both runs from their saved files and prints, for each metric, the parent, the candidate, the change with its bounds, and a verdict: better, worse, mixed or no change. A metric with two bounds (recall and precision while some findings are unresolved) has two readings, so each is tested at half the error share: two readings never get two chances to call a change. Splitting is chosen over asking both bounds to agree, because a change in one bound alone, such as new findings nobody has ruled on, is a change worth reporting. When nothing is unresolved, the two bounds are the same and are tested once at the whole share. `decide.mjs` applies the rule to a change recorded by `benchmark/loop/propose.mjs` and appends one line to `benchmark/index/ledger/reviewer.jsonl`, by writing the whole ledger to a temp file and renaming it into place under the ledger's lock, so a reader never sees half a line. A side may name a configuration and repeats: `<run>#<config>@<repeats>`.
+
+The rule:
+
+- Before any run, the change's record names one primary metric and an acceptable loss for every metric. The losses never change after that.
+- The candidate is compared with the parent on the same cases, under the same scoring rules, review by review on first attempts. The unit is the case on planted suites and the repository group on real ones, with every repeat inside it. Three reviews of one case that agree count as one case, not three.
+- The test is a paired sign-flip test. If the change did nothing, either run's result for a case is as likely to be the other's, so swapping them case by case shows how large a change noise alone makes. A bootstrap is not used: it calls a change carried by a few cases significant however many cases there are.
+- Each decision is a look. The t-th look in the ledger, counting every stage of every change, may be wrong with a chance of 0.05 / (t (t + 1)), split equally across the nine metrics. All looks together spend at most 0.05, so a loop that decides often does not accept noise sooner or later.
+- Unresolved findings count against the change. The candidate's precision is read at its lower bound and the parent's at its upper bound, and a truth item an unresolved finding may have found counts as missed by the candidate and found by the parent.
+- A change is accepted only when the primary is better on the target path, every other metric (and the primary everywhere else) stays strictly inside its loss (a bound on the loss fails) on every path the change touches, every reviewer and each stratum (planted, real and both pooled), no hard rule breaks, every pair has three repeats, and the laptop path has both Claude Code and Codex.
+- The hard rules refuse a change whatever the bounds say: a critical issue found in two or more of three reviews is found in one or fewer; a clean change draws findings in two or more of three reviews; a review is newly cut short by the budget; a review is complete while a changed range was not delivered.
+- A change is reverted when a metric is past its loss even at its better bound, the primary is clearly worse, or a hard rule breaks. Otherwise a bound wider than its loss is inconclusive, and an inconclusive change is reverted too.
+- Stage 1 (one repeat) can only stop a change. At stage 2, a change whose only open question is the primary may add repeats 4 to 6 (stage 3). Stage 3 is final.
+- An A/A pair (two runs of the parent build) only sets how many cases and repeats a decision needs. Where its half-width is wider than a loss, the decision is inconclusive until cases or repeats are added. It never widens a loss.
+- A metric no review measures, such as findings on clean changes in a run with no clean case, is named in the reason and does not decide.
+
+`validate.mjs` must pass before the first live decision, and again after any change to the rule's files. `decide.mjs` refuses to write while the last `validation` line in the ledger fails or names an older version of the rule. The version is a hash of the rule's files, which `validate.mjs` takes before it loads them and again before it writes its line; a file edited in between refuses the line. It tests the rule two ways:
+
+- Simulated: 1,000 sequences of 10 looks, each look a change that does nothing, drawn from a world shaped like the saved runs (50 cases with three truth items each, 20 clean cases, three repeats). None may be accepted. The same world must accept a real gain at least once, and a constructed harmful change must be reverted.
+- Saved: each pair of disjoint repeats of each configuration of a saved run is a change that does nothing, and the same pair with every hit removed from half the cases is a harmful one. Neither may be accepted.
+
+The validation of the rule as it stands, `VAL-0002`, ran on `2026-10-08-752b77f` scored with `--specs cases-v2`, after review fixes to the first version (`VAL-0001`, the same results). No simulated change that does nothing was accepted in 1,000 sequences: the primary passed by chance at 1 of 10,000 looks, and a guard stopped it. The constructed harmful change was reverted, and the simulated gain was accepted in 4 of 40 tries. On the saved run, none of 18 decisions on changes that do nothing and none of 18 on harmful changes accepted anything, and all 18 harmful ones were reverted on evidence. On the same run, graph off against graph on is inconclusive on recall (1.8 points better at the bound worse for the change, one-sided p 0.25), and repeat 1 against 2, 1 against 3 and 2 against 3 show no change on any metric in either configuration.
+
+The simulation also says how many cases a decision needs. With about 50 cases and 20 clean ones, the size of the laptop acceptance set, the rule accepted a gain that finds three quarters of what the parent missed in 4 of 40 tries: precision and severity agreement vary too much there for their 2 and 3 point losses at one ninth of a look's error budget. With 200 cases it accepted about half. The A/A pairs say how many cases or repeats each decision needs before it runs.
 
 ## What it does not measure
 

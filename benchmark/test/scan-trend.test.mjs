@@ -23,16 +23,35 @@
 //    group has no accepted entry fails and says how to record one.
 // 4. A Semgrep registry update reads as a product regression and turns
 //    every pull request red: when the rule packs differ from the accepted
-//    run's, each difference is printed as a warning and the gate passes.
-//    An osv.dev hash change does not excuse a drop, since that hash also
-//    covers the osv-scanner adapter's own messages.
+//    run's and the score is higher or merely changed, each difference is
+//    printed as a warning and the gate passes; equal scores pass whatever
+//    the packs. On the bench-scan job's first runs (2026-10-11) the bytes
+//    of p/default differed between runs an hour apart, five times, with
+//    equal scores, so "the packs differ" holds on almost every run.
+// 4a. Because of that, a scanner change that lowers the score while the
+//    packs differ passes: a drop fails the gate whatever the packs, and
+//    the verdict says the packs differ, so a person can tell a registry
+//    change from a product change. An osv.dev hash change does not excuse
+//    a drop either, since that hash also covers the osv-scanner adapter's
+//    own messages.
 // 5. Two passes that differ are judged by the first: a run whose
-//    identical.json says the passes differ fails the gate. A run that lacked
-//    a scanner fails it too, naming the scanner rather than its bugs alone.
+//    identical.json says the passes differ, or a scored run with no
+//    identical.json (one pass, never checked), is refused (exit 2) with the
+//    reason. A run that lacked a scanner fails the gate, naming the scanner
+//    rather than its bugs alone.
 // 6. A red job does not say why: the summary file holds the trend table,
 //    the verdict and each bug the run lost.
 // 7. The plain trend over the index compares scanner-only entries with the
 //    review runs' noise test, which reads a lost bug as noise.
+// 8. A regression against a newer entry accepted on main passes, because a
+//    pull request's head carries its own older copy of the index: the gate
+//    judges against main's accepted run (--index, main's copy), and when the
+//    branch's own index (--branch-index) accepts another run, it says so
+//    and still compares with main's. A changed score passes only when
+//    the branch accepts exactly this run's scores; a drop against main fails
+//    whatever the branch accepts.
+// 9. A model, or anyone people.json does not list, accepts a baseline:
+//    --accept refuses a --by that is not a person on that list.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -126,7 +145,7 @@ function scanRun(root, { runId, startedAt, commit, demo = BASE.demo, clean = BAS
     ended: { at: startedAt, how: "finished", why: null, elapsedMin: 0.1 },
   });
   saveScore(out);
-  write(join(out, "identical.json"), { version: 1, runId, identical, cause: identical ? null : "product", inputs: [], differences: identical ? [] : ["samples/demo-polyglot/scan/1/report/scan.json: candidates.0.lineStart"], passes: [{ folder: runId, elapsedMin: 0.1 }, { folder: `${runId}-pass2`, elapsedMin: 0.1 }] });
+  if (identical !== null) write(join(out, "identical.json"), { version: 1, runId, identical, cause: identical ? null : "product", inputs: [], differences: identical ? [] : ["samples/demo-polyglot/scan/1/report/scan.json: candidates.0.lineStart"], passes: [{ folder: runId, elapsedMin: 0.1 }, { folder: `${runId}-pass2`, elapsedMin: 0.1 }] });
   return out;
 }
 
@@ -138,20 +157,25 @@ const NEXT = { runId: "2026-10-11-bbbbbbb-planted-scan-ci", startedAt: "2026-10-
 function acceptedIndex(accepted = {}) {
   const root = tempDir("oq-bench-scan-trend-");
   const index = join(root, "index");
-  const run = scanRun(join(root, "results"), { ...ACCEPTED, ...accepted });
+  const at = { ...ACCEPTED, ...accepted };
+  const run = scanRun(join(root, "results"), at);
   publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
-  const r = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index, "--results", dirname(run)]);
+  const r = trend(["--accept", at.runId, "--by", "Sid", "--index", index, "--results", dirname(run)]);
   expect(r.status, r.out).toBe(0);
   return { root, index };
 }
 
-// The gate on a run of `next`'s candidates, with its summary file.
-function gate({ root, index }, next = {}) {
+// The gate on a run of `next`'s candidates, with its summary file. `index`
+// is main's copy of the index; `branchIndex` the pull request's own.
+function gate({ root, index }, next = {}, { branchIndex = null } = {}) {
   const run = scanRun(join(root, "ci"), { ...NEXT, ...next });
   const summary = join(root, `summary-${basename(run)}-${Math.random().toString(16).slice(2)}.md`);
-  const r = trend(["--mode", "scan", "--against-run", run, "--index", index, "--summary", summary]);
+  const r = trend(["--mode", "scan", "--against-run", run, "--index", index, ...(branchIndex ? ["--branch-index", branchIndex] : []), "--summary", summary]);
   return { ...r, summary: existsSync(summary) ? readFileSync(summary, "utf8") : "" };
 }
+
+// A run this branch accepts, newer than main's.
+const BRANCH = { runId: "2026-10-11-ccccccc-planted-scan-ci", startedAt: "2026-10-11T09:30:00.000Z", commit: "c".repeat(40) };
 
 describe("a scanner change lowers the scanner-only score and CI stays green", () => {
   it("passes a run whose scores equal the accepted run's, and writes the trend table to the summary", () => {
@@ -215,14 +239,32 @@ describe("the gate passes because there is nothing to compare with", () => {
 });
 
 describe("a Semgrep registry update reads as a product regression and turns every pull request red", () => {
-  it("passes with a warning when the rule packs differ, naming the packs, each difference and the steps to record the run", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV], sha: SHA_B });
+  it("passes with a warning when the rule packs differ and the score is higher, naming the packs, each difference and the steps to record the run", () => {
+    const r = gate(acceptedIndex({ demo: [OSV] }), { sha: SHA_B });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/warning/i);
     expect(r.out).toMatch(/Semgrep rule packs/);
     expect(r.out).toMatch(/shell-rm-unquoted/);
     expect(r.out).toContain(`trend.mjs --accept ${NEXT.runId}`);
     expect(r.summary).toMatch(/Semgrep rule packs/);
+  });
+
+  it("passes equal scores whatever the packs, and names the packs that differ", () => {
+    const r = gate(acceptedIndex(), { sha: SHA_B });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toMatch(/equal the accepted run's/);
+    expect(r.out).toMatch(/Semgrep rule packs/);
+  });
+});
+
+describe("a scanner change that lowers the score passes while the rule packs differ", () => {
+  it("fails a lost bug when the packs differ too, and says the packs differ", () => {
+    const r = gate(acceptedIndex(), { demo: [OSV], sha: SHA_B });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toMatch(/regression/i);
+    expect(r.out).toMatch(/shell-rm-unquoted/);
+    expect(r.out).toMatch(/Semgrep rule packs differ/);
+    expect(r.out).toContain(`trend.mjs --accept ${NEXT.runId}`);
   });
 
   it("still fails a lost bug when only the osv.dev data differs, since that hash also covers the adapter's own messages", () => {
@@ -236,12 +278,89 @@ describe("a Semgrep registry update reads as a product regression and turns ever
 });
 
 describe("two passes that differ are judged by the first", () => {
-  it("fails a run whose identical.json says its two passes differ, and names the difference", () => {
+  it("refuses a run whose identical.json says its two passes differ, and names the difference", () => {
     const r = gate(acceptedIndex(), { identical: false });
-    expect(r.status, r.out).toBe(1);
+    expect(r.status, r.out).toBe(2);
     expect(r.out).toMatch(/two passes/i);
     expect(r.out).toContain("samples/demo-polyglot/scan/1/report/scan.json");
     expect(r.summary).toMatch(/two passes/i);
+  });
+
+  it("refuses a scored run with no identical.json, which was never checked in a second pass", () => {
+    const r = gate(acceptedIndex(), { identical: null });
+    expect(r.status, r.out).toBe(2);
+    expect(r.out).toMatch(/identical\.json/);
+    expect(r.out).toMatch(/--check-identical/);
+    expect(r.summary).toMatch(/identical\.json/);
+  });
+});
+
+describe("a regression against a newer entry accepted on main passes", () => {
+  it("fails a run that equals the branch's older accepted run but lost a bug main's newer accepted run finds", () => {
+    const main = acceptedIndex({ ...BRANCH });
+    const branch = acceptedIndex({ demo: [OSV] });
+    const r = gate(main, { demo: [OSV] }, { branchIndex: branch.index });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toMatch(/regression/i);
+    expect(r.out).toMatch(/shell-rm-unquoted/);
+    expect(r.out).toContain(`against the run main accepts, ${BRANCH.runId}`);
+  });
+
+  it("passes a higher score that this branch accepts, says the branch accepts another run, and still compares with main's", () => {
+    const main = acceptedIndex({ demo: [OSV] });
+    const branch = acceptedIndex({ ...BRANCH });
+    const r = gate(main, {}, { branchIndex: branch.index });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toContain(`This branch's index accepts ${BRANCH.runId} for this group, and main's accepts ${ACCEPTED.runId}`);
+    expect(r.out).toContain(`against the run main accepts, ${ACCEPTED.runId}`);
+    expect(r.out).toMatch(/shell-rm-unquoted/);
+    expect(r.summary).toContain("This branch's index accepts");
+  });
+
+  it("fails a changed score when the branch's accepted run is not this run's score", () => {
+    const main = acceptedIndex({ demo: [OSV] });
+    const branch = acceptedIndex({ ...BRANCH, demo: [SC2115, OSV, STRAY] });
+    const r = gate(main, {}, { branchIndex: branch.index });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toMatch(/does not match this run/);
+  });
+
+  it("fails a drop against main though the branch accepts it", () => {
+    const main = acceptedIndex();
+    const branch = acceptedIndex({ ...BRANCH, demo: [OSV] });
+    const r = gate(main, { demo: [OSV] }, { branchIndex: branch.index });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toMatch(/regression/i);
+    expect(r.out).toContain("This branch's index accepts");
+  });
+
+  it("judges the run against the branch's entry when main accepts none yet, and fails when neither does", () => {
+    const root = tempDir("oq-bench-scan-trend-");
+    const empty = { root, index: join(root, "index") };
+    const branch = acceptedIndex({ ...BRANCH });
+    const r = gate(empty, {}, { branchIndex: branch.index });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toMatch(/main accepts no scanner-only run for this group yet/);
+    const lower = gate(empty, { demo: [OSV] }, { branchIndex: branch.index });
+    expect(lower.status, lower.out).toBe(1);
+    const neither = gate(empty, {}, { branchIndex: join(root, "index") });
+    expect(neither.status, neither.out).toBe(1);
+    expect(neither.out).toMatch(/no scanner-only run is accepted/i);
+  });
+});
+
+describe("a model, or anyone people.json does not list, accepts a baseline", () => {
+  it("refuses --by naming a model, an agent or a name people.json does not list", () => {
+    const root = tempDir("oq-bench-scan-trend-");
+    const index = join(root, "index");
+    const run = scanRun(join(root, "results"), ACCEPTED);
+    publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
+    for (const by of ["Claude Opus 5.5", "gpt-6.1-sol", "the session", "Somebody Else"]) {
+      const r = trend(["--accept", ACCEPTED.runId, "--by", by, "--index", index, "--results", dirname(run)]);
+      expect(r.status, `${by}: ${r.out}`).toBe(2);
+      expect(r.out).toMatch(/people\.json/);
+    }
+    expect(existsSync(join(index, "accepted.json"))).toBe(false);
   });
 });
 

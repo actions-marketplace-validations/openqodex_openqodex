@@ -21,6 +21,11 @@ import type { OwnFiles, ToolCall } from "./trace.js";
 // refuses: a review never starts another review.
 export const DEPTH_ENV = "OPENQODEX_REVIEW_DEPTH";
 
+// The failure of a turn the review's deadline stopped, whichever stop fired
+// first: the driver's, the conversation's or the model loop's. The
+// conversation reports it as the host words it (ReviewInputs.timedOut).
+export const TIMED_OUT = "the reviewer timed out and was stopped";
+
 export type Detected = { ok: true; version: string; bin: string } | { ok: false; missing: string; fix: string };
 
 // One answer of the reviewer. `usage` is the session's total so far.
