@@ -40,8 +40,11 @@
 //   candidates saved: S's kept candidates that absorbed no other scanner's
 //   finding.
 // - Raised, held, dropped, unanswered: a shown finding names the candidate;
-//   a low-confidence finding does; the reviewer dropped it (its class from
-//   lib/drops.mjs); none of these. A scanner-only run's candidates are
+//   a finding of the saved final answer (submission.json) names it and
+//   finalize did not show it (under the confidence floor or below the
+//   severity threshold, which the report lists without the candidate); the
+//   reviewer dropped it (its class from lib/drops.mjs); none of these, or a
+//   review that saved no final answer. A scanner-only run's candidates are
 //   unreviewed.
 //
 // Failure list, written before the code:
@@ -70,6 +73,15 @@
 //    different issue: K1 compares items found with issue-level evidence,
 //    and a candidate that only sits on a lost item's lines is named as a
 //    location match, never as the item kept.
+// Found by the OpenQodex review of this change:
+// 8. A candidate the final answer raised and finalize hid reads as
+//    unanswered, since the report lists hidden findings without their
+//    candidate: the final answer is read, and a review that saved none is
+//    named as missing it.
+// 9. A language whose only language scanners did not run reads as a gap
+//    with recall zero: a language scanner's remit counts toward the gap only
+//    where it ran; where only a scanner that did not run holds an item, the
+//    item's language remit is unknown.
 import { langOf } from "../../packages/graph/dist/index.js";
 import { DROP_CLASSES, classifyReportDrops, countDrops } from "./drops.mjs";
 import { semgrepPacksOf } from "./external.mjs";
@@ -173,10 +185,10 @@ const extOf = (file) => {
 // The graph's language of a file, otherwise its extension (or its name).
 export const languageOf = (file) => langOf(normPath(file)) ?? extOf(normPath(file));
 
-// One sample analysed: `scan` its scan.json, `report` its report.json (null
-// when it saved none), `row` its sample.json, `changed` the case's changed
-// lines or null.
-export function analyseSample({ job, spec, scan, report = null, row = {}, mode = "review", changed = null }) {
+// One sample analysed: `scan` its scan.json, `report` its report.json and
+// `submission` its submission.json (null when it saved none), `row` its
+// sample.json, `changed` the case's changed lines or null.
+export function analyseSample({ job, spec, scan, report = null, submission = null, row = {}, mode = "review", changed = null }) {
   const truthItems = (spec?.bugs ?? []).filter((b) => b.valid !== false);
   const extras = spec?.extras ?? [];
   const places = placesOf(scan);
@@ -213,7 +225,8 @@ export function analyseSample({ job, spec, scan, report = null, row = {}, mode =
 
   const reviewed = mode !== "scan" && report !== null;
   const shown = new Set([...(report?.findings ?? []), ...(report?.outside_change ?? [])].map((f) => f.candidate).filter((x) => typeof x === "string"));
-  const held = new Set((report?.low_confidence ?? []).map((f) => f.candidate).filter((x) => typeof x === "string"));
+  const answered = Array.isArray(submission?.findings) ? submission.findings : null;
+  const held = new Set((answered ?? []).map((f) => f?.candidate).filter((x) => typeof x === "string" && !shown.has(x)));
   const drops = reviewed ? classifyReportDrops(report, scan) : [];
   const dropOf = new Map(drops.map((d) => [d.candidate?.id, d]));
   const candidates = (scan.candidates ?? []).map((c) => {
@@ -261,7 +274,7 @@ export function analyseSample({ job, spec, scan, report = null, row = {}, mode =
     repeat: job.repeat,
     sample: `${job.case}/${job.config}/${job.repeat}`,
     repoGroup: spec?.repoGroup ?? job.case,
-    has: { selection: selection !== null, trail: Array.isArray(scan.trail), stages: ran.every((s) => s.stages !== null), resolveMs: ran.every((s) => s.resolveMs !== null), files: ran.every((s) => s.files !== null), timings: t !== null },
+    has: { submission: !reviewed || answered !== null, selection: selection !== null, trail: Array.isArray(scan.trail), stages: ran.every((s) => s.stages !== null), resolveMs: ran.every((s) => s.resolveMs !== null), files: ran.every((s) => s.files !== null), timings: t !== null },
     scanners,
     mergedTokens,
     candidates,
@@ -281,7 +294,7 @@ export function analyseSample({ job, spec, scan, report = null, row = {}, mode =
 }
 
 // A run's first attempts analysed. `attempts` are as score.mjs loadRun reads
-// them ({ case, config, repeat, attempt, row, report, scan }), `specs` the
+// them ({ case, config, repeat, attempt, row, report, submission, scan }), `specs` the
 // specs by case name, and `changedOf(case)` the case's changed lines or
 // null. A planned job whose first attempt saved no scan.json is listed in
 // noScan and analysed no further.
@@ -300,7 +313,7 @@ export function analyseRun({ name, manifest, attempts, specs, changedOf = () => 
       continue;
     }
     scans.push(j.first.scan);
-    samples.push(analyseSample({ job: j, spec: specs[j.case], scan: j.first.scan, report: j.first.report ?? null, row: j.first.row ?? {}, mode, changed: changedOf(j.case) }));
+    samples.push(analyseSample({ job: j, spec: specs[j.case], scan: j.first.scan, report: j.first.report ?? null, submission: j.first.submission ?? null, row: j.first.row ?? {}, mode, changed: changedOf(j.case) }));
   }
   return {
     name,
@@ -343,6 +356,7 @@ function missingOf(samples) {
     ["resolveMs", (s) => s.has.resolveMs],
     ["files", (s) => s.has.files],
     ["timings", (s) => s.has.timings],
+    ["submission", (s) => s.has.submission],
   ];
   const out = {};
   for (const [field, has] of fields) {
@@ -482,8 +496,9 @@ export function scannerReport(run) {
       it.reachable.push(t.reachable);
       it.found ||= t.foundBy.length > 0;
       it.foundLanguage ||= t.foundBy.some(isLanguageScanner);
-      const languageScanners = t.remit === null ? null : Object.entries(t.remit).filter(([name]) => isLanguageScanner(name)).map(([, state]) => state);
-      it.inLanguageRemit.push(languageScanners === null ? null : languageScanners.includes("in") ? true : languageScanners.includes("unknown") ? null : false);
+      // Only a language scanner that ran puts the item in a language remit; one that did not run leaves it unknown.
+      const languageScanners = t.remit === null ? null : Object.entries(t.remit).filter(([name]) => isLanguageScanner(name)).map(([name, state]) => ({ state, ran: statusOf.get(name) === "ran" }));
+      it.inLanguageRemit.push(languageScanners === null ? null : languageScanners.some((x) => x.ran && x.state === "in") ? true : languageScanners.some((x) => x.state === "unknown" || x.state === "in") ? null : false);
       items.set(key, it);
     }
   }

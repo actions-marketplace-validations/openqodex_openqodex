@@ -150,6 +150,7 @@ const MISSING_TEXT = {
   resolveMs: "resolveMs (the time to find or install each tool)",
   files: "files (how many files each scanner was handed)",
   timings: "timings (the product's phase times): the scanner stage is read as the slowest scanner",
+  submission: "submission.json (the reviewer's final answer): a candidate it raised and finalize hid reads as unanswered",
 };
 
 export function render(r, { specsFrom }) {
@@ -165,7 +166,7 @@ export function render(r, { specsFrom }) {
     out.push("", "Not recorded by these scans (saved by an older build), so what depends on it is unknown, never guessed:");
     for (const [field, m] of missing) out.push(`- ${MISSING_TEXT[field]}: ${m.lacking} of ${m.of} samples.`);
   }
-  out.push("", `Candidates: ${t.candidates} in ${t.samples} samples. ${r.mode === "scan" ? `${t.unreviewed} unreviewed (no reviewer ran).` : `${t.raised} raised by a shown finding, ${t.held} held under the confidence floor, ${t.dropped} dropped, ${t.unanswered} unanswered${t.unreviewed > 0 ? `, ${t.unreviewed} in reviews that saved no report` : ""}.`}`);
+  out.push("", `Candidates: ${t.candidates} in ${t.samples} samples. ${r.mode === "scan" ? `${t.unreviewed} unreviewed (no reviewer ran).` : `${t.raised} raised by a shown finding, ${t.held} held (raised in the final answer, hidden by finalize under the confidence floor or below the severity threshold), ${t.dropped} dropped, ${t.unanswered} unanswered${t.unreviewed > 0 ? `, ${t.unreviewed} in reviews that saved no report` : ""}.`}`);
 
   const names = Object.keys(r.scanners);
   const notRun = (s) => Object.entries(s.samples.notRun).map(([k, n]) => `${k} ${n}`).join(", ") || "0";

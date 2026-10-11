@@ -230,6 +230,42 @@ describe("a location match on the same lines counts as preserved coverage of a d
   });
 });
 
+describe("a candidate the final answer raised and finalize hid reads as unanswered", () => {
+  const name = "demo-polyglot";
+  const latest = cand("c1", "hadolint:DL3042", "Dockerfile", 7, 7, "Avoid use of cache directory with pip.");
+  const shown = cand("c2", "hadolint:DL3007", "Dockerfile", 1, 1, "Using latest is prone to errors.");
+  const finding = (c, extra = {}) => ({ severity: "minor", category: "maintainability", confidence: 0.9, file_path: c.filePath, line_number: c.lineStart, line_end: c.lineEnd, title: `About ${c.id}`, problem: "p", consequence: "c", fix: "f", suggested_change: null, source: c.token, candidate: c.id, ...extra });
+  // The report lists what finalize hid by title and place only (low_confidence, below_threshold); the final answer names the candidate.
+  const report = { findings: [finding(shown)], outside_change: [], low_confidence: [], below_threshold: 1, dropped: [] };
+  const submission = { findings: [finding(shown), finding(latest)] };
+
+  it("counts a candidate the saved final answer raised, and the report does not show, as held", () => {
+    const run = runOf([name], [{ ...attempt(name, scanOf([latest, shown], [ran("hadolint", 2)]), { report, config: "claude" }), submission }], { mode: "review", configs: ["claude"] });
+    const r = scannerReport(run);
+    expect(r.totals).toMatchObject({ raised: 1, held: 1, unanswered: 0 });
+    expect(r.scanners.hadolint).toMatchObject({ raised: 1, held: 1, unanswered: 0 });
+  });
+
+  it("names the final answer as missing when a review saved none, and holds nothing it cannot see", () => {
+    const run = runOf([name], [attempt(name, scanOf([latest, shown], [ran("hadolint", 2)]), { report, config: "claude" })], { mode: "review", configs: ["claude"] });
+    const r = scannerReport(run);
+    expect(r.missingFields).toContain("submission");
+    expect(r.totals).toMatchObject({ raised: 1, held: 0, unanswered: 1 });
+  });
+});
+
+describe("a language whose only language scanners did not run reads as a gap", () => {
+  it("calls the gap unknown, not a gap with recall zero, when the language scanners in remit were not installed", () => {
+    const selection = ["semgrep", "brakeman", "rubocop"].map((scanner) => ({ scanner, wanted: true, paths: RAILS_FILES, projects: [""], skip: null }));
+    const scan = scanOf([RAILS_SQL], [ran("semgrep", 1), notInstalled("brakeman"), notInstalled("rubocop")], { selection, trail: [] });
+    const r = scannerReport(runOf([RAILS], [attempt(RAILS, scan)], { changed: { [RAILS]: RAILS_CHANGED } }));
+    const ruby = r.languages.find((l) => l.language === "ruby");
+    expect(ruby.gap).toBeNull();
+    expect(ruby.languageRecall).toEqual({ hit: 0, of: 0 });
+    expect(r.scanners.brakeman.infraMisses).toBe(4);
+  });
+});
+
 describe("the command exits 0, 1 or 2 on a pair of runs", () => {
   // Two scanner-only runs of the demo case, written the way run.mjs writes them, against the case's frozen spec.
   const name = "demo-polyglot";
