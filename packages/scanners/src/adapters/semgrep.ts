@@ -7,11 +7,14 @@
 // The rule packs are fetched from the Semgrep registry at run time onto the
 // developer's machine and never bundled. Semgrep keeps its settings and logs
 // under ~/.semgrep, outside the repo, and writes nothing into the working tree.
-// Its temp files go to a folder of its own, removed after the scan.
+// Its temp files go to a folder of its own, removed after the scan. The scan's
+// summary names each pack it consumed by the sha256 and size of the bytes
+// semgrep read, taken from that folder before it is removed.
 
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AdapterResult, ResolvedTool, StaticFinding } from "@openqodex/core";
+import type { AdapterResult, ResolvedTool, RulePack, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Scratch } from "../scratch.js";
@@ -80,7 +83,8 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   // Semgrep writes each rule pack to its temp folder as semgrep-*.rules and
   // never removes them, about 2.7 MB a scan. It gets a folder of its own,
   // which mkdtemp makes readable by this user only, removed after the scan
-  // whatever the exit.
+  // whatever the exit. The packs each process consumed are read from it
+  // first (consumedPacks).
   let tmp: string;
   try {
     tmp = await fs.mkdtemp(path.join(args.scratch.temp, "openqodex-semgrep-"));
@@ -90,11 +94,19 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   }
 
   // One process per chunk of files, so a whole-repo file list stays under
-  // the argument limit; the findings of every chunk are merged.
+  // the argument limit; the findings of every chunk are merged. Each process
+  // fetches the packs again, so the record holds every version a chunk
+  // consumed, and is left out once one chunk's packs cannot be told apart.
   const tool = args.tool;
+  const rules: RulePack[] = [];
+  const seen = new Set<string>();
+  let rulesKnown = true;
   try {
     const findings = await runInChunks("semgrep", targets, SEMGREP_TIMEOUT_MS, async (chunk, left) => {
       const stdout = await execSemgrep(tool, cliArgs(chunk), args.repoDir, left, tmp);
+      const packs = await consumedPacks(tmp, seen);
+      if (packs === null) rulesKnown = false;
+      else for (const p of packs) if (!rules.some((r) => r.pack === p.pack && r.sha256 === p.sha256)) rules.push(p);
       try {
         return parseSemgrepJson(stdout);
       } catch (err) {
@@ -102,12 +114,40 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
         throw new Error(`parse: ${message.slice(0, 200)}`);
       }
     });
-    return { findings, error: null };
+    return { findings, error: null, ...(rulesKnown ? { rules } : {}) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+// The packs one semgrep process consumed, from the files it wrote that `seen`
+// does not hold yet. semgrep 1.94.0 fetches the --config packs one after
+// another in the order given, and writes each, as the text it then parses,
+// to a new semgrep-<random>.rules file before it fetches the next
+// (config_resolver.py: Config.from_config_list, parse_config_string). So
+// those files, oldest first, are RULE_PACKS in order. Null when they cannot
+// be told apart: not one file per pack, two written at the same instant, or
+// one that cannot be read.
+async function consumedPacks(tmp: string, seen: Set<string>): Promise<RulePack[] | null> {
+  try {
+    const names = (await fs.readdir(tmp)).filter((n) => n.startsWith("semgrep-") && n.endsWith(".rules") && !seen.has(n));
+    for (const n of names) seen.add(n);
+    if (names.length !== RULE_PACKS.length) return null;
+    const files = await Promise.all(
+      names.map(async (name) => {
+        const file = path.join(tmp, name);
+        const [stat, bytes] = await Promise.all([fs.stat(file, { bigint: true }), fs.readFile(file)]);
+        return { written: stat.mtimeNs, sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+      }),
+    );
+    files.sort((a, b) => (a.written < b.written ? -1 : a.written > b.written ? 1 : 0));
+    if (files.some((f, i) => i > 0 && f.written === files[i - 1]!.written)) return null;
+    return files.map((f, i) => ({ pack: RULE_PACKS[i]!, sha256: f.sha256, bytes: f.bytes }));
+  } catch {
+    return null;
   }
 }
 
