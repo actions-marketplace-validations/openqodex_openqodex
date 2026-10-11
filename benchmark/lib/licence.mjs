@@ -1,0 +1,132 @@
+// The licence of a real pull request's repository, and the GitHub facts the
+// split groups repositories by (current name, fork source). Every answer
+// GitHub gives is cached under $OPENQODEX_BENCH_CACHE/github/, so the ingest
+// asks once and reads the cache from then on.
+//
+// Failure list, written before the code:
+// 1. A pull request whose repository has no licence is used: a repository
+//    with no licence file is class none, and one whose licence GitHub cannot
+//    name (NOASSERTION, or an id on none of the lists below) is class
+//    unknown; the ingest excludes both and names them in its report. No
+//    licence text is guessed by a script.
+// 2. Two ingests read the licence differently (a new day, a changed
+//    repository), so the same dataset gives two suites: the first answer is
+//    cached with the day it was read, and the cache is the only source after
+//    that. A person moves a cache file to the Trash to read it again.
+// 3. A quota, login or permission error is read as "no licence": only a 404
+//    on the licence endpoint of a repository GitHub knows means no licence
+//    file. A 401, 403 or 429, a rate limit, or any other failure stops at
+//    once with GitHub's own words, and nothing is cached.
+// 4. A renamed or moved repository is grouped under its old name only:
+//    GitHub's current full name is cached beside the name asked.
+// 5. An OR expression is classed by a closed option: chosen is the first
+//    permissive option, else the first copyleft one, else the first
+//    source-available one.
+// 6. Code from a repository whose licence is not permissive is published:
+//    excerpts is "full" only for permissive, "omit" otherwise
+//    (publish-run.mjs reads the class).
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export const PERMISSIVE = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MPL-2.0", "Unlicense", "Zlib", "0BSD"];
+const COPYLEFT = /^(A|L)?GPL-[23]\.[01](-only|-or-later|\+)?$/;
+const SOURCE_AVAILABLE = /^(Elastic-2\.0|SSPL-1\.0|BUSL-1\.1|FSL-1\.[01]-(MIT|Apache-2\.0|ALv2))$/;
+export const USE = "local review and scoring";
+// The classes a case may be used under; unknown and none exclude it.
+export const USABLE = ["permissive", "copyleft", "source-available"];
+
+const classOf = (id) => (PERMISSIVE.includes(id) ? "permissive" : COPYLEFT.test(id) ? "copyleft" : SOURCE_AVAILABLE.test(id) ? "source-available" : null);
+
+// A licence id or an SPDX OR expression to { chosen, class }.
+export function classify(spdx) {
+  if (spdx === null || spdx === undefined || spdx === "") return { chosen: null, class: "none" };
+  const options = String(spdx)
+    .split(/\s+OR\s+/i)
+    .map((o) => o.replace(/^\(|\)$/g, "").replace(/\s+WITH\s+.*$/i, "").trim());
+  for (const wanted of USABLE) {
+    const chosen = options.find((o) => classOf(o) === wanted);
+    if (chosen) return { chosen, class: wanted };
+  }
+  return { chosen: null, class: "unknown" };
+}
+
+export const cacheRoot = (env = process.env) => env.OPENQODEX_BENCH_CACHE || join(homedir(), ".cache", "openqodex-bench");
+
+const answerPath = (cache, repo) => join(cache, "github", `${repo.toLowerCase().replace("/", "__")}.json`);
+
+// A cached GitHub answer: { v: 1, asked, readOn, found, fullName, fork,
+// source, licence? }. licence is absent when it was never asked for, null
+// when the repository has no licence file, else { spdx, key, file,
+// fileSha256 }.
+export function readRepoAnswer(cache, repo) {
+  const path = answerPath(cache, repo);
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+}
+
+export function saveRepoAnswer(cache, answer) {
+  const path = answerPath(cache, answer.asked);
+  mkdirSync(join(cache, "github"), { recursive: true });
+  const ordered = { v: 1, asked: answer.asked, readOn: answer.readOn, found: answer.found, fullName: answer.fullName ?? null, fork: answer.fork ?? false, source: answer.source ?? null };
+  if (answer.licence !== undefined) ordered.licence = answer.licence;
+  writeFileSync(`${path}.tmp`, `${JSON.stringify(ordered, null, 2)}\n`);
+  renameSync(`${path}.tmp`, path);
+  return ordered;
+}
+
+// One GitHub API call through the gh command. Returns the parsed body, or
+// null on a 404; stops on anything else.
+function ghApi(path) {
+  try {
+    return JSON.parse(execFileSync("gh", ["api", path], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 26 }));
+  } catch (error) {
+    const said = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim() || error.message;
+    if (/\(HTTP 404\)/.test(said) && !/rate limit/i.test(said)) return null;
+    throw new Error(`gh api ${path} failed, so the ingest stops: ${said}`);
+  }
+}
+
+// GitHub's answer for a repository, from the cache or, unless offline, from
+// GitHub (then cached). With `licence`, the licence file is read too.
+export function repoAnswer(repo, { cache = cacheRoot(), offline = false, licence = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+  const cached = readRepoAnswer(cache, repo);
+  if (cached && (!licence || !cached.found || cached.licence !== undefined)) return cached;
+  if (offline) throw new Error(`no cached GitHub answer for ${repo}${licence ? " with its licence" : ""} in ${join(cache, "github")}, and the ingest is offline`);
+  let answer = cached;
+  if (!answer) {
+    const body = ghApi(`repos/${repo}`);
+    answer = body ? { asked: repo, readOn: today, found: true, fullName: body.full_name, fork: body.fork === true, source: body.fork ? (body.source?.full_name ?? body.parent?.full_name ?? null) : null } : { asked: repo, readOn: today, found: false, fullName: null, fork: false, source: null };
+  }
+  if (licence && answer.found) {
+    const body = ghApi(`repos/${repo}/license`);
+    answer = { ...answer, licence: body ? { spdx: body.license?.spdx_id ?? null, key: body.license?.key ?? null, file: body.path ?? null, fileSha256: body.content ? createHash("sha256").update(Buffer.from(body.content, "base64")).digest("hex") : null } : null };
+  }
+  return saveRepoAnswer(cache, answer);
+}
+
+// The licence record of a case (PLAN-benchmark 4.2), from a cached answer.
+export function licenceRecord(answer) {
+  const l = answer?.found ? answer.licence : null;
+  const spdx = l ? l.spdx : null;
+  const { chosen, class: cls } = l ? (spdx === null ? { chosen: null, class: "unknown" } : classify(spdx)) : classify(null);
+  return {
+    spdx,
+    chosen,
+    class: cls,
+    file: l?.file ?? null,
+    fileSha256: l?.fileSha256 ?? null,
+    at: `the default branch on ${answer?.readOn ?? "an unknown day"}`,
+    source: "the GitHub licence API",
+    use: USE,
+    excerpts: cls === "permissive" ? "full" : "omit",
+  };
+}
+
+// Why a case under this licence is excluded, or null when it may be used.
+export function licenceExclusion(record) {
+  if (USABLE.includes(record.class)) return null;
+  if (record.class === "none") return "licence none: the repository has no licence file, so its code is all rights reserved";
+  return `licence unknown: GitHub names ${record.spdx ?? "no single licence"} for the licence file ${record.file ?? "(none)"}, and no script guesses a licence from its text`;
+}
