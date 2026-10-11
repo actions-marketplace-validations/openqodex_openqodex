@@ -69,3 +69,82 @@ jobs:
         run: node scripts/config-docs.mjs --check
       - name: Private material scrub
         run: node scripts/scrub.mjs
+
+  # The scanner-only benchmark on the frozen planted cases with every
+  # scanner installed, two passes on one build, and its trend gate against
+  # the accepted scanner-only run in benchmark/index. It fails when the two
+  # passes differ, or when the score moved against the accepted run and the
+  # index does not hold the new number (benchmark/trend.mjs --against-run).
+  # scripts/gate.sh does not run it: it needs Ruby and Go.
+  bench-scan:
+    name: Scanner-only benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # The scanners' install root, and the folder the artifact is made of.
+      - name: Name the folders
+        run: |
+          echo "OPENQODEX_HOME=$RUNNER_TEMP/openqodex-bench-home" >> "$GITHUB_ENV"
+          echo "BENCH=$RUNNER_TEMP/bench-scan" >> "$GITHUB_ENV"
+      # The pull request's own head, not the merge commit GitHub makes: the
+      # run's build commit becomes the commit of an index entry when the run
+      # is accepted, and a merge commit is not kept once the pull request
+      # closes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # brakeman and rubocop need Ruby, golangci-lint needs Go; the runner
+      # image carries Cargo for cargo-deny.
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.3"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # golangci-lint 2.12.2 is built with Go 1.26 and cannot check a newer Go.
+          go-version: "1.26"
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      # The Ruby scanners are installed against this Ruby, so its version is in the key.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/openqodex-bench-home
+          key: bench-scanners-${{ runner.os }}-${{ runner.arch }}-ruby3.3-go1.26-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
+      - name: Build the CLI and record its commit
+        run: node benchmark/build-cli.mjs
+      # Fails when any scanner is not installed at its pinned version or does
+      # not report its check case.
+      - name: Install every scanner
+        run: node packages/cli/dist/bin.js doctor --install --all-scanners --require-all
+      - name: Scan the planted cases twice
+        run: |
+          run_id="$(date -u +%Y-%m-%d)-$(git rev-parse --short=7 HEAD)-planted-scan-ci"
+          echo "RUN_ID=$run_id" >> "$GITHUB_ENV"
+          node benchmark/run.mjs --mode scan --check-identical --out "$BENCH/results/$run_id"
+      - name: Trend against the accepted run
+        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        run: node benchmark/trend.mjs --mode scan --against-run "$BENCH/results/$RUN_ID" --summary "$GITHUB_STEP_SUMMARY"
+      # The entry a person commits to accept this run (benchmark/trend.mjs
+      # --accept), written from the run folder the artifact holds.
+      - name: Write the run's index entry
+        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        run: |
+          node benchmark/publish-run.mjs "$BENCH/results/$RUN_ID" --dry-run --write-index --out "$BENCH/asset"
+          mkdir -p "$BENCH/index/runs"
+          cp "benchmark/index/runs/$RUN_ID.json" "$BENCH/index/runs/"
+          {
+            echo ""
+            echo "The run folders and this index entry are in the artifact bench-scan-$RUN_ID, kept 14 days. \`gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --name bench-scan-$RUN_ID --dir <dir>\` puts the run folder at \`<dir>/results/$RUN_ID\`, so \`<results>\` above is \`<dir>/results\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        with:
+          name: bench-scan-${{ env.RUN_ID }}
+          path: ${{ runner.temp }}/bench-scan
+          retention-days: 14
+          if-no-files-found: error
