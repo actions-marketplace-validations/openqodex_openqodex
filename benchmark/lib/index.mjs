@@ -374,8 +374,10 @@ export function entryProblems(e) {
 //   { version: 1, commit, runId, scoreHash, acceptedAt, acceptedBy,
 //     groups: { <group key>: { runId, commit, scoreHash, acceptedAt, acceptedBy } } }
 // Each group key names the run the trend compares that group's newer runs
-// against. The top level names the run accepted last; its build commit is
-// the reviewer loop's base, which loop/propose.mjs reads from `commit`.
+// against. The top level names the run accepted last, of either mode. The
+// reviewer loop's base is the commit of the review run accepted last, which
+// loop/propose.mjs reads from the review groups, so a scanner-only accept
+// never moves it.
 export const ACCEPTED_VERSION = 1;
 export const acceptedPath = (index = indexRoot) => join(index, "accepted.json");
 

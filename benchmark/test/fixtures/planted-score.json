@@ -1,0 +1,875 @@
+{
+  "score": {
+    "version": 3,
+    "suite": "planted",
+    "split": "dev",
+    "splitHash": null,
+    "mode": "review",
+    "path": "laptop",
+    "build": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "short": "aaaaaaa",
+      "dirty": false,
+      "cliVersion": "0.14.0"
+    },
+    "reviewers": {
+      "claude": {
+        "name": "claude",
+        "version": "2.1.300",
+        "model": "claude-opus-5-5"
+      }
+    },
+    "caseIds": [
+      "planted/hand@abababab"
+    ],
+    "caseSetHash": "8dece81e61ab06dc66f108f71e6ba75d81275fa2b376f8e8c5e292ff0a349343",
+    "decisionsHash": null,
+    "rulings": {
+      "read": 0,
+      "ignored": [],
+      "people": []
+    },
+    "external": null,
+    "repeat": 2,
+    "population": {
+      "planned": 2,
+      "complete": 2,
+      "incomplete": 0,
+      "failed": 0,
+      "unstarted": 0,
+      "retries": 0,
+      "retryCostUsd": 0,
+      "jobsFrom": "manifest",
+      "unplanned": [],
+      "unrecorded": 0
+    },
+    "resumes": [],
+    "specsFrom": "the run's own cases/",
+    "specsDiffer": [],
+    "byConfig": {
+      "claude-graph-on": {
+        "population": {
+          "planned": 2,
+          "complete": 2,
+          "incomplete": 0,
+          "failed": 0,
+          "unstarted": 0,
+          "retries": 0,
+          "retryCostUsd": 0
+        },
+        "issueRecall": {
+          "all": {
+            "hit": 4,
+            "of": 14,
+            "ci": null
+          },
+          "criticalMajor": {
+            "hit": 2,
+            "of": 8,
+            "ci": null
+          }
+        },
+        "precision": {
+          "lower": {
+            "hit": 6,
+            "of": 9,
+            "ci": null
+          },
+          "upper": {
+            "hit": 9,
+            "of": 9,
+            "ci": null
+          },
+          "unresolved": 3
+        },
+        "uniqueIssuePrecision": {
+          "lower": {
+            "hit": 5,
+            "of": 8
+          },
+          "upper": {
+            "hit": 8,
+            "of": 8
+          }
+        },
+        "redundancy": {
+          "hit": 1,
+          "of": 9
+        },
+        "f1": 0.4,
+        "cleanFindingsPerCase": {
+          "findings": 0,
+          "cases": 0
+        },
+        "controls": {
+          "hit": 0,
+          "of": 0
+        },
+        "location": {
+          "label": "Location diagnostic: AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart). A board output; never an acceptance metric.",
+          "precision": {
+            "hit": 5,
+            "of": 10
+          },
+          "recall": {
+            "hit": 5,
+            "of": 14
+          },
+          "matches": 5,
+          "generated": 10,
+          "expected": 14,
+          "knownNoise": 0
+        },
+        "plantedLegacy": {
+          "label": "Only planted cases: the format 2 rule, with duplicates, accepted side issues and requests for a test set apart; testGaps counts the requests for a test, which stay out of both precision bounds. Never pooled with real-suite precision.",
+          "precision": {
+            "hit": 4,
+            "of": 7
+          },
+          "testGaps": 1
+        },
+        "severity": {
+          "label": "Each found truth item once, by the first finding that hit it: the severity it gave against the truth item's, on the scale critical, major, minor, nitpick, info. Off is two steps or more; the matrix is truth severity, then given severity.",
+          "exact": {
+            "hit": 3,
+            "of": 4
+          },
+          "oneOff": {
+            "hit": 0,
+            "of": 4
+          },
+          "off": {
+            "hit": 1,
+            "of": 4
+          },
+          "withinOne": {
+            "hit": 3,
+            "of": 4
+          },
+          "over": 1,
+          "under": 0,
+          "unknown": 0,
+          "matrix": {
+            "critical": {
+              "critical": 1,
+              "major": 0,
+              "minor": 0,
+              "nitpick": 0,
+              "info": 0
+            },
+            "major": {
+              "critical": 0,
+              "major": 1,
+              "minor": 0,
+              "nitpick": 0,
+              "info": 0
+            },
+            "minor": {
+              "critical": 0,
+              "major": 0,
+              "minor": 0,
+              "nitpick": 0,
+              "info": 0
+            },
+            "nitpick": {
+              "critical": 0,
+              "major": 0,
+              "minor": 0,
+              "nitpick": 1,
+              "info": 0
+            },
+            "info": {
+              "critical": 0,
+              "major": 0,
+              "minor": 1,
+              "nitpick": 0,
+              "info": 0
+            }
+          }
+        },
+        "finder": {
+          "label": "Each found truth item once, judged from the review's own scan.json: a scanner found it when one of its candidates, or a finding merged into one, sits on the item's lines and is either from a scanner found_by names or names the item's words; else the reviewer found it alone. found_by is the expectation: a scanner it names is met when that scanner located the item, reasoning and graph when no scanner did.",
+          "match": {
+            "hit": 0,
+            "of": 0
+          },
+          "byExpected": {},
+          "byFinder": {
+            "scanner": 0,
+            "reviewer": 0
+          },
+          "scannerExpectedReviewerFound": 0,
+          "unjudged": 4,
+          "droppedCandidates": 0
+        },
+        "outcomes": {
+          "hit": 4,
+          "duplicate": 1,
+          "accepted": 1,
+          "unresolved": 1,
+          "near": 1,
+          "wrong-kind": 1,
+          "test-gap": 1
+        },
+        "brief": {
+          "gaps": {
+            "hit": 0,
+            "of": 0
+          },
+          "callers": {
+            "hit": 0,
+            "of": 0
+          }
+        },
+        "causes": {
+          "version": 1,
+          "misses": {
+            "incomplete": 0,
+            "spec-disputed": 0,
+            "not-in-brief": 0,
+            "not-read": 0,
+            "finalize-floor": 0,
+            "finalize-threshold": 0,
+            "finalize-rejected": 0,
+            "line-off": 1,
+            "wrong-kind": 1,
+            "unresolved": 8,
+            "candidate-dropped": 0,
+            "judged-wrong": 0
+          },
+          "nonHits": {
+            "real-unlisted": 0,
+            "line-off": 1,
+            "wrong-kind": 1,
+            "false": 0,
+            "unresolved": 1
+          }
+        },
+        "wallMs": {
+          "n": 2,
+          "mean": 1000,
+          "median": 1000,
+          "total": 2000
+        },
+        "reviewerMs": {
+          "n": 2,
+          "mean": 1000,
+          "median": 1000,
+          "total": 2000
+        },
+        "costUsd": {
+          "n": 2,
+          "mean": 0.01,
+          "median": 0.01,
+          "total": 0.02
+        },
+        "turns": {
+          "n": 2,
+          "mean": 1,
+          "median": 1,
+          "total": 2
+        },
+        "inputTokens": {
+          "n": 2,
+          "mean": 10,
+          "median": 10,
+          "total": 20
+        },
+        "outputTokens": {
+          "n": 2,
+          "mean": 10,
+          "median": 10,
+          "total": 20
+        },
+        "allAttempts": {
+          "label": "Every saved attempt, retries included and unstarted jobs left out, as score format 2 counted them. A diagnostic only.",
+          "samples": 2,
+          "recall": {
+            "hit": 4,
+            "of": 14
+          },
+          "precision": {
+            "hit": 4,
+            "of": 7
+          }
+        },
+        "wording": null
+      }
+    },
+    "intervals": {
+      "method": "Percentile bootstrap over clusters drawn with replacement; each metric is a ratio of sums recomputed on every resample, and a cluster keeps all its truth items, findings and repeats together. A cluster with nothing to count for a metric is left out of it. The interval describes this run and decides nothing: the trend's alarm and the acceptance rule compare two runs with a paired sign-flip test. With fewer than minClusters clusters it is null, listed under tooFewClusters.",
+      "cluster": "case",
+      "groups": null,
+      "resamples": 10000,
+      "level": 0.95,
+      "minClusters": 8,
+      "seed": "mulberry32 seeded with the first 32 bits of sha256 over the run id, the configuration and the metric name, joined by NUL",
+      "runId": "planted-golden",
+      "tooFewClusters": {
+        "claude-graph-on": {
+          "issueRecall.all": 1,
+          "issueRecall.criticalMajor": 1,
+          "precision.lower": 1,
+          "precision.upper": 1
+        }
+      }
+    },
+    "perCase": {
+      "claude-graph-on": {
+        "planted/hand@abababab": {
+          "issueRecall": {
+            "hit": 4,
+            "of": 14
+          },
+          "precision": {
+            "lower": {
+              "hit": 6,
+              "of": 9
+            },
+            "upper": {
+              "hit": 9,
+              "of": 9
+            }
+          },
+          "findings": 10,
+          "criticalMajor": {
+            "hit": 2,
+            "of": 8
+          },
+          "controls": {
+            "hit": 0,
+            "of": 0
+          }
+        }
+      }
+    },
+    "perBug": {
+      "claude-graph-on": {
+        "planted/hand@abababab": {
+          "sqli": {
+            "found": [
+              true,
+              false
+            ],
+            "severity": "critical",
+            "given": [
+              "critical",
+              null
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              null,
+              "unresolved"
+            ],
+            "ruling": null
+          },
+          "off-by-one": {
+            "found": [
+              false,
+              false
+            ],
+            "severity": "major",
+            "given": [
+              null,
+              null
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              "line-off",
+              "unresolved"
+            ],
+            "ruling": null
+          },
+          "root": {
+            "found": [
+              false,
+              false
+            ],
+            "severity": "major",
+            "given": [
+              null,
+              null
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              "wrong-kind",
+              "unresolved"
+            ],
+            "ruling": null
+          },
+          "apt": {
+            "found": [
+              false,
+              false
+            ],
+            "severity": "minor",
+            "given": [
+              null,
+              null
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              "unresolved",
+              "unresolved"
+            ],
+            "ruling": null
+          },
+          "lodash": {
+            "found": [
+              false,
+              true
+            ],
+            "severity": "major",
+            "given": [
+              null,
+              "major"
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              "unresolved",
+              null
+            ],
+            "ruling": null
+          },
+          "log": {
+            "found": [
+              true,
+              false
+            ],
+            "severity": "nitpick",
+            "given": [
+              "nitpick",
+              null
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              null,
+              "unresolved"
+            ],
+            "ruling": null
+          },
+          "doc": {
+            "found": [
+              false,
+              true
+            ],
+            "severity": "info",
+            "given": [
+              null,
+              "minor"
+            ],
+            "finder": [
+              null,
+              null
+            ],
+            "cause": [
+              "unresolved",
+              null
+            ],
+            "ruling": null
+          }
+        }
+      }
+    },
+    "briefFailures": {
+      "claude-graph-on": []
+    }
+  },
+  "outcomes": [
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 0,
+      "findingId": "42e450fffe440847cc7da50db9145e98b2563fd980468df836dd7c23f1380eac",
+      "issueId": null,
+      "outcome": "hit",
+      "truthId": "sqli",
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "critical",
+      "severityExpected": "critical",
+      "severityAgreement": "exact",
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 1,
+      "findingId": "e613963d2bbfd225a3d5f14df02ac43f0daa7b5f4e814e62a6fa11db9cfa79e6",
+      "issueId": null,
+      "outcome": "duplicate",
+      "truthId": "sqli",
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "major",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 2,
+      "findingId": "317c256d90c278ccbbf0b161f82156d5c6535b8526b4a713d9b2e51f5e7b3a7f",
+      "issueId": null,
+      "outcome": "near",
+      "truthId": "off-by-one",
+      "evidenceKind": null,
+      "cause": "line-off",
+      "confidence": 0.9,
+      "severity": "minor",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 3,
+      "findingId": "39414b71026d280fc8e2701da3b90428e315c1bda3443dbbee46d5d76485cd44",
+      "issueId": null,
+      "outcome": "wrong-kind",
+      "truthId": "root",
+      "evidenceKind": null,
+      "cause": "wrong-kind",
+      "confidence": 0.9,
+      "severity": "major",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 4,
+      "findingId": "c0d6434f8b4b0e6a7f60b8a975c3dfd3e0ef4259e5aafe6a817ce4c0e5220fa0",
+      "issueId": null,
+      "outcome": "accepted",
+      "truthId": null,
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "minor",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 5,
+      "findingId": "e74e2ebf8f5d0ca6ce3e4fb1f2fb9a9983bc37d200fc3b9f8d8fad49c55681b1",
+      "issueId": null,
+      "outcome": "test-gap",
+      "truthId": null,
+      "evidenceKind": null,
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "info",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 6,
+      "findingId": "0e4d4590008ce74312ea9bee26fb26d0c050cfd4c7fe0bb3cd24f93c9ffbdfc2",
+      "issueId": null,
+      "outcome": "unresolved",
+      "truthId": null,
+      "evidenceKind": null,
+      "cause": "unresolved",
+      "confidence": 0.9,
+      "severity": "nitpick",
+      "severityExpected": null,
+      "severityAgreement": null,
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/1",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 1,
+      "index": 7,
+      "findingId": "9d125f5404185370dc943afbab65bf321973cc20b3ca09bf08dc96f56946c472",
+      "issueId": null,
+      "outcome": "hit",
+      "truthId": "log",
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "nitpick",
+      "severityExpected": "nitpick",
+      "severityAgreement": "exact",
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/2",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "index": 0,
+      "findingId": "04e8939d65e4375b10a73e6fc0ae3b8fadbe49021114856f02d4f848486c1a7b",
+      "issueId": null,
+      "outcome": "hit",
+      "truthId": "lodash",
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "major",
+      "severityExpected": "major",
+      "severityAgreement": "exact",
+      "severityDirection": null,
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    },
+    {
+      "jobId": "planted/hand@abababab/claude-graph-on/2",
+      "caseId": "planted/hand@abababab",
+      "config": "claude-graph-on",
+      "repeat": 2,
+      "index": 1,
+      "findingId": "fc983a31a14a7adebfc51b0efb9c8efdff69f3f153bf0daa8fa452f10f7e4f11",
+      "issueId": null,
+      "outcome": "hit",
+      "truthId": "doc",
+      "evidenceKind": "frozen",
+      "cause": null,
+      "confidence": 0.9,
+      "severity": "minor",
+      "severityExpected": "info",
+      "severityAgreement": "off",
+      "severityDirection": "over",
+      "finder": null,
+      "locatedBy": null,
+      "wording": null
+    }
+  ],
+  "unresolved": [
+    {
+      "v": 1,
+      "findingId": "317c256d90c278ccbbf0b161f82156d5c6535b8526b4a713d9b2e51f5e7b3a7f",
+      "issueId": null,
+      "caseId": "planted/hand@abababab",
+      "suite": "planted",
+      "split": "dev",
+      "specsFrom": null,
+      "file": "app/server.py",
+      "lines": [
+        25,
+        25
+      ],
+      "category": "bug",
+      "severity": "minor",
+      "text": {
+        "title": "The offset skips a row",
+        "problem": "The offset skips a row",
+        "consequence": "c",
+        "fix": "f"
+      },
+      "evidence": {
+        "lines": [
+          25,
+          25
+        ],
+        "text": null,
+        "context": null,
+        "sha256": null,
+        "from": null,
+        "missing": [
+          25
+        ]
+      },
+      "truth": {
+        "id": "off-by-one",
+        "file": "app/server.py",
+        "lines": [
+          23,
+          23
+        ],
+        "text": "t"
+      },
+      "asks": [
+        "real",
+        "match"
+      ],
+      "occurrences": [
+        {
+          "run": "planted-golden",
+          "build": "aaaaaaa",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "config": "claude-graph-on",
+          "repeat": 1,
+          "outcome": "near"
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "findingId": "39414b71026d280fc8e2701da3b90428e315c1bda3443dbbee46d5d76485cd44",
+      "issueId": null,
+      "caseId": "planted/hand@abababab",
+      "suite": "planted",
+      "split": "dev",
+      "specsFrom": null,
+      "file": "Dockerfile",
+      "lines": [
+        11,
+        11
+      ],
+      "category": "bug",
+      "severity": "major",
+      "text": {
+        "title": "Runs as root",
+        "problem": "Runs as root",
+        "consequence": "c",
+        "fix": "f"
+      },
+      "evidence": {
+        "lines": [
+          11,
+          11
+        ],
+        "text": null,
+        "context": null,
+        "sha256": null,
+        "from": null,
+        "missing": [
+          11
+        ]
+      },
+      "truth": {
+        "id": "root",
+        "file": "Dockerfile",
+        "lines": [
+          3,
+          11
+        ],
+        "text": "t"
+      },
+      "asks": [
+        "real",
+        "match"
+      ],
+      "occurrences": [
+        {
+          "run": "planted-golden",
+          "build": "aaaaaaa",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "config": "claude-graph-on",
+          "repeat": 1,
+          "outcome": "wrong-kind"
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "findingId": "0e4d4590008ce74312ea9bee26fb26d0c050cfd4c7fe0bb3cd24f93c9ffbdfc2",
+      "issueId": null,
+      "caseId": "planted/hand@abababab",
+      "suite": "planted",
+      "split": "dev",
+      "specsFrom": null,
+      "file": "app/nowhere.py",
+      "lines": [
+        1,
+        1
+      ],
+      "category": "bug",
+      "severity": "nitpick",
+      "text": {
+        "title": "Something else",
+        "problem": "Something else",
+        "consequence": "c",
+        "fix": "f"
+      },
+      "evidence": {
+        "lines": [
+          1,
+          1
+        ],
+        "text": null,
+        "context": null,
+        "sha256": null,
+        "from": null,
+        "missing": [
+          1
+        ]
+      },
+      "truth": null,
+      "asks": [
+        "real"
+      ],
+      "occurrences": [
+        {
+          "run": "planted-golden",
+          "build": "aaaaaaa",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "config": "claude-graph-on",
+          "repeat": 1,
+          "outcome": "unresolved"
+        }
+      ]
+    }
+  ]
+}

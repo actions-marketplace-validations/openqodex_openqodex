@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # The gate. Runs every check in order and stops at the first failure.
 # .github/workflows/ci.yml runs the same steps; keep the two in step.
+# One CI job is not mirrored here and runs in CI only: bench-scan, the
+# scanner-only benchmark and its trend gate against the accepted run in
+# benchmark/index. It installs every scanner, which needs Ruby 3.3 for
+# brakeman and rubocop and Go 1.26 for golangci-lint (this Mac has neither).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

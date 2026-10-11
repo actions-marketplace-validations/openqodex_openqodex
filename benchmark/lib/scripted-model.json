@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "model": "scripted",
+  "served": "scripted-1",
+  "prices": { "input": 0, "cachedInput": 0, "output": 0 },
+  "summary": "The scripted model's answer: it drops every scanner candidate and raises no finding.",
+  "findings": [],
+  "dropReason": "The scripted model drops every candidate; it reads no code.",
+  "reply": null
+}
