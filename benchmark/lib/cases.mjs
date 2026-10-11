@@ -181,7 +181,7 @@ export function generatedValue(caseId, file, kind) {
   return out;
 }
 
-function gitEnv() {
+export function gitEnv() {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_") && v !== undefined) env[k] = v;
   return { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_DATE: FIXED_DATE, GIT_COMMITTER_DATE: FIXED_DATE, GIT_TERMINAL_PROMPT: "0" };

@@ -106,6 +106,38 @@ export function repoAnswer(repo, { cache = cacheRoot(), offline = false, licence
   return saveRepoAnswer(cache, answer);
 }
 
+// Whether GitHub still serves a commit of a repository: a pull request
+// pushed over after a dataset was made can leave the dataset's head with no
+// branch or pull request ref, and GitHub then drops it. Cached like the
+// repository answers, as { v: 1, repo, sha, readOn, served }, under
+// github/commits/<owner>__<name>/<sha>.json. "No commit found" and a 404
+// mean not served; any other failure stops with GitHub's words, and nothing
+// is cached.
+const commitPath = (cache, repo, sha) => join(cache, "github", "commits", repo.toLowerCase().replace("/", "__"), `${sha}.json`);
+
+export function saveCommitAnswer(cache, answer) {
+  const path = commitPath(cache, answer.repo, answer.sha);
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(`${path}.tmp`, `${JSON.stringify({ v: 1, repo: answer.repo, sha: answer.sha, readOn: answer.readOn, served: answer.served }, null, 2)}\n`);
+  renameSync(`${path}.tmp`, path);
+  return answer;
+}
+
+export function commitAnswer(repo, sha, { cache = cacheRoot(), offline = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+  const path = commitPath(cache, repo, sha);
+  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  if (offline) throw new Error(`no cached GitHub answer for ${repo} commit ${sha} in ${join(cache, "github", "commits")}, and the ingest is offline`);
+  let served = true;
+  try {
+    execFileSync("gh", ["api", `repos/${repo}/commits/${sha}`, "--jq", ".sha"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    const said = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim() || error.message;
+    if (!/No commit found for SHA|\(HTTP 404\)/.test(said) || /rate limit/i.test(said)) throw new Error(`gh api repos/${repo}/commits/${sha} failed, so the ingest stops: ${said}`);
+    served = false;
+  }
+  return saveCommitAnswer(cache, { repo, sha, readOn: today, served });
+}
+
 // The licence record of a case (PLAN-benchmark 4.2), from a cached answer.
 export function licenceRecord(answer) {
   const l = answer?.found ? answer.licence : null;

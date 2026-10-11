@@ -1,8 +1,10 @@
 // How the graph's tests hold work to a time: CPU time, never the wall clock,
 // and the growth between two input sizes, never one absolute number. A busy
 // runner makes this process wait for a core, which adds wall time and no CPU
-// time; a step that rescans its input costs sixteen times as much at four
-// times the input on any machine, where a linear one costs about four. The
+// time, though it can still slow a reading's CPU time up to about twice
+// (expectLinearRepeated reads again for that). A step that rescans its input
+// costs sixteen times as much at four times the input on any machine, where
+// a linear one costs about four. The
 // bound is the middle of the two, as in the scanners' YAML key test. A loose
 // absolute bound beside it fails only a gross slowdown.
 // Test code only: nothing src/index.ts exports reaches this file.
@@ -116,6 +118,14 @@ export function expectLinear(what: string, small: number, large: number): void {
 // doubles until the smaller input's runs pass NOISE_MS, and both inputs are
 // run as many times, so a step inside that range (a cost per byte that
 // jumps between 256 KiB and 1 MiB) is still seen.
+// CPU time is not free of a busy runner either. On the Linux runner, one
+// input's CPU time per byte varied 2.1 times between readings while other
+// test files ran (issue #116), so a linear reader can read as eight times,
+// and a quadratic reader whose smaller input is read in a busy stretch as
+// under eight. So when the first reading of each reaches the bound, both
+// inputs are read twice more, in turn (smaller, larger, smaller, larger),
+// and the check compares the median of each input's three readings: one
+// reading in a busy stretch moves neither median, whichever way it points.
 export async function expectLinearRepeated(what: string, smallAt: (repeats: number) => number | Promise<number>, largeAt: (repeats: number) => number | Promise<number>, opts: { maxRepeats?: number } = {}): Promise<void> {
   const maxRepeats = opts.maxRepeats ?? MAX_REPEATS;
   let repeats = 1;
@@ -124,11 +134,24 @@ export async function expectLinearRepeated(what: string, smallAt: (repeats: numb
     repeats *= 2;
     small = await smallAt(repeats);
   }
-  const large = await largeAt(repeats);
-  const said = `${what}: ${small.toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${large.toFixed(1)} ms for as many on four times it`;
-  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
-  expect(large / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
+  const smalls = [small];
+  const larges = [await largeAt(repeats)];
+  const growth = () => median(larges) / Math.max(median(smalls), NOISE_MS);
+  if (growth() >= MAX_GROWTH) {
+    for (let i = 1; i < READINGS; i++) {
+      smalls.push(await smallAt(repeats));
+      larges.push(await largeAt(repeats));
+    }
+  }
+  const all = (ms: number[]) => ms.map((m) => m.toFixed(1)).join(", ");
+  const said = `${what}: ${median(smalls).toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${median(larges).toFixed(1)} ms for as many on four times it${smalls.length > 1 ? ` (the medians of readings taken in turn: ${all(smalls)} ms and ${all(larges)} ms)` : ""}`;
+  expect(growth(), said).toBeLessThan(MAX_GROWTH);
+  expect(median(larges) / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
 }
+
+// The most readings of each input expectLinearRepeated takes, and the middle one.
+const READINGS = 3;
+const median = (ms: number[]): number => [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)] ?? Number.NaN;
 
 // `run` repeated `repeats` times, as a CPU time for expectLinearRepeated.
 export const repeatedCpuMs = (run: () => unknown) => (repeats: number): Promise<number> =>
