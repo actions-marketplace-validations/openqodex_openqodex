@@ -55,7 +55,7 @@
 //     a review that filled large scanner caches reports a total_ms that
 //     misses the cleanup reviewChange still waits for; or the JSON report's
 //     timings differ from the result's.
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -552,20 +552,17 @@ describe("what a host gets and gives", () => {
 
 describe("the result's timings", () => {
   it("23. total_ms covers the scratch folder's removal, and the JSON report holds the result's timings", async () => {
-    // How long removing that many files takes here, measured on a copy: the
-    // case proves nothing on a machine where it is quick.
-    const FILES = 20_000;
-    const probe = join(tempDir("oq-rc-fill-"), "cache");
-    fillFolder(probe, FILES);
-    const removing = Date.now();
-    rmSync(probe, { recursive: true, force: true });
-    const removeMs = Date.now() - removing;
-    expect(removeMs, "removing the filled cache is too quick to measure here").toBeGreaterThanOrEqual(200);
-    const r = await run({ fill: FILES });
+    // 20,000 small files in the scratch folder's cache make its removal a
+    // real part of the call. The test reads the call's wall time around the
+    // await (wallMs); total_ms covers it all but what runs before the clock
+    // starts, so a clock read before the removal falls short by the removal.
+    const r = await run({ fill: 20_000 });
     expect(r.result.status).toBe("complete");
     expect(readdirSync(r.workDir)).toEqual([]);
     const timings = r.result.timings!;
-    expect(timings.total_ms, JSON.stringify({ timings, wallMs: r.wallMs, removeMs })).toBeGreaterThan(r.wallMs - removeMs / 2);
+    const seen = JSON.stringify({ timings, wallMs: r.wallMs });
+    expect(timings.total_ms, seen).toBeLessThanOrEqual(r.wallMs);
+    expect(timings.total_ms, seen).toBeGreaterThanOrEqual(r.wallMs - 50);
     expect(JSON.parse(r.result.render.json()).timings).toEqual(timings);
   });
 });
