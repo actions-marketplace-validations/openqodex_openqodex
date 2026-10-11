@@ -2,7 +2,8 @@
 # Guards "a run silently lacks a scanner". The outside benchmark's image must
 # not build unless every built-in scanner is installed at its pinned version
 # and reports its check case. Three linux/amd64 builds of image/Dockerfile:
-#   full      must build, and preinstall must report every built-in ready;
+#   full      must build, run as a user other than root, and report every
+#             built-in ready when checked again in the finished image;
 #   no-ruby   (WITH_RUBY=0) must fail, naming brakeman and rubocop, no other;
 #   no-rust   (WITH_RUST=0) must fail, naming cargo-deny, no other.
 # The full image is kept as $IMAGE_TAG for local runs.
@@ -56,27 +57,33 @@ not_ready() {
   { grep -oE 'not ready: [a-z0-9-]+:' "$1" || true; } | sed -E 's/^not ready: //; s/:$//' | sort -u
 }
 
-# The readiness the built image holds, as one line. Read from the image, not
-# the build log: a repeat build takes the preinstall layer from the cache and
-# prints none of its output.
-readiness() {
-  docker run --rm --platform linux/amd64 --entrypoint node "$tag" -e '
-    const r = JSON.parse(require("node:fs").readFileSync("/opt/openqodex/readiness.json", "utf8"));
-    const ready = r.tools.filter((t) => t.ok).length;
-    console.log(`${ready} of ${r.tools.length} built-in scanners ready (preinstall took ${r.seconds} s; openqodex ${r.openqodex})`);
-  ' 2>&1 || true
+# The full image checked again at run time, as the user it runs as: after
+# the build's last step, and without the build log, which a repeat build
+# takes from the cache and leaves empty. Nothing may need installing.
+recheck() {
+  docker run --rm --platform linux/amd64 --entrypoint node "$tag" /srv/preinstall.mjs >"$out/recheck.log" 2>&1 || true
 }
 
-# 1. The full image builds, and every built-in scanner is ready in it.
+# 1. The full image builds, runs as a user other than root, and has every
+# built-in scanner ready.
 if ! build full --load -t "$tag"; then
   tail -n 40 "$out/full.log" >&2
   missing=$(not_ready "$out/full.log" | tr '\n' ' ' | sed 's/ $//')
   fail "the full image did not build${missing:+; not ready: $missing} (log: $out/full.log)"
 fi
-line=$(readiness)
+uid=$(docker run --rm --platform linux/amd64 --entrypoint id "$tag" -u 2>&1 || true)
+case "$uid" in
+  "" | 0 | *[!0-9]*) fail "the full image runs as user ${uid:-unknown}, not as a user other than root" ;;
+  *) echo "check-build: full: runs as user $uid" ;;
+esac
+recheck
+if grep -q '^installing ' "$out/recheck.log"; then
+  fail "the full image lacked a scanner at run time: $(grep '^installing ' "$out/recheck.log" | tr '\n' ' ')(log: $out/recheck.log)"
+fi
+line=$({ grep -oE '[0-9]+ of [0-9]+ built-in scanners ready.*' "$out/recheck.log" || true; } | tail -n 1)
 case "$line" in
-  "$expected of $expected built-in scanners ready"*) echo "check-build: full: $line" ;;
-  *) fail "the full image built, but its readiness is not $expected of $expected built-in scanners ready (it says: ${line:-nothing}; log: $out/full.log)" ;;
+  "$expected of $expected built-in scanners ready"*) echo "check-build: full: at run time, $line" ;;
+  *) fail "the full image built, but at run time it does not have $expected of $expected built-in scanners ready (it says: ${line:-nothing}; log: $out/recheck.log)" ;;
 esac
 
 # 2 and 3. A build without a runtime fails, naming exactly the scanners that need it.
@@ -97,4 +104,4 @@ refused() {
 refused no-ruby "brakeman rubocop" --build-arg WITH_RUBY=0
 refused no-rust "cargo-deny" --build-arg WITH_RUST=0
 
-echo "check-build: passed: $tag has every built-in scanner ready; a build without Ruby or Rust is refused"
+echo "check-build: passed: $tag runs as user $uid with every built-in scanner ready; a build without Ruby or Rust is refused"

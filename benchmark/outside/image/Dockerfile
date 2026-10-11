@@ -64,10 +64,20 @@ RUN if [ "$WITH_RUBY" = 1 ]; then \
       && ruby --version; \
     fi
 
-# Every built-in scanner installed and proved; the build fails, naming each
-# scanner that is not ready.
+# The image runs as the base image's node user, never root. That user owns
+# the install root and the Cargo home, where a case's crates go before its
+# review. Go keeps a case's modules under /home/node/go; a review's scratch
+# is under /tmp.
+RUN mkdir -p /opt/openqodex /usr/local/cargo && chown node:node /opt/openqodex /usr/local/cargo
+USER node
+
+# Every built-in scanner installed and proved, as the node user a review
+# runs as; the build fails, naming each scanner that is not ready. RubyGems
+# keeps a copy of every gem archive in each gem install's cache folder; a
+# gem never reads it once installed, so it goes in the same step.
 COPY image/preinstall.mjs ./
-RUN node preinstall.mjs
+RUN node preinstall.mjs \
+ && find /opt/openqodex/tools -type f -path '*/cache/*.gem' -delete
 
 COPY reviewbench/entry.mjs ./entry.mjs
 ENTRYPOINT ["node", "/srv/entry.mjs"]

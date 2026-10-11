@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// The image's readiness check, run once while the image builds. It installs
+// The image's readiness check, run while the image builds and again by
+// check-build.sh in the finished image, where it finds every scanner
+// installed and only checks them. It installs
 // every built-in scanner of the openqodex version in package.json, cargo-deny
 // included, into /opt/openqodex/tools with the package's own
 // preinstallScanners, and proves each one with its check case. It exits 1 and
