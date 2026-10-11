@@ -3,8 +3,8 @@
 // an earlier run when asked:
 //
 //   node benchmark/score.mjs <results folder> [--against <earlier folder>]
-//                            [--specs <folder of <case>.json>] [--out <folder>]
-//                            [--decisions <file>] [--json]
+//                            [--specs <folder of <case>.json>] [--judge <judge.json>]
+//                            [--out <folder>] [--decisions <file>] [--json]
 //
 // The specs are the run's own copies (cases/ in the run). --specs scores the
 // saved reviews against other specs, such as an amended copy; the output and
@@ -17,12 +17,14 @@
 // own scan.json), the location and planted-rule blocks, per-case ratios,
 // per-bug results, the rules block, and a 95% cluster bootstrap interval on
 // each issue-level ratio, lib/interval.mjs, seeded from the run id so a
-// rescore draws the same interval), outcomes.jsonl (one line per finding of
-// every first attempt) and unresolved.jsonl (each finding that still asks a
-// person a question, with its text and the code it cites, for queue.mjs
-// add), into the results folder or --out. It applies the rulings in the
-// adjudication file, benchmark/review-queue/decisions.jsonl unless
-// --decisions names another, and records that file's sha256. A legacy run (one
+// rescore draws the same interval, and each configuration's wording verdict
+// from the run's judge.json, or the file --judge names, which no rule
+// reads), outcomes.jsonl (one line per finding of every first attempt) and
+// unresolved.jsonl (each finding that still asks a person a question, with
+// its text and the code it cites, for queue.mjs add), into the results
+// folder or --out. It applies the rulings in the adjudication file,
+// benchmark/review-queue/decisions.jsonl unless --decisions names another,
+// and records that file's sha256. A legacy run (one
 // with a recipe in benchmark/legacy/recipes.json) keeps the score its own
 // scorer wrote: its folder is the published original, so its format 3 score
 // is written only with --out. Prints markdown tables (or, with --json, the
@@ -59,6 +61,11 @@
 // 8. Two runs whose scans read other Semgrep rule packs or other osv.dev
 //    advisories are compared as builds: every difference in their external
 //    inputs is printed above the comparison, labelled as an input.
+// 9. The wording verdict changes the score or its exit code: it is added to
+//    each configuration after the scoring (lib/score.mjs wordingBlock), and
+//    a judge file (the run's own or --judge's) that cannot be read, or does
+//    not hold what judge.mjs writes, leaves the wording null with one line
+//    on stderr naming it, never a failed scoring.
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,7 +75,7 @@ import { runIntervals } from "./lib/interval.mjs";
 import { unresolvedItems } from "./lib/queue.mjs";
 import { readDecisions } from "./lib/rulings.mjs";
 import { SCAN_RULES, scanRegressions, scoreScanAttempts } from "./lib/scan-score.mjs";
-import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
+import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value, wordingBlock } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
 const readJson = (path) => {
@@ -95,7 +102,14 @@ function plannedCases(manifest) {
   return [...names];
 }
 
-export function loadRun(folder, { specsDir = null } = {}) {
+// A path as a score shows it: relative to the repository when it lies in
+// it, so no machine path is published.
+const shownPath = (p) => {
+  const r = relative(repoRoot, p);
+  return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : p;
+};
+
+export function loadRun(folder, { specsDir = null, judgeFile = null } = {}) {
   const manifest = readJson(join(folder, "manifest.json"));
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
   const from = specsDir ?? join(folder, "cases");
@@ -146,13 +160,15 @@ export function loadRun(folder, { specsDir = null } = {}) {
   const resumes = existsSync(join(folder, "resumes.jsonl")) ? readFileSync(join(folder, "resumes.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   const specsDiffer = specsDir ? Object.keys(specs).filter((c) => JSON.stringify(specs[c]) !== JSON.stringify(ownSpecs[c])) : [];
   // Shown and saved relative to the repository when the run lies in it, so no machine path is published.
-  const inside = relative(repoRoot, folder);
-  const name = inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) ? inside : folder;
-  const specsName = specsDir === null ? null : (() => {
-    const r = relative(repoRoot, specsDir);
-    return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : specsDir;
-  })();
-  return { folder, name, manifest, specs, samples, attempts, unrecorded, resumes, specsFrom: specsName, specsDiffer };
+  const name = shownPath(folder);
+  const specsName = specsDir === null ? null : shownPath(specsDir);
+  // The wording verdict: the run's own judge.json, or the file --judge names.
+  const judgePath = judgeFile ?? join(folder, "judge.json");
+  const judge = existsSync(judgePath) ? readJson(judgePath) : null;
+  // A judge file that cannot be read is named, and never fails the scoring.
+  const judgeProblem = judge === null && (judgeFile !== null || existsSync(judgePath)) ? `${shownPath(judgePath)} cannot be read as a judge.json, so the score carries no wording verdict` : null;
+  const judgeFrom = judgeFile === null ? "judge.json" : shownPath(judgeFile);
+  return { folder, name, manifest, specs, samples, attempts, unrecorded, resumes, specsFrom: specsName, specsDiffer, judge, judgeFrom, judgeProblem };
 }
 
 const pct = (r) => `${r.hit}/${r.of}${r.of > 0 ? ` (${Math.round(value(r) * 100)}%)` : ""}`;
@@ -250,6 +266,19 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
   // second pass (run.mjs --check-identical) carries its first pass's run id.
   const perCase = caseSums(s.perCase, s.jobs);
   const { byConfig, intervals } = runIntervals({ runId: m.runId ?? basename(run.folder), byConfig: s.byConfig, perCase, groups: repoGroups(originOf(s.suite), s.jobs, run.specs) });
+  // The wording verdict, added after the scoring: report only. A judge.json
+  // that does not hold what the judge writes leaves every block null, with
+  // the problem named, and never fails the scoring.
+  let wordingProblem = null;
+  let wording = Object.fromEntries(Object.keys(byConfig).map((config) => [config, null]));
+  if (run.judge) {
+    try {
+      wording = Object.fromEntries(Object.keys(byConfig).map((config) => [config, wordingBlock(run.judge, config, run.judgeFrom)]));
+    } catch (error) {
+      wordingProblem = `${run.judgeFrom} does not hold what judge.mjs writes (${String(error.message).split("\n")[0]}), so the score carries no wording verdict`;
+    }
+  }
+  for (const config of Object.keys(byConfig)) byConfig[config].wording = wording[config];
   const score = {
     version: 3,
     rules: scan ? SCAN_RULES : RULES,
@@ -281,7 +310,7 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
   // A scanner-only run's candidates enter the review queue only from real
   // pull requests (P1-T8 and P2), so its queue file is empty.
   const unresolved = scan ? [] : unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
-  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs };
+  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs, wordingProblem };
 }
 
 // The legacy run whose folder `path` is or lies in, wherever it is, by the
@@ -299,6 +328,24 @@ export function legacyFolderOf(path, recipes) {
 }
 
 const bounds = (b) => (b.lower.of === 0 ? "n/a" : `${pct(b.lower)} to ${pct(b.upper)}`);
+
+// The wording blocks of a score's configurations as a table, or null when
+// no configuration has one. Report only.
+export function renderWording(byConfig) {
+  const rows = Object.entries(byConfig).filter(([, w]) => w);
+  if (rows.length === 0) return null;
+  const models = [...new Set(rows.map(([, w]) => w.model))].join(", ");
+  const served = [...new Set(rows.flatMap(([, w]) => w.servedModels))].join(", ");
+  const from = [...new Set(rows.map(([, w]) => w.from))].join(", ");
+  const pair = (s) => `${pct(s.plain)} / ${pct(s.correct)}`;
+  const cost = (w) => `$${w.costUsd.toFixed(2)}${w.costUnknown > 0 ? ` (${w.costUnknown} reviews with no cost reported)` : ""}`;
+  return [
+    `Wording, judged by ${models}${served ? ` (answered as ${served})` : ""}, from ${from}. Report only: it never changes a hit, a count, an exit code or an accept.`,
+    "",
+    table(["Configuration", "Findings", "Problem plain / correct", "Consequence plain / correct", "Fix plain / correct", "Unparsed", "Judge cost"], rows.map(([c, w]) => [c, String(w.findings), pair(w.problem), pair(w.consequence), pair(w.fix), String(w.unparsed), cost(w)])),
+  ].join("\n");
+}
+
 // A ratio with its interval, when the score carries one.
 const ci = (r) => (Array.isArray(r.ci) ? ` [${Math.round(r.ci[0] * 100)}%, ${Math.round(r.ci[1] * 100)}%]` : "");
 const withCi = (r) => `${pct(r)}${ci(r)}`;
@@ -359,6 +406,8 @@ export function renderV3(s) {
   ];
   out.push(table(["Measure", ...configs], rows.map(([label, f]) => [label, ...configs.map((c) => f(s.byConfig[c]))])));
   out.push("");
+  const wording = renderWording(Object.fromEntries(configs.map((c) => [c, s.byConfig[c].wording ?? null])));
+  if (wording !== null) out.push(wording, "");
   for (const c of configs) {
     const m = s.byConfig[c].severity.matrix;
     out.push(`Severity given (columns) against the spec's (rows), found issues (${c}):`);
@@ -531,6 +580,7 @@ function main() {
   const args = process.argv.slice(2);
   let against = null;
   let specsDir = null;
+  let judgeFile = null;
   let outDir = null;
   let decisionsFile = decisionsPath;
   let json = false;
@@ -539,12 +589,13 @@ function main() {
     if (args[i] === "--against") against = args[++i];
     else if (args[i] === "--json") json = true;
     else if (args[i] === "--specs") specsDir = args[++i];
+    else if (args[i] === "--judge") judgeFile = args[++i];
     else if (args[i] === "--out") outDir = args[++i];
     else if (args[i] === "--decisions") decisionsFile = args[++i];
     else pos.push(args[i]);
   }
-  if (pos.length !== 1 || against === undefined || specsDir === undefined || outDir === undefined || decisionsFile === undefined) {
-    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--out <folder>] [--decisions <file>] [--json]");
+  if (pos.length !== 1 || against === undefined || specsDir === undefined || judgeFile === undefined || outDir === undefined || decisionsFile === undefined) {
+    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--judge <judge.json>] [--out <folder>] [--decisions <file>] [--json]");
     process.exit(2);
   }
   let run;
@@ -553,7 +604,8 @@ function main() {
   let olderScored = null;
   let dest;
   try {
-    run = loadRun(resolve(pos[0]), { specsDir: specsDir === null ? null : resolve(specsDir) });
+    run = loadRun(resolve(pos[0]), { specsDir: specsDir === null ? null : resolve(specsDir), judgeFile: judgeFile === null ? null : resolve(judgeFile) });
+    if (run.judgeProblem !== null) console.error(run.judgeProblem);
     // Where the files go, checked by its canonical path: never a legacy run's folder or a folder in one, this run's or another's.
     dest = outDir === null ? run.folder : resolve(outDir);
     const legacy = legacyFolderOf(dest, readRecipes());
@@ -563,6 +615,7 @@ function main() {
     if (against) older = loadRun(resolve(against));
     const d = readDecisions(resolve(decisionsFile));
     scored = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
+    if (scored.wordingProblem !== null) console.error(scored.wordingProblem);
     if (older) olderScored = scoreRun(older, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
   } catch (error) {
     console.error(error.message);
