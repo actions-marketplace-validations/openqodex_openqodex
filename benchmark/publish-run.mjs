@@ -27,29 +27,36 @@
 //    other file is named as left out.
 // 2. A secret leaves: every packaged file, briefs, traces, transcripts,
 //    submissions and rounds included, is searched for each case's generated
-//    secret value, this machine's home folder path, every value of the model
-//    settings file (~/.config/openqodex-bench/azure.env, or
+//    secret value, this machine's home folder path, a home folder path of any
+//    platform (/Users/<name>/, /home/<name>/, C:\Users\<name>\), every value
+//    of the model settings file (~/.config/openqodex-bench/azure.env, or
 //    OPENQODEX_BENCH_MODEL_ENV) and its base URL's host, and the scrub
 //    patterns (scripts/scrub-patterns.txt and the private list); one hit
 //    refuses the publish and nothing is written. The values themselves are
 //    never printed.
-// 3. A reviewed repository's code leaves when its licence does not allow it:
+// 3. A run with a model reviewer is published from a machine without the
+//    model settings file, so its key and base URL are never looked for: such
+//    a run is refused unless the file can be read and holds a value.
+// 4. A reviewed repository's code leaves when its licence does not allow it:
 //    a case whose licence class is not permissive has its brief and trace
 //    left out (they carry the code by design), and every other packaged file
 //    is searched for the lines of that case's repository from the cache
-//    ($OPENQODEX_BENCH_CACHE/cases/<case hash>.git); a hit, or a missing
-//    repository, refuses the publish.
-// 4. A legacy run is published from a folder that is not the committed one:
+//    ($OPENQODEX_BENCH_CACHE/cases/<case hash>.git). The search is for each
+//    line anywhere in the decoded text, whitespace normalised, so a line
+//    behind a file name and line number, after a diff marker or inside a
+//    sentence is found, and no line is too short to count. A hit, or a
+//    missing repository, refuses the publish.
+// 5. A legacy run is published from a folder that is not the committed one:
 //    every file must match the blob the recipe's commit holds.
-// 5. A legacy run is published without the scorer that wrote its numbers:
+// 6. A legacy run is published without the scorer that wrote its numbers:
 //    the scorer files come from git at each recipe commit and must hash to
 //    the recipe's sha256.
-// 6. The uploaded asset is not the one the committed entry names: the same
+// 7. The uploaded asset is not the one the committed entry names: the same
 //    folder packages to the same bytes with the same Node (a tar written
 //    here: sorted, fixed times, owners and modes; gzip with no name or
 //    time), an existing entry whose file list differs refuses the publish,
 //    and one whose bytes alone differ is rewritten and said so.
-// 7. An asset is uploaded twice under one name: an existing asset of that
+// 8. An asset is uploaded twice under one name: an existing asset of that
 //    name refuses the upload.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -75,9 +82,6 @@ export const ALLOWED = [
 // Files that carry the reviewed code by design: left out for a case whose
 // licence class is not permissive.
 export const CODE_FILES = /^samples\/([^/]+)\/[^/]+\/[^/]+\/report\/(brief\.md|trace\.json)$/;
-// A line of a case's code counts when it is at least this long once trimmed
-// and holds a letter; shorter lines (braces, `return x`) are everywhere.
-export const MIN_CODE_LINE = 24;
 
 const FIXED_MTIME = 1767225600; // 2026-01-01T00:00:00Z, the time every packaged file carries
 
@@ -186,12 +190,30 @@ function scrubPatterns() {
   return out;
 }
 
+// The reviewers of a run that call a model over HTTP: the server path, a
+// `model:<deployment>` reviewer, or a reviewer recorded with an endpoint.
+function modelReviewers(manifest) {
+  const named = Object.entries(manifest?.reviewers ?? {})
+    .filter(([name, r]) => name.startsWith("model:") || r?.endpoint !== undefined || r?.endpointHash !== undefined)
+    .map(([name]) => name);
+  return named.length === 0 && manifest?.path === "server" ? ["the server path"] : named;
+}
+
 // Every value of the model settings file, and the host of each URL in it.
-function modelValues(env) {
+// A run with a model reviewer is refused when the file cannot be read here,
+// since that run may hold the key or base URL and nothing could find them.
+function modelValues(env, runId, manifest) {
   const path = env.OPENQODEX_BENCH_MODEL_ENV ?? join(homedir(), ".config", "openqodex-bench", "azure.env");
-  if (!existsSync(path)) return [];
+  const model = modelReviewers(manifest);
+  let text = null;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    if (model.length > 0) throw new Error(`refused: ${runId} uses a model reviewer (${model.join(", ")}), and the model settings file ${path} cannot be read here, so its key and base URL cannot be looked for; publish it where that file is`);
+    return [];
+  }
   const values = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     const m = /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*?)\s*$/.exec(line);
     if (!m) continue;
     const value = m[1].replace(/^(["'])(.*)\1$/, "$2");
@@ -204,6 +226,7 @@ function modelValues(env) {
       // not a URL
     }
   }
+  if (model.length > 0 && values.length === 0) throw new Error(`refused: ${runId} uses a model reviewer (${model.join(", ")}), and the model settings file ${path} holds no key or base URL to look for`);
   return values;
 }
 
@@ -227,11 +250,88 @@ function codeLines(c, env) {
     at = nl + 1 + Number(size) + 1;
     if (type !== "blob" || body.includes(0)) continue;
     for (const line of body.toString("utf8").split("\n")) {
-      const t = line.trim();
-      if (t.length >= MIN_CODE_LINE && /[A-Za-z]/.test(t)) lines.add(t);
+      const t = normalise(line);
+      if (!carriesNoCode(t)) lines.add(t);
     }
   }
   return lines;
+}
+
+// Whitespace runs become one space, so a line matches however it was
+// indented, wrapped in a table cell or prefixed by a reader tool.
+const normalise = (s) => s.replace(/\s+/g, " ").trim();
+
+// The only source lines left out of the search, because they hold no code
+// of their own: blank lines, lines of punctuation alone (a lone brace or
+// bracket such as `}` or `});`, a comment marker such as `*/`), and a single
+// keyword (`else:`, `end`, `return;`). Every other line counts, however
+// short: a two-line function is still the repository's code.
+const KEYWORDS = new Set(["abstract", "and", "async", "await", "begin", "break", "case", "catch", "class", "const", "continue", "debugger", "def", "default", "defer", "do", "done", "echo", "elif", "else", "end", "endfor", "endif", "endwhile", "ensure", "enum", "esac", "except", "export", "extends", "false", "fi", "final", "finally", "fn", "for", "foreach", "from", "func", "function", "go", "goto", "if", "impl", "implements", "import", "in", "interface", "is", "let", "loop", "match", "mod", "module", "mut", "namespace", "new", "nil", "none", "not", "null", "or", "override", "package", "pass", "print", "private", "protected", "pub", "public", "raise", "require", "rescue", "return", "select", "self", "static", "struct", "super", "switch", "template", "then", "this", "throw", "true", "try", "type", "undefined", "union", "unless", "until", "use", "using", "var", "virtual", "when", "where", "while", "with", "yield"]);
+export function carriesNoCode(line) {
+  if (line === "" || !/[A-Za-z0-9]/.test(line)) return true;
+  const word = /^([A-Za-z_]+)[:;,]?$/.exec(line);
+  return word !== null && KEYWORDS.has(word[1].toLowerCase());
+}
+
+const WORD = /[A-Za-z0-9_$]/;
+
+// Finds which of many strings occur anywhere in a text, in one pass over it
+// (Aho-Corasick over UTF-16 units). A match must not cut a word in two: a
+// pattern that starts or ends with a word character needs a non-word
+// character, or the text's edge, beside it.
+export function substringMatcher(patterns) {
+  const list = [...new Set(patterns)];
+  const next = [new Map()];
+  const fail = [0];
+  const own = [[]];
+  for (const [id, p] of list.entries()) {
+    let s = 0;
+    for (let k = 0; k < p.length; k++) {
+      let t = next[s].get(p[k]);
+      if (t === undefined) {
+        t = next.length;
+        next.push(new Map());
+        fail.push(0);
+        own.push([]);
+        next[s].set(p[k], t);
+      }
+      s = t;
+    }
+    own[s].push(id);
+  }
+  // `link[s]`: the nearest state on the failure chain where a pattern ends.
+  const link = Array.from({ length: next.length }, () => 0);
+  const queue = [...next[0].values()];
+  for (let i = 0; i < queue.length; i++) {
+    const s = queue[i];
+    for (const [ch, t] of next[s]) {
+      let f = fail[s];
+      while (f !== 0 && !next[f].has(ch)) f = fail[f];
+      const g = next[f].get(ch);
+      fail[t] = g !== undefined && g !== t ? g : 0;
+      link[t] = own[fail[t]].length > 0 ? fail[t] : link[fail[t]];
+      queue.push(t);
+    }
+  }
+  return (text) => {
+    const found = [];
+    let s = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      while (s !== 0 && !next[s].has(ch)) s = fail[s];
+      s = next[s].get(ch) ?? 0;
+      for (let u = own[s].length > 0 ? s : link[s]; u !== 0; u = link[u]) {
+        for (const id of own[u]) {
+          const p = list[id];
+          const start = i - p.length + 1;
+          if (WORD.test(p[0]) && start > 0 && WORD.test(text[start - 1])) continue;
+          if (WORD.test(p[p.length - 1]) && i + 1 < text.length && WORD.test(text[i + 1])) continue;
+          found.push(p);
+        }
+      }
+    }
+    return found;
+  };
 }
 
 // The texts one line of a file may carry: the line itself and every JSON
@@ -250,16 +350,14 @@ function textsOf(line) {
   return out;
 }
 
-// A line as it may be quoted: as is, without a diff marker, or without the
-// line number a reader tool puts in front of it.
-const quotedForms = (t) => {
-  const s = t.trim();
-  return [s, s.replace(/^[+\- ]\s*/, ""), s.replace(/^\d+(?:\t|:|\s*\|)\s*/, "")];
-};
+// A home folder of any platform, followed by a path inside it:
+// /Users/<name>/, /home/<name>/, C:\Users\<name>\ (or with forward slashes).
+// A name in angle brackets or starting with $ is a placeholder, not a home.
+const HOME_PATH = /(?:^|[^\w.~-])(?:\/Users\/[^/\s"'`<>$]+\/|\/home\/[^/\s"'`<>$]+\/|[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`<>$]+[\\/])/;
 
 // Every hit in the files to publish, as "<path>:<line>: <what>", and how
 // many values and patterns of each kind were looked for.
-export function inspect(folder, files, { cases, env = process.env } = {}) {
+export function inspect(folder, files, { cases, env = process.env, manifest = null } = {}) {
   const needles = [];
   for (const c of cases.values()) {
     if (!c.planted) continue;
@@ -267,14 +365,15 @@ export function inspect(folder, files, { cases, env = process.env } = {}) {
   }
   const home = homedir();
   if (home.length > 1) needles.push({ value: home, label: "the home folder path" });
-  for (const value of modelValues(env)) needles.push({ value, label: "a value from the model settings file" });
+  for (const value of modelValues(env, basename(folder), manifest)) needles.push({ value, label: "a value from the model settings file" });
   const patterns = scrubPatterns();
-  const code = [...cases.values()].filter((c) => c.licence !== "permissive").map((c) => ({ c, lines: codeLines(c, env) }));
+  patterns.push({ regex: HOME_PATH, label: "a home folder path" });
+  const code = [...cases.values()].filter((c) => c.licence !== "permissive").map((c) => ({ c, find: substringMatcher([...codeLines(c, env)]) }));
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
     secrets: needles.filter((n) => n.label.startsWith("the generated secret")).length,
     modelValues: needles.filter((n) => n.label === "a value from the model settings file").length,
-    patterns: patterns.filter((p) => !p.label.startsWith("matches a private")).length,
+    patterns: patterns.filter((p) => p.label.startsWith("matches the scrub")).length,
     privatePatterns: patterns.filter((p) => p.label.startsWith("matches a private")).length,
     codeCases: code.length,
   };
@@ -286,8 +385,10 @@ export function inspect(folder, files, { cases, env = process.env } = {}) {
       const texts = textsOf(line);
       for (const n of needles) if (texts.some((t) => t.includes(n.value))) hits.push(`${at}: ${n.label}`);
       for (const p of patterns) if (texts.some((t) => p.regex.test(t))) hits.push(`${at}: ${p.label}`);
-      for (const { c, lines } of code) {
-        if (texts.some((t) => t.split("\n").some((l) => quotedForms(l).some((q) => lines.has(q))))) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
+      // Anywhere in the decoded text: behind a file name and line number as
+      // a search prints it, after a diff marker, inside a sentence.
+      for (const { c, find } of code) {
+        if (texts.some((t) => find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
       }
     });
   }
@@ -346,7 +447,7 @@ export function packageRun(folder, { out, env = process.env, recipes = readRecip
     }
     files.push({ path: "_archive/recipe.json", bytes: Buffer.from(`${JSON.stringify({ runId, ...recipe }, null, 2)}\n`) });
   }
-  const { hits, looked } = inspect(folder, files, { cases, env });
+  const { hits, looked } = inspect(folder, files, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
   if (hits.length > 0) throw new Error(`refused: ${hits.length} hit${hits.length === 1 ? "" : "s"} in the files to publish:\n${hits.slice(0, 40).join("\n")}`);
   const tar = tarGz(files.map((f) => ({ path: `${runId}/${f.path}`, bytes: f.bytes })));
   mkdirSync(out, { recursive: true });
@@ -459,7 +560,7 @@ function main() {
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist, or a non-permissive case's code): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;
-  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, the home folder path, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns, and the code of ${l.codeCases} non-permissive cases. No hit.`);
+  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, this machine's and any platform's home folder paths, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns, and the code of ${l.codeCases} non-permissive cases. No hit.`);
   console.log(dryRun ? `Dry run: nothing uploaded. The asset unpacks to the same file list.` : `Uploaded to ${entry.asset.url}`);
   if (written) {
     console.log(`Index entry written: ${written}`);

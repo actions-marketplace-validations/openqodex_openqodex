@@ -47,9 +47,9 @@ function addSample(run, name, config, extra = {}) {
 
 // A planted run: its manifest, its own copy of each spec, two samples, the
 // rows and a score, the way run.mjs and score.mjs leave them.
-function plantedRun(runId = "2026-10-10-abc1234") {
+function plantedRun(runId = "2026-10-10-abc1234", manifest = {}) {
   const run = join(tempDir("oq-publish-"), runId);
-  write(join(run, "manifest.json"), JSON.stringify({ version: 2, started_at: "2026-10-10T10:00:00.000Z", build: { commit: "a".repeat(40), short: "abc1234", dirty: false, cliVersion: "0.13.0" }, configs: ["claude-graph-on"], repeat: 1, planned: 2, cases: ["demo-polyglot", "flask-path-traversal"], ended: { how: "finished", why: null } }));
+  write(join(run, "manifest.json"), JSON.stringify({ version: 2, started_at: "2026-10-10T10:00:00.000Z", build: { commit: "a".repeat(40), short: "abc1234", dirty: false, cliVersion: "0.13.0" }, configs: ["claude-graph-on"], repeat: 1, planned: 2, cases: ["demo-polyglot", "flask-path-traversal"], ended: { how: "finished", why: null }, ...manifest }));
   for (const name of ["demo-polyglot", "flask-path-traversal"]) {
     write(join(run, "cases", `${name}.json`), readFileSync(join(casesRoot, name, "case.json"), "utf8"));
     addSample(run, name, "claude-graph-on");
@@ -176,6 +176,8 @@ describe("nothing private or third-party leaves in an asset", () => {
     const work = join(tempDir("oq-case-repo-"), "repo");
     mkdirSync(join(work, "ledger"), { recursive: true });
     writeFileSync(join(work, "ledger", "invoice.py"), "def invoice_total(order, rates):\n    subtotal = sum(line.amount * rates[line.currency] for line in order.lines)\n    return round(subtotal, 2)\n");
+    // A short function: each of its lines is shorter than any length cutoff would allow.
+    writeFileSync(join(work, "ledger", "fees.py"), "def fee(x):\n    return x * 3\n");
     git(work, "init", "-q");
     git(work, "add", "-A");
     git(work, "commit", "-q", "-m", "Base");
@@ -201,6 +203,40 @@ describe("nothing private or third-party leaves in an asset", () => {
     const listed = execFileSync("tar", ["-tzf", asset.tarPath], { encoding: "utf8" });
     expect(listed).not.toContain(`${name}/model-gpt-6.1-sol/1/report/brief.md`);
     expect(listed).toContain(`${name}/model-gpt-6.1-sol/1/report/report.json`);
+  });
+
+  it("refuses a copyleft line quoted behind a file name, as search_code prints it, or inline in a finding's text", () => {
+    const cache = tempDir("oq-bench-cache-");
+    const { run, name } = realCaseRun(cache);
+    addSample(run, name, "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"tool","content":"ledger/invoice.py:2:     subtotal = sum(line.amount * rates[line.currency] for line in order.lines)\\n"}\n` });
+    expect(refused(run, { OPENQODEX_BENCH_CACHE: cache })).toMatch(new RegExp(`samples/${name}/model-gpt-6\\.1-sol/1/transcript\\.jsonl:1: a line of ${name}'s code`));
+    const cache2 = tempDir("oq-bench-cache-");
+    const second = realCaseRun(cache2);
+    const finding = { title: "Refunds are counted", problem: "The total is built as `subtotal = sum(line.amount * rates[line.currency] for line in order.lines)`, which counts refunded lines.", consequence: "c", fix: "f" };
+    addSample(second.run, name, "model-gpt-6.1-sol", { "report/report.json": JSON.stringify({ findings: [finding] }) });
+    expect(refused(second.run, { OPENQODEX_BENCH_CACHE: cache2 })).toMatch(new RegExp(`samples/${name}/model-gpt-6\\.1-sol/1/report/report\\.json:1: a line of ${name}'s code`));
+  });
+
+  it("refuses a copyleft line shorter than any length cutoff, such as the body of a short function", () => {
+    const cache = tempDir("oq-bench-cache-");
+    const { run, name } = realCaseRun(cache);
+    addSample(run, name, "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"tool","content":"    return x * 3\\n"}\n` });
+    expect(refused(run, { OPENQODEX_BENCH_CACHE: cache })).toMatch(new RegExp(`transcript\\.jsonl:1: a line of ${name}'s code`));
+  });
+
+  it("refuses a run with a model reviewer when the model settings file cannot be read here, since its key and base URL cannot be looked for", () => {
+    const run = plantedRun("2026-10-10-abc1234", { path: "server", configs: ["model-gpt-6.1-sol"], reviewers: { "model:gpt-6.1-sol": { version: null, model: "gpt-6.1-sol", endpoint: "azure-openai-v1" } } });
+    addSample(run, "flask-path-traversal", "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"system","note":"sent with api-key test-model-key-${randomBytes(16).toString("hex")}"}\n` });
+    const missing = join(tempDir("oq-model-env-"), "azure.env");
+    expect(refused(run, { OPENQODEX_BENCH_MODEL_ENV: missing })).toMatch(/uses a model reviewer \(model:gpt-6\.1-sol\), and the model settings file .*azure\.env cannot be read here/);
+  });
+
+  it("refuses home folder paths of every platform, not only this machine's", () => {
+    for (const path of ["/home/alice/project/app.py", "/Users/bob/src/app.py", "C:\\Users\\carol\\src\\app.py"]) {
+      const run = plantedRun();
+      write(join(run, "samples/flask-path-traversal/claude-graph-on/1/stderr.txt"), `warning: ${path} is not a git repository\n`);
+      expect(refused(run)).toMatch(/samples\/flask-path-traversal\/claude-graph-on\/1\/stderr\.txt:1: a home folder path/);
+    }
   });
 
   it("refuses a copyleft case whose repository is not in the cache, since its code cannot be looked for", () => {
