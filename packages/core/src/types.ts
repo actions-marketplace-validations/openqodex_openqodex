@@ -84,9 +84,50 @@ export type ScannerRunSummary = {
   // and size of the bytes semgrep read. Absent when the packs could not be
   // told apart, and in a scan an older version saved.
   rules?: RulePack[];
+  // The wall time of finding, checking or installing the scanner's tool
+  // before it ran; 0 when no tool was looked up. Absent in a scan an older
+  // version saved, as are `files` and `stages`.
+  resolveMs?: number;
+  // How many changed files the scanner was handed; 0 when it did not run.
+  files?: number;
+  // How many of this scanner's entries in the scan's trail each stage
+  // dropped. Its own candidates about the change count here as they do in
+  // keptCount.
+  stages?: ScannerStages;
 };
 
 export type RulePack = { pack: string; sha256: string; bytes: number };
+
+// `changedLines`: the changed-line filter (a file outside the change, or no
+// changed line in the span); `fixtures`: the fixture filter; `rules`:
+// review.disabled_rules; `merged`: dedup, into another candidate.
+export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number };
+
+// What the selector chose for one scanner on this change: whether it runs,
+// the changed files that call for it, the project folders that decide how
+// it runs, and why it does not run when it does not. A custom scanner's
+// paths are the changed files its `paths` globs match.
+export type ScannerSelection = { scanner: ScannerSource; wanted: boolean; paths: string[]; projects: string[]; skip: string | null };
+
+// Where a scanner finding left the pipeline: "outside-change" (its file is
+// not in the change), "changed-lines" (its file is, but no line of its span
+// changed), "fixture", "disabled-rule", "merged" (dedup folded it into the
+// candidate `into`) or "kept" (it is the candidate `id`).
+export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept";
+
+// One raw finding of one scanner, or one of OpenQodex's own candidates
+// about the change, and what became of it. Never the message, which can
+// quote a secret.
+export type TrailEntry = {
+  token: string;
+  file: string;
+  lineStart: number;
+  lineEnd: number;
+  severity: ScannerSeverity;
+  stage: TrailStage;
+  id?: string;
+  into?: string;
+};
 
 // A secret a scanner matched, kept only as its length and sha256 so later
 // steps can redact it from text without the secret ever being stored.
@@ -101,6 +142,19 @@ export type ScanResult = {
   // manifest, "" for the repo root) and the frameworks read from their
   // dependency lists. Absent in a scan an older version saved.
   projects?: { root: string; frameworks: string[] }[];
+  // What the selector chose for every built-in scanner, then for every
+  // custom one, whether or not --only or --skip left it out of this run.
+  // Absent in a scan an older version saved, as are `trail` and
+  // `trailOmitted`.
+  selection?: ScannerSelection[];
+  // One entry per raw finding of every scanner that ran and per candidate
+  // OpenQodex raised about the change, kept entries first, then merged,
+  // disabled-rule, fixture, changed-lines and outside-change; within a
+  // stage in the order the pipeline sorts findings (scanner, file, lines,
+  // rule). At most 5,000 entries; `trailOmitted` counts the rest, which the
+  // scanners' `stages` still count.
+  trail?: TrailEntry[];
+  trailOmitted?: number;
 };
 
 // What one adapter run returns to the runner. `secrets` are the raw matched

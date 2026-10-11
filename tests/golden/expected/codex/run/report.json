@@ -556,7 +556,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 11,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "sqllint",
@@ -565,7 +573,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "squawk",
@@ -574,7 +590,15 @@
       "rawCount": 4,
       "keptCount": 4,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "sqlfluff",
@@ -583,7 +607,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "cargo-deny",
@@ -592,7 +624,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "actionlint",
@@ -601,7 +641,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "zizmor",
@@ -610,7 +658,15 @@
       "rawCount": 1,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 1
+      }
     },
     {
       "scanner": "hadolint",
@@ -619,7 +675,15 @@
       "rawCount": 7,
       "keptCount": 7,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "trivy",
@@ -628,7 +692,15 @@
       "rawCount": 3,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 2,
+      "reason": null,
+      "stages": {
+        "changedLines": 2,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "checkov",
@@ -637,7 +709,15 @@
       "rawCount": 3,
       "keptCount": 3,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 2,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "tflint",
@@ -646,7 +726,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "kube-linter",
@@ -655,7 +743,15 @@
       "rawCount": 2,
       "keptCount": 2,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "kubeconform",
@@ -664,7 +760,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "shellcheck",
@@ -673,7 +777,15 @@
       "rawCount": 4,
       "keptCount": 4,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 1,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "ruff",
@@ -682,7 +794,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 3,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "brakeman",
@@ -691,7 +811,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "rubocop",
@@ -700,7 +828,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "bandit",
@@ -709,7 +845,15 @@
       "rawCount": 1,
       "keptCount": 1,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 3,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "oxlint",
@@ -718,7 +862,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     },
     {
       "scanner": "golangci",
@@ -727,7 +879,15 @@
       "rawCount": 0,
       "keptCount": 0,
       "durationMs": "<DURATION_MS>",
-      "reason": null
+      "resolveMs": "<DURATION_MS>",
+      "files": 0,
+      "reason": null,
+      "stages": {
+        "changedLines": 0,
+        "fixtures": 0,
+        "rules": 0,
+        "merged": 0
+      }
     }
   ],
   "not_reviewed_paths": [],
