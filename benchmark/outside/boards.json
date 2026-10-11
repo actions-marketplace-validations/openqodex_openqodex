@@ -395,8 +395,18 @@
         "reviewer"
       ],
       "source": "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models",
-      "probed": null,
-      "served": null
+      "probed": {
+        "at": "2026-10-11T13:19:47.812Z",
+        "api": "responses",
+        "authHeader": "api-key",
+        "toolRoundTrip": true,
+        "calls": 2,
+        "inputTokens": 210,
+        "outputTokens": 28,
+        "costUsd": 0.0007,
+        "by": "the session, from this Mac, benchmark/lib/openai-reviewer.mjs --probe"
+      },
+      "served": "gpt-6.1-sol"
     },
     "judge": {
       "id": "gpt-5.2",
@@ -407,8 +417,18 @@
         "wording"
       ],
       "source": "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models",
-      "probed": null,
-      "served": null
+      "probed": {
+        "at": "2026-10-11T13:19:50.251Z",
+        "api": "responses",
+        "authHeader": "api-key",
+        "toolRoundTrip": true,
+        "calls": 2,
+        "inputTokens": 207,
+        "outputTokens": 46,
+        "costUsd": 0.00100625,
+        "by": "the session, from this Mac, benchmark/lib/openai-reviewer.mjs --probe"
+      },
+      "served": "gpt-5.2"
     }
   },
   "aliases": {}
