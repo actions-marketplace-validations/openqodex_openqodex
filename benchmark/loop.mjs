@@ -54,7 +54,14 @@
 // 7. A parent is reused across a change of reviewer, model, script, machine
 //    or settings, or after a week: those runs are not compared; the line
 //    says why and the person re-runs the parent.
-import { spawnSync } from "node:child_process";
+// 8. A candidate run that spent before the ledger named it is left out of
+//    the day's room, so the day ends past its cap: what the step's runs
+//    spent and the ledger has not recorded counts against the room first.
+// 9. A second change enters stage 2 between this step's check and its line:
+//    the check runs again under the ledger lock, as the line is written.
+// 10. A step that dies leaves its run.mjs spending: run.mjs runs in a
+//    process group of its own, named in the run lock (loop/ledger.mjs).
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -70,7 +77,7 @@ import { REQUIRED_REVIEWERS, Refusal, decide, decisionLine, lookOf, validationPr
 import { ToolError } from "./loop/leak-check.mjs";
 import { DAILY_SERVER_USD, changeSpend, dailyRoom, folderSpend, signalRefusal, stepSpend, takeRunLock, withLedger } from "./loop/ledger.mjs";
 import { LEDGER, propose, readLedger } from "./loop/propose.mjs";
-import { PARENT_MAX_AGE_DAYS, STAGES, changeState, inDecision, repeatsFor, screen, stageOutcome } from "./loop/stages.mjs";
+import { PARENT_MAX_AGE_DAYS, STAGES, changeState, inDecision, repeatsFor, screen, scriptedReviewers, stageOutcome } from "./loop/stages.mjs";
 
 const USAGE = "usage: node benchmark/loop.mjs propose <record.json> [--repo <dir>] [--ledger <file>]\n       node benchmark/loop.mjs step --change <RC-id> --parent <run> [--parent <run> ...] [--candidate <run> ...] [--checkout <dir>] [--parent-checkout <dir>] [--results <dir>] [--ledger <file>] [--decisions <file>] [--model-script <file>] [--install-root <dir>/tools] [--allow-missing-scanners] [--max-minutes 600]\n       node benchmark/loop.mjs status [--ledger <file>]";
 
@@ -246,12 +253,34 @@ function workFor(run, repeats, parent) {
   return { reviews, actions };
 }
 
-// One invocation of run.mjs from `checkout`; its output goes to this
-// process's stdout. Returns its exit and how the run says it ended.
-function invokeRun({ checkout, flags, folder }) {
-  const p = spawnSync(process.execPath, [join(checkout, "benchmark", "run.mjs"), ...flags, "--out", folder], { cwd: checkout, stdio: ["ignore", 1, 1] });
-  const run = existsSync(join(folder, "manifest.json")) ? runOf(folder, null) : null;
-  return { status: p.status, signal: p.signal, ended: run?.ended ?? null };
+// One invocation of run.mjs from `checkout`, in a process group of its own
+// whose number goes into the run lock before the run starts spending
+// (`started`), so a lock left by a step that dies stays live while the run
+// does. Ctrl-C and SIGTERM to this step are passed on to that group. Its
+// output goes to this process's stdout. Resolves to its exit and how the
+// run says it ended.
+function invokeRun({ checkout, flags, folder, started }) {
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [join(checkout, "benchmark", "run.mjs"), ...flags, "--out", folder], { cwd: checkout, stdio: ["ignore", 1, 1], detached: true });
+    const pass = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        // gone already
+      }
+    };
+    process.on("SIGINT", pass);
+    process.on("SIGTERM", pass);
+    if (child.pid !== undefined) started({ pid: child.pid, pgid: child.pid });
+    let failed = null;
+    child.on("error", (error) => (failed = error));
+    child.on("close", (status, signal) => {
+      process.off("SIGINT", pass);
+      process.off("SIGTERM", pass);
+      const run = existsSync(join(folder, "manifest.json")) ? runOf(folder, null) : null;
+      done({ status: failed ? 2 : status, signal, ended: run?.ended ?? null });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +288,7 @@ function invokeRun({ checkout, flags, folder }) {
 
 const money = (usd) => `$${usd.toFixed(4)}`;
 
-function step(o) {
+async function step(o) {
   const id = o.change;
   if (!/^RC-\d{4}$/.test(id ?? "")) throw new Refusal("name the change with --change RC-<4 digits>");
   if (o.parents.length === 0) throw new Refusal("name the parent's saved runs with --parent <run>, one per path and reviewer group the change runs on");
@@ -338,7 +367,7 @@ function step(o) {
       for (const w of work) w.flags = runFlags(w.parent, o, w.checkout);
       lock = takeRunLock(o.ledger, { change: id, stage, runs });
       if (lock.stale) settleAbandoned(o.ledger, lock.stale);
-      ran = runWork({ o, id, stage, record, work });
+      ran = await runWork({ o, id, stage, record, work, runs, lock });
       if (ran.refusal) throw new Refusal(ran.refusal);
     }
     const out = writeLine({ o, id, stage, record, pairs, runs, ran, started });
@@ -360,13 +389,17 @@ function settleAbandoned(ledger, stale) {
 }
 
 // Runs the stage's work, server runs held to the day's room. Returns
-// whether every run finished, and why not.
-function runWork({ o, id, stage, record, work }) {
+// whether every run finished, and why not. What the step's runs spent that
+// the ledger has not recorded yet (a candidate run made before the step, a
+// run a dead step left) counts against the day and the change first.
+async function runWork({ o, id, stage, record, work, runs, lock }) {
   const lines = readLedger(o.ledger);
-  const day = dailyRoom(lines);
+  const ledgerDay = dailyRoom(lines);
+  const pending = stepSpend(lines, runs);
+  const day = { ...ledgerDay, roomUsd: Math.max(0, ledgerDay.roomUsd - pending.serverUsd), pendingUsd: pending.serverUsd };
   const change = changeSpend(lines, id);
-  const capLeftUsd = Math.max(0, record.capUsd - change.serverUsd);
-  const capLeftReviews = Math.max(0, record.capReviews - change.laptopReviews);
+  const capLeftUsd = Math.max(0, record.capUsd - change.serverUsd - pending.serverUsd);
+  const capLeftReviews = Math.max(0, record.capReviews - change.laptopReviews - pending.laptopReviews);
   const server = work.filter((w) => w.run.path === "server");
   const laptop = work.filter((w) => w.run.path === "laptop");
   const serverReviews = server.reduce((n, w) => n + w.work.reviews, 0);
@@ -382,7 +415,7 @@ function runWork({ o, id, stage, record, work }) {
   if (server.length > 0) {
     if (allowedUsd < reviewCap || forecastUsd > allowedUsd) {
       const why = allowedUsd < reviewCap ? `one review may spend up to ${money(reviewCap)}` : `stage ${stage}'s ${serverReviews} server reviews are forecast at ${money(forecastUsd)}`;
-      if (bound === "daily") return { ...base, refusal: `refused, nothing run: the daily server cap of $${DAILY_SERVER_USD} leaves ${money(day.roomUsd)} on ${day.day} (${money(day.spentUsd)} spent), and ${why}; step again on a later day` };
+      if (bound === "daily") return { ...base, refusal: `refused, nothing run: the daily server cap of $${DAILY_SERVER_USD} leaves ${money(day.roomUsd)} on ${day.day} (${money(day.spentUsd)} recorded in the ledger${day.pendingUsd > 0 ? `, and ${money(day.pendingUsd)} this step's runs spent that it has not recorded yet` : ""}), and ${why}; step again on a later day` };
       return { ...base, finished: false, capped: true, reason: `the change's server cap of $${record.capUsd} leaves ${money(capLeftUsd)}, and ${why}` };
     }
   }
@@ -401,7 +434,8 @@ function runWork({ o, id, stage, record, work }) {
       if (action.kind === "new") flags.push("--repeat", String(action.repeats), ...(action.repeats > 3 ? ["--allow-more"] : []));
       else if (action.kind === "resume") flags.push("--resume");
       else flags.push("--add-repeats", String(action.add), ...(action.to > 3 ? ["--allow-more"] : []));
-      const r = invokeRun({ checkout: w.checkout, flags, folder: w.run.folder });
+      const r = await invokeRun({ checkout: w.checkout, flags, folder: w.run.folder, started: (child) => lock.update({ child }) });
+      lock.update({ child: null });
       if (w.run.path === "server") allowedUsd = Math.max(0, allowedUsd - (folderSpend(w.run.folder).usd - spent.usd));
       if (r.status === 0 && r.ended?.how === "finished") continue;
       const why = r.ended && r.ended.how !== "finished" ? `${r.ended.how}${r.ended.why ? `: ${r.ended.why}` : ""}` : `run.mjs exited ${r.status ?? r.signal} before the run ended`;
@@ -431,7 +465,9 @@ function writeLine({ o, id, stage, record, pairs, runs, ran, started }) {
     // Read again: a run made now has its manifest.
     const fresh = pairs.map((p) => ({ ...p, candidate: runOf(p.candidate.folder, "candidate"), parent: runOf(p.parent.folder, "parent") }));
     const differ = fresh.flatMap((p) => settingsDiffer(p.parent, p.candidate).map((d) => `${p.parent.runId} against ${p.candidate.runId}: ${d}`));
-    if (differ.length > 0) problems = [`the parent's runs differ from the candidate's beyond the build, so a difference would not be the change's; re-run the parent at ${record.parent.slice(0, 8)} and step again`, ...differ];
+    const scripted = scriptedReviewers(fresh.flatMap((p) => [p.parent, p.candidate]));
+    if (scripted.length > 0) problems = [`no evidence: the runs were reviewed by the scripted model (${scripted.join(", ")}), which reads no code, so they neither stop nor pass a change; only a real reviewer's runs decide. The spend is recorded`];
+    else if (differ.length > 0) problems = [`the parent's runs differ from the candidate's beyond the build, so a difference would not be the change's; re-run the parent at ${record.parent.slice(0, 8)} and step again`, ...differ];
     else {
       try {
         const decisions = readRulings(o.decisions);
@@ -459,6 +495,10 @@ function writeLine({ o, id, stage, record, pairs, runs, ran, started }) {
       line = ran.capped ? plain("decided", "inconclusive-reverted", `inconclusive, so reverted: ${ran.reason}; nothing more may be spent on it`) : plain("stage", null, ran.reason);
     } else {
       let result = null;
+      // One change at a time in stage 2 or 3, checked again as the line is
+      // written: another change may have entered since the step began.
+      const other = stage >= 2 && problems.length === 0 ? inDecision(lines, id) : null;
+      if (other) problems = [`${other} entered stage 2 or 3 while this step ran; one change is decided at a time, so ${id} waits until ${other} is decided`];
       if (problems.length === 0) {
         try {
           result = decide({ id, record, pairs: sides, look: lookOf(lines), stage, final: stage === 3 });
@@ -515,12 +555,12 @@ function statusCommand(o) {
   return 0;
 }
 
-function main() {
+async function main() {
   try {
     const o = parseArgs(process.argv.slice(2));
     if (o.command === "propose") return proposeCommand(o);
     if (o.command === "status") return statusCommand(o);
-    const line = step(o);
+    const line = await step(o);
     console.log(`${line.id} stage ${line.stage}: ${line.decision ?? (line.look === null ? "no look taken" : "goes on")}${line.look !== null ? ` at look ${line.look} (alpha ${line.alpha.toPrecision(3)})` : ""}; spent ${money(line.spend.serverUsd)} on the server and ${line.spend.laptopReviews} laptop reviews. ${line.reason}\nWritten to ${o.ledger}.`);
     return 0;
   } catch (error) {
@@ -534,4 +574,4 @@ function main() {
 }
 
 // Run as a script, not imported: Node gives import.meta.url the real path, so argv[1] is compared by its real path.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

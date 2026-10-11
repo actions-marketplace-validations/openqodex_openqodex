@@ -26,9 +26,9 @@
 // 1. Two iterations read the ledger before either writes, so both take look
 //    t and the second is tested at a bound already spent: the look is read
 //    and the line written under one hold of the lock.
-// 2. A line is cut half way (a crash, a full disk), and every later reader
-//    refuses the ledger: the new text is written to a file beside it, synced,
-//    and renamed over it.
+// 2. A line is cut half way (a crash, a full disk, a short write), and every
+//    later reader refuses the ledger: the new text is written in full to a
+//    file beside it, synced, checked, and only then renamed over it.
 // 3. The day's cap is checked against a forecast and the run spends more
 //    than the forecast: the cap is the run's hard cap, never a forecast.
 // 4. A run's spend is counted at every stage that names it, or a parent run
@@ -38,10 +38,17 @@
 // 5. A step dies while its runs spend, and the day's sum misses that spend:
 //    the run lock names the step's runs, and the next step records what
 //    they spent before it reads the room.
+// 6. A step dies and the run.mjs it started keeps spending, and the next
+//    step takes the lock over: the lock names that run.mjs and its process
+//    group, and stays live while either runs.
+// 7. Two steps find one dead holder's lock, and one removes the lock the
+//    other has just taken: the takeover is runner.mjs's, which puts back a
+//    lock that is not the dead holder's.
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { readLedger as readBudget } from "../lib/budget.mjs";
+import { lockRun } from "../lib/runner.mjs";
 import { ToolError } from "./leak-check.mjs";
 import { lockLedger, readLedger } from "./propose.mjs";
 
@@ -55,17 +62,37 @@ const round = (usd) => Math.round(usd * 1e9) / 1e9;
 export const dayOf = (iso) => String(iso).slice(0, 10);
 
 // Writes `text` after the ledger's current content as one replace: a temp
-// file beside it, synced, renamed over it (failure 2).
+// file beside it, every byte written, synced, checked (its size, and that
+// its last line parses), then renamed over it. A temp file that fails the
+// check is moved aside and the ledger is left as it was (failure 2).
 function replaceWith(path, text) {
   const raw = existsSync(path) ? readFileSync(path, "utf8") : "";
   if (raw !== "" && !raw.endsWith("\n")) throw new ToolError(`${path} does not end with a newline; a line was cut, so nothing is written until a person mends it`);
+  const bytes = Buffer.from(raw + text, "utf8");
   const temp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   const fd = openSync(temp, "wx");
   try {
-    writeSync(fd, raw + text);
+    let written = 0;
+    while (written < bytes.length) {
+      const n = writeSync(fd, bytes, written, bytes.length - written);
+      if (n <= 0) throw new ToolError(`the ledger's new text could not be written to ${temp} (${written} of ${bytes.length} bytes); the ledger is unchanged`);
+      written += n;
+    }
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+  const back = readFileSync(temp);
+  let lastParses = false;
+  try {
+    JSON.parse(back.toString("utf8").trimEnd().split("\n").at(-1));
+    lastParses = true;
+  } catch {
+    lastParses = false;
+  }
+  if (statSync(temp).size !== bytes.length || !back.equals(bytes) || !lastParses) {
+    renameSync(temp, `${temp}.failed`);
+    throw new ToolError(`the ledger's new text in ${temp} is not what was written (kept as ${basename(temp)}.failed); the ledger is unchanged`);
   }
   renameSync(temp, path);
 }
@@ -183,6 +210,16 @@ export function signalRefusal(lines) {
 
 // ---------------------------------------------------------------------------
 // The run lock: one stage that runs reviews at a time.
+//
+// The lock file holds the step's process number and is taken the way a run
+// folder is (lib/runner.mjs lockRun): by an exclusive create, and from a
+// holder that has ended only through takeOverStale, which moves the file
+// aside and puts it back when what it moved is not the dead holder's.
+// Beside it, <ledger>.run.lock.json names what the step runs: the change,
+// the stage, its runs with what each had spent, and the run.mjs it has
+// started, with its process group. A lock is live while its step or that
+// run.mjs (or anything in its group) is: a step that died leaves a run.mjs
+// still spending, and nothing takes the lock over until it has ended.
 
 const alive = (pid) => {
   try {
@@ -192,53 +229,71 @@ const alive = (pid) => {
     return error.code === "EPERM";
   }
 };
+const groupAlive = (pgid) => alive(-pgid);
+const childAlive = (child) => Boolean(child) && ((Number.isInteger(child.pid) && alive(child.pid)) || (Number.isInteger(child.pgid) && groupAlive(child.pgid)));
 
-export const runLockPath = (ledger) => `${ledger}.run.lock`;
+export const runLockFile = (ledger) => `${basename(ledger)}.run.lock`;
+export const runLockPath = (ledger) => join(dirname(ledger), runLockFile(ledger));
+export const runInfoPath = (ledger) => `${runLockPath(ledger)}.json`;
+
+// The lock's holder now: its process number, and what it said it runs (only
+// when the note is that holder's own). Null when nobody holds the lock.
+function holderOf(ledger) {
+  let text;
+  try {
+    text = readFileSync(runLockPath(ledger), "utf8").trim();
+  } catch {
+    return null;
+  }
+  const pid = /^\d+$/.test(text) ? Number(text) : null;
+  let info = null;
+  try {
+    info = JSON.parse(readFileSync(runInfoPath(ledger), "utf8"));
+  } catch {
+    info = null;
+  }
+  return { pid, info: pid !== null && info?.pid === pid ? info : null };
+}
 
 /**
- * Takes the run lock for a step ({change, stage, step, runs: [{runId,
- * folder, path, role, before}]}). Returns { release, update, stale }:
- * update(info) rewrites the runs it names, and `stale` is the info a dead
- * step left, which the caller settles before it reads the room. A lock held
- * by a live process refuses.
+ * Takes the run lock for a step ({change, stage, runs: [{runId, folder,
+ * path, role, before}]}). Returns { release, update, stale }: update(more)
+ * adds to what the step says it runs (the run.mjs it started), and `stale`
+ * is what a dead step said, which the caller settles before it reads the
+ * room. A lock whose step, or whose run.mjs, still runs refuses.
  */
 export function takeRunLock(ledger, info) {
-  const path = runLockPath(ledger);
-  mkdirSync(dirname(path), { recursive: true });
-  let stale = null;
-  for (let tries = 0; tries < 3; tries++) {
-    const mine = JSON.stringify({ pid: process.pid, at: new Date().toISOString(), nonce: randomBytes(6).toString("hex"), ...info });
-    try {
-      writeFileSync(path, mine, { flag: "wx" });
-      let text = mine;
-      return {
-        stale,
-        update(more) {
-          const now = existsSync(path) ? readFileSync(path, "utf8") : null;
-          if (now !== text) throw new ToolError(`the run lock ${path} is no longer this step's`);
-          text = JSON.stringify({ ...JSON.parse(text), ...more });
-          writeFileSync(`${path}.tmp`, text);
-          renameSync(`${path}.tmp`, path);
-        },
-        release() {
-          if (existsSync(path) && readFileSync(path, "utf8") === text) unlinkSync(path);
-        },
-      };
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    let held;
-    try {
-      held = JSON.parse(readFileSync(path, "utf8"));
-    } catch {
-      // Still being written: an empty lock older than a minute is a dead writer's.
-      if (Date.now() - statSync(path).mtimeMs < 60_000) throw new ToolError(`the run lock ${path} is being taken by another step; step again in a moment`);
-      held = {};
-    }
-    if (Number.isInteger(held.pid) && alive(held.pid)) throw new ToolError(`another step runs reviews now: ${held.change ?? "a change"} stage ${held.stage ?? "?"} (process ${held.pid}, since ${held.at}); one stage runs at a time, so step again when it ends`);
-    stale = held;
-    renameSync(path, `${path}.stale-${process.pid}`);
-    unlinkSync(`${path}.stale-${process.pid}`);
+  mkdirSync(dirname(ledger), { recursive: true });
+  const before = holderOf(ledger);
+  const dead = before !== null && before.pid !== null && !alive(before.pid);
+  if (dead && childAlive(before.info?.child)) throw new ToolError(`the step that held the run lock (process ${before.pid}, ${before.info.change} stage ${before.info.stage}, since ${before.info.at}) has ended, but the run.mjs it started (process ${before.info.child.pid}, group ${before.info.child.pgid}) still runs and may spend; step again when it has ended`);
+  let release;
+  try {
+    release = lockRun(dirname(ledger), { file: runLockFile(ledger), who: "another loop step that runs reviews", advice: "one stage runs reviews at a time, so step again when it ends" });
+  } catch (error) {
+    throw new ToolError(error.message);
   }
-  throw new ToolError(`the run lock ${path} could not be taken`);
+  const path = runInfoPath(ledger);
+  let note = { pid: process.pid, at: new Date().toISOString(), ...info };
+  const write = () => {
+    const temp = `${path}.${process.pid}.tmp`;
+    writeFileSync(temp, JSON.stringify(note));
+    renameSync(temp, path);
+  };
+  write();
+  return {
+    stale: dead ? (before.info ?? { pid: before.pid, runs: [] }) : null,
+    update(more) {
+      note = { ...note, ...more };
+      write();
+    },
+    release() {
+      try {
+        if (JSON.parse(readFileSync(path, "utf8")).pid === process.pid) unlinkSync(path);
+      } catch {
+        // no note, or another step's
+      }
+      release();
+    },
+  };
 }

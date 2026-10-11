@@ -38,6 +38,12 @@
 // by the change's own cap is decided inconclusive-reverted, since nothing
 // more may be spent on it.
 //
+// Runs of the scripted model (model:scripted, the stand-in tests and dry
+// runs review with) are no evidence about a change: it reads no code, so a
+// parent and a candidate it reviewed agree whatever the change did. A stage
+// on them takes no look, records the spend and "no evidence", and neither
+// stops nor passes the change; only a real reviewer's runs decide.
+//
 // Failure list, written before the code:
 // 1. An iteration behind after stage 1 spends through stage 3: stage 1 stops
 //    on point estimates, which one repeat can give, where the interval rule
@@ -50,7 +56,14 @@
 // 4. A stage decided on part of its runs (a run cut short by a cap) reads
 //    the missing reviews as nothing found: a stage whose runs did not finish
 //    takes no look and decides nothing.
+// 5. A scripted screen stops a change as evidence: the scripted model's
+//    runs never stop, pass or decide a change.
 import { GATE_METRICS, lossIn, metricOf } from "./compare.mjs";
+
+/** The reviewers among `runs` (each with its manifest) that are the scripted model, as "<run id>: <reviewer>". */
+export function scriptedReviewers(runs) {
+  return runs.flatMap((run) => Object.entries(run.manifest?.reviewers ?? {}).filter(([name, r]) => name === "model:scripted" || Boolean(r?.script)).map(([name]) => `${run.runId}: ${name}`));
+}
 
 /** Each stage's repeats: on the target path, and on every other path the change runs on. */
 export const STAGES = Object.freeze({

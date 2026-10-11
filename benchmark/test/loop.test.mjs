@@ -1,10 +1,17 @@
 // The reviewer loop's driver (benchmark/loop.mjs) with its stage rules
 // (loop/stages.mjs) and its ledger (loop/ledger.mjs). Each failure is
-// guarded end to end: the driver is run as a person runs it, it invokes
+// guarded end to end: the driver is run as a person runs it.
+//
+// Two kinds of runs feed it. Where the driver must make runs, it invokes
 // run.mjs, and run.mjs reviews with the scripted model, the only stand-in.
 // The scripted model's script carries prices, so every review costs what a
 // real model at those prices would cost, and the budget ledger, the daily
-// cap and the spend in the reviewer ledger are the real ones.
+// cap and the spend in the reviewer ledger are the real ones. A scripted
+// run is never evidence about a change, so where a test needs the rule to
+// stop or decide, the runs are saved score sets: run folders written by the
+// runner's own code (executeRun) with reports the test writes, their spend
+// recorded by lib/budget.mjs, as the plan's check feeds the loop "saved
+// adverse score sets".
 //
 // The checkout the driver runs is a clone of this repository at HEAD with
 // the built CLI copied in and its provenance recorded, as
@@ -28,13 +35,24 @@
 // 5. A lever is chosen after the earliest-failure signal said stop: while
 //    the last baseline's signal says stop, or no baseline carries one,
 //    neither a proposal nor a step goes through.
+// 6. The day's room leaves out spend already on disk: a candidate run that
+//    spent before the ledger named it must count against the room before a
+//    stage starts more reviews.
+// 7. A second change enters stage 2 while one is there: the check must hold
+//    at the moment the line is written, under the ledger lock.
+// 8. A step that died leaves its run.mjs spending, and the next step takes
+//    the run lock over: the lock is live while the run.mjs it names is.
+// 9. A scripted screen stops a change as evidence: runs of the scripted
+//    model record no evidence and neither stop nor pass a change.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "../lib/cases.mjs";
-import { bundleHash, treeState } from "../lib/runner.mjs";
+import { openLedger } from "../lib/budget.mjs";
+import { bundleHash, executeRun, planJobs, runManifest, sampleRecord, treeState } from "../lib/runner.mjs";
 import { ruleHash } from "../loop/decide.mjs";
 import { lockLedger } from "../loop/propose.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -50,6 +68,8 @@ const LOSSES = { recall: 2, criticalMajorRecall: 2, precision: 2, severityAgreem
 const SCRIPT = { version: 1, model: "scripted", served: "scripted-1", prices: { input: 0, cachedInput: 0, output: 500 }, summary: "The scripted model's answer.", findings: [], dropReason: "The scripted model drops every candidate; it reads no code.", reply: null };
 const REVIEW_MAX_USD = 0.02;
 const MAX_OUTPUT_TOKENS = 30;
+// The reviewer of the saved score sets: a real deployment's name, no script.
+const REAL = "model:gpt-6.1-sol";
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const writeJson = (path, value) => {
@@ -61,6 +81,9 @@ const writeLines = (path, lines) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
 };
+const appendLine = (path, line) => appendFileSync(path, `${JSON.stringify(line)}\n`);
+const sha = (text) => createHash("sha256").update(text).digest("hex");
+const wait = (ms) => new Promise((wake) => setTimeout(wake, ms));
 
 let root;
 let checkout;
@@ -101,19 +124,42 @@ function copyRun(from, runId, edit = (m) => m) {
   return to;
 }
 
-// Every review of a run finds the case's critical bug: a parent the
-// candidate is behind.
-function everyReviewFindsTheBug(folder) {
-  const samples = join(folder, "samples", CASE);
-  for (const config of readdirSync(samples)) {
-    for (const n of readdirSync(join(samples, config))) {
-      const file = join(samples, config, n, "report", "report.json");
-      const report = readJson(file);
-      report.findings = [{ origin: "agent", severity: "critical", category: "security", confidence: 0.9, file_path: "files/app.py", line_number: 17, line_end: 17, title: "Path traversal in the download route", problem: "The name from the query string is joined to the folder unchecked.", consequence: "A request with ../ reads any file the server can read.", fix: "Use send_from_directory.", candidate: null, source: null }];
-      writeJson(file, report);
-    }
-  }
-  return folder;
+// A saved score set: a run folder of six planted-style cases with one
+// critical bug each and a clean one, written by the runner's own code
+// (executeRun) on the server path with a real reviewer's name. `found(c, r)`
+// says whether review r of case c finds its bug. Each review's cost is
+// recorded in the run's budget ledger by lib/budget.mjs.
+async function savedSet({ runId, commit = head, changeId = null, found, repeat = 3, cost = 0.01 }) {
+  const out = join(root, "sets", runId);
+  const specs = join(root, "sets", `${runId}-specs`);
+  const names = [...Array.from({ length: 6 }, (_, i) => `case-${String(i).padStart(2, "0")}`), "clean-00"];
+  const hashes = Object.fromEntries(names.map((x) => [x, sha(x)]));
+  const caseIds = Object.fromEntries(names.map((x) => [x, `planted/${x}@${hashes[x].slice(0, 8)}`]));
+  for (const x of names) writeJson(join(specs, `${x}.json`), { id: x, guards: "g", language: "python", framework: "none", clean: x.startsWith("clean"), bugs: x.startsWith("clean") ? [] : [{ id: "b1", file: "app.py", lines: [10, 10], anchor: { line: 10, text: "x" }, mentions: ["flaw"], kind: ["bug"], severity: "critical", found_by: ["reasoning"], truth: "t" }] });
+  const { configs, jobs } = planJobs({ cases: names, caseIds, reviewers: [REAL], graph: ["on"], repeat });
+  const manifest = runManifest({
+    startedAt: new Date().toISOString(),
+    settings: { runId, mode: "review", path: "server", suite: "planted", split: "dev", build: { commit, short: commit.slice(0, 7), dirty: false, cliVersion: "0.12.0", bundleHash: "b".repeat(64) }, reviewers: { [REAL]: { name: REAL, kind: "model", model: "gpt-6.1-sol", settings: { effort: "low", maxOutputTokens: 32000 } } }, review: { web: "off", timeoutSeconds: 1800 }, cases: names, caseIds: names.map((x) => caseIds[x]), caseHashes: hashes, configs: configs.map((c) => c.id), repeat, concurrency: 1, scannersComplete: true, draft: false, changeId, budget: { hardCaps: { maxUsd: 10, reviewMaxUsd: 3 } } },
+    jobs,
+  });
+  const budget = openLedger(out, { maxUsd: 10, reviewMaxUsd: 3 });
+  await executeRun({
+    out,
+    manifest,
+    jobs,
+    copies: names.map((x) => [join(specs, `${x}.json`), `cases/${x}.json`]),
+    runJob: async (job) => {
+      const c = names.indexOf(job.case);
+      const shown = !job.case.startsWith("clean") && found(c, job.repeat) ? [{ origin: "agent", severity: "critical", category: "bug", confidence: 0.9, file_path: "app.py", line_number: 10, line_end: 10, title: "A flaw here", problem: "p", consequence: "c", fix: "f", candidate: null, source: null }] : [];
+      const report = { findings: shown, outside_change: [], dropped: [], completion: { status: "complete", missing: [] } };
+      const dir = join(out, "samples", job.case, job.config, String(job.repeat));
+      writeJson(join(dir, "sample.json"), sampleRecord({ job, attempt: 1, result: { code: 0, signal: null, wallMs: 20_000 }, report, who: null, startedAt: "t", failure: null, stopped: null }));
+      writeJson(join(dir, "report", "report.json"), report);
+      budget.noteLaunch(job.jobId);
+      budget.spend(cost, job.jobId);
+    },
+  });
+  return out;
 }
 
 // The lines every live ledger holds before a change: a passing validation
@@ -121,6 +167,8 @@ function everyReviewFindsTheBug(folder) {
 const validation = () => ({ v: 1, id: "VAL-0001", at: "2026-10-11T00:00:00.000Z", event: "validation", ruleHash: ruleHash(), look: null, alpha: null, simulation: { sequences: 1000, looks: 10, accepted: 0, harm: { decision: "reverted" } }, saved: { falseAccepts: 0, missedHarms: 0 }, pass: true, reason: "test" });
 const baseline = (stop = false, id = "RC-BASE-0001") => ({ v: 1, id, at: "2026-10-11T00:00:01.000Z", event: "baseline", look: null, alpha: null, runs: [], signal: { sameIssueAgreement: stop ? 0.5 : 0.9, unresolvedShare: 0.1, toolStressShare: 0.2, stop } });
 const proposed = (id, over = {}) => ({ v: 1, id, at: "2026-10-11T00:00:02.000Z", event: "proposed", record: { lever: "brief.order-and-size", title: `change ${id}`, hypothesis: "h", branch: `b-${id}`, parent: head, commit: head, paths: ["server"], target: "server", aim: "quality", primary: { metric: "recall", better: "higher" }, acceptableLoss: { ...LOSSES }, capUsd: 40, capReviews: 240, proposedBy: "test", ...over }, runs: [], look: null, alpha: null, results: {}, strata: null, causes: {}, stage: null, decision: null, reason: null, spendUsd: 0, laptopReviews: 0, minutes: 0, pr: null });
+// A stage line a change wrote earlier: `look` taken, `spendRuns` the runs it recorded with their totals.
+const stageLine = (id, { stage, look, spendUsd = 0, spendRuns = [], at = new Date().toISOString(), event = "stage", decision = null }) => ({ v: 1, id, at, event, runs: [], look, alpha: look === null ? null : 0.05 / (look * (look + 1)), stage, decision, reason: "test", spend: { serverUsd: spendUsd, serverReviews: 0, laptopUsd: 0, laptopReviews: 0, runs: spendRuns }, spendUsd, laptopReviews: 0, minutes: 1, pr: null });
 
 // The driver, run as a person runs it, on the test's checkout, results
 // folder and ledger.
@@ -132,9 +180,10 @@ const loopAsync = (ledger, results, args) =>
   new Promise((done) => {
     const child = spawn(process.execPath, loopArgs(ledger, results, args), { cwd: repoRoot });
     let out = "";
+    let err = "";
     child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (out += d));
-    child.on("close", (status) => done({ status, out }));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("close", (status) => done({ status, out: out + err, stderr: err }));
   });
 
 beforeAll(() => {
@@ -151,34 +200,33 @@ beforeAll(() => {
 }, 300_000);
 
 describe("an iteration behind after stage 1 spends through stage 3", () => {
-  it("stops the change at stage 1 with its look and spend in the ledger, and runs nothing after", () => {
-    const parent = everyReviewFindsTheBug(copyRun(parentRun, "parent-finds"));
+  it("stops the change at stage 1 with its look and spend in the ledger, and runs nothing after", async () => {
+    // The parent finds every case's critical bug in every review; the
+    // change's saved run finds none.
+    const parent = await savedSet({ runId: "behind-parent", found: () => true });
+    const candidate = await savedSet({ runId: "behind-candidate", changeId: "RC-0001", found: () => false, repeat: 1, cost: 0.02 });
     const ledger = join(root, "behind", "reviewer.jsonl");
     const results = join(root, "behind", "results");
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001")]);
 
-    const first = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent]);
+    const first = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent, "--candidate", candidate]);
     expect(first.status, first.stdout + first.stderr).toBe(0);
     const line = readLines(ledger).at(-1);
     expect(line).toMatchObject({ v: 1, id: "RC-0001", event: "decided", stage: 1, decision: "stopped-early", look: 1 });
     expect(line.alpha).toBeCloseTo(0.05 / 2, 15);
     expect(line.reason).toMatch(/recall/);
-    // The stage-1 run is the candidate's one repeat, and what it cost is the spend.
-    const candidate = join(results, "RC-0001-parent-finds");
-    expect(readJson(join(candidate, "manifest.json"))).toMatchObject({ repeat: 1, changeId: "RC-0001", build: { commit: head } });
-    expect(line.spend.serverUsd).toBeGreaterThan(0);
-    expect(line.spend.serverReviews).toBe(1);
-    const spentAfterStage1 = readFileSync(join(candidate, "budget.jsonl"), "utf8");
+    expect(line.screen.filter((r) => r.fired).map((r) => r.rule)).toEqual(expect.arrayContaining(["primary", "critical"]));
+    // What the stage-1 run cost is the step's spend.
+    expect(line.spend.serverUsd).toBeCloseTo(7 * 0.02, 9);
+    expect(line.spend.serverReviews).toBe(7);
 
     // A later step is refused: nothing runs, nothing is written.
     const second = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent]);
     expect(second.status).toBe(1);
     expect(second.stderr).toMatch(/stopped-early|decided/);
     expect(readLines(ledger)).toHaveLength(4);
-    expect(readJson(join(candidate, "manifest.json")).repeat).toBe(1);
-    expect(readFileSync(join(candidate, "budget.jsonl"), "utf8")).toBe(spentAfterStage1);
-    expect(readdirSync(results)).toEqual(["RC-0001-parent-finds"]);
-  }, 300_000);
+    expect(existsSync(results)).toBe(false);
+  }, 120_000);
 });
 
 describe("the loop reads a test-split run", () => {
@@ -226,20 +274,19 @@ describe("two iterations take one look number", () => {
     const results = join(root, "looks", "results");
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002")]);
     // Each change's stage-1 run is a saved run made for it: nothing is run.
-    const fed = (id) => copyRun(parentRun, `candidate-${id}`, (m) => ({ ...m, changeId: id }));
+    const parent = await savedSet({ runId: "looks-parent", found: (c) => c < 3 });
+    const a = await savedSet({ runId: "looks-a", changeId: "RC-0001", found: () => true, repeat: 1 });
+    const b = await savedSet({ runId: "looks-b", changeId: "RC-0002", found: () => true, repeat: 1 });
     // The ledger's own lock is held while both steps start and score their
     // runs, so both reach their decision before either may write: a step
     // that reads its look outside the lock reads the same one as the other.
     const held = lockLedger(ledger);
-    const both = Promise.all([
-      loopAsync(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun, "--candidate", fed("RC-0001")]),
-      loopAsync(ledger, results, ["step", "--change", "RC-0002", "--parent", parentRun, "--candidate", fed("RC-0002")]),
-    ]);
-    await new Promise((wake) => setTimeout(wake, 5000));
+    const both = Promise.all([loopAsync(ledger, results, ["step", "--change", "RC-0001", "--parent", parent, "--candidate", a]), loopAsync(ledger, results, ["step", "--change", "RC-0002", "--parent", parent, "--candidate", b])]);
+    await wait(5000);
     held.release();
-    const [a, b] = await both;
-    expect(a.status, a.out).toBe(0);
-    expect(b.status, b.out).toBe(0);
+    const [x, y] = await both;
+    expect(x.status, x.out).toBe(0);
+    expect(y.status, y.out).toBe(0);
     const looks = readLines(ledger).filter((l) => l.look !== null);
     expect(looks.map((l) => l.id).sort()).toEqual(["RC-0001", "RC-0002"]);
     expect(looks.map((l) => l.look).sort()).toEqual([1, 2]);
@@ -252,13 +299,12 @@ describe("the daily cap is exceeded by a stage 2 decision that was forecast unde
   it("holds the stage 2 run to the day's room, so the day's server spend stays inside 60 dollars", () => {
     const ledger = join(root, "daily", "reviewer.jsonl");
     const results = join(root, "daily", "results");
-    const now = new Date().toISOString();
     // RC-0001 passed stage 1 at $0.001 a review, so stage 2's three reviews
     // are forecast at $0.003. Another change spent $59.97 on the server
     // today, leaving $0.03, which one review's $0.02 cap fits in. Each
     // review really costs $0.0135: three of them would pass the cap.
-    const stage1 = { v: 1, id: "RC-0001", at: now, event: "stage", runs: [], look: 1, alpha: 0.025, stage: 1, decision: null, reason: "stage 1 continues", spend: { serverUsd: 0.001, serverReviews: 1, laptopUsd: 0, laptopReviews: 0, runs: [] }, spendUsd: 0.001, laptopReviews: 0, minutes: 1, pr: null };
-    const other = { v: 1, id: "RC-0002", at: now, event: "decided", runs: [], look: 2, alpha: 0.05 / 6, stage: 1, decision: "stopped-early", reason: "test", spend: { serverUsd: 59.97, serverReviews: 400, laptopUsd: 0, laptopReviews: 0, runs: [] }, spendUsd: 59.97, laptopReviews: 0, minutes: 300, pr: null };
+    const stage1 = { ...stageLine("RC-0001", { stage: 1, look: 1, spendUsd: 0.001 }), spend: { serverUsd: 0.001, serverReviews: 1, laptopUsd: 0, laptopReviews: 0, runs: [] } };
+    const other = stageLine("RC-0002", { stage: 1, look: 2, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stage1, other]);
 
     const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
@@ -269,7 +315,7 @@ describe("the daily cap is exceeded by a stage 2 decision that was forecast unde
     expect(line).toMatchObject({ id: "RC-0001", event: "stage", stage: 2, look: null, decision: null });
     expect(line.spend.forecastUsd).toBeLessThan(0.03);
     expect(line.reason).toMatch(/daily/);
-    const today = now.slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
     const spentToday = lines.filter((l) => l.spend && l.at.slice(0, 10) === today).reduce((s, l) => s + l.spend.serverUsd, 0);
     expect(spentToday).toBeLessThanOrEqual(60 + 1e-9);
     expect(line.spend.serverUsd).toBeGreaterThan(0);
@@ -281,6 +327,110 @@ describe("the daily cap is exceeded by a stage 2 decision that was forecast unde
     expect(again.status).toBe(1);
     expect(again.stderr).toMatch(/daily/);
     expect(readLines(ledger)).toHaveLength(lines.length);
+  }, 300_000);
+});
+
+describe("the day's room leaves out spend already on disk", () => {
+  it("counts a candidate run's unrecorded spend against the room before any review starts", () => {
+    const ledger = join(root, "on-disk", "reviewer.jsonl");
+    const results = join(root, "on-disk", "results");
+    // Stage 1 of RC-0001 made its candidate run, $0.0135 for one review, and
+    // the ledger never recorded it. With $59.97 spent today the room is
+    // $0.03 by the ledger, but $0.0165 with the run's own spend: less than
+    // one review's $0.02 cap.
+    const candidate = join(results, `RC-0001-${basename(parentRun)}`);
+    runBench(candidate, ["--repeat", "1", "--change", "RC-0001"]);
+    const stage1 = stageLine("RC-0001", { stage: 1, look: 1 });
+    const other = stageLine("RC-0002", { stage: 1, look: 2, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stage1, other]);
+    const before = readFileSync(ledger, "utf8");
+    const budgetBefore = readFileSync(join(candidate, "budget.jsonl"), "utf8");
+
+    const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
+    expect(r.status, r.stdout + r.stderr).toBe(1);
+    expect(r.stderr).toMatch(/daily/);
+    expect(readFileSync(ledger, "utf8")).toBe(before);
+    expect(readJson(join(candidate, "manifest.json")).repeat).toBe(1);
+    expect(readFileSync(join(candidate, "budget.jsonl"), "utf8")).toBe(budgetBefore);
+  }, 300_000);
+});
+
+describe("a second change enters stage 2 while one is there", () => {
+  it("refuses at the moment of writing when another change entered stage 2 after the step began", async () => {
+    const ledger = join(root, "one-at-a-time", "reviewer.jsonl");
+    const results = join(root, "one-at-a-time", "results");
+    const parent = await savedSet({ runId: "one-parent", found: (c) => c < 3 });
+    const b = await savedSet({ runId: "one-b", changeId: "RC-0002", found: () => true });
+    // Both changes passed stage 1; B's line recorded its run's whole spend,
+    // so B's stage 2 spends nothing new.
+    const bTotal = { runId: "one-b", role: "candidate", path: "server", usd: 21 * 0.01, reviews: 21 };
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stageLine("RC-0001", { stage: 1, look: 1 }), stageLine("RC-0002", { stage: 1, look: 2, spendUsd: bTotal.usd, spendRuns: [bTotal] })]);
+    // B's step starts with A still waiting for stage 2; while the ledger's
+    // lock is held, A's stage 2 line lands.
+    const held = lockLedger(ledger);
+    const step = loopAsync(ledger, results, ["step", "--change", "RC-0002", "--parent", parent, "--candidate", b]);
+    await wait(5000);
+    appendLine(ledger, stageLine("RC-0001", { stage: 2, look: 3 }));
+    held.release();
+    const r = await step;
+    expect(r.status, r.out).toBe(1);
+    expect(r.stderr).toMatch(/RC-0001/);
+    const lines = readLines(ledger);
+    expect(lines.at(-1)).toMatchObject({ id: "RC-0001", stage: 2, look: 3 });
+    expect(lines.filter((l) => l.id === "RC-0002" && l.stage === 2)).toEqual([]);
+  }, 120_000);
+});
+
+describe("a step that died leaves its run.mjs spending", () => {
+  it("refuses while the run.mjs a dead step started still runs, and settles the dead step's spend once it has ended", async () => {
+    const ledger = join(root, "dead-step", "reviewer.jsonl");
+    const results = join(root, "dead-step", "results");
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001")]);
+    // The dead step: a process that has ended, and the run.mjs it started,
+    // still running in its own process group.
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    const child = spawn("sleep", ["120"], { detached: true, stdio: "ignore" });
+    const ended = new Promise((done) => child.on("exit", done));
+    const abandoned = await savedSet({ runId: "dead-step-run", changeId: "RC-0001", found: () => false, repeat: 1, cost: 0.03 });
+    writeFileSync(`${ledger}.run.lock`, `${dead}\n`);
+    writeJson(`${ledger}.run.lock.json`, { pid: dead, at: new Date().toISOString(), change: "RC-0001", stage: 1, runs: [{ runId: "dead-step-run", folder: abandoned, path: "server", role: "candidate", before: { usd: 0, reviews: 0 } }], child: { pid: child.pid, pgid: child.pid } });
+    const before = readFileSync(ledger, "utf8");
+
+    const refused = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
+    expect(refused.status, refused.stdout + refused.stderr).not.toBe(0);
+    expect(refused.stderr).toMatch(new RegExp(`${child.pid}`));
+    expect(readFileSync(ledger, "utf8")).toBe(before);
+    expect(existsSync(results)).toBe(false);
+
+    process.kill(-child.pid, "SIGTERM");
+    await ended;
+    const settled = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
+    expect(settled.status, settled.stdout + settled.stderr).toBe(0);
+    const lines = readLines(ledger);
+    const gone = lines.find((l) => l.event === "abandoned");
+    expect(gone).toMatchObject({ id: "RC-0001", look: null });
+    expect(gone.spend.serverUsd).toBeCloseTo(7 * 0.03, 9);
+    expect(lines.indexOf(gone)).toBeLessThan(lines.length - 1);
+    expect(existsSync(`${ledger}.run.lock`)).toBe(false);
+  }, 300_000);
+});
+
+describe("a scripted screen stops a change as evidence", () => {
+  it("records no evidence for the scripted model's runs: no look, no decision, the spend kept, stage 1 still due", () => {
+    const ledger = join(root, "scripted", "reviewer.jsonl");
+    const results = join(root, "scripted", "results");
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001")]);
+    // The parent's scripted runs and the change's, made now by run.mjs, find
+    // the same nothing: a screen reading them would stop the change.
+    const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const line = readLines(ledger).at(-1);
+    expect(line).toMatchObject({ id: "RC-0001", event: "stage", stage: 1, look: null, decision: null });
+    expect(line.reason).toMatch(/no evidence/);
+    expect(line.reason).toMatch(/scripted/);
+    expect(line.spend.serverUsd).toBeGreaterThan(0);
+    const status = spawnSync(process.execPath, [LOOP, "status", "--ledger", ledger], { encoding: "utf8" });
+    expect(status.stdout).toMatch(/RC-0001 .*stage 1 due/);
   }, 300_000);
 });
 
