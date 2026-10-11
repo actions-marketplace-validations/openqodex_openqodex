@@ -158,6 +158,28 @@ node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>
 
 This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
+## Replays
+
+Three replays use saved reviewer submissions without calling a reviewer:
+
+- `threshold` shows findings down to info severity at the product's confidence floor.
+- `union` merges repeats 1 and 2 for each case and configuration, counting each planted bug once. It needs more than one repeat: both repeats must be saved for every case, or it reports `insufficient repeats`.
+- `floor` compares confidence floors of 0.6, 0.7, 0.8 and 0.9. A lens's higher floor still applies.
+
+They import the product's own `checkSubmission` and `mergeFindings` from the built packages. Counts use the planted matching rules, without human rulings. They never write into a run folder: output is printed, and optional `--out <file>` must name a file outside the run folders.
+
+```
+node benchmark/loop/replay.mjs threshold benchmark/results/<run>
+node benchmark/loop/replay.mjs union benchmark/results/<run>
+node benchmark/loop/replay.mjs floor benchmark/results/<run>
+```
+
+Each command accepts more runs; `--specs <folder>` follows the run it applies to.
+
+Saved inventory lengths take priority. Missing lengths come from `buildCase` in `lib/cases.mjs`, using the supplied specs and source folders pinned to the run's build commit (or source folders saved beside the specs). The replay builds each planted case once per run in a temporary folder outside any repository and removes that folder afterwards. It hashes the built head files by path and content, without modes, and compares them with a reference built from the recorded case. It computes both legacy case hash rules, with and without executable modes, when checking the manifest. A missing manifest hash uses the pinned source as the reference. Scoring amendments and mode changes are accepted when built content matches; different content refuses the case by name.
+
+Line counts follow `snapshot.ts`'s `lineCounter`: count LF bytes and add one for a nonempty final line without LF, for files up to 5 MiB. That helper is not exported. In core's `finalize.ts`, `citesChange` and `checkSubmission` consume these counts to check findings and dropped citations. A pull request case stays unresolved with a reason because this branch has no pull request builder through the clone cache.
+
 ## Scanner-only runs
 
 ```
