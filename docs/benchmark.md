@@ -87,13 +87,48 @@ A run writes one folder, `benchmark/results/<date>-<commit>/`:
 - `rows.jsonl`: one line per attempt.
 - `score.json`: written by `score.mjs`; `score-<folder>.json` when it scored against other specs with `--specs <folder>`.
 
+`benchmark/results/` is not committed; each run folder stays on the machine that ran it until it is published.
+
 Every attempt is saved as a sample before anything stops, and is scored: a review that failed, timed out or was stopped is a failure in the table, never a missing row. A reviewer failure gets one more attempt, in its own folder. The run stops at once when the reviewer hits a usage limit, a rate limit or a login wall, and when the same review fails twice with the same cause. It probes the reviewer before the first review and after any review whose reviewer failed. `--resume` runs the reviews that have no attempt yet; it is refused when the bundle, the machine, a reviewer's version or model, web access, the timeout, the concurrency, the cases, the configurations or the repeats differ from the run's.
+
+## Where the runs are kept
+
+A run leaves the machine as one file, `<run-id>.tar.gz`, attached to the `benchmark-data` pre-release of the repository (never marked latest). The repository keeps one index entry per run, `benchmark/index/runs/<run-id>.json`: the build, the reviewers and their models, the configurations, the headline numbers per configuration and per case, and the asset's URL, sha256, size, file count and file-list hash.
+
+```
+node benchmark/fetch-run.mjs <run-id>                  # download, check, unpack into benchmark/results/<run-id>/
+node benchmark/publish-run.mjs benchmark/results/<run-id> --dry-run
+```
+
+`fetch-run.mjs` refuses a download whose sha256 or file list is not the one the index entry names. `publish-run.mjs` packages only the run's own files (the manifest, rows, specs, samples and scores; the HTML, markdown and SARIF renderings of each report stay behind), and refuses to publish when any packaged file holds a case's generated secret, the home folder path of the machine, a value from the benchmark's model settings file, or text the repository's scrub list forbids. For a real pull request whose licence is not permissive, it leaves out the brief and the trace and refuses any other file that quotes a line of that repository's code. `--dry-run` packages and unpacks the run without uploading it; only a maintainer uploads.
+
+The 11 runs made before the results left the repository are legacy runs: their index entries say `legacy: true`, carry no intervals and are never accepted as a baseline. Each one's asset also carries, under `_archive/<commit>/`, the scorer of every commit that wrote one of its score files, and `benchmark/legacy/recipes.json` says which scorer and which specs wrote which file and how each number below is read from the runs. After fetching, this rescores a run with its own scorers and checks every number this page quotes from it:
+
+```
+node benchmark/legacy/rescore.mjs <run-id>             # or --all, with every legacy run fetched
+```
+
+| Run | Index entry | Asset |
+|---|---|---|
+| The first run | `benchmark/index/runs/2026-10-08-752b77f.json` | [2026-10-08-752b77f.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-08-752b77f.tar.gz) |
+| Phase 3, earlier build | `benchmark/index/runs/2026-10-08-588a38c.json` | [2026-10-08-588a38c.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-08-588a38c.tar.gz) |
+| Phase 2 | `benchmark/index/runs/2026-10-09-ac9cdae.json` | [2026-10-09-ac9cdae.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-ac9cdae.tar.gz) |
+| Phase 2, the retried review | `benchmark/index/runs/2026-10-09-ac9cdae-django-retry.json` | [2026-10-09-ac9cdae-django-retry.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-ac9cdae-django-retry.tar.gz) |
+| Phase 3 | `benchmark/index/runs/2026-10-09-95efb19.json` | [2026-10-09-95efb19.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-95efb19.tar.gz) |
+| Phase 4a | `benchmark/index/runs/2026-10-09-602a140.json` | [2026-10-09-602a140.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-602a140.tar.gz) |
+| Phase 4a, Django with the graph off | `benchmark/index/runs/2026-10-09-602a140-django-graph-off.json` | [2026-10-09-602a140-django-graph-off.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-602a140-django-graph-off.tar.gz) |
+| Phase 4b | `benchmark/index/runs/2026-10-09-881318b.json` | [2026-10-09-881318b.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-881318b.tar.gz) |
+| Graph off, 18 cases (not quoted here) | `benchmark/index/runs/2026-10-09-4850f66.json` | [2026-10-09-4850f66.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-4850f66.tar.gz) |
+| Wave 1 | `benchmark/index/runs/2026-10-09-5227579.json` | [2026-10-09-5227579.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-5227579.tar.gz) |
+| Wave 1 review fixes | `benchmark/index/runs/2026-10-09-4a7d198.json` | [2026-10-09-4a7d198.tar.gz](https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-4a7d198.tar.gz) |
 
 ## Compare two builds
 
 ```
 node benchmark/score.mjs benchmark/results/<new> --against benchmark/results/<old>
 ```
+
+A published run is fetched first with `node benchmark/fetch-run.mjs <run-id>`.
 
 The comparison first lists anything that differs besides the build: every reviewer with its version and model, the machine, the concurrency, web access, the timeout, the cases and their specs, the repeats. A different model is not a product change. It then shows recall, precision, clean controls, graph disclosure, time and cost per configuration, before and after, and lists regressions: a planted bug missed in two or more reviews of a configuration, more often than before, or more clean changes with findings. One missed review is a reason to look; two are a bug.
 
@@ -125,7 +160,7 @@ A model reads each finding that the script matched to a planted bug, with the bu
 
 ## The first run
 
-`benchmark/results/2026-10-08-752b77f`: build `752b77f` (openqodex 0.9.0), Claude Code 2.1.294 as the reviewer with `claude-opus-5-5`, on an Apple M5 Pro with Node 22. 14 cases, graph off and on, 3 repeats: 84 reviews, all complete, none failed.
+Run `2026-10-08-752b77f` (index entry `benchmark/index/runs/2026-10-08-752b77f.json`): build `752b77f` (openqodex 0.9.0), Claude Code 2.1.294 as the reviewer with `claude-opus-5-5`, on an Apple M5 Pro with Node 22. 14 cases, graph off and on, 3 repeats: 84 reviews, all complete, none failed.
 
 The table is the run scored with the matching rules above, in `score-cases-v2.json`, against `cases-v2/`: the run's own specs with the words each plant and side issue needs added, and nothing else changed. The first scoring, `score.json`, used earlier rules that matched by place and kind alone and counted duplicates as correct; its precision was 101/105 and 102/106. This run was made before the build record existed: its manifest's `dirty: false` means no uncommitted change under `packages/` when the run started, not the tree the bundle was built from.
 
@@ -156,9 +191,9 @@ What it showed:
 
 ## The phase 2 run
 
-`benchmark/results/2026-10-09-ac9cdae`: build `ac9cdae` (openqodex 0.10.0 with phase 2 of the code graph: calls through interfaces and base classes, functions used as values, type and value uses), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, on the same Mac with Node 22. 15 cases, graph on only, 1 repeat. The run is marked dirty because 18 untracked scratch files sat under `.tmp/` in the build's tree; the product code is the commit's. The fixes from the phase's code review came after this build. They change how sure some edges are, not what the five graph cases' briefs say: scored again on the final build with the same brief checks, those briefs still name every gap and every caller.
+Run `2026-10-09-ac9cdae` (index entry `benchmark/index/runs/2026-10-09-ac9cdae.json`): build `ac9cdae` (openqodex 0.10.0 with phase 2 of the code graph: calls through interfaces and base classes, functions used as values, type and value uses), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, on the same Mac with Node 22. 15 cases, graph on only, 1 repeat. The run is marked dirty because 18 untracked scratch files sat under `.tmp/` in the build's tree; the product code is the commit's. The fixes from the phase's code review came after this build. They change how sure some edges are, not what the five graph cases' briefs say: scored again on the final build with the same brief checks, those briefs still name every gap and every caller.
 
-The `django-model-view` review failed: the Mac went to sleep a second after it started, and the run stopped it after 1,521 s with no report. That one review ran again on the same build, in `benchmark/results/2026-10-09-ac9cdae-django-retry`, and completed. The phase 2 column takes `django-model-view` from that folder and every other case from the run. Each folder is scored with its own specs (`score.json`). The first run is scored with `cases-v2/`, as in its own table. `score.mjs --against` scores the earlier run with that run's own specs, which predate the words each plant needs, so this comparison calls the scorer's functions directly (#73).
+The `django-model-view` review failed: the Mac went to sleep a second after it started, and the run stopped it after 1,521 s with no report. That one review ran again on the same build, in run `2026-10-09-ac9cdae-django-retry` (`benchmark/index/runs/2026-10-09-ac9cdae-django-retry.json`), and completed. The phase 2 column takes `django-model-view` from that run and every other case from the first. Each folder is scored with its own specs (`score.json`). The first run is scored with `cases-v2/`, as in its own table. `score.mjs --against` scores the earlier run with that run's own specs, which predate the words each plant needs, so this comparison calls the scorer's functions directly (#73).
 
 | Measure (graph on) | First run, `752b77f`, 3 repeats | Phase 2, `ac9cdae`, 1 repeat |
 |---|---|---|
@@ -184,7 +219,7 @@ What it showed:
 
 ## Code graph phase 3: the graph command and the MCP server
 
-`benchmark/results/2026-10-09-95efb19`: build `95efb19` of the phase 3 branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 14 reviews, all complete, none failed. `benchmark/results/2026-10-08-588a38c` is an earlier build of the same branch, run the same way. The first run is scored against this run's specs (`score-cases.json` in its folder), so every column uses the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
+Run `2026-10-09-95efb19` (index entry `benchmark/index/runs/2026-10-09-95efb19.json`): build `95efb19` of the phase 3 branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 14 reviews, all complete, none failed. Run `2026-10-08-588a38c` (`benchmark/index/runs/2026-10-08-588a38c.json`) is an earlier build of the same branch, run the same way. The first run is scored against this run's specs (`score-cases.json` in the first run's asset), so every column uses the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
 
 | Measure | First run, graph on (`752b77f`, 3 repeats) | Phase 3, earlier build (`588a38c`) | Phase 3 (`95efb19`) |
 |---|---|---|---|
@@ -210,7 +245,7 @@ What it showed:
 
 ## Code graph phase 4a: Django and Rails framework entries
 
-`benchmark/results/2026-10-09-602a140`: build `602a140` of the phase 4a branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 15 reviews, all complete, none failed. The first run is scored against this run's specs (`score-cases-602a140.json` in its folder, named for this run so it sits beside other phases' scores of the same run), so both columns use the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
+Run `2026-10-09-602a140` (index entry `benchmark/index/runs/2026-10-09-602a140.json`): build `602a140` of the phase 4a branch (openqodex 0.10.0), Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 15 reviews, all complete, none failed. The first run is scored against this run's specs (`score-cases-602a140.json` in the first run's asset, named for this run so it sits beside other phases' scores of the same run), so both columns use the same rules and words. Its Rails numbers do not compare, since that case's code changed after it ran.
 
 | Measure (graph on) | First run (`752b77f`, 3 repeats) | Phase 4a (`602a140`, 1 repeat) |
 |---|---|---|
@@ -229,14 +264,14 @@ What it showed:
 
 What it showed:
 
-- The new case, `django-renamed-view`, renames a view while `orders/urls.py`, outside the diff, still registers the old name. The brief listed the route `ANY orders/<int:pk>/`, named `orders:detail`, declared at `orders/urls.py:8`, with "no handler now: the handler is missing", and the review found the bug. With the graph off, on the same build, three reviews found it too (`benchmark/results/2026-10-09-602a140-django-graph-off`, 3 of 3): in a repository this small the reviewer opens `urls.py` itself. This phase put the broken route in the brief; it moved no line of bugs found.
+- The new case, `django-renamed-view`, renames a view while `orders/urls.py`, outside the diff, still registers the old name. The brief listed the route `ANY orders/<int:pk>/`, named `orders:detail`, declared at `orders/urls.py:8`, with "no handler now: the handler is missing", and the review found the bug. With the graph off, on the same build, three reviews found it too (run `2026-10-09-602a140-django-graph-off`, `benchmark/index/runs/2026-10-09-602a140-django-graph-off.json`, 3 of 3): in a repository this small the reviewer opens `urls.py` itself. This phase put the broken route in the brief; it moved no line of bugs found.
 - On the 14 cases both runs hold, the review found 33 of 37 plants: every critical and major one. The four misses are minor: three Dockerfile issues in the demo repository that the scanners raised and the reviewer dropped, and the list items without keys in the Next.js case, as in the earlier runs.
 - No finding was false. Three findings matched side issues the cases list as real but not planted.
 - The graph gap line is unchanged: the `js-dynamic-dispatch-gap` brief still does not name the computed call `table[action](id)`. Phase 2 changes that, and this branch does not hold phase 2.
 
 ## Code graph phase 4b: the framework plugins
 
-`benchmark/results/2026-10-09-881318b`: build `881318b` (openqodex 0.10.0, the Express, React, Next.js, FastAPI and Go net/http plugins), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, graph on, one repeat of the 15 cases: 15 reviews, all complete. It is compared with the graph-on reviews of the first run, scored against this run's specs (`baseline-752b77f-score-cases.json` in this run's folder). Eight cases were edited after the first run, so for those the first run reviewed other files than its score assumes: its Rails `permit!` plant sat behind the admin check, and 0 of 3 of its reviews found it.
+Run `2026-10-09-881318b` (index entry `benchmark/index/runs/2026-10-09-881318b.json`): build `881318b` (openqodex 0.10.0, the Express, React, Next.js, FastAPI and Go net/http plugins), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, graph on, one repeat of the 15 cases: 15 reviews, all complete. It is compared with the graph-on reviews of the first run, scored against this run's specs (`baseline-752b77f-score-cases.json` in this run's asset). Eight cases were edited after the first run, so for those the first run reviewed other files than its score assumes: its Rails `permit!` plant sat behind the admin check, and 0 of 3 of its reviews found it.
 
 | Measure | 752b77f, graph on, 3 repeats, 14 cases | 881318b, graph on, 1 repeat, 15 cases |
 |---|---|---|
@@ -261,7 +296,7 @@ What it showed:
 
 ## Code graph wave 1: phases 2, 3, 4a and 4b merged
 
-`benchmark/results/2026-10-09-5227579`: build `5227579` of the `graph-wave-1` branch (openqodex 0.10.0 with phases 2, 3, 4a and 4b merged), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5` pinned by `--model`, graph on, one repeat: 17 reviews, all complete, none failed. The first run's graph-on reviews are scored against this run's specs in `baseline-752b77f-score-cases.json` in this run's folder; its Rails numbers do not compare, since that case's code changed after it ran. Each phase column is that phase's own run as its section above gives it, scored with its own specs and cases.
+Run `2026-10-09-5227579` (index entry `benchmark/index/runs/2026-10-09-5227579.json`): build `5227579` of the `graph-wave-1` branch (openqodex 0.10.0 with phases 2, 3, 4a and 4b merged), Claude Code 2.1.295 as the reviewer with `claude-opus-5-5` pinned by `--model`, graph on, one repeat: 17 reviews, all complete, none failed. The first run's graph-on reviews are scored against this run's specs in `baseline-752b77f-score-cases.json` in this run's asset; its Rails numbers do not compare, since that case's code changed after it ran. Each phase column is that phase's own run as its section above gives it, scored with its own specs and cases.
 
 | Measure (graph on) | First run `752b77f`, 3 repeats, 14 cases | Phase 2 `ac9cdae`, 15 cases | Phase 3 `95efb19`, 14 cases | Phase 4a `602a140`, 15 cases | Phase 4b `881318b`, 15 cases | Wave 1 `5227579`, 17 cases |
 |---|---|---|---|---|---|---|
@@ -293,7 +328,7 @@ What it showed:
 
 ### The review fixes
 
-The code review of the merged branch changed what four briefs show: three framework tables no longer say a route whose handler is an inline function or a method of an untyped value has "no handler now" (`express-admin-routes`, `go-http-handler`, `suppression-comments`), and the `django-renamed-view` brief adds the gap at the route that names the missing view. Only those four cases ran again, on build `4a7d198`, in `benchmark/results/2026-10-09-4a7d198`, the same way (graph on, one repeat, `claude-opus-5-5`).
+The code review of the merged branch changed what four briefs show: three framework tables no longer say a route whose handler is an inline function or a method of an untyped value has "no handler now" (`express-admin-routes`, `go-http-handler`, `suppression-comments`), and the `django-renamed-view` brief adds the gap at the route that names the missing view. Only those four cases ran again, on build `4a7d198`, in run `2026-10-09-4a7d198` (`benchmark/index/runs/2026-10-09-4a7d198.json`), the same way (graph on, one repeat, `claude-opus-5-5`).
 
 | Measure (graph on, the four cases) | Wave 1 `5227579` | Review fixes `4a7d198` |
 |---|---|---|
@@ -306,4 +341,4 @@ No planted bug moved. The false finding of `5227579` (the purge reply's count in
 
 ## Claims cite a run
 
-A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a saved benchmark run: the results folder, the score file it quotes (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no saved run backs is not written.
+A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a published benchmark run: its index entry (`benchmark/index/runs/<run-id>.json`), the score file it quotes from the run's asset (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no published run backs is not written.

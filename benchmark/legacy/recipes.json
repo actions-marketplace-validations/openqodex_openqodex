@@ -1,0 +1,595 @@
+{
+  "version": 1,
+  "about": "The 11 runs that were committed under benchmark/results/ before the results left the tree. Per run: the commit that held the original folder, each stored score file with the commit whose scorer wrote it (the commit that added the file, from git log), the specs it read, and what the run did not record. Then the selections and measures behind every number docs/benchmark.md quotes from them. node benchmark/legacy/rescore.mjs reads this file.",
+  "runs": {
+    "2026-10-08-588a38c": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-08-588a38c" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-08-588a38c", "specs": { "run": "2026-10-08-588a38c", "folder": "cases" }, "scorer": { "commit": "066b1eb08422f776c38399f679d5c445adf15ee4", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["An earlier build of the code graph phase 3 branch, run the same way as 2026-10-09-95efb19."]
+    },
+    "2026-10-08-752b77f": {
+      "headline": "score-cases-v2.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-08-752b77f" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-08-752b77f", "folder": "cases" }, "scorer": { "commit": "5e44e3164c99b2e9416380944c751070d682c4d2", "sha256": "6e1d040346ce6fcaebbf8782f0346a6bafdfae003f06595c8bddefb833deb6d5" } },
+        { "file": "score-cases-v2.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-08-752b77f", "folder": "cases-v2" }, "scorer": { "commit": "4ef668431a901d9dfab289a8643846f06b2fe7fd", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } },
+        { "file": "score-cases.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-09-95efb19", "folder": "cases" }, "scorer": { "commit": "8e6690d4cd2f897b78d49c8cf53d27e2a7a90f2c", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } },
+        { "file": "score-cases-602a140.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-09-602a140", "folder": "cases" }, "scorer": { "commit": "dbd1ee24bc7ab7865877ba2849341febfab2778b", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": [
+        "The manifest is version 1 and has no caseHashes, so which case files the run reviewed is known only from its own cases/ copies and git history; the index entry's caseIds is null.",
+        "The build record did not exist yet: no tree hash, and dirty: false means only that nothing under packages/ was uncommitted when the run started.",
+        "score.json is the first scoring, under the rules from before each plant named its words; the docs quote score-cases-v2.json, against cases-v2/, which is the run's own specs with the words added and nothing else changed.",
+        "score-cases.json, score-cases-602a140.json and the baseline files in 2026-10-09-5227579 and 2026-10-09-881318b score this run's reviews against later runs' specs. Eight cases' specs differ from this run's own (specsDiffer in each file); where a case's code changed too, as the Rails case's did, its reviews read other code than those specs describe.",
+        "judge.json holds a model's wording verdicts (claude-sonnet-5, saved at commit 316ca42cec567ac91a30d1629821705bb921b1d0). It is not a score and cannot be run again; the totals the docs quote are counted again from its saved verdicts."
+      ]
+    },
+    "2026-10-09-4850f66": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-4850f66" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-4850f66", "specs": { "run": "2026-10-09-4850f66", "folder": "cases" }, "scorer": { "commit": "8183c781f6648db854d9abbeb4824644e13a32a1", "sha256": "da9f6d4e1deda442b2aa4ad4822fc8b72d8ce8088230ee6e513d951c9bcc3b12" } }
+      ],
+      "notes": ["Graph off, one repeat, 18 cases. The docs quote no number from this run."]
+    },
+    "2026-10-09-4a7d198": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-4a7d198" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-4a7d198", "specs": { "run": "2026-10-09-4a7d198", "folder": "cases" }, "scorer": { "commit": "5b9a5ffb2e00815c4109b088de06d62e6beeb3a5", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["Only the four cases whose briefs the wave 1 review fixes changed."]
+    },
+    "2026-10-09-5227579": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-5227579" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-5227579", "specs": { "run": "2026-10-09-5227579", "folder": "cases" }, "scorer": { "commit": "ec1ce14a4538aa3d1ac81eca500cd472f62306ab", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } },
+        { "file": "baseline-752b77f-score-cases.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-09-5227579", "folder": "cases" }, "scorer": { "commit": "ec1ce14a4538aa3d1ac81eca500cd472f62306ab", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["baseline-752b77f-score-cases.json scores the first run's reviews (2026-10-08-752b77f) against this run's specs; rescoring it needs that run fetched too."]
+    },
+    "2026-10-09-602a140": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-602a140" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-602a140", "specs": { "run": "2026-10-09-602a140", "folder": "cases" }, "scorer": { "commit": "dbd1ee24bc7ab7865877ba2849341febfab2778b", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": []
+    },
+    "2026-10-09-602a140-django-graph-off": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-602a140-django-graph-off" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-602a140-django-graph-off", "specs": { "run": "2026-10-09-602a140-django-graph-off", "folder": "cases" }, "scorer": { "commit": "dbd1ee24bc7ab7865877ba2849341febfab2778b", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["One case, django-renamed-view, with the graph off, three repeats, on the build of 2026-10-09-602a140."]
+    },
+    "2026-10-09-881318b": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-881318b" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-881318b", "specs": { "run": "2026-10-09-881318b", "folder": "cases" }, "scorer": { "commit": "47112702da2f12760538983a8d36ac328e5c5b76", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } },
+        { "file": "baseline-752b77f-score-cases.json", "scores": "2026-10-08-752b77f", "specs": { "run": "2026-10-09-881318b", "folder": "cases" }, "scorer": { "commit": "47112702da2f12760538983a8d36ac328e5c5b76", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["baseline-752b77f-score-cases.json scores the first run's reviews (2026-10-08-752b77f) against this run's specs; rescoring it needs that run fetched too."]
+    },
+    "2026-10-09-95efb19": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-95efb19" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-95efb19", "specs": { "run": "2026-10-09-95efb19", "folder": "cases" }, "scorer": { "commit": "8e6690d4cd2f897b78d49c8cf53d27e2a7a90f2c", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": []
+    },
+    "2026-10-09-ac9cdae": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-ac9cdae" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-ac9cdae", "specs": { "run": "2026-10-09-ac9cdae", "folder": "cases" }, "scorer": { "commit": "f863f870790b5e298c4c961b3debd4b146be5810", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": [
+        "The build is marked dirty: its tree differs from the commit's. The docs say 18 untracked scratch files under .tmp/ made the difference; the manifest records only the two tree hashes.",
+        "The run stopped when the django-model-view review failed (the Mac slept), was resumed and finished (resumes.jsonl). That failed review is a sample of this run; the docs' phase 2 column takes django-model-view from 2026-10-09-ac9cdae-django-retry instead."
+      ]
+    },
+    "2026-10-09-ac9cdae-django-retry": {
+      "headline": "score.json",
+      "originals": { "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884", "path": "benchmark/results/2026-10-09-ac9cdae-django-retry" },
+      "scores": [
+        { "file": "score.json", "scores": "2026-10-09-ac9cdae-django-retry", "specs": { "run": "2026-10-09-ac9cdae-django-retry", "folder": "cases" }, "scorer": { "commit": "f863f870790b5e298c4c961b3debd4b146be5810", "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555" } }
+      ],
+      "notes": ["The django-model-view review of 2026-10-09-ac9cdae, run again on the same build after it failed."]
+    }
+  },
+  "sources": {
+    "first-v1-off": [{ "run": "2026-10-08-752b77f", "score": "score.json", "configs": ["claude-graph-off"] }],
+    "first-v1-on": [{ "run": "2026-10-08-752b77f", "score": "score.json", "configs": ["claude-graph-on"] }],
+    "first-v2": [{ "run": "2026-10-08-752b77f", "score": "score-cases-v2.json" }],
+    "first-v2-off": [{ "run": "2026-10-08-752b77f", "score": "score-cases-v2.json", "configs": ["claude-graph-off"] }],
+    "first-v2-on": [{ "run": "2026-10-08-752b77f", "score": "score-cases-v2.json", "configs": ["claude-graph-on"] }],
+    "first-on-95efb19": [{ "run": "2026-10-08-752b77f", "score": "score-cases.json", "configs": ["claude-graph-on"] }],
+    "first-on-602a140": [{ "run": "2026-10-08-752b77f", "score": "score-cases-602a140.json", "configs": ["claude-graph-on"] }],
+    "first-on-881318b": [{ "run": "2026-10-09-881318b", "score": "baseline-752b77f-score-cases.json", "configs": ["claude-graph-on"] }],
+    "first-on-5227579": [{ "run": "2026-10-09-5227579", "score": "baseline-752b77f-score-cases.json", "configs": ["claude-graph-on"] }],
+    "phase2-run": [{ "run": "2026-10-09-ac9cdae", "score": "score.json" }],
+    "phase2": [
+      { "run": "2026-10-09-ac9cdae", "score": "score.json", "exceptCases": ["django-model-view"] },
+      { "run": "2026-10-09-ac9cdae-django-retry", "score": "score.json" }
+    ],
+    "phase3-early": [{ "run": "2026-10-08-588a38c", "score": "score.json" }],
+    "phase3": [{ "run": "2026-10-09-95efb19", "score": "score.json" }],
+    "phase4a": [{ "run": "2026-10-09-602a140", "score": "score.json" }],
+    "phase4a-off": [{ "run": "2026-10-09-602a140-django-graph-off", "score": "score.json" }],
+    "phase4b": [{ "run": "2026-10-09-881318b", "score": "score.json" }],
+    "wave1": [{ "run": "2026-10-09-5227579", "score": "score.json" }],
+    "wave1-four": [{ "run": "2026-10-09-5227579", "score": "score.json", "cases": ["django-renamed-view", "express-admin-routes", "go-http-handler", "suppression-comments"] }],
+    "fixes": [{ "run": "2026-10-09-4a7d198", "score": "score.json" }]
+  },
+  "docs": {
+    "file": "docs/benchmark.md",
+    "tables": [
+      {
+        "section": "The first run",
+        "columns": { "Graph off": "first-v2-off", "Graph on": "first-v2-on" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratioPct" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Near misses (one line off)": { "measure": "nearMisses", "format": "int" },
+          "Duplicate hits (not counted)": { "measure": "duplicates", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      },
+      {
+        "section": "The phase 2 run",
+        "columns": { "First run, `752b77f`, 3 repeats": "first-v2-on", "Phase 2, `ac9cdae`, 1 repeat": "phase2" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratioPct" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      },
+      {
+        "section": "Code graph phase 3: the graph command and the MCP server",
+        "columns": { "First run, graph on (`752b77f`, 3 repeats)": "first-on-95efb19", "Phase 3, earlier build (`588a38c`)": "phase3-early", "Phase 3 (`95efb19`)": "phase3" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratioPct" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Reviewer turns per review, mean": { "measure": "turns.mean", "format": "fixed1" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "columns": { "First run (`752b77f`, 3 repeats)": "first-on-602a140", "Phase 4a (`602a140`, 1 repeat)": "phase4a" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratioPct" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Reviewer turns per review, mean": { "measure": "turns.mean", "format": "fixed1" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      },
+      {
+        "section": "Code graph phase 4b: the framework plugins",
+        "columns": { "752b77f, graph on, 3 repeats, 14 cases": "first-on-881318b", "881318b, graph on, 1 repeat, 15 cases": "phase4b" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratio" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "`express-route-param` (new: a handler reading a parameter its route does not declare)": { "measure": "recall", "cases": ["express-route-param"], "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "columns": {
+          "First run `752b77f`, 3 repeats, 14 cases": "first-on-5227579",
+          "Phase 2 `ac9cdae`, 15 cases": "phase2",
+          "Phase 3 `95efb19`, 14 cases": "phase3",
+          "Phase 4a `602a140`, 15 cases": "phase4a",
+          "Phase 4b `881318b`, 15 cases": "phase4b",
+          "Wave 1 `5227579`, 17 cases": "wave1"
+        },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratioPct" },
+          "critical": { "measure": "bySeverity.critical", "format": "ratio" },
+          "major": { "measure": "bySeverity.major", "format": "ratio" },
+          "minor": { "measure": "bySeverity.minor", "format": "ratio" },
+          "Findings that are planted bugs": { "measure": "precision", "format": "ratioPct" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Clean changes with no finding": { "measure": "controls", "format": "ratio" },
+          "Callers the change breaks, listed in the brief": { "measure": "callers", "format": "ratio" },
+          "Graph gaps disclosed in the brief": { "measure": "gaps", "format": "ratio" },
+          "Briefs with a framework table": { "measure": "briefsWith", "text": "Framework entries this change reaches.", "format": "ratio", "about": "counted from the saved briefs, not by the scorer" },
+          "`django-renamed-view` found": { "measure": "recall", "cases": ["django-renamed-view"], "format": "ratio" },
+          "`express-route-param` found": { "measure": "recall", "cases": ["express-route-param"], "format": "ratio" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Reviewer turns per review, mean": { "measure": "turns.mean", "format": "fixed1" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        },
+        "cells": {
+          "Briefs with a framework table|First run `752b77f`, 3 repeats, 14 cases": { "format": "noneOrRatio" },
+          "Reviewer turns per review, mean|Phase 2 `ac9cdae`, 15 cases": { "given": "not given", "why": "the phase 2 section gives no turns, so the docs leave the cell empty of a number" }
+        }
+      },
+      {
+        "section": "The review fixes",
+        "columns": { "Wave 1 `5227579`": "wave1-four", "Review fixes `4a7d198`": "fixes" },
+        "rows": {
+          "Planted bugs found": { "measure": "recall", "format": "ratio" },
+          "False findings": { "measure": "falseFindings", "format": "int" },
+          "Time per review, mean": { "measure": "wallMs.mean", "format": "secs" },
+          "Cost per review, mean": { "measure": "costUsd.mean", "format": "usd" }
+        }
+      }
+    ],
+    "quotes": [
+      {
+        "section": "The first run",
+        "text": "build `752b77f` (openqodex 0.9.0), Claude Code 2.1.294 as the reviewer with `claude-opus-5-5`, on an Apple M5 Pro with Node 22. 14 cases, graph off and on, 3 repeats: 84 reviews, all complete, none failed.",
+        "checks": [
+          { "source": "first-v2", "measure": "manifest", "path": "build.short", "expect": "752b77f" },
+          { "source": "first-v2", "measure": "manifest", "path": "build.cliVersion", "expect": "0.9.0" },
+          { "source": "first-v2", "measure": "manifest", "path": "reviewers.claude.version", "expect": "2.1.294" },
+          { "source": "first-v2", "measure": "manifest", "path": "reviewers.claude.model", "expect": "claude-opus-5-5" },
+          { "source": "first-v2", "measure": "manifest", "path": "machine.cpu", "expect": "Apple M5 Pro" },
+          { "source": "first-v2", "measure": "manifest", "path": "machine.node", "expect": "v22.23.3" },
+          { "source": "first-v2", "measure": "count", "path": "cases", "format": "int", "expect": "14" },
+          { "source": "first-v2", "measure": "manifest", "path": "configs", "expect": ["claude-graph-off", "claude-graph-on"] },
+          { "source": "first-v2", "measure": "manifest", "path": "repeat", "format": "int", "expect": "3" },
+          { "source": "first-v2", "measure": "samples", "format": "int", "expect": "84" },
+          { "source": "first-v2", "measure": "complete", "format": "int", "expect": "84" },
+          { "source": "first-v2", "measure": "failed", "format": "int", "expect": "0" }
+        ]
+      },
+      {
+        "section": "The first run",
+        "text": "its precision was 101/105 and 102/106",
+        "checks": [
+          { "source": "first-v1-off", "measure": "precision", "format": "ratio", "expect": "101/105" },
+          { "source": "first-v1-on", "measure": "precision", "format": "ratio", "expect": "102/106" }
+        ]
+      },
+      {
+        "section": "The first run",
+        "text": "(`js-dynamic-dispatch-gap`, 3 of 3 reviews)",
+        "checks": [{ "source": "first-v2-on", "measure": "reviewsMissingGaps", "cases": ["js-dynamic-dispatch-gap"], "format": "of", "expect": "3 of 3" }]
+      },
+      {
+        "section": "The first run",
+        "text": "a place the spec did not list (2 reviews)",
+        "checks": [{ "source": "first-v2", "measure": "falseFindings", "cases": ["rails-controller-model"], "format": "int", "expect": "2" }]
+      },
+      {
+        "section": "The first run",
+        "text": "a real bug the reviewer reported 5 times, each counted false",
+        "checks": [{ "source": "first-v2", "measure": "falseFindings", "cases": ["nextjs-react-hooks"], "format": "int", "expect": "5" }]
+      },
+      {
+        "section": "The first run",
+        "text": "the plant was weak and was never reported (0 of 6)",
+        "checks": [{ "source": "first-v2", "measure": "bug", "case": "rails-controller-model", "bug": "permit-all", "format": "of", "expect": "0 of 6" }]
+      },
+      {
+        "section": "The first run",
+        "text": "Of the 8 false findings, 7 come from the first two errors. The eighth is real but was not listed: a path traversal in the suppression case's thumbnail command",
+        "checks": [
+          { "source": "first-v2", "measure": "falseFindings", "format": "int", "expect": "8" },
+          { "source": "first-v2", "measure": "falseFindings", "cases": ["rails-controller-model", "nextjs-react-hooks"], "format": "int", "expect": "7" },
+          { "source": "first-v2", "measure": "falseFindings", "cases": ["suppression-comments"], "format": "int", "expect": "1" }
+        ]
+      },
+      {
+        "section": "The first run",
+        "text": "(32 and 31 findings)",
+        "checks": [
+          { "source": "first-v2-off", "measure": "testGaps", "format": "int", "expect": "32" },
+          { "source": "first-v2-on", "measure": "testGaps", "format": "int", "expect": "31" }
+        ]
+      },
+      {
+        "section": "The first run",
+        "text": "read the 203 findings that the earlier rules matched to a planted bug. Graph off and on: the problem sentence was plain in 86% and 90% and correct in 97% and 98%; the consequence plain in 86% and 85%, correct in 97% and 92%; the fix plain in 91% and 95%, correct in 97% and 98%. The judge's answer for 8 findings did not parse.",
+        "checks": [
+          { "measure": "judge", "run": "2026-10-08-752b77f", "path": "findings", "format": "int", "expect": "203" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "problem.plain", "format": "pct", "expect": "86%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "problem.plain", "format": "pct", "expect": "90%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "problem.correct", "format": "pct", "expect": "97%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "problem.correct", "format": "pct", "expect": "98%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "consequence.plain", "format": "pct", "expect": "86%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "consequence.plain", "format": "pct", "expect": "85%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "consequence.correct", "format": "pct", "expect": "97%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "consequence.correct", "format": "pct", "expect": "92%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "fix.plain", "format": "pct", "expect": "91%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "fix.plain", "format": "pct", "expect": "95%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-off"], "path": "fix.correct", "format": "pct", "expect": "97%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "configs": ["claude-graph-on"], "path": "fix.correct", "format": "pct", "expect": "98%" },
+          { "measure": "judge", "run": "2026-10-08-752b77f", "path": "unparsed", "format": "int", "expect": "8" }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, on the same Mac with Node 22. 15 cases, graph on only, 1 repeat.",
+        "checks": [
+          { "source": "phase2-run", "measure": "manifest", "path": "reviewers.claude.version", "expect": "2.1.295" },
+          { "source": "phase2-run", "measure": "manifest", "path": "reviewers.claude.model", "expect": "claude-opus-5-5" },
+          { "source": "phase2-run", "measure": "count", "path": "cases", "format": "int", "expect": "15" },
+          { "source": "phase2-run", "measure": "manifest", "path": "configs", "expect": ["claude-graph-on"] },
+          { "source": "phase2-run", "measure": "manifest", "path": "repeat", "format": "int", "expect": "1" },
+          { "source": "phase2-run", "measure": "manifest", "path": "build.dirty", "format": "string", "expect": "true" }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "the run stopped it after 1,521 s with no report",
+        "checks": [
+          { "source": "phase2-run", "measure": "sampleField", "field": "wallMs", "cases": ["django-model-view"], "format": "secsComma", "expect": ["1,521 s"] },
+          { "source": "phase2-run", "measure": "failed", "cases": ["django-model-view"], "format": "int", "expect": "1" }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "2 of 2 checks, where each review of the first run passed 1 of 2.",
+        "checks": [
+          { "source": "phase2", "measure": "gaps", "cases": ["js-dynamic-dispatch-gap"], "format": "of", "expect": "2 of 2" },
+          { "source": "first-v2-on", "measure": "gapsPerReview", "cases": ["js-dynamic-dispatch-gap"], "format": "string", "expect": ["1/2"] }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "and called the list a floor (3 of 3 checks), and the review found the bug",
+        "checks": [
+          { "source": "phase2", "measure": "gapsAndCallers", "cases": ["ts-interface-dispatch-break"], "format": "of", "expect": "3 of 3" },
+          { "source": "phase2", "measure": "recall", "cases": ["ts-interface-dispatch-break"], "format": "ratio", "expect": "1/1" }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "On the 14 cases both runs hold, the review found 32 of 37 plants: every critical and major one. The five misses are minor: three Dockerfile issues and a shell loop in the demo repository that the scanners raised and the reviewer dropped, as in the first run, and the list items without keys in the Next.js case.",
+        "checks": [
+          { "source": "phase2", "measure": "recall", "exceptCases": ["ts-interface-dispatch-break"], "format": "of", "expect": "32 of 37" },
+          { "source": "phase2", "measure": "bySeverity.critical", "exceptCases": ["ts-interface-dispatch-break"], "format": "ratio", "expect": "12/12" },
+          { "source": "phase2", "measure": "bySeverity.major", "exceptCases": ["ts-interface-dispatch-break"], "format": "ratio", "expect": "19/19" },
+          { "source": "phase2", "measure": "missed", "exceptCases": ["ts-interface-dispatch-break"], "format": "string", "expect": ["demo-polyglot/docker-add", "demo-polyglot/docker-apt-install", "demo-polyglot/docker-pip-cache", "demo-polyglot/shell-ls-loop", "nextjs-react-hooks/list-without-key"] }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "No finding was false. Three findings matched side issues the cases list as real but not planted",
+        "checks": [
+          { "source": "phase2", "measure": "falseFindings", "format": "int", "expect": "0" },
+          { "source": "phase2", "measure": "accepted", "format": "int", "expect": "3" }
+        ]
+      },
+      {
+        "section": "The phase 2 run",
+        "text": "The mean time rests on one demo review of 98 s, 82 s of it the reviewer's; the first run's three demo reviews with the graph on took 47 s, 83 s and 50 s. The median review took 28 s.",
+        "checks": [
+          { "source": "phase2", "measure": "sampleField", "field": "wallMs", "cases": ["demo-polyglot"], "format": "secs", "expect": ["98 s"] },
+          { "source": "phase2", "measure": "sampleField", "field": "reviewerMs", "cases": ["demo-polyglot"], "format": "secs", "expect": ["82 s"] },
+          { "source": "first-v2-on", "measure": "sampleField", "field": "wallMs", "cases": ["demo-polyglot"], "format": "secs", "expect": ["47 s", "83 s", "50 s"] },
+          { "source": "phase2", "measure": "wallMs.median", "format": "secs", "expect": "28 s" }
+        ]
+      },
+      {
+        "section": "Code graph phase 3: the graph command and the MCP server",
+        "text": "Claude Code 2.1.295 with `claude-opus-5-5`, graph on, one repeat: 14 reviews, all complete, none failed.",
+        "checks": [
+          { "source": "phase3", "measure": "manifest", "path": "reviewers.claude.version", "expect": "2.1.295" },
+          { "source": "phase3", "measure": "manifest", "path": "reviewers.claude.model", "expect": "claude-opus-5-5" },
+          { "source": "phase3", "measure": "manifest", "path": "configs", "expect": ["claude-graph-on"] },
+          { "source": "phase3", "measure": "samples", "format": "int", "expect": "14" },
+          { "source": "phase3", "measure": "complete", "format": "int", "expect": "14" },
+          { "source": "phase3", "measure": "failed", "format": "int", "expect": "0" },
+          { "source": "phase3-early", "measure": "manifest", "path": "configs", "expect": ["claude-graph-on"] },
+          { "source": "phase3-early", "measure": "manifest", "path": "repeat", "format": "int", "expect": "1" }
+        ]
+      },
+      {
+        "section": "Code graph phase 3: the graph command and the MCP server",
+        "text": "The two false findings are real issues the specs do not list: the Go search handler never checks `rows.Err()` after its loop, and the Next.js search page lets a late response overwrite newer results.",
+        "checks": [
+          { "source": "phase3", "measure": "falseFindings", "cases": ["go-http-handler"], "format": "int", "expect": "1" },
+          { "source": "phase3", "measure": "falseFindings", "cases": ["nextjs-react-hooks"], "format": "int", "expect": "1" }
+        ]
+      },
+      {
+        "section": "Code graph phase 3: the graph command and the MCP server",
+        "text": "(1.71 per review against 1.36)",
+        "checks": [
+          { "source": "phase3", "measure": "rounds", "format": "fixed2", "expect": "1.71" },
+          { "source": "phase3-early", "measure": "rounds", "format": "fixed2", "expect": "1.36" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "graph on, one repeat: 15 reviews, all complete, none failed.",
+        "checks": [
+          { "source": "phase4a", "measure": "samples", "format": "int", "expect": "15" },
+          { "source": "phase4a", "measure": "complete", "format": "int", "expect": "15" },
+          { "source": "phase4a", "measure": "failed", "format": "int", "expect": "0" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "declared at `orders/urls.py:8`, with \"no handler now: the handler is missing\", and the review found the bug.",
+        "checks": [
+          { "source": "phase4a", "measure": "briefsWith", "text": "orders/urls.py:8", "cases": ["django-renamed-view"], "format": "ratio", "expect": "1/1" },
+          { "source": "phase4a", "measure": "briefsWith", "text": "no handler now: the handler is missing", "cases": ["django-renamed-view"], "format": "ratio", "expect": "1/1" },
+          { "source": "phase4a", "measure": "recall", "cases": ["django-renamed-view"], "format": "ratio", "expect": "1/1" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "3 of 3): in a repository this small the reviewer opens `urls.py` itself.",
+        "checks": [
+          { "source": "phase4a-off", "measure": "recall", "format": "of", "expect": "3 of 3" },
+          { "source": "phase4a-off", "measure": "manifest", "path": "configs", "expect": ["claude-graph-off"] }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "On the 14 cases both runs hold, the review found 33 of 37 plants: every critical and major one. The four misses are minor: three Dockerfile issues in the demo repository that the scanners raised and the reviewer dropped, and the list items without keys in the Next.js case, as in the earlier runs.",
+        "checks": [
+          { "source": "phase4a", "measure": "recall", "exceptCases": ["django-renamed-view"], "format": "of", "expect": "33 of 37" },
+          { "source": "phase4a", "measure": "bySeverity.critical", "exceptCases": ["django-renamed-view"], "format": "ratio", "expect": "12/12" },
+          { "source": "phase4a", "measure": "bySeverity.major", "exceptCases": ["django-renamed-view"], "format": "ratio", "expect": "19/19" },
+          { "source": "phase4a", "measure": "missed", "exceptCases": ["django-renamed-view"], "format": "string", "expect": ["demo-polyglot/docker-add", "demo-polyglot/docker-apt-install", "demo-polyglot/docker-pip-cache", "nextjs-react-hooks/list-without-key"] }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "No finding was false. Three findings matched side issues the cases list as real but not planted.",
+        "checks": [
+          { "source": "phase4a", "measure": "falseFindings", "format": "int", "expect": "0" },
+          { "source": "phase4a", "measure": "accepted", "format": "int", "expect": "3" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4a: Django and Rails framework entries",
+        "text": "The graph gap line is unchanged: the `js-dynamic-dispatch-gap` brief still does not name the computed call `table[action](id)`.",
+        "checks": [{ "source": "phase4a", "measure": "reviewsMissingGaps", "cases": ["js-dynamic-dispatch-gap"], "format": "of", "expect": "1 of 1" }]
+      },
+      {
+        "section": "Code graph phase 4b: the framework plugins",
+        "text": "Claude Code 2.1.295 as the reviewer with `claude-opus-5-5`, graph on, one repeat of the 15 cases: 15 reviews, all complete.",
+        "checks": [
+          { "source": "phase4b", "measure": "manifest", "path": "reviewers.claude.version", "expect": "2.1.295" },
+          { "source": "phase4b", "measure": "samples", "format": "int", "expect": "15" },
+          { "source": "phase4b", "measure": "complete", "format": "int", "expect": "15" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4b: the framework plugins",
+        "text": "Eight cases were edited after the first run, so for those the first run reviewed other files than its score assumes: its Rails `permit!` plant sat behind the admin check, and 0 of 3 of its reviews found it.",
+        "checks": [
+          { "source": "first-on-881318b", "measure": "specsDiffer", "format": "int", "expect": "8" },
+          { "source": "first-on-881318b", "measure": "bug", "case": "rails-controller-model", "bug": "permit-all", "format": "of", "expect": "0 of 3" }
+        ]
+      },
+      {
+        "section": "Code graph phase 4b: the framework plugins",
+        "text": "The three misses are minor: two Dockerfile issues in the demo repository the reviewer dropped as harmless (as in the first run), and the list items without keys in the Next.js case, a candidate the reviewer dropped.",
+        "checks": [{ "source": "phase4b", "measure": "missed", "format": "string", "expect": ["demo-polyglot/docker-add", "demo-polyglot/docker-pip-cache", "nextjs-react-hooks/list-without-key"] }]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "Claude Code 2.1.295 as the reviewer with `claude-opus-5-5` pinned by `--model`, graph on, one repeat: 17 reviews, all complete, none failed.",
+        "checks": [
+          { "source": "wave1", "measure": "manifest", "path": "reviewers.claude.version", "expect": "2.1.295" },
+          { "source": "wave1", "measure": "samples", "format": "int", "expect": "17" },
+          { "source": "wave1", "measure": "complete", "format": "int", "expect": "17" },
+          { "source": "wave1", "measure": "failed", "format": "int", "expect": "0" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "Eight of the 17 briefs carry a table of framework entries, against three in phase 4a's run and none in phase 4b's",
+        "checks": [
+          { "source": "wave1", "measure": "briefsWith", "text": "Framework entries this change reaches.", "format": "ratio", "expect": "8/17" },
+          { "source": "phase4a", "measure": "briefsWith", "text": "Framework entries this change reaches.", "format": "ratio", "expect": "3/15" },
+          { "source": "phase4b", "measure": "briefsWith", "text": "Framework entries this change reaches.", "format": "ratio", "expect": "0/15" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "In `express-route-param` the brief now lists the route `GET /users/:id` declared at `src/routes/users.js:7`",
+        "checks": [
+          { "source": "wave1", "measure": "briefsWith", "text": "src/routes/users.js:7", "cases": ["express-route-param"], "format": "ratio", "expect": "1/1" },
+          { "source": "phase4b", "measure": "briefsWith", "text": "Framework entries this change reaches.", "cases": ["express-route-param"], "format": "ratio", "expect": "0/1" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "In `django-renamed-view` the brief lists the route `ANY orders/<int:pk>/`, named `orders:detail`, as having no handler now, as in phase 4a's run, and the review found the bug, as in that run.",
+        "checks": [
+          { "source": "wave1", "measure": "briefsWith", "text": "no handler now: the handler is missing", "cases": ["django-renamed-view"], "format": "ratio", "expect": "1/1" },
+          { "source": "wave1", "measure": "recall", "cases": ["django-renamed-view"], "format": "ratio", "expect": "1/1" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "every graph gap the specs check is disclosed (3 of 3) and every broken caller is listed (7 of 7)",
+        "checks": [
+          { "source": "wave1", "measure": "gaps", "format": "of", "expect": "3 of 3" },
+          { "source": "wave1", "measure": "callers", "format": "of", "expect": "7 of 7" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "The three misses: two Dockerfile issues in the demo repository (every run misses some of these), and the Decimal times float in `django-model-view`, which the reviewer reported one line off the planted lines (a near miss by the scoring rules, not a hit).",
+        "checks": [
+          { "source": "wave1", "measure": "missed", "format": "string", "expect": ["demo-polyglot/docker-add", "demo-polyglot/docker-pip-cache", "django-model-view/decimal-times-float"] },
+          { "source": "wave1", "measure": "nearMisses", "cases": ["django-model-view"], "format": "int", "expect": "1" }
+        ]
+      },
+      {
+        "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged",
+        "text": "The false finding is a minor one in `express-admin-routes`",
+        "checks": [{ "source": "wave1", "measure": "falseFindings", "cases": ["express-admin-routes"], "format": "int", "expect": "1" }]
+      },
+      {
+        "section": "The review fixes",
+        "text": "Only those four cases ran again, on build `4a7d198`",
+        "checks": [
+          { "source": "fixes", "measure": "count", "path": "cases", "format": "int", "expect": "4" },
+          { "source": "fixes", "measure": "manifest", "path": "build.short", "expect": "4a7d198" }
+        ]
+      },
+      {
+        "section": "The review fixes",
+        "text": "The false finding of `5227579` (the purge reply's count in `express-admin-routes`) was not raised again",
+        "checks": [{ "source": "fixes", "measure": "falseFindings", "cases": ["express-admin-routes"], "format": "int", "expect": "0" }]
+      }
+    ],
+    "unchecked": [
+      { "section": "The cases", "text": "Fifty-one planted bugs in all: 18 critical, 27 major, 6 minor.", "why": "counts today's case files, not a run" },
+      { "section": "The phase 2 run", "text": "18 untracked scratch files sat under `.tmp/`", "why": "the manifest records only that the build's tree differs from the commit's (build.dirty, checked above), not which files made the difference" },
+      { "section": "Code graph phase 3: the graph command and the MCP server", "text": "No line of bugs found, clean controls or graph disclosure moved by more than one review's spread.", "why": "a reading of the table above it, whose every cell is checked" },
+      { "section": "Code graph phase 3: the graph command and the MCP server", "text": "Time, turns and cost per review doubled against `588a38c`", "why": "a reading of the table above it, whose every cell is checked" },
+      { "section": "Code graph wave 1: phases 2, 3, 4a and 4b merged", "text": "and read `src/routes/users.js` in both", "why": "what the reviewer opened is in each review's trace, which the scorer does not read" }
+    ]
+  }
+}

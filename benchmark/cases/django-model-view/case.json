@@ -19,6 +19,7 @@
       "kind": [
         "bug"
       ],
+      "class": "logic",
       "severity": "major",
       "found_by": [
         "reasoning"
@@ -29,6 +30,16 @@
         "Decimal",
         "TypeError",
         "0.9"
+      ],
+      "tags": [],
+      "evidence": [
+        {
+          "file": "orders/models.py",
+          "lines": [
+            9,
+            9
+          ]
+        }
       ]
     },
     {
@@ -49,11 +60,22 @@
       "kind": [
         "bug"
       ],
+      "class": "framework-misuse",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "The change adds the discount_code field but no migration, so the column does not exist and every query of Order fails once the code is deployed. The fix is a 0002 migration from makemigrations in the same change."
+      "truth": "The change adds the discount_code field but no migration, so the column does not exist and every query of Order fails once the code is deployed. The fix is a 0002 migration from makemigrations in the same change.",
+      "tags": [],
+      "evidence": [
+        {
+          "file": "orders/migrations/0001_initial.py",
+          "lines": [
+            18,
+            30
+          ]
+        }
+      ]
     },
     {
       "id": "order-detail-any-owner",
@@ -79,11 +101,14 @@
       "kind": [
         "security"
       ],
+      "class": "access-control",
       "severity": "critical",
       "found_by": [
         "reasoning"
       ],
-      "truth": "order_detail looks the order up by id alone, so any logged-in user can read any other user's order by changing the number in the URL. The fix is to filter by owner=request.user, as redeem and order_list do."
+      "truth": "order_detail looks the order up by id alone, so any logged-in user can read any other user's order by changing the number in the URL. The fix is to filter by owner=request.user, as redeem and order_list do.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "csrf-exempt-redeem",
@@ -103,12 +128,15 @@
       "kind": [
         "security"
       ],
+      "class": "csrf",
       "severity": "major",
       "found_by": [
         "semgrep",
         "reasoning"
       ],
-      "truth": "redeem changes an order on POST with CSRF protection turned off, so another site can make a logged-in user's browser redeem the code. The fix is to remove csrf_exempt."
+      "truth": "redeem changes an order on POST with CSRF protection turned off, so another site can make a logged-in user's browser redeem the code. The fix is to remove csrf_exempt.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

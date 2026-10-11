@@ -31,12 +31,32 @@
       "kind": [
         "bug"
       ],
+      "class": "contract-break",
       "severity": "major",
       "found_by": [
         "reasoning",
         "graph"
       ],
-      "truth": "tax_for now returns None for an unknown region, where it returned 0 before, and its callers in the shop package add it to an int (order_total) and divide it (tax_line), which raises TypeError for any unknown region. The fix is to keep returning 0, or update both callers to handle None."
+      "truth": "tax_for now returns None for an unknown region, where it returned 0 before, and its callers in the shop package add it to an int (order_total) and divide it (tax_line), which raises TypeError for any unknown region. The fix is to keep returning 0, or update both callers to handle None.",
+      "tags": [
+        "needs-callers"
+      ],
+      "evidence": [
+        {
+          "file": "pkgs/shop/src/shop/checkout.py",
+          "lines": [
+            6,
+            6
+          ]
+        },
+        {
+          "file": "pkgs/shop/src/shop/receipt.py",
+          "lines": [
+            6,
+            6
+          ]
+        }
+      ]
     }
   ]
 }

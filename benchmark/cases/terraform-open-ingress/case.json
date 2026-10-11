@@ -29,13 +29,16 @@
       "kind": [
         "security"
       ],
+      "class": "iac-exposure",
       "severity": "critical",
       "found_by": [
         "trivy",
         "checkov",
         "reasoning"
       ],
-      "truth": "The bastion's security group lets SSH (port 22) in from 0.0.0.0/0, so every address on the internet can reach the jump host's SSH server and try to log in. The fix is to allow SSH only from the company's VPN or office ranges, or to drop the open port and reach the hosts through AWS Systems Manager Session Manager."
+      "truth": "The bastion's security group lets SSH (port 22) in from 0.0.0.0/0, so every address on the internet can reach the jump host's SSH server and try to log in. The fix is to allow SSH only from the company's VPN or office ranges, or to drop the open port and reach the hosts through AWS Systems Manager Session Manager.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "database-publicly-accessible",
@@ -57,13 +60,16 @@
       "kind": [
         "security"
       ],
+      "class": "iac-exposure",
       "severity": "major",
       "found_by": [
         "trivy",
         "checkov",
         "reasoning"
       ],
-      "truth": "The orders database is created with publicly_accessible = true, so AWS gives it a public address and it can be reached from outside the VPC as soon as a route or a security group rule allows it. The orders database is only used from inside the VPC; the fix is publicly_accessible = false."
+      "truth": "The orders database is created with publicly_accessible = true, so AWS gives it a public address and it can be reached from outside the VPC as soon as a route or a security group rule allows it. The orders database is only used from inside the VPC; the fix is publicly_accessible = false.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

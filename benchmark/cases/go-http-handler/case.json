@@ -24,13 +24,16 @@
       "kind": [
         "security"
       ],
+      "class": "sql-injection",
       "severity": "critical",
       "found_by": [
         "semgrep",
         "golangci",
         "reasoning"
       ],
-      "truth": "The name from the query string is formatted into the SQL text, so a caller can run any SQL. The fix is a placeholder, QueryContext(ctx, \"... WHERE name = ?\", name)."
+      "truth": "The name from the query string is formatted into the SQL text, so a caller can run any SQL. The fix is a placeholder, QueryContext(ctx, \"... WHERE name = ?\", name).",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "mutex-held-on-return",
@@ -52,11 +55,14 @@
       "kind": [
         "bug"
       ],
+      "class": "concurrency",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "Count takes the lock and returns early for a missing key without unlocking, so the next request to Count waits forever. The fix is defer h.mu.Unlock() right after Lock, or checking the key before taking the lock."
+      "truth": "Count takes the lock and returns early for a missing key without unlocking, so the next request to Count waits forever. The fix is defer h.mu.Unlock() right after Lock, or checking the key before taking the lock.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "defer-close-before-err",
@@ -76,12 +82,15 @@
       "kind": [
         "bug"
       ],
+      "class": "error-handling",
       "severity": "major",
       "found_by": [
         "reasoning",
         "golangci"
       ],
-      "truth": "resp.Body.Close is deferred before err is checked; when http.Get fails, resp is nil and the deferred call panics. The fix is to check err first and defer the close after."
+      "truth": "resp.Body.Close is deferred before err is checked; when http.Get fails, resp is nil and the deferred call panics. The fix is to check err first and defer the close after.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

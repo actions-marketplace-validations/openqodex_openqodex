@@ -48,6 +48,9 @@
 // 21. The owners' instructions a host gives do not reach the brief, reach
 //     it without the framing the laptop's instructions file gets, or an
 //     oversized one is cut instead of refused.
+// 22. A round's check errors are lost, so a rejected finding reads as never
+//     raised: the result's rounds lack a correction round's errors, the
+//     answer they judged, or the changed ranges the round carried.
 import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -436,6 +439,24 @@ describe("findings already checked", () => {
     expect(r.result.dispositions.length).toBeGreaterThan(0);
     expect(r.result.render.markdown()).toContain("Findings so far");
     expect(r.result.render.markdown()).toContain("Subtraction in add");
+  });
+});
+
+describe("every correction round in the result", () => {
+  it("22. a round's check errors are lost, so a rejected finding reads as never raised", async () => {
+    // Answer 1 cites an unchanged line of src/math.ts and leaves b/second.txt
+    // unread: the correction round names the error and carries that file's
+    // changed lines. Answer 2 leaves the finding out and passes.
+    const rejected: Finding = { ...SUBTRACTION, line_number: 1, title: "Signature of add changed" };
+    const r = await run({ big: true, fixture: { answers: { 1: (brief) => recorded(brief, [rejected]) } } });
+    expect(r.result.status).toBe("complete");
+    expect(r.result.findings).toEqual([]);
+    expect(r.result.rounds).toHaveLength(1);
+    const round = r.result.rounds[0]!;
+    expect(round).toMatchObject({ by: "primary", round: 1, later: 0 });
+    expect(round.errors).toEqual([expect.stringMatching(/^findings\[0\] \("Signature of add changed"\): line 1 of src\/math\.ts is not a line this change added or modified/)]);
+    expect((round.answer as { findings: Finding[] }).findings.map((f) => [f.title, f.file_path, f.line_number])).toEqual([["Signature of add changed", "src/math.ts", 1]]);
+    expect(round.delivered).toEqual([{ path: "b/second.txt", start: 1, end: 1000, deletion: false }]);
   });
 });
 

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "currency": "USD",
+  "unit": "per-million-tokens",
+  "models": {
+    "gpt-6.1-sol": {
+      "input": 2,
+      "cachedInput": 0.1,
+      "output": 10,
+      "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%276.1%27%29+or+contains%28meterName%2C+%276.1%27%29+or+contains%28skuName%2C+%276.1%27%29%29&currencyCode=USD",
+      "readDate": "2026-10-10",
+      "deploymentType": "Global Standard",
+      "region": "East US 2",
+      "context": "Short context (ShortCo in the API meter); long context has separate meters and is not priced by these rates.",
+      "regionNote": "East US 2 is the permitted fallback. The alma2 resource region and deployment type were not verified; these are public Global Standard retail rates, not a claim about its billing.",
+      "meters": {
+        "input": {
+          "meterName": "6.1-sol ShortCo Inp Std Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT6",
+          "skuName": "6.1-sol ShortCo Inp Std Gl",
+          "meterId": "146da5d0-1643-56df-ac51-9dbadafb7ba4",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%276.1%27%29+or+contains%28meterName%2C+%276.1%27%29+or+contains%28skuName%2C+%276.1%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2026-10-01T00:00:00Z"
+        },
+        "cachedInput": {
+          "meterName": "6.1-sol ShortCo Cd Inp Std Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT6",
+          "skuName": "6.1-sol ShortCo Cd Inp Std Gl",
+          "meterId": "19478835-ba31-5516-bc8b-d1c758b48b43",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%276.1%27%29+or+contains%28meterName%2C+%276.1%27%29+or+contains%28skuName%2C+%276.1%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2026-10-01T00:00:00Z"
+        },
+        "output": {
+          "meterName": "6.1-sol ShortCo Opt Std Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT6",
+          "skuName": "6.1-sol ShortCo Opt Std Gl",
+          "meterId": "1a0d434b-1dba-5668-bc5e-2b033414246f",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%276.1%27%29+or+contains%28meterName%2C+%276.1%27%29+or+contains%28skuName%2C+%276.1%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2026-10-01T00:00:00Z"
+        }
+      }
+    },
+    "gpt-5.2": {
+      "input": 1.75,
+      "cachedInput": 0.175,
+      "output": 14,
+      "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%275.2%27%29+or+contains%28meterName%2C+%275.2%27%29+or+contains%28skuName%2C+%275.2%27%29%29&currencyCode=USD",
+      "readDate": "2026-10-10",
+      "deploymentType": "Global Standard",
+      "region": "East US 2",
+      "context": "GPT 5.2 base model; these meters are distinct from chat, codex, pro, pp and batch variants.",
+      "regionNote": "East US 2 is the permitted fallback. The alma2 resource region and deployment type were not verified; these are public Global Standard retail rates, not a claim about its billing.",
+      "meters": {
+        "input": {
+          "meterName": "GPT 5.2 inp Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT5",
+          "skuName": "GPT 5.2 inp Gl",
+          "meterId": "51939794-a203-55a3-9b6e-98876279ec33",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%275.2%27%29+or+contains%28meterName%2C+%275.2%27%29+or+contains%28skuName%2C+%275.2%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2025-12-01T00:00:00Z"
+        },
+        "cachedInput": {
+          "meterName": "GPT 5.2 cd inp Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT5",
+          "skuName": "GPT 5.2 cd inp Gl",
+          "meterId": "b62afd39-8449-547a-abd6-004e1c5bef23",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%275.2%27%29+or+contains%28meterName%2C+%275.2%27%29+or+contains%28skuName%2C+%275.2%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2025-12-01T00:00:00Z"
+        },
+        "output": {
+          "meterName": "GPT 5.2 opt Gl 1M Tokens",
+          "productName": "Azure OpenAI GPT5",
+          "skuName": "GPT 5.2 opt Gl",
+          "meterId": "77a42d90-dbe2-5e8c-b378-bbcc7d890ed8",
+          "region": "US East 2",
+          "armRegionName": "eastus2",
+          "unitOfMeasure": "1M",
+          "readDate": "2026-10-10",
+          "source": "https://prices.azure.com/api/retail/prices?%24filter=%28contains%28productName%2C+%275.2%27%29+or+contains%28meterName%2C+%275.2%27%29+or+contains%28skuName%2C+%275.2%27%29%29&currencyCode=USD",
+          "effectiveStartDate": "2025-12-01T00:00:00Z"
+        }
+      }
+    }
+  }
+}

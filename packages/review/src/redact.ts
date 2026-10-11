@@ -29,13 +29,14 @@ function isCitation(path: string[]): boolean {
 }
 
 // Every string in `value` through `redact`, but the scanner citations: the
-// same walk for every caller.
+// same walk for every caller. Object keys are strings too: a reviewer's
+// answer can hold a secret as a key.
 export function redactWith<T>(value: T, redact: (text: string) => string): T {
   const walk = (v: unknown, path: string[]): unknown => {
     if (typeof v === "string") return isCitation(path) ? v : redact(v);
     if (Array.isArray(v)) return v.map((x) => walk(x, [...path, "#"]));
     if (v !== null && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, [...path, k])]));
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k), walk(x, [...path, k])]));
     }
     return v;
   };

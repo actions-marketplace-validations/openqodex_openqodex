@@ -1,2 +1,16 @@
 # What benchmark/build-cli.mjs records about the local build; each machine has its own.
 .build/
+# Run folders stay on the machine that ran them. publish-run.mjs puts each on
+# the benchmark-data pre-release, benchmark/index/runs/<run-id>.json names it,
+# and fetch-run.mjs brings it back here.
+results/
+# Inside a run, each review's report.html, report.md and report.sarif are
+# renderings of its report.json, and impact.json is inside report.json. The
+# scorer reads report.json and brief.md; the renderings stay on the machine
+# that ran, and publish-run.mjs leaves them out of the asset.
+results/**/report/report.html
+results/**/report/report.md
+results/**/report/report.sarif
+results/**/report/impact.json
+# The wording judge's raw model answers; judge.json keeps every verdict.
+results/**/judge-raw/

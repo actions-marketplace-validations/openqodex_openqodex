@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "runId": "2026-10-09-4850f66",
+  "date": "2026-10-09",
+  "suite": "planted",
+  "split": "dev",
+  "splitHash": null,
+  "mode": "review",
+  "path": "laptop",
+  "build": {
+    "commit": "4850f6670d378a85e787e100759cd6f7cf2389f3",
+    "short": "4850f66",
+    "cliVersion": "0.10.0",
+    "dirty": false,
+    "bundleHash": "e0712012cbf588768a3c3511f5562405402e7039b65e51058c97f5f7fb31a162"
+  },
+  "reviewers": {
+    "claude": {
+      "version": "2.1.295",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "configs": [
+    "claude-graph-off"
+  ],
+  "repeat": 1,
+  "web": "on",
+  "caseSetHash": null,
+  "caseIds": [
+    "planted/clean-python-feature@9ec4022c",
+    "planted/clean-ts-refactor@932afbb6",
+    "planted/demo-polyglot@54efb49b",
+    "planted/django-model-view@1c282ee0",
+    "planted/express-admin-routes@e9cc8bd1",
+    "planted/flask-path-traversal@0ca5ead7",
+    "planted/go-http-handler@d94de84a",
+    "planted/js-dynamic-dispatch-gap@2b036d38",
+    "planted/kubernetes-host-access@aeb552b4",
+    "planted/nextjs-react-hooks@ef6f5582",
+    "planted/postgres-migration-locks@ade7ae57",
+    "planted/python-caller-break@32735853",
+    "planted/rails-controller-model@44f38142",
+    "planted/suppression-comments@f224edf0",
+    "planted/terraform-open-ingress@8a8f088c",
+    "planted/ts-removed-export@4998a203",
+    "planted/ts-workspace-caller-break@d99bea74",
+    "planted/workflow-untrusted-checkout@6bad2b2a"
+  ],
+  "rulesVersion": null,
+  "scannersComplete": null,
+  "external": null,
+  "ended": {
+    "how": "finished",
+    "why": null
+  },
+  "release": null,
+  "scores": {
+    "claude-graph-off": {
+      "samples": 18,
+      "complete": 18,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 43,
+        "of": 48,
+        "ci": null
+      },
+      "precision": {
+        "hit": 43,
+        "of": 45,
+        "ci": null
+      },
+      "controls": {
+        "hit": 2,
+        "of": 2
+      },
+      "falseFindings": 1,
+      "wallMsMean": 27938.5,
+      "costUsdMean": 0.11082134444444446,
+      "costUsdTotal": 1.9947842000000002
+    }
+  },
+  "perCase": {
+    "claude-graph-off": {
+      "clean-python-feature": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "clean-ts-refactor": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "demo-polyglot": {
+        "recall": [
+          11,
+          15
+        ],
+        "precision": [
+          11,
+          11
+        ]
+      },
+      "django-model-view": {
+        "recall": [
+          3,
+          4
+        ],
+        "precision": [
+          3,
+          4
+        ]
+      },
+      "express-admin-routes": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "flask-path-traversal": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "go-http-handler": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "js-dynamic-dispatch-gap": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "kubernetes-host-access": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "nextjs-react-hooks": {
+        "recall": [
+          4,
+          4
+        ],
+        "precision": [
+          4,
+          4
+        ]
+      },
+      "postgres-migration-locks": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "python-caller-break": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "rails-controller-model": {
+        "recall": [
+          4,
+          4
+        ],
+        "precision": [
+          4,
+          4
+        ]
+      },
+      "suppression-comments": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "terraform-open-ingress": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          3
+        ]
+      },
+      "ts-removed-export": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "ts-workspace-caller-break": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "workflow-untrusted-checkout": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      }
+    }
+  },
+  "asset": {
+    "url": "https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-4850f66.tar.gz",
+    "sha256": "99aa6d153baf62d2780e269357ff7a43783a2f44d34722541f79665a8fb31a77",
+    "bytes": 199322,
+    "files": 207,
+    "listHash": "2a7b49e4437c5863308cf42351d88fe3648977f34ff5825df8af2d4575f11c54"
+  },
+  "accepted": false,
+  "acceptedAt": null,
+  "acceptedBy": null,
+  "legacy": true,
+  "privateListHash": "1c09c752ba6fa41ef7dbf4ed80a07b7ebe22993404e865324b8511d93308ccea",
+  "scoreFile": "score.json",
+  "specsFrom": "cases",
+  "scorer": {
+    "commit": "8183c781f6648db854d9abbeb4824644e13a32a1",
+    "sha256": "da9f6d4e1deda442b2aa4ad4822fc8b72d8ce8088230ee6e513d951c9bcc3b12"
+  },
+  "scoreFiles": [
+    {
+      "file": "score.json",
+      "scores": "2026-10-09-4850f66",
+      "specsFrom": "cases",
+      "scorer": {
+        "commit": "8183c781f6648db854d9abbeb4824644e13a32a1",
+        "sha256": "da9f6d4e1deda442b2aa4ad4822fc8b72d8ce8088230ee6e513d951c9bcc3b12"
+      }
+    }
+  ],
+  "originals": {
+    "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884",
+    "path": "benchmark/results/2026-10-09-4850f66"
+  },
+  "notes": [
+    "Graph off, one repeat, 18 cases. The docs quote no number from this run."
+  ]
+}
