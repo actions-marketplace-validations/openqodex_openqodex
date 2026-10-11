@@ -72,8 +72,10 @@ import { RULES_VERSION, jobIdOf } from "./score.mjs";
 // configuration, "scan", with no reviewer.
 export function planJobs({ cases, caseIds, reviewers = [], graph = [], repeat, mode = "review" }) {
   const configs = [];
+  // A model reviewer's name (model:<deployment>) holds a colon, which a
+  // configuration id, a folder name, writes as a dash.
   if (mode === "scan") configs.push({ id: SCAN_CONFIG, reviewer: null, graph: false });
-  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer.replace(/:/g, "-")}-graph-${g}`, reviewer, graph: g === "on" });
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
@@ -196,16 +198,17 @@ const readJsonFile = (path) => {
 //    first: a ticket (closed when the job ends; a model review's meter), a
 //    wait for a running job to end, or a stop that ends the run as
 //    "budget" (failure 13);
-// 4. records how it ended, with the minutes it took, and what `finish()`
-//    adds once every job is done (a scanner-only run's external inputs), in
-//    the manifest (a new run) or resumes.jsonl (a resume), and gives the
-//    folder back.
+// 4. records how it ended, with the minutes it took, the halt rule that
+//    stopped it when `haltOf()` names one ({ rule, why }, lib/halts.mjs),
+//    and what `finish()` adds once every job is done (a scanner-only run's
+//    external inputs, a model run's served models), in the manifest (a new
+//    run) or resumes.jsonl (a resume), and gives the folder back.
 // `addRepeats` ({ repeat, jobs, at }) adds repeats to a finished run, as a
 // resume whose plan grows: the manifest gets the longer plan, under the
 // folder's lock, before the first added review (failure 15). `resumeNote`
 // is added to the resume's first line (the budget it runs under).
 // Throws before any review when the folder is refused.
-export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {}, budget = null, addRepeats = null, resumeNote = {}, finish = () => ({}) }) {
+export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, haltOf = () => null, log = () => {}, budget = null, addRepeats = null, resumeNote = {}, finish = () => ({}) }) {
   const release = lockRun(out);
   const started = Date.now();
   try {
@@ -277,10 +280,12 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
     const why = stopReason();
     const spent = budget ? (budgetStop ?? budget.stopped()) : null;
     const how = why !== null ? "stopped" : spent ? "budget" : "finished";
+    const halt = how === "stopped" ? haltOf() : null;
     const ended = {
       at: new Date().toISOString(),
       how,
       why: why ?? spent?.why ?? null,
+      ...(halt ? { halt } : {}),
       ...(how === "budget" ? { limit: spent.limit, limitKind: spent.limitKind } : {}),
       ...(budget ? budget.summary() : {}),
       reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length,
@@ -374,7 +379,7 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
 // its raw and kept counts, its time and the time to find its tool, the
 // files it was handed, what each filter stage dropped, and, for semgrep,
 // the rule packs it consumed.
-function scannerRows(list) {
+export function scannerRows(list) {
   return list.map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, raw: s.rawCount ?? null, kept: s.keptCount, ms: s.durationMs, resolveMs: s.resolveMs ?? null, files: s.files ?? null, stages: s.stages ?? null, ...(Array.isArray(s.rules) ? { rules: s.rules } : {}), reason: s.reason ?? null }));
 }
 
@@ -419,10 +424,23 @@ export function resumeProblems(earlier, now) {
   for (const n of names) {
     same(`${n} reviewer version`, earlier.reviewers?.[n]?.version, now.reviewers?.[n]?.version);
     same(`${n} model`, earlier.reviewers?.[n]?.model, now.reviewers?.[n]?.model);
+    // A model reviewer's settings (effort, maxOutputTokens), the alias that
+    // named it and the scripted model's script.
+    same(`${n} settings`, earlier.reviewers?.[n]?.settings, now.reviewers?.[n]?.settings);
+    same(`${n} alias`, earlier.reviewers?.[n]?.alias, now.reviewers?.[n]?.alias);
+    same(`${n} script`, earlier.reviewers?.[n]?.script?.sha256, now.reviewers?.[n]?.script?.sha256);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);
+  // The tools folder a model review reads its scanners from.
+  same("install root", earlier.review?.installRoot, now.review?.installRoot);
   same("concurrency", earlier.concurrency, now.concurrency);
+  // The cases' suite and where in it they come from; a run made before the
+  // manifest named them is a planted run on the dev split.
+  same("suite", earlier.suite ?? "planted", now.suite ?? "planted");
+  same("split", earlier.split ?? "dev", now.split ?? "dev");
+  same("split file hash", earlier.splitHash ?? null, now.splitHash ?? null);
+  same("subset", earlier.subset ?? null, now.subset ?? null);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);
   if (earlier.repeat !== undefined || now.repeat !== undefined) same("repeats", earlier.repeat, now.repeat);
@@ -435,6 +453,8 @@ export function resumeProblems(earlier, now) {
     same("scanners missing", earlier.scannersMissing, now.scannersMissing);
   }
   if (earlier.changeId !== undefined || now.changeId !== undefined) same("change", earlier.changeId, now.changeId);
+  // A smoke run stays one: it is never indexed, so a resume may not make it a full run.
+  if (earlier.smoke !== undefined || now.smoke !== undefined) same("smoke", earlier.smoke ?? false, now.smoke ?? false);
   for (const c of Object.keys(now.caseHashes ?? {})) {
     if (earlier.caseHashes?.[c] !== now.caseHashes[c]) out.push(`case ${c}: its files or spec differ from the run's (or the run recorded no hash)`);
   }

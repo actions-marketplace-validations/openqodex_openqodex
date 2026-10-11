@@ -312,6 +312,8 @@ describe("a rule constant changes without a version bump, and old and new scores
     4: "01790c27b9e182e7c6b4c142c8e04a0c020eb5f739bd0efab7c601b6877963db",
     // A person's rulings and the location match of an unlisted finding.
     5: "ff7b2ece2aff21df3b948e5bd849d872dfba298cfa928203e784780061050511",
+    // Pull request truth: matched on its categories when it has no kind, and no severity tally without a severity.
+    6: "b796da57c0aae63538f12bf8f3aa1139219da6a2f2a8ef7e4ccdd04c0b737536",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

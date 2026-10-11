@@ -442,6 +442,22 @@ export function caseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl
   });
 }
 
+// Whether the case's merge base is an ancestor of its head, as git answers
+// in the commits cache's history (run.mjs --materialise-only records it):
+// { isAncestor: true }, { isAncestor: false, why } when git says no on a
+// history with no cut, or { isAncestor: null, why } when that history
+// cannot answer (no commits cache, a missing commit, or a no on a shallow
+// history, where the path may lie behind a cut).
+export function mergeBaseAncestry(c, mergeBaseSha, { cache = cacheRoot() } = {}) {
+  const repo = repoCachePath(cache, c, ".commits");
+  if (!existsSync(join(repo, "HEAD"))) return { isAncestor: null, why: `history unknown: there is no commits cache at ${repo}` };
+  const r = spawnSync("git", [...FLAGS, "merge-base", "--is-ancestor", mergeBaseSha, c.materialise.headSha], { cwd: repo, env: commitsEnv(), encoding: "utf8" });
+  if (r.status === 0) return { isAncestor: true, why: null };
+  if (r.status === 1 && shallowOf(repo).length === 0) return { isAncestor: false, why: `git answers that ${mergeBaseSha.slice(0, 12)} is not an ancestor of ${c.materialise.headSha.slice(0, 12)}` };
+  if (r.status === 1) return { isAncestor: null, why: "history unknown: the commits cache is shallow, and git found no path within it" };
+  return { isAncestor: null, why: `history unknown: git merge-base --is-ancestor failed (${`${r.stderr ?? ""}`.trim().split("\n")[0] || `exit ${r.status}`})` };
+}
+
 // ---------- one attempt's repository ----------
 
 // The tree a review of `dir` sees: HEAD's tree with every working tree
