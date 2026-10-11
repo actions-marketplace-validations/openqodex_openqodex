@@ -39,7 +39,7 @@ export const OSV_BASIS = "sha256 over each sample's osv-scanner status and what 
 // The scanners of the bundle a run uses, from `openqodex doctor --json`
 // run in the run's own home: the toolchain hash, each scanner's pinned
 // version, and every scanner that is not ready with its state and reason.
-export function scannerPreflight(doctor, { home = homedir() } = {}) {
+export function toolchainOf(doctor, { home = homedir() } = {}) {
   if (!doctor || typeof doctor.toolchain !== "string" || !Array.isArray(doctor.scanners)) throw new Error("openqodex doctor --json gave no toolchain hash or scanner list");
   const hide = (text) => (typeof text === "string" && home ? text.split(home).join("~") : (text ?? null));
   const sorted = [...doctor.scanners].sort((a, b) => byText(a.scanner, b.scanner));
@@ -108,7 +108,7 @@ export function osvAdvisoriesOf(samples) {
 }
 
 // The manifest's `external` for a run: `samples` are the first attempts,
-// { caseId, startedAt, scan }, and `preflight` is scannerPreflight's record.
+// { caseId, startedAt, scan }, and `preflight` is toolchainOf's record.
 export function externalOf({ samples, preflight }) {
   const asked = samples.filter((s) => (s.scan?.scanners ?? []).some((x) => x.scanner === "osv-scanner" && x.status === "ran")).map((s) => s.startedAt).filter((t) => typeof t === "string").sort(byText);
   return {
