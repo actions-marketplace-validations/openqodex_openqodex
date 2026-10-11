@@ -29,6 +29,9 @@ export const INDEX_VERSION = 1;
 export const indexRoot = join(benchRoot, "index");
 export const runsRoot = join(indexRoot, "runs");
 export const resultsRoot = join(benchRoot, "results");
+// The two loops' ledgers: append-only JSON lines, one per event
+// (PLAN-benchmark 4.8): ledger/scanner.jsonl and ledger/reviewer.jsonl.
+export const ledgerPath = (loop) => join(indexRoot, "ledger", `${loop}.jsonl`);
 // Where published runs live: one pre-release of the public repository,
 // never marked latest. A second container is used when this one is full.
 export const REPOSITORY = "openqodex/openqodex";

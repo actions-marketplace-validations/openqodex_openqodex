@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "about": "The reviewer loop's levers (PLAN-benchmark 4.8, P3 part 4.3). A change names one lever and may change only that lever's files and the companions. Each file glob carries the review paths it runs on; a change runs on every path its files reach. Metrics are the issue-level acceptance metrics; each carries the direction that is better and the default acceptable loss (PLAN question 20), in points for rates, findings per case for cleanFindings, and a fraction of the parent for cost and time. A record states its own losses; these are the defaults --template fills in.",
+  "metrics": {
+    "recall": { "better": "higher", "unit": "points", "loss": 2 },
+    "criticalMajorRecall": { "better": "higher", "unit": "points", "loss": 2 },
+    "precision": { "better": "higher", "unit": "points", "loss": 2 },
+    "severityAgreement": { "better": "higher", "unit": "points", "loss": 3 },
+    "incompleteRate": { "better": "lower", "unit": "points", "loss": 2 },
+    "redundancy": { "better": "lower", "unit": "points", "loss": 5 },
+    "cleanFindings": { "better": "lower", "unit": "findings per clean case", "loss": 0.1 },
+    "costPerReview": { "better": "lower", "unit": "fraction of the parent", "loss": 0.15 },
+    "secondsPerReview": { "better": "lower", "unit": "fraction of the parent", "loss": 0.2 }
+  },
+  "defaults": { "aim": "quality", "target": "server", "capUsd": 40, "capReviews": 240 },
+  "companions": [
+    { "glob": ".changeset/*.md", "paths": [] },
+    { "glob": "packages/*/test/**", "paths": [] },
+    { "glob": "packages/**/*.test.ts", "paths": [] }
+  ],
+  "modelNames": ["gpt", "chatgpt", "o1", "o3", "o4", "claude", "opus", "sonnet", "haiku", "fable", "codex", "cursor", "cline", "copilot", "gemini", "gemma", "llama", "mistral", "mixtral", "deepseek", "qwen", "grok", "astra", "sol", "luna", "terra", "openai", "anthropic", "azure", "google", "vertex", "bedrock", "openrouter", "ollama", "groq", "xai", "cohere"],
+  "levers": [
+    {
+      "id": "brief.diff-numbers",
+      "title": "Line numbers in the brief's diff (diffBlockV2)",
+      "files": [{ "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    },
+    {
+      "id": "brief.missing-tests",
+      "title": "The missing tests block (MISSING_TESTS, missing-tests.ts)",
+      "files": [
+        { "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] },
+        { "glob": "packages/core/src/missing-tests.ts", "paths": ["laptop", "server"] }
+      ],
+      "primary": "precision"
+    },
+    {
+      "id": "brief.judgement",
+      "title": "How to review and how to dispose of a candidate (howToReviewV2, answer rules, candidatesBlockV2)",
+      "files": [{ "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    },
+    {
+      "id": "brief.order-and-size",
+      "title": "Block order and the diff size limit (MAX_DIFF_BYTES)",
+      "files": [{ "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    },
+    {
+      "id": "brief.role-for-model",
+      "title": "The reviewer role, keyed on the reviewer kind (REVIEWER_ROLE)",
+      "files": [{ "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    },
+    {
+      "id": "lenses",
+      "title": "Lens selection, frontmatter and bodies",
+      "files": [
+        { "glob": "packages/core/src/lenses.ts", "paths": ["laptop", "server"] },
+        { "glob": "packages/core/lenses/**", "paths": ["laptop", "server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "tools.told",
+      "title": "What the server reviewer is told about its tools (MODEL_SYSTEM, TOOL_DEFINITIONS, the graph block's instruction)",
+      "files": [
+        { "glob": "packages/review/src/model-loop.ts", "paths": ["server"] },
+        { "glob": "packages/review/src/tools/index.ts", "paths": ["server"] },
+        { "glob": "packages/graph/src/render.ts", "paths": ["laptop", "server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "tools.limits",
+      "title": "Tool and call limits (MAX_CALLS_PER_ANSWER, TOOL_REPLY_BYTES, MAX_CALLERS)",
+      "files": [
+        { "glob": "packages/review/src/model-loop.ts", "paths": ["server"] },
+        { "glob": "packages/review/src/tools/index.ts", "paths": ["server"] }
+      ],
+      "primary": "incompleteRate"
+    },
+    {
+      "id": "coverage.delivery",
+      "title": "Delivery of changed ranges the reviewer was not given (conversation.ts, MAX_DIFF_BYTES); the rule never loosens",
+      "files": [
+        { "glob": "packages/review/src/conversation.ts", "paths": ["laptop", "server"] },
+        { "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }
+      ],
+      "primary": "incompleteRate"
+    },
+    {
+      "id": "finalize.floor",
+      "title": "The confidence floor (GLOBAL_CONFIDENCE_FLOOR, lens floors)",
+      "files": [
+        { "glob": "packages/core/src/finalize.ts", "paths": ["laptop", "server"] },
+        { "glob": "packages/core/lenses/**", "paths": ["laptop", "server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "finalize.threshold-and-checks",
+      "title": "What finalize shows and checks (shown, proseErrors, citesChange)",
+      "files": [{ "glob": "packages/core/src/finalize.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    },
+    {
+      "id": "second-reviewer",
+      "title": "The second reviewer (second.ts, options.secondReviewer)",
+      "files": [
+        { "glob": "packages/review/src/second.ts", "paths": ["server"] },
+        { "glob": "benchmark/lib/server-review.mjs", "paths": ["server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "graph.brief",
+      "title": "The graph's block in the brief (renderImpactBlock, impact limits)",
+      "files": [
+        { "glob": "packages/graph/src/render.ts", "paths": ["laptop", "server"] },
+        { "glob": "packages/graph/src/impact.ts", "paths": ["laptop", "server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "server.model-settings",
+      "title": "The benchmark's server model settings (model, effort, maxOutputTokens); a win is a note for Sid, changed only at a release",
+      "files": [
+        { "glob": "benchmark/lib/openai-reviewer.mjs", "paths": ["server"] },
+        { "glob": "benchmark/lib/server-review.mjs", "paths": ["server"] }
+      ],
+      "primary": "recall"
+    },
+    {
+      "id": "context.framing",
+      "title": "How context items and instructions are framed (contextBlocks, DATA_RULES, instructionsBlock)",
+      "files": [{ "glob": "packages/core/src/brief.ts", "paths": ["laptop", "server"] }],
+      "primary": "recall"
+    }
+  ]
+}
