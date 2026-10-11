@@ -23,9 +23,17 @@
 //    group has no accepted entry fails and says how to record one.
 // 4. A Semgrep registry update reads as a product regression and turns
 //    every pull request red: when the rule packs differ from the accepted
-//    run's, each difference is printed as a warning and the gate passes.
-//    An osv.dev hash change does not excuse a drop, since that hash also
-//    covers the osv-scanner adapter's own messages.
+//    run's and the score is higher or merely changed, each difference is
+//    printed as a warning and the gate passes; equal scores pass whatever
+//    the packs. On the bench-scan job's first runs (2026-10-11) the bytes
+//    of p/default differed between runs an hour apart, five times, with
+//    equal scores, so "the packs differ" holds on almost every run.
+// 4a. Because of that, a scanner change that lowers the score while the
+//    packs differ passes: a drop fails the gate whatever the packs, and
+//    the verdict says the packs differ, so a person can tell a registry
+//    change from a product change. An osv.dev hash change does not excuse
+//    a drop either, since that hash also covers the osv-scanner adapter's
+//    own messages.
 // 5. Two passes that differ are judged by the first: a run whose
 //    identical.json says the passes differ fails the gate. A run that lacked
 //    a scanner fails it too, naming the scanner rather than its bugs alone.
@@ -215,14 +223,32 @@ describe("the gate passes because there is nothing to compare with", () => {
 });
 
 describe("a Semgrep registry update reads as a product regression and turns every pull request red", () => {
-  it("passes with a warning when the rule packs differ, naming the packs, each difference and the steps to record the run", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV], sha: SHA_B });
+  it("passes with a warning when the rule packs differ and the score is higher, naming the packs, each difference and the steps to record the run", () => {
+    const r = gate(acceptedIndex({ demo: [OSV] }), { sha: SHA_B });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/warning/i);
     expect(r.out).toMatch(/Semgrep rule packs/);
     expect(r.out).toMatch(/shell-rm-unquoted/);
     expect(r.out).toContain(`trend.mjs --accept ${NEXT.runId}`);
     expect(r.summary).toMatch(/Semgrep rule packs/);
+  });
+
+  it("passes equal scores whatever the packs, and names the packs that differ", () => {
+    const r = gate(acceptedIndex(), { sha: SHA_B });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toMatch(/equal the accepted run's/);
+    expect(r.out).toMatch(/Semgrep rule packs/);
+  });
+});
+
+describe("a scanner change that lowers the score passes while the rule packs differ", () => {
+  it("fails a lost bug when the packs differ too, and says the packs differ", () => {
+    const r = gate(acceptedIndex(), { demo: [OSV], sha: SHA_B });
+    expect(r.status, r.out).toBe(1);
+    expect(r.out).toMatch(/regression/i);
+    expect(r.out).toMatch(/shell-rm-unquoted/);
+    expect(r.out).toMatch(/Semgrep rule packs differ/);
+    expect(r.out).toContain(`trend.mjs --accept ${NEXT.runId}`);
   });
 
   it("still fails a lost bug when only the osv.dev data differs, since that hash also covers the adapter's own messages", () => {

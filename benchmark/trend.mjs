@@ -31,14 +31,15 @@
 // --against-run is the scanner-only gate the bench-scan CI job runs: a
 // scored scanner-only run folder (run.mjs --mode scan --check-identical),
 // which is not in the index, is compared exactly with the accepted entry of
-// its group (scanGate). It passes (exit 0) only when the two scores are
-// equal, time fields and intervals left out, or when the Semgrep rule
-// packs differ from the accepted run's, which turns every difference into
-// a warning. Anything else fails (exit 1): a regression, a better score
-// the index does not hold yet (the golden pattern: the pull request that
-// moves the score carries the new accepted entry), no accepted entry for
-// the group, or two passes that differ. --summary <file> appends the trend
-// table and the verdict to that file as markdown (the job's
+// its group (scanGate). It passes (exit 0) when the two scores are equal,
+// time fields and intervals left out, whatever the Semgrep rule packs, and
+// when the score is higher or merely changed while the packs differ from
+// the accepted run's, which turns those differences into a warning.
+// Anything else fails (exit 1): a regression, whatever the packs; a better
+// score the index does not hold yet (the golden pattern: the pull request
+// that moves the score carries the new accepted entry); no accepted entry
+// for the group; or two passes that differ. --summary <file> appends the
+// trend table and the verdict to that file as markdown (the job's
 // $GITHUB_STEP_SUMMARY), the same text the gate prints.
 //
 // --accept first checks the entry against its run: the run folder
@@ -104,10 +105,13 @@
 //    accepted entry for the run's group (a new rules version included)
 //    fails it.
 // 12. A Semgrep registry update reads as a product regression and turns
-//    every pull request red: when the packs differ from the accepted run's,
-//    every difference is printed as a warning and the gate passes. Other
-//    osv.dev data does not excuse a change: its hash also covers the
-//    osv-scanner adapter's own messages, so it is printed as context only.
+//    every pull request red: when the packs differ from the accepted run's
+//    and the score is not lower, every difference is printed as a warning
+//    and the gate passes. The bytes of p/default differed five times in an
+//    hour of bench-scan runs (2026-10-11) with equal scores, so a drop is
+//    never excused by the packs: it fails the gate, and the verdict says
+//    the packs differ. Other osv.dev data excuses nothing: its hash also
+//    covers the osv-scanner adapter's own messages.
 // 13. Two passes that differ are judged by the first: identical.json of
 //    the run must say identical.
 // 14. A red job does not say why: the summary holds the trend table, the
@@ -327,11 +331,14 @@ export function scanGate({ index = indexRoot, folder }) {
       out.push(...list("These inputs differ and changed no score:", inputs));
       continue;
     }
-    if (packsMoved) {
-      out.push(`Verdict: warning, the gate passes. The Semgrep rule packs differ from the accepted run's, so a change in the score cannot be told from a product change. Record a new accepted run so the gate can judge again.`, "");
+    if (c.worse.length > 0) {
+      code = 1;
+      out.push(`Verdict: regression against the accepted run ${acceptedId}.${packsMoved ? " The Semgrep rule packs differ from the accepted run's too, so a lost semgrep finding may be the registry's: if every line below is, record this run as the accepted one." : ""}`, "");
+    } else if (packsMoved) {
+      out.push(`Verdict: warning, the gate passes. The score is not lower, and the Semgrep rule packs differ from the accepted run's, so a higher or changed score cannot be told from a registry change. Record a new accepted run so the gate judges the next change against it.`, "");
     } else {
       code = 1;
-      out.push(c.worse.length > 0 ? `Verdict: regression against the accepted run ${acceptedId}.` : `Verdict: the score changed against the accepted run ${acceptedId}, and the index still holds the old number. If the change is wanted, record this run as the accepted one.`, "");
+      out.push(`Verdict: the score changed against the accepted run ${acceptedId}, and the index still holds the old number. If the change is wanted, record this run as the accepted one.`, "");
     }
     out.push(...list("Lower than the accepted run:", c.worse), ...list("Higher than the accepted run:", c.better), ...list("Also changed:", c.other), ...list("Inputs that differ from the accepted run's:", inputs));
     out.push(...acceptSteps(runId, c.worse.length > 0), "");
@@ -430,13 +437,13 @@ export function runTrend({ index = indexRoot, suite = null, mode = null, config 
     }
     const rules = rulesDifferences({ version: accepted.rulesVersion, hash: accepted.rulesHash }, { version: newest.rulesVersion, hash: newest.rulesHash });
     if (rules.length > 0) throw new Refusal(`${newest.runId} cannot be compared with the accepted run ${acceptedId}: ${rules.join("; ")}`);
-    // A scanner-only group is compared exactly (failure 9); other Semgrep rule packs make a drop a warning (failure 12).
+    // A scanner-only group is compared exactly (failure 9); a drop is a regression whatever the Semgrep rule packs (failure 12).
     if (newest.mode === "scan") {
       const s = compareScan(accepted, newest, g.config);
       const packsMoved = canonical(accepted.external?.semgrepPacks ?? null) !== canonical(newest.external?.semgrepPacks ?? null);
-      log(s.same ? `The newest run ${newest.runId} has the scores of the accepted run ${acceptedId}.` : `The newest run ${newest.runId} against the accepted run ${acceptedId}, compared exactly${packsMoved ? " (warning: their Semgrep rule packs differ, so a drop is not read as a regression)" : ""}:`);
+      log(s.same ? `The newest run ${newest.runId} has the scores of the accepted run ${acceptedId}.` : `The newest run ${newest.runId} against the accepted run ${acceptedId}, compared exactly${packsMoved ? " (their Semgrep rule packs differ, so a change may be the registry's)" : ""}:`);
       for (const [title, lines] of [["Lower", s.worse], ["Higher", s.better], ["Also changed", s.other]]) for (const l of lines) log(`- ${title}: ${l}`);
-      if (s.worse.length > 0 && !packsMoved) regressed.push(`${g.label}: ${newest.runId} against ${acceptedId}`);
+      if (s.worse.length > 0) regressed.push(`${g.label}: ${newest.runId} against ${acceptedId}`);
       continue;
     }
     const c = compareConfig(accepted, newest, g.config, { alpha });
