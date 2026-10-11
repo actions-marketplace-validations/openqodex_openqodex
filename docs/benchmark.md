@@ -158,6 +158,24 @@ node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>
 
 This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
+## Scanner-only runs
+
+```
+node benchmark/build-cli.mjs
+node benchmark/run.mjs --mode scan --check-identical                  # every case, scanners only, twice
+node benchmark/run.mjs --mode scan --cases a,b --scanner-config <file>
+```
+
+A scanner-only run runs `openqodex scan --report-dir <sample>/report --no-install` on each case, one at a time, with no reviewer and no model, so it needs no account and spends nothing. It runs in an OpenQodex home of its own: its tool folders are links to the scanners you installed (`$OPENQODEX_HOME/tools`, or `~/.openqodex/tools`), and its approvals and caches are its own. Before the first scan, `openqodex doctor --json` lists every scanner. The run refuses to start when one is not installed. `--allow-missing-scanners` runs without them, and the manifest names each one (`scannersMissing`, with `scannersComplete: false`). A Mac without Ruby, Go or Cargo needs the flag for brakeman, rubocop, golangci and cargo-deny.
+
+Each candidate a scan hands the reviewer is scored against the case's spec by its lines. On a planted bug's lines, it finds the bug when the bug's expected finders name its scanner (or a scanner whose finding was merged into it), or when its rule id or message names one of the bug's words. A later candidate on a bug already found counts as redundancy, never against precision. A candidate on a bug's lines that meets neither test finds nothing and stays unresolved. Every candidate on a clean change is false. The run writes `score.json` under the scan rules (`rules.kind` is `scan`) and `outcomes.jsonl` with one line per candidate.
+
+The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by sha256 and size), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different bytes of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
+
+`--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
+
+`--scanner-config <file>` passes `--config <file>` to every scan. The run first runs `openqodex trust --yes` with that file in its own home, for the one repository path each case is built at in turn, and does not start when the trust step fails. The manifest records the file's sha256 and every custom scanner the step approved.
+
 ## The wording pass
 
 ```

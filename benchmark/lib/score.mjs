@@ -1152,7 +1152,7 @@ const NOT_RULES = new Set(["RULES", "RULES_BLOCK", "RULE_ROOTS", "NOT_RULES", "r
 // with a semicolon is that line; any other runs to the next line that opens
 // with a closing brace, bracket or parenthesis at column 0), and the names
 // it imports from modules beside it.
-function topLevel(source) {
+export function topLevel(source) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const decls = new Map();
   for (const [i, line] of lines.entries()) {
