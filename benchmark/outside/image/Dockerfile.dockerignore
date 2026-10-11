@@ -1,0 +1,6 @@
+# The build context is benchmark/outside; the image copies these files only.
+*
+!image/package.json
+!image/package-lock.json
+!image/preinstall.mjs
+!reviewbench/entry.mjs
