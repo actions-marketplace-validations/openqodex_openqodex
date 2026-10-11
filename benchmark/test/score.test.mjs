@@ -4,15 +4,17 @@
 // by one line, a wrong kind, two bugs on one line, a bug found at its second
 // location, an accepted side issue, a request for a test, a false finding, a
 // clean change (complete, incomplete and missing), and what a brief did and
-// did not say. Score format 3 is checked on saved runs of the shape run.mjs
-// writes, built in temp folders: its population of planned first attempts,
-// its rules block, and the planted-only precision kept apart.
-import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+// did not say. Score format 3 is checked on runs made in temp folders by the
+// runner's own code (executeRun, with the review step that would call a
+// model replaced): its population of planned first attempts, its rules
+// block, and the planted-only precision kept apart.
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { RULES, RULES_VERSION, classify, regressions, rulesDifferences, rulesHash, runDifferences, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
-import { planJobs, sampleRecord } from "../lib/runner.mjs";
+import { RULES, RULES_VERSION, classify, regressions, ruleCodeHash, ruleSources, rulesDifferences, rulesHash, runDifferences, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
+import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { loadRun, renderV3, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -263,36 +265,32 @@ const CONFIG = "claude-graph-on";
 // The jobs run.mjs plans for the hand case: one configuration, `repeat` repeats.
 const planned = (repeat) => planJobs({ cases: ["hand"], caseIds: { hand: CASE_ID }, reviewers: ["claude"], graph: ["on"], repeat }).jobs;
 
-// A saved run of the hand case, as run.mjs leaves it: the manifest with every
-// planned job, the run's own spec, and one folder per attempt (a retry is
-// <repeat>-attempt<n>), each with its sample.json and, when the review wrote
-// one, its report.
-function savedRun({ repeat, attempts }) {
-  const out = tempDir("oq-bench-v3-");
+// The manifest run.mjs writes for the hand case, from its settings and plan.
+const handManifest = (jobs, repeat) =>
+  runManifest({
+    startedAt: "2026-10-10T10:00:00.000Z",
+    settings: { build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersion: "0.14.0" }, reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } }, cases: ["hand"], caseIds: [CASE_ID], caseHashes: { hand: HASH }, configs: [CONFIG], repeat },
+    jobs,
+  });
+
+// A run of the hand case made by the runner's own code (executeRun writes
+// the manifest and the spec copy), with each review replaced by the
+// attempts given: one folder per attempt (a retry is <repeat>-attempt<n>),
+// each with its sample.json and, when the review wrote one, its report. A
+// repeat with no attempt given never starts.
+async function savedRun({ repeat, attempts }) {
+  const root = tempDir("oq-bench-v3-");
+  const out = join(root, "run");
+  write(join(root, "hand.json"), JSON.stringify(spec));
   const jobs = planned(repeat);
-  const manifest = {
-    version: 3,
-    started_at: "2026-10-10T10:00:00.000Z",
-    build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersion: "0.14.0" },
-    reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } },
-    cases: ["hand"],
-    caseHashes: { hand: HASH },
-    caseIds: [CASE_ID],
-    configs: [CONFIG],
-    repeat,
-    planned: jobs.length,
-    jobs: jobs.map(({ jobId, caseId, config, repeat: r }) => ({ jobId, caseId, config, repeat: r })),
-    ended: { how: "finished", why: null },
-  };
-  write(join(out, "manifest.json"), JSON.stringify(manifest));
-  write(join(out, "cases", "hand.json"), JSON.stringify(spec));
-  for (const a of attempts) {
-    const job = jobs.find((j) => j.repeat === a.repeat);
-    const dir = join(out, "samples", "hand", CONFIG, a.attempt === 1 ? String(a.repeat) : `${a.repeat}-attempt${a.attempt}`);
-    const rec = sampleRecord({ job, attempt: a.attempt, result: { code: a.report ? 0 : 2, signal: null, wallMs: 30_000 }, report: a.report, who: null, startedAt: "t", failure: a.report ? null : { cause: "no report.json" }, stopped: null });
-    write(join(dir, "sample.json"), JSON.stringify(rec));
-    if (a.report) write(join(dir, "report", "report.json"), JSON.stringify(a.report));
-  }
+  await executeRun({ out, manifest: handManifest(jobs, repeat), jobs, copies: [[join(root, "hand.json"), "cases/hand.json"]], runJob: async (job) => {
+    for (const a of attempts.filter((x) => x.repeat === job.repeat)) {
+      const dir = attemptDir(out, job, a.attempt);
+      const rec = sampleRecord({ job, attempt: a.attempt, result: { code: a.report ? 0 : 2, signal: null, wallMs: 30_000 }, report: a.report, who: null, startedAt: "t", failure: a.report ? null : { cause: "no report.json" }, stopped: null });
+      write(join(dir, "sample.json"), JSON.stringify(rec));
+      if (a.report) write(join(dir, "report", "report.json"), JSON.stringify(a.report));
+    }
+  } });
   return out;
 }
 
@@ -304,7 +302,8 @@ describe("a rule constant changes without a version bump, and old and new scores
   // edited: a change to a constant, a list, the rule order or the matching
   // code changes the hash, and this test fails until RULES_VERSION is bumped
   // in lib/score.mjs and the new version's hash is added here.
-  const KNOWN_RULES = { 3: "3646227c6813aefa4d27163c88c9ea1d83ed258c69c8d7983156db1f15bbf2a7" };
+  // A change of layout alone moves the hash too, and needs a bump all the same.
+  const KNOWN_RULES = { 3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d" };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {
     expect(RULES.version).toBe(RULES_VERSION);
@@ -321,6 +320,22 @@ describe("a rule constant changes without a version bump, and old and new scores
     for (const change of changes) expect(rulesHash({ ...RULES, ...change })).not.toBe(RULES.hash);
   });
 
+  it("hashes the attempt selection and every helper a rule calls, in this file or one it imports, and moves the hash when any of them changes", () => {
+    const here = dirname(fileURLToPath(new URL("../lib/score.mjs", import.meta.url)));
+    const read = (file) => readFileSync(join(here, file), "utf8");
+    const sources = ruleSources(read);
+    const ids = sources.map((s) => s.id);
+    // The word matcher's escape, the folder-name rule for first attempts and retries, the scoring of a run's attempts, and the case id parser in cases.mjs.
+    for (const id of ["score.mjs#escape", "score.mjs#attemptOf", "score.mjs#scoreAttempts", "score.mjs#population", "cases.mjs#parseCaseId"]) expect(ids).toContain(id);
+    expect(ruleCodeHash(read)).toBe(RULES.code);
+    for (const { id, text } of sources) {
+      const [file] = id.split("#");
+      const first = text.split("\n")[0];
+      const mutated = (f) => (f === file ? read(f).replace(first, `${first} void 0;`) : read(f));
+      expect(ruleCodeHash(mutated), `a change to ${id} must move the rules hash`).not.toBe(RULES.code);
+    }
+  });
+
   it("never calls two scores comparable when their rules differ, under one version or two", () => {
     expect(rulesDifferences(RULES, RULES)).toEqual([]);
     const edited = { ...RULES, nearLines: 4 };
@@ -331,25 +346,33 @@ describe("a rule constant changes without a version bump, and old and new scores
     expect(rulesDifferences(RULES, undefined)).not.toEqual([]);
   });
 
-  it("writes the rules block into every score", () => {
-    const { score } = scoreRun(loadRun(savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+  it("writes the rules block into every score", async () => {
+    const { score } = scoreRun(loadRun(await savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
     expect(score.version).toBe(3);
     expect(score.rules).toEqual(RULES);
   });
 });
 
 describe("a job that never started leaves the denominator", () => {
-  it("lists every planned job, with its id, before any job starts, and every attempt names its job and whether it is the first", () => {
+  it("has the runner write the full manifest, every planned job with its id, before the first review starts, and every attempt name its job", async () => {
+    const root = tempDir("oq-bench-plan-");
+    write(join(root, "hand.json"), JSON.stringify(spec));
     const { jobs } = planJobs({ cases: ["hand", "other"], caseIds: { hand: CASE_ID, other: "planted/other@12345678" }, reviewers: ["claude"], graph: ["off", "on"], repeat: 2 });
-    expect(jobs).toHaveLength(8);
-    expect(new Set(jobs.map((j) => j.jobId)).size).toBe(8);
     expect(jobs[0]).toMatchObject({ jobId: `${CASE_ID}/claude-graph-off/1`, caseId: CASE_ID, case: "hand", config: "claude-graph-off", repeat: 1 });
+    const out = join(root, "run");
+    const seen = [];
+    await executeRun({ out, manifest: handManifest(jobs, 2), jobs, copies: [[join(root, "hand.json"), "cases/hand.json"]], runJob: async () => {
+      seen.push(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")));
+    } });
+    expect(seen).toHaveLength(8);
+    expect(seen[0]).toMatchObject({ version: 3, rulesVersion: RULES_VERSION, planned: 8, ended: null });
+    expect(seen[0].jobs).toEqual(jobs.map(({ jobId, caseId, config, repeat }) => ({ jobId, caseId, config, repeat })));
     const retry = sampleRecord({ job: jobs[0], attempt: 2, result: { code: 0, signal: null, wallMs: 1 }, report: null, who: null, startedAt: "t", failure: null, stopped: null });
     expect(retry).toMatchObject({ jobId: jobs[0].jobId, caseId: CASE_ID, firstAttempt: false });
   });
 
-  it("counts a planned job with no attempt as unstarted: it misses every bug of its case and adds no finding", () => {
-    const { score, outcomes } = scoreRun(loadRun(savedRun({ repeat: 2, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+  it("counts a planned job with no attempt as unstarted: it misses every bug of its case and adds no finding", async () => {
+    const { score, outcomes } = scoreRun(loadRun(await savedRun({ repeat: 2, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
     const c = score.byConfig[CONFIG];
     expect(c.population).toEqual({ planned: 2, complete: 1, incomplete: 0, failed: 0, unstarted: 1, retries: 0, retryCostUsd: 0 });
     expect(score.population).toMatchObject({ planned: 2, unstarted: 1, jobsFrom: "manifest" });
@@ -367,8 +390,8 @@ describe("a job that never started leaves the denominator", () => {
 });
 
 describe("a successful retry replaces a failed first attempt", () => {
-  it("scores the failed first attempt as a miss, and the retry only as a diagnostic with its cost", () => {
-    const { score, outcomes } = scoreRun(loadRun(savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: null }, { repeat: 1, attempt: 2, report: report([SQLI]) }] })));
+  it("scores the failed first attempt as a miss, and the retry only as a diagnostic with its cost", async () => {
+    const { score, outcomes } = scoreRun(loadRun(await savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: null }, { repeat: 1, attempt: 2, report: report([SQLI]) }] })));
     const c = score.byConfig[CONFIG];
     expect(c.population).toEqual({ planned: 1, complete: 0, incomplete: 0, failed: 1, unstarted: 0, retries: 1, retryCostUsd: 0.5 });
     expect(c.issueRecall.all).toEqual({ hit: 0, of: 5 });
@@ -413,5 +436,50 @@ describe("a planted-only precision with test requests set apart is pooled with r
     expect(pooled.precision.upper).toEqual({ hit: 3, of: 3 });
     expect(pooled.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
     expect(pooled.plantedLegacy.testGaps).toBe(1);
+  });
+});
+
+describe("a finding on a clean case that a listed side issue matches is counted correct, and the control passes", () => {
+  it("makes every finding on a clean case false, and fails the control on any shown finding", () => {
+    const clean = { id: "clean", guards: "g", language: "python", framework: "none", clean: true, bugs: [], extras: [{ file: "app/server.py", lines: [30, 32], mentions: ["connection"], why: "listed by mistake" }] };
+    const j = scoreJob({ job: { jobId: "planted/clean@abababab/c/1", caseId: "planted/clean@abababab", config: "c", repeat: 1 }, spec: clean, report: report([finding("app/server.py", 31, "bug", "connection leak")]), brief: null, origin: "planted" });
+    expect(j.findings.map((f) => f.outcome)).toEqual(["false"]);
+    const s = summarizeJobs([j]);
+    expect(s.precision.lower).toEqual({ hit: 0, of: 1 });
+    expect(s.precision.upper).toEqual({ hit: 0, of: 1 });
+    expect(s.controls).toEqual({ hit: 0, of: 1 });
+    expect(s.cleanFindingsPerCase).toEqual({ findings: 1, cases: 1 });
+  });
+});
+
+describe("a legacy run's published folder is written over through --out", () => {
+  // A folder named for a legacy run (benchmark/legacy/recipes.json), with a run and the stored score its own scorer wrote.
+  function legacyFolder(root, runId) {
+    const out = join(root, runId);
+    write(join(out, "manifest.json"), JSON.stringify({ version: 2, cases: ["hand"], configs: [CONFIG], repeat: 1 }));
+    write(join(out, "cases", "hand.json"), JSON.stringify(spec));
+    write(join(out, "samples", "hand", CONFIG, "1", "sample.json"), JSON.stringify({ case: "hand", config: CONFIG, repeat: 1, attempt: 1, status: "complete" }));
+    write(join(out, "samples", "hand", CONFIG, "1", "report", "report.json"), JSON.stringify(report([SQLI])));
+    write(join(out, "score.json"), "stored by its own scorer\n");
+    return out;
+  }
+  const scoreMjs = fileURLToPath(new URL("../score.mjs", import.meta.url));
+  const score = (...args) => spawnSync(process.execPath, [scoreMjs, ...args], { encoding: "utf8" });
+
+  it("refuses --out at the run's own folder, inside it, or at another legacy run's folder, and writes nothing there", () => {
+    const root = tempDir("oq-bench-legacy-");
+    const run = legacyFolder(root, "2026-10-09-5227579");
+    const other = legacyFolder(root, "2026-10-08-752b77f");
+    for (const dest of [run, join(run, "v3"), other, join(run, "..", "2026-10-08-752b77f")]) {
+      const r = score(run, "--out", dest);
+      expect(r.status, dest).toBe(2);
+      expect(r.stderr).toMatch(/legacy run/);
+    }
+    expect(score(run).status).toBe(2);
+    expect(readFileSync(join(run, "score.json"), "utf8")).toBe("stored by its own scorer\n");
+    expect(readFileSync(join(other, "score.json"), "utf8")).toBe("stored by its own scorer\n");
+    const elsewhere = join(root, "v3-scores");
+    expect(score(run, "--out", elsewhere).status).toBe(0);
+    expect(JSON.parse(readFileSync(join(elsewhere, "score.json"), "utf8")).version).toBe(3);
   });
 });

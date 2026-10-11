@@ -469,7 +469,9 @@ export function regressions(oldSamples, newSamples) {
 //     lowers precision for good, or as true, so noise raises it: nothing
 //     frozen rules on it, so it is unresolved, and precision is a pair of
 //     bounds (unresolved counted wrong, then right) until a person rules.
-//     A finding on a clean case is false, since the case is clean by spec.
+//     A finding on a clean case is false, since the case is clean by spec,
+//     even one a side issue listed on that spec matches, and the clean
+//     control fails on any shown finding.
 // 18. Two findings on one issue raise precision: precision counts every
 //     displayed finding, unique-issue precision counts each issue once, and
 //     redundancy is the share of displayed findings beyond one per issue.
@@ -523,10 +525,12 @@ export function findingId(caseId, f) {
   return sha256(JSON.stringify([caseId, normPath(f.file_path), start, end, normText(f.title), normText(f.problem), normText(f.consequence), normText(f.fix)]));
 }
 
-// Format 3's outcome from classify()'s: an unlisted finding is unresolved,
-// except on a clean case, where the spec makes every finding false.
+// Format 3's outcome from classify()'s: on a clean case every finding is
+// false, whatever it matches (an extras entry on a clean spec included);
+// elsewhere an unlisted finding is unresolved.
 export function outcomeOf(outcome, spec) {
-  return outcome === "false" && !spec.clean ? "unresolved" : outcome;
+  if (spec.clean) return "false";
+  return outcome === "false" ? "unresolved" : outcome;
 }
 
 const treatment = (outcome) => (PRECISION.correct.includes(outcome) ? "correct" : PRECISION.wrong.includes(outcome) ? "wrong" : PRECISION.apart.includes(outcome) ? "apart" : "unresolved");
@@ -579,6 +583,13 @@ export function plannedJobs(manifest, attempts) {
   return { from: "derived", jobs };
 }
 
+// Which attempt a sample folder holds, from its name: <repeat> is the first
+// attempt of that repeat, <repeat>-attempt<n> its n-th.
+export function attemptOf(folder) {
+  const m = /^(\d+)(?:-attempt(\d+))?$/.exec(folder);
+  return m ? { repeat: Number(m[1]), attempt: m[2] === undefined ? 1 : Number(m[2]) } : null;
+}
+
 // The population of a run: each planned job with its first attempt (null
 // when it never started). Retries, and first attempts of no planned job,
 // are kept apart; a saved attempt that names another job than its folder is
@@ -623,7 +634,8 @@ export function scoreJob({ job, spec, report = null, brief = null, row = {}, ori
     status: started ? base.status : "unstarted",
     bugs: base.bugs,
     findings,
-    controls: base.controls,
+    // A clean change passes only a review that completed with no shown finding at all.
+    controls: spec.clean ? { hit: base.status === "complete" && findings.length === 0 ? 1 : 0, of: 1 } : ratio(),
     issueRecall: { all: base.recall, criticalMajor: add(base.bySeverity.critical, base.bySeverity.major) },
     precision: counted(inPrecision.map((f) => treatment(f.outcome))),
     issues: counted([...issues.values()]),
@@ -700,6 +712,66 @@ export function summarizeJobs(jobs, retries = []) {
   };
 }
 
+// A run's saved attempts scored by format 3: the population from the
+// manifest, each planned job by its first attempt, the sums per
+// configuration, case and bug, and one outcome line per finding of every
+// first attempt. `attempts` are { case, config, repeat, attempt, row,
+// report, brief, sample } (sample: the attempt scored by format 2), and
+// `specs` the specs by case name.
+export function scoreAttempts({ manifest, attempts, specs }) {
+  const suite = manifest.suite ?? "planted";
+  const origin = originOf(suite);
+  if (origin === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
+  const pop = population(manifest, attempts);
+  if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
+  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null }));
+  const configs = [...new Set(jobs.map((j) => j.config))].sort();
+  const byConfig = {};
+  for (const config of configs) {
+    const all = summarize(attempts.filter((a) => a.config === config).map((a) => a.sample));
+    byConfig[config] = {
+      ...summarizeJobs(jobs.filter((j) => j.config === config), pop.retries.filter((a) => a.config === config).map((a) => a.sample)),
+      allAttempts: { label: ALL_ATTEMPTS_LABEL, samples: all.samples, recall: all.recall, precision: all.precision },
+    };
+  }
+  const perCase = {};
+  const perBug = {};
+  for (const j of jobs) {
+    perCase[j.config] ??= {};
+    const c = (perCase[j.config][j.caseId] ??= { issueRecall: ratio(), precision: { lower: ratio(), upper: ratio() }, findings: 0 });
+    c.issueRecall = add(c.issueRecall, j.issueRecall.all);
+    c.precision.lower = add(c.precision.lower, { hit: j.precision.correct, of: j.precision.of });
+    c.precision.upper = add(c.precision.upper, { hit: j.precision.correct + j.precision.unresolved, of: j.precision.of });
+    c.findings += j.findings.length;
+    perBug[j.config] ??= {};
+    const bugs = (perBug[j.config][j.caseId] ??= {});
+    for (const b of j.bugs) {
+      const x = (bugs[b.id] ??= { found: [], severity: b.severity, cause: null });
+      x.found[j.repeat - 1] = b.found;
+    }
+  }
+  const briefFailures = {};
+  for (const config of configs) {
+    const seen = new Map();
+    for (const j of jobs.filter((x) => x.config === config)) for (const f of j.failures) seen.set(`${j.case}: ${f}`, (seen.get(`${j.case}: ${f}`) ?? 0) + 1);
+    briefFailures[config] = [...seen].map(([what, n]) => ({ what, reviews: n }));
+  }
+  const outcomes = jobs.flatMap((j) =>
+    j.findings.map((f) => ({ jobId: j.jobId, caseId: j.caseId, config: j.config, repeat: j.repeat, index: f.index, findingId: f.findingId, issueId: null, outcome: f.outcome, truthId: f.bug ?? null, evidenceKind: f.evidenceKind, cause: null, confidence: f.confidence, severity: f.severity ?? null, severityAgreement: null, finder: null, wording: null })),
+  );
+  return {
+    suite,
+    jobs,
+    caseIds: [...new Set(jobs.map((j) => j.caseId))].sort(),
+    population: { ...summarizeJobs(jobs, pop.retries.map((a) => a.sample)).population, jobsFrom: pop.from, unplanned: pop.unplanned.map((a) => `${a.case}/${a.config}/${a.repeat}`) },
+    byConfig,
+    perCase,
+    perBug,
+    briefFailures,
+    outcomes,
+  };
+}
+
 // Why two scores' numbers cannot be compared as they stand: their rules
 // differ, by version or, under one version, by hash. Empty when the rules
 // are the same.
@@ -716,23 +788,74 @@ export function rulesDifferences(a, b) {
 }
 
 // The rules block every format 3 score carries. Its hash covers each
-// constant and list, and the source of every function that decides an
-// outcome, a match or a counted number, so any change to a rule changes it.
-// The source is read from this file on disk, not from Function.toString(),
+// constant and list, and the source of everything the scoring of a run
+// depends on: from the roots below (which attempt of each job counts, and
+// the scoring of a run's attempts), every top-level declaration they name,
+// transitively, in this file or in a module beside it that this file
+// imports from (the case id parser in cases.mjs). So a change to any rule,
+// any helper a rule calls or the attempt selection moves the hash. The
+// source is read from the files on disk, not from Function.toString(),
 // because a test runner rewrites imported names inside a loaded function,
-// and the tests and the command must hash the same text.
-const RULE_CODE = ["normPath", "findingText", "locations", "gap", "names", "classify", "shownFindings", "scoreSample", "normText", "findingId", "outcomeOf", "treatment", "issueKey", "lineMatches", "plannedJobs", "population", "scoreJob", "summarizeJobs"];
+// and the tests and the command must hash the same text. Formatting counts
+// too: a change of layout alone moves the hash and needs a version bump
+// (accepted as the price of hashing the text).
+const RULE_ROOTS = ["attemptOf", "scoreAttempts"];
+// The hashing and comparing itself, which no rule calls.
+const NOT_RULES = new Set(["RULES", "RULES_BLOCK", "RULE_ROOTS", "NOT_RULES", "ruleSources", "ruleCodeHash", "rulesHash", "rulesDifferences", "canonical", "topLevel", "readOwn"]);
 
-// The text of one top-level declaration of this file: a one-line const, or
-// a function from its first line to the brace that closes it at column 0.
-function declaration(source, name) {
+// One module's top-level declarations (a declaration ending its first line
+// with a semicolon is that line; any other runs to the next line that opens
+// with a closing brace, bracket or parenthesis at column 0), and the names
+// it imports from modules beside it.
+function topLevel(source) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const start = lines.findIndex((l) => l.startsWith(`function ${name}(`) || l.startsWith(`export function ${name}(`) || l.startsWith(`const ${name} = `) || l.startsWith(`export const ${name} = `));
-  if (start === -1) throw new Error(`lib/score.mjs: no top-level declaration of ${name}, whose source the rules hash covers`);
-  if (lines[start].startsWith("const ") || lines[start].startsWith("export const ")) return lines[start];
-  const end = lines.findIndex((l, i) => i > start && l === "}");
-  return lines.slice(start, end + 1).join("\n");
+  const decls = new Map();
+  for (const [i, line] of lines.entries()) {
+    const m = /^(?:export )?(?:async )?(?:function\*? ?|const |let )([A-Za-z_$][\w$]*)/.exec(line);
+    if (!m) continue;
+    let end = i;
+    if (!/;\s*$/.test(line)) {
+      end = lines.findIndex((l, j) => j > i && /^[}\])]/.test(l));
+      if (end === -1) end = lines.length - 1;
+    }
+    decls.set(m[1], lines.slice(i, end + 1).join("\n"));
+  }
+  const imports = new Map();
+  for (const m of source.matchAll(/^import \{([^}]*)\} from "\.\/([^"]+)";/gm)) {
+    for (const name of m[1].split(",").map((s) => s.trim().split(/\s+as\s+/).pop()).filter(Boolean)) imports.set(name, m[2]);
+  }
+  return { decls, imports };
 }
+
+const readOwn = (file) => readFileSync(fileURLToPath(new URL(`./${file}`, import.meta.url)), "utf8");
+
+// Every declaration the scoring depends on, as { id: "<file>#<name>", text },
+// sorted by id. `read(file)` gives the source of a module of this folder.
+export function ruleSources(read = readOwn) {
+  const modules = new Map();
+  const mod = (file) => {
+    if (!modules.has(file)) modules.set(file, topLevel(read(file)));
+    return modules.get(file);
+  };
+  const seen = new Map();
+  const visit = (file, name) => {
+    if (NOT_RULES.has(name)) return;
+    const m = mod(file);
+    const text = m.decls.get(name);
+    if (text === undefined) {
+      if (m.imports.has(name)) visit(m.imports.get(name), name);
+      return;
+    }
+    const id = `${file}#${name}`;
+    if (seen.has(id)) return;
+    seen.set(id, text);
+    for (const token of new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? [])) if (token !== name && (m.decls.has(token) || m.imports.has(token))) visit(file, token);
+  };
+  for (const root of RULE_ROOTS) visit("score.mjs", root);
+  return [...seen].map(([id, text]) => ({ id, text })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export const ruleCodeHash = (read = readOwn) => sha256(ruleSources(read).map(({ id, text }) => `${id}\n${text.replace(/\s+/g, " ").trim()}`).join("\n"));
 
 function canonical(v) {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -746,7 +869,6 @@ export function rulesHash(block) {
   return sha256(canonical(rest));
 }
 
-const SOURCE = readFileSync(fileURLToPath(import.meta.url), "utf8");
 const RULES_BLOCK = {
   version: RULES_VERSION,
   nearLines: NEAR_LINES,
@@ -758,6 +880,6 @@ const RULES_BLOCK = {
   precision: PRECISION,
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue; any other finding is its own issue, by findingId, until a person consolidates it.",
-  code: sha256(RULE_CODE.map((name) => declaration(SOURCE, name).replace(/\s+/g, " ").trim()).join("\n")),
+  code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });

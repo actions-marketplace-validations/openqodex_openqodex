@@ -41,14 +41,15 @@
 // 5. A table hides how many samples a number rests on: every ratio is
 //    printed as hits/checks, every time and cost with its count.
 // 6. A legacy run's published folder is written over, so it stops being
-//    the original its index entry names: a legacy run is scored only with
-//    --out, into another folder.
+//    the original its index entry names: the folder the files go to, the
+//    run's own or --out, is checked by its canonical path, and is refused
+//    when it is, or lies in, a folder named for any legacy run.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
-import { ALL_ATTEMPTS_LABEL, RULES, bugStability, caseSetHash, groupBy, originOf, population, ratio, regressions, runDifferences, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "./lib/score.mjs";
+import { RULES, attemptOf, bugStability, caseSetHash, groupBy, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
 const readJson = (path) => {
@@ -66,7 +67,6 @@ const readText = (path) => {
   }
 };
 const dirs = (path) => (existsSync(path) ? readdirSync(path, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : []);
-const add = (a, b) => ({ hit: a.hit + b.hit, of: a.of + b.of });
 
 // The cases a run planned, by name: the manifest's case list, and the cases
 // its `jobs` name.
@@ -101,19 +101,20 @@ export function loadRun(folder, { specsDir = null } = {}) {
     for (const config of dirs(join(folder, "samples", c))) {
       for (const n of dirs(join(folder, "samples", c, config))) {
         const dir = join(folder, "samples", c, config, n);
-        // The folder says which job and which attempt this is: <repeat>, or <repeat>-attempt<n> for a retry.
-        const [repeat, attempt] = n.split("-attempt").map(Number);
+        // The folder says which job and which attempt this is (lib/score.mjs attemptOf).
+        const which = attemptOf(n);
+        if (which === null) throw new Error(`${dir} is not an attempt folder (<repeat> or <repeat>-attempt<n>)`);
         let row = readJson(join(dir, "sample.json"));
         // An attempt the runner never finished recording is still a review that happened.
         if (!row) {
           unrecorded++;
-          row = { case: c, config, repeat, attempt: attempt || 1, unrecorded: true };
+          row = { case: c, config, repeat: which.repeat, attempt: which.attempt, unrecorded: true };
         }
         const report = readJson(join(dir, "report", "report.json"));
         const brief = readText(join(dir, "report", "brief.md"));
         const sample = scoreSample({ spec, report, brief, row });
         samples.push(sample);
-        attempts.push({ case: c, config, repeat, attempt: attempt || 1, row, report, brief, sample });
+        attempts.push({ case: c, config, ...which, row, report, brief, sample });
       }
     }
   }
@@ -182,91 +183,49 @@ export function summary(run) {
 // of outcomes.jsonl, `jobs` the scored jobs (for a comparison).
 export function scoreRun(run, { decisionsHash = null } = {}) {
   const m = run.manifest;
-  const suite = m.suite ?? "planted";
-  const origin = originOf(suite);
-  if (origin === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
-  const pop = population(m, run.attempts);
-  if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
-  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: run.specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null }));
-  const configs = [...new Set(jobs.map((j) => j.config))].sort();
-  const byConfig = {};
-  for (const config of configs) {
-    const all = summarize(run.samples.filter((s) => s.config === config));
-    byConfig[config] = {
-      ...summarizeJobs(jobs.filter((j) => j.config === config), pop.retries.filter((a) => a.config === config).map((a) => a.sample)),
-      allAttempts: { label: ALL_ATTEMPTS_LABEL, samples: all.samples, recall: all.recall, precision: all.precision },
-    };
-  }
-  const perCase = {};
-  const perBug = {};
-  for (const j of jobs) {
-    perCase[j.config] ??= {};
-    const c = (perCase[j.config][j.caseId] ??= { issueRecall: ratio(), precision: { lower: ratio(), upper: ratio() }, findings: 0 });
-    c.issueRecall = add(c.issueRecall, j.issueRecall.all);
-    c.precision.lower = add(c.precision.lower, { hit: j.precision.correct, of: j.precision.of });
-    c.precision.upper = add(c.precision.upper, { hit: j.precision.correct + j.precision.unresolved, of: j.precision.of });
-    c.findings += j.precision.of;
-    perBug[j.config] ??= {};
-    const bugs = (perBug[j.config][j.caseId] ??= {});
-    for (const b of j.bugs) {
-      const x = (bugs[b.id] ??= { found: [], severity: b.severity, cause: null });
-      x.found[j.repeat - 1] = b.found;
-    }
-  }
-  const briefFailures = {};
-  for (const config of configs) {
-    const seen = new Map();
-    for (const j of jobs.filter((x) => x.config === config)) for (const f of j.failures) seen.set(`${j.case}: ${f}`, (seen.get(`${j.case}: ${f}`) ?? 0) + 1);
-    briefFailures[config] = [...seen].map(([what, n]) => ({ what, reviews: n }));
-  }
-  const outcomes = jobs.flatMap((j) =>
-    j.findings.map((f) => ({
-      jobId: j.jobId,
-      caseId: j.caseId,
-      config: j.config,
-      repeat: j.repeat,
-      index: f.index,
-      findingId: f.findingId,
-      issueId: null,
-      outcome: f.outcome,
-      truthId: f.bug ?? null,
-      evidenceKind: f.evidenceKind,
-      cause: null,
-      confidence: f.confidence,
-      severity: f.severity ?? null,
-      severityAgreement: null,
-      finder: null,
-      wording: null,
-    })),
-  );
-  const caseIds = [...new Set(jobs.map((j) => j.caseId))].sort();
+  // The scoring itself, attempt selection included, is lib/score.mjs scoreAttempts, which the rules hash covers.
+  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs });
   const score = {
     version: 3,
     rules: RULES,
     run: run.name,
-    suite,
+    suite: s.suite,
     split: m.split ?? "dev",
     splitHash: m.splitHash ?? null,
     mode: m.mode ?? "review",
     path: m.path ?? "laptop",
     build: m.build ?? null,
     reviewers: m.reviewers ?? (m.reviewer ? { [m.reviewer.name]: m.reviewer } : null),
-    caseIds,
-    caseSetHash: caseIds.every((id) => parseCaseId(id) !== null) ? caseSetHash(caseIds) : null,
+    caseIds: s.caseIds,
+    caseSetHash: s.caseIds.every((id) => parseCaseId(id) !== null) ? caseSetHash(s.caseIds) : null,
     decisionsHash,
     external: m.external ?? null,
     repeat: m.repeat ?? null,
-    population: { ...summarizeJobs(jobs, pop.retries.map((a) => a.sample)).population, jobsFrom: pop.from, unplanned: pop.unplanned.map((a) => `${a.case}/${a.config}/${a.repeat}`), unrecorded: run.unrecorded },
+    population: { ...s.population, unrecorded: run.unrecorded },
     ended: m.ended ?? null,
     resumes: run.resumes,
     specsFrom: run.specsFrom ?? "the run's own cases/",
     specsDiffer: run.specsDiffer,
-    byConfig,
-    perCase,
-    perBug,
-    briefFailures,
+    byConfig: s.byConfig,
+    perCase: s.perCase,
+    perBug: s.perBug,
+    briefFailures: s.briefFailures,
   };
-  return { score, outcomes, jobs };
+  return { score, outcomes: s.outcomes, jobs: s.jobs };
+}
+
+// The legacy run whose folder `path` is or lies in, wherever it is, by the
+// canonical path (symbolic links and `..` resolved): a folder named for a
+// run in benchmark/legacy/recipes.json. Null when there is none.
+export function legacyFolderOf(path, recipes) {
+  let head = resolve(path);
+  const rest = [];
+  while (!existsSync(head) && dirname(head) !== head) {
+    rest.unshift(basename(head));
+    head = dirname(head);
+  }
+  const canonical = join(realpathSync(head), ...rest);
+  return canonical.split(sep).find((part) => recipes.runs[part] !== undefined) ?? null;
 }
 
 const bounds = (b) => (b.lower.of === 0 ? "n/a" : `${pct(b.lower)} to ${pct(b.upper)}`);
@@ -403,10 +362,14 @@ function main() {
   let older = null;
   let scored;
   let olderScored = null;
+  let dest;
   try {
     run = loadRun(resolve(pos[0]), { specsDir: specsDir === null ? null : resolve(specsDir) });
-    if (outDir === null && readRecipes().runs[basename(run.folder)]) {
-      throw new Error(`${run.name} is a legacy run: its folder is the published original and holds the score its own scorer wrote. Write its format 3 score elsewhere with --out <folder>.`);
+    // Where the files go, checked by its canonical path: never a legacy run's folder or a folder in one, this run's or another's.
+    dest = outDir === null ? run.folder : resolve(outDir);
+    const legacy = legacyFolderOf(dest, readRecipes());
+    if (legacy !== null) {
+      throw new Error(`${dest} is, or lies in, the folder of the legacy run ${legacy}, which is the published original and holds the scores its own scorers wrote. Write the format 3 score into another folder with --out <folder>.`);
     }
     if (against) older = loadRun(resolve(against));
     const hash = decisionsHash();
@@ -422,7 +385,6 @@ function main() {
   // Scored against other specs, the score gets its own files, so the score
   // against the run's own specs is never overwritten.
   const suffix = specsDir === null ? "" : `-${basename(resolve(specsDir))}`;
-  const dest = outDir === null ? run.folder : resolve(outDir);
   mkdirSync(dest, { recursive: true });
   writeFileSync(join(dest, `score${suffix}.json`), `${JSON.stringify(doc, null, 2)}\n`);
   writeFileSync(join(dest, `outcomes${suffix}.jsonl`), outcomes.map((o) => `${JSON.stringify(o)}\n`).join(""));
