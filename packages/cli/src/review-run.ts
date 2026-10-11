@@ -21,7 +21,7 @@ import { join, relative, resolve } from "node:path";
 import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
 import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
 import { DEPTH_ENV, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
-import type { ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
+import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
 import { createToolResolver } from "@openqodex/scanners";
 import { announceRepoFiles } from "./agents/repo-folder.js";
 import { checkoutOwner, laptopSnapshots } from "./checkout.js";
@@ -210,6 +210,21 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string }): void => {
     if (o.reportDir !== undefined) write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
   };
+  // rounds.json: every correction round sent to the reviewer, already
+  // redacted by the core, written when the reviewer starts and again as
+  // each round goes, so a run stopped part way still holds the rounds sent.
+  // A record of the review, not the review: a write that fails is named
+  // once on stderr and the review goes on.
+  const rounds: CorrectionRound[] = [];
+  let roundsFailed = false;
+  const writeRounds = (): void => {
+    try {
+      write({ "rounds.json": `${JSON.stringify(rounds, null, 2)}\n` });
+    } catch (error) {
+      if (!roundsFailed) warn(`openqodex: could not write rounds.json, so this run's correction rounds are not saved: ${redact((error as Error).message.split("\n")[0] ?? "")}`);
+      roundsFailed = true;
+    }
+  };
   // Ctrl-C or a kill: the core's stop ends the reviewer's process group and
   // removes the snapshot, synchronously, since the process exits right after.
   let onSignal: ((signal: NodeJS.Signals) => void) | null = null;
@@ -338,7 +353,13 @@ export async function runReview(o: ReviewOptions): Promise<number> {
               "brief.md": e.brief,
               "impact.json": `${JSON.stringify(e.impact, null, 2)}\n`,
             });
-          } else if (e.type === "started") noteReviewer({ started: true, driver: e.driver, version: e.version });
+          } else if (e.type === "started") {
+            noteReviewer({ started: true, driver: e.driver, version: e.version });
+            writeRounds();
+          } else if (e.type === "round") {
+            rounds.push(e.round);
+            writeRounds();
+          }
         },
         onStop: (stop) => {
           onSignal = (signal) => {

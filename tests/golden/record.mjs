@@ -22,7 +22,7 @@ export const bin = join(root, "packages/cli/dist/bin.js");
 export const drivers = ["claude", "codex"];
 // The scanners that read live data, left out of the recording (see the top).
 export const SKIPPED = "semgrep,osv-scanner";
-const required = ["manifest.json", "scan.json", "brief.md", "impact.json", "report.md", "report.json", "report.sarif", "submission.json", "trace.json", "report.html"];
+const required = ["manifest.json", "scan.json", "brief.md", "impact.json", "report.md", "report.json", "report.sarif", "submission.json", "trace.json", "rounds.json", "report.html"];
 
 function command(program, args, cwd, env) {
   return new Promise((done, reject) => {

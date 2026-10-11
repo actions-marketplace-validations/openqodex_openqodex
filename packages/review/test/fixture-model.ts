@@ -30,8 +30,9 @@ export type FixtureOptions = {
   findings?: Finding[];
   // The first answer, in place of the recorded one: forces a correction round.
   firstAnswer?: string;
-  // Answers by their number (1 for the first), in place of the recorded one.
-  answers?: Record<number, string>;
+  // Answers by their number (1 for the first), in place of the recorded one;
+  // a function is given the brief.
+  answers?: Record<number, string | ((brief: string) => string)>;
   // The call number (1 for the first) whose transport throws.
   throwOn?: number;
   // The model's name, in place of "fixture-model" (a second reviewer).
@@ -94,7 +95,8 @@ export function fixtureModel(opts: FixtureOptions = {}): Fixture {
         return reply("", [{ id: `read-${calls}`, name: "read_file", args: r.next === 1 ? { path: r.path } : { path: r.path, start: r.next } }], request);
       }
       answered++;
-      const text = opts.answers?.[answered] ?? (answered === 1 && opts.firstAnswer !== undefined ? opts.firstAnswer : recorded(brief, opts.findings, opts.raise));
+      const given = opts.answers?.[answered];
+      const text = (typeof given === "function" ? given(brief) : given) ?? (answered === 1 && opts.firstAnswer !== undefined ? opts.firstAnswer : recorded(brief, opts.findings, opts.raise));
       return reply(text, [], request);
     },
   };
