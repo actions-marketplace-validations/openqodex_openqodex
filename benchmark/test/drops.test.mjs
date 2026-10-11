@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { DETECTED_FRAMEWORKS, classifyDrop, classifyReportDrops, drawAudit } from "../lib/drops.mjs";
+import { DETECTED_FRAMEWORKS, NEVER_TAGGED, classifyDrop, classifyReportDrops, drawAudit } from "../lib/drops.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -115,40 +115,20 @@ describe("structure before words", () => {
   });
 
   it("a framework the scan cannot detect is called missing from the project", () => {
-    // detect.ts reads no SQLAlchemy, and read no Flask before semgrep's
-    // framework gate: without the scan's word that it could, neither is
-    // known to be absent.
+    // detect.ts reads no SQLAlchemy, and Flask is never tagged (NEVER_TAGGED), so the scan cannot say they are absent.
     const d = drop(candidate("c7", "semgrep:python.flask.security.xss.audit.template-unescaped", "app/views.py", 9), "Flask escapes this value in its Jinja templates; SQLAlchemy is not involved.");
     expect(classifyDrop(d, { raised: [], frameworks: [] })).toMatchObject({ class: "rule-fp", tags: [] });
-  });
-
-  it("a Flask rule on a Django project is tagged only where the scan knows Flask absent", () => {
-    const flaskRule = candidate("c2", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "orders/views.py", 8);
-    const report = { findings: [], dropped: [{ candidate: "c2", reason: "This is a Django view; the Flask rule does not apply.", cited: null }] };
-    const scanOf = (projects) => ({ candidates: [flaskRule], scanners: [], projects });
-    // Every source of the project settled, and none names Flask.
-    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"], absent: ["airflow", "fastapi", "flask"] }]))[0]).toMatchObject({ class: "rule-fp", tags: ["framework-mismatch"] });
-    // A source could not be settled, or names Flask: Flask is unknown, not absent.
-    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"], absent: ["airflow", "fastapi"] }]))[0]).toMatchObject({ class: "rule-fp", tags: [] });
-    // One of two projects of the change may use Flask.
-    expect(classifyReportDrops(report, scanOf([{ root: "a", frameworks: ["django"], absent: ["flask"] }, { root: "b", frameworks: [], absent: [] }]))[0]).toMatchObject({ tags: [] });
-    // An older build recorded no absent list and could not detect Flask at all.
-    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"] }]))[0]).toMatchObject({ class: "rule-fp", tags: [] });
-  });
-
-  it("a Django rule on a project whose sources do not settle Django is not tagged, though Django was not found", () => {
-    const djangoRule = candidate("c4", "semgrep:python.django.security.injection.tainted-sql-string", "app/search.py", 14);
-    const report = { findings: [], dropped: [{ candidate: "c4", reason: "The app uses Flask, not Django.", cited: null }] };
-    const unsettled = { candidates: [djangoRule], scanners: [], projects: [{ root: "", frameworks: ["flask"], absent: [] }] };
-    expect(classifyReportDrops(report, unsettled)[0]).toMatchObject({ tags: [] });
-    const settled = { ...unsettled, projects: [{ root: "", frameworks: ["flask"], absent: ["airflow", "django", "fastapi"] }] };
-    expect(classifyReportDrops(report, settled)[0]).toMatchObject({ tags: ["framework-mismatch"] });
   });
 
   it("a framework the scan detects is missing from the classifier's names, so its mismatches go untagged", () => {
     const detect = readFileSync(join(repo, "packages", "scanners", "src", "detect.ts"), "utf8");
     const declared = /export type Framework = ([^;]+);/.exec(detect)[1].match(/"([a-z-]+)"/g).map((s) => s.slice(1, -1)).sort();
-    expect([...DETECTED_FRAMEWORKS].sort()).toEqual(declared);
+    expect([...DETECTED_FRAMEWORKS, ...NEVER_TAGGED].sort()).toEqual(declared);
+  });
+
+  it("a Flask rule is never tagged as a mismatch, since a scan saved before Flask was detected records a Flask project with no framework", () => {
+    const d = drop(candidate("c2", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "orders/views.py", 8), "This is a Django view; the Flask rule does not apply.");
+    expect(classifyDrop(d, { raised: [], frameworks: ["django"] })).toMatchObject({ class: "rule-fp", tags: [] });
   });
 
   it("a framework rule dropped as a repeat loses its framework-mismatch tag", () => {

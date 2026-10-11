@@ -140,14 +140,9 @@ export type ScanResult = {
   fixturesDropped: number;
   secretFingerprints: SecretFingerprint[];
   // The projects the changed files belong to (the nearest folder holding a
-  // manifest, "" for the repo root), the frameworks read from their
-  // dependency lists, and `absent`, the frameworks each is known not to use:
-  // every dependency and settings file of the project and the folders above
-  // it reads and parses, and none of them nor a changed file of the project
-  // names the framework. A framework in neither list is unknown. Missing in
-  // a scan an older version saved, and `absent` is missing in one saved
-  // before Flask was detected.
-  projects?: { root: string; frameworks: string[]; absent?: string[] }[];
+  // manifest, "" for the repo root) and the frameworks read from their
+  // dependency lists. Absent in a scan an older version saved.
+  projects?: { root: string; frameworks: string[] }[];
   // What the selector chose for every built-in scanner, then for every
   // custom one, whether or not --only or --skip left it out of this run.
   // Absent in a scan an older version saved, as are `trail` and

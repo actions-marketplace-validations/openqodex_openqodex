@@ -53,13 +53,9 @@
 //    classed a duplicate: the candidate's own rule is read first.
 // 5. A framework the project does use is called a mismatch: the tag needs
 //    a framework the scan can detect and found in no project. A framework
-//    the scan cannot detect (SQLAlchemy), and an older scan that recorded no
-//    projects, give no tag rather than a guess.
-// 5a. A framework the detector cannot rule out is called a mismatch: a
-//    scan that records `absent` per project (the frameworks known unused,
-//    every source of the project read and parsed and none naming them) tags
-//    only a framework every project lists there. An older scan has no
-//    `absent` and could not detect Flask, so there Flask never counts.
+//    the scan cannot detect (SQLAlchemy), Flask (detected only by newer
+//    scans, and never tagged: NEVER_TAGGED), and an older scan that
+//    recorded no projects, give no tag rather than a guess.
 // 6. A framework rule dropped as a repeat hides that it fired on the wrong
 //    framework: the tag is read from the reason whatever the class.
 // 7. A drop that cites its own line is called a repeat because a raised
@@ -84,9 +80,7 @@
 import { isFixturePath } from "../../packages/scanners/dist/index.js";
 import { normPath } from "./score.mjs";
 
-// 2: Flask joined the frameworks a tag can name, and a scan's `absent`
-// decides the tag (5a).
-export const DROPS_VERSION = 2;
+export const DROPS_VERSION = 1;
 export const DROP_CLASSES = Object.freeze(["config-owned", "fixture", "test", "duplicate", "out-of-change", "low-value", "rule-fp"]);
 // What each class points at, printed beside its count.
 export const POINTS_AT = Object.freeze({
@@ -129,11 +123,11 @@ const LOW_VALUE_WORDS = /\bstyle\b|\bnitpicks?\b|\bpreferences?\b|\bsize\b|\benl
 // The frameworks the scan can detect (the Framework type in
 // packages/scanners/src/detect.ts), each with how a reason writes it. Only
 // these can be missing from scan.projects: a framework the scan cannot
-// detect, such as Flask, is never known to be absent. Names that are also
-// everyday words are matched only as capitalised names.
+// detect, such as SQLAlchemy, is never known to be absent. Names that are
+// also everyday words are matched only as capitalised names. Flask is
+// detected but never tagged (NEVER_TAGGED).
 const FRAMEWORKS = [
   ["django", /\bdjango\b/i],
-  ["flask", /\bflask\b/i],
   ["fastapi", /\bfastapi\b/i],
   ["airflow", /\bairflow\b/i],
   ["nextjs", /\bnext\.?js\b/i],
@@ -142,9 +136,11 @@ const FRAMEWORKS = [
   ["rails", /\bRails\b/],
 ];
 export const DETECTED_FRAMEWORKS = Object.freeze(FRAMEWORKS.map(([slug]) => slug));
-// The frameworks a build that records no `absent` could detect: Flask came
-// with `absent` (5a).
-const DETECTED_BEFORE_ABSENT = Object.freeze(DETECTED_FRAMEWORKS.filter((slug) => slug !== "flask"));
+// Frameworks the scan detects that a tag never names: scans saved before
+// Flask was detected record a Flask project with no framework, and nothing in
+// a scan tells those apart from newer ones, so Flask's absence from
+// scan.projects says nothing.
+export const NEVER_TAGGED = Object.freeze(["flask"]);
 
 // Paths a reason quotes: any token with a slash, and a bare file name that
 // starts in lower case with a known extension (a capitalised name such as
@@ -166,15 +162,6 @@ export function projectFrameworks(scan) {
   return [...new Set(scan.projects.flatMap((p) => p.frameworks ?? []))].sort();
 }
 
-// The frameworks every project of the change is known not to use (5a), or
-// null when the scan records no `absent` (an older scan.json, read by the
-// detectable-and-not-found rule instead).
-export function absentFrameworks(scan) {
-  const projects = scan?.projects;
-  if (!Array.isArray(projects) || projects.length === 0 || !projects.every((p) => Array.isArray(p?.absent))) return null;
-  return DETECTED_FRAMEWORKS.filter((slug) => projects.every((p) => p.absent.includes(slug)));
-}
-
 // The lines of every candidate the reviewer raised: a finding that names
 // its candidate, on or off the change, at the candidate's own place (the
 // finding's when the scan is missing).
@@ -194,17 +181,14 @@ export function raisedSpans(report, scan) {
 
 // One drop's class: { class, tags, matched: { rule, text } }. `matched`
 // names the rule that decided and the text it matched, so a person can see
-// why. Context: the raised candidates' spans, and either the frameworks
-// known absent from every project (`absent`, 5a) or, for an older scan, the
-// frameworks it found (`frameworks`).
-export function classifyDrop(drop, { raised = [], frameworks = null, absent = null } = {}) {
+// why. Context: the raised candidates' spans and the scan's frameworks.
+export function classifyDrop(drop, { raised = [], frameworks = null } = {}) {
   const out = classOf(drop, raised);
   // The tag is the reason's, whatever the class: a framework rule dropped as
   // a repeat still fired on a framework the change does not use.
   const present = new Set(frameworks ?? []);
-  const missing = (slug) => (absent !== null ? absent.includes(slug) : frameworks !== null && DETECTED_BEFORE_ABSENT.includes(slug) && !present.has(slug));
   const words = withoutPaths(drop?.reason);
-  if (FRAMEWORKS.some(([slug, re]) => missing(slug) && re.test(words))) out.tags.push("framework-mismatch");
+  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => !present.has(slug) && re.test(words))) out.tags.push("framework-mismatch");
   return out;
 }
 
@@ -255,7 +239,7 @@ function classOf(drop, raised) {
 // Every drop of one saved review, in its order, with its class. `report` is
 // report.json, `scan` is scan.json (null when the sample has none).
 export function classifyReportDrops(report, scan) {
-  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan), absent: absentFrameworks(scan) };
+  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan) };
   return (report?.dropped ?? []).map((d) => ({ candidate: d.candidate, reason: d.reason, cited: d.cited ?? null, ...classifyDrop(d, context) }));
 }
 

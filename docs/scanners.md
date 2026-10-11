@@ -27,14 +27,7 @@ What a project's dependencies switch on:
 | Django, FastAPI, Airflow | `django`, `fastapi` or `apache-airflow` in `pyproject.toml` (its dependency lists), a `requirements*.txt` or a `Pipfile` | ruff adds its `DJ`, `FAST` or `AIR` rules |
 | Rails | `rails` or `railties` in the folder's `Gemfile` or `Gemfile.lock`, and `config/application.rb` or `bin/rails` in that folder | brakeman runs, in that folder; rubocop loads its Rails cops |
 
-`init` prints one line per scanner it downloads, saying why, such as `brakeman: Rails app in backend/` or `oxlint: JavaScript or TypeScript files, such as web/app/page.tsx; React, accessibility and Next.js rules in web/`. `init --dry-run` prints the same lines and downloads nothing. `doctor` prints them under "This repository needs", and the Action prints them in its plan step.
-
-A scan records the projects of the changed files in `scan.json`, under `projects`: each one's folder (`root`), its `frameworks` (those in the table, and Flask, from `flask` in the same Python files as Django; Flask switches nothing on), and `absent`, the frameworks it is known not to use. A framework in neither list is unknown. A framework is known absent only when:
-
-- no source names it, in any case, anywhere in its text (any dependency group, marker, URL, import, string or setting). The sources are the changed files of the project and, in the project's folder and every folder above it up to the repository root, the manifests above plus `requirements*` and `constraints*` (`.txt`, `.in`), `Pipfile.lock`, `poetry.lock`, `uv.lock`, `pdm.lock`, `environment.yml` or `.yaml`, `setup.cfg`, `tox.ini`, `pytest.ini`, `manage.py` and `setup.py`. A changed file that is not text, or that the change deleted, names nothing; one over 1 MB or behind a link names every framework.
-- at least one source of its ecosystem stands there (Python, JavaScript or Ruby), and every one reads: it is a regular file of at most 1 MB (16 KB for a YAML file) in UTF-8; a TOML, JSON, YAML or INI file parses (an INI file that uses `:` counts as not parsing); a requirements file lists every package by name, with no `-r`, `-c` or `-e` line and no URL or path; a `Gemfile` pulls in no `gemspec` or other Gemfile. A `setup.py` never settles anything, since only running it tells its dependencies, and a folder that cannot be listed settles nothing.
-
-A dependency that only another package pulls in, with no lockfile beside it, is not seen.
+`init` prints one line per scanner it downloads, saying why, such as `brakeman: Rails app in backend/` or `oxlint: JavaScript or TypeScript files, such as web/app/page.tsx; React, accessibility and Next.js rules in web/`. `init --dry-run` prints the same lines and downloads nothing. `doctor` prints them under "This repository needs", and the Action prints them in its plan step. A scan records the projects of the changed files and their frameworks in `scan.json`: those in the table, and Flask, from `flask` in the same Python files as Django, which switches nothing on. A framework missing from a project's list is not known to be unused: the list holds only what the files above name.
 
 ## Where scanners come from
 

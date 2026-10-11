@@ -670,13 +670,6 @@
       "root": "",
       "frameworks": [
         "flask"
-      ],
-      "absent": [
-        "airflow",
-        "django",
-        "fastapi",
-        "nextjs",
-        "react"
       ]
     }
   ],

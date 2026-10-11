@@ -1,9 +1,8 @@
 // What the repo's own files say about a file of the change: the project it
 // belongs to (the nearest folder, up to the repo root, that holds a
 // manifest) and that project's frameworks, read from its dependency lists;
-// for a file whose name says nothing, what its first bytes say (a shell
-// shebang, a Kubernetes object, a CloudFormation template); and which
-// frameworks a project is known not to use (knownAbsent).
+// and, for a file whose name says nothing, what its first bytes say (a shell
+// shebang, a Kubernetes object, a CloudFormation template).
 //
 // Offline and bounded. Nothing in the repo is run, loaded or evaluated: a
 // Gemfile or a pyproject.toml is read as text, never as Ruby or TOML code.
@@ -11,23 +10,17 @@
 // file's name or in any folder on the way, even one inside the repo), under
 // a size cap, and past a count cap a file counts as unknown. Unknown never
 // switches a check off; it only keeps a framework's own scanner (brakeman)
-// and its rule switches from running, and keeps a framework out of the
-// known-absent list.
+// and its rule switches from running.
 //
 // Linear time. These files come from the change, so a hostile one must not
 // hang the review: every reader below walks a line once, with string
 // methods or a single anchored character class, never a pattern whose
 // repetitions overlap (two blank runs side by side, a lazy run before a
-// blank run) and backtrack on a long line. The absence check also hands a
-// source to a TOML, JSON or YAML parser, and counts a parse that throws as
-// a source that cannot rule anything out.
+// blank run) and backtrack on a long line.
 
 import fs from "node:fs";
 import path from "node:path";
-import { parse as parseToml } from "smol-toml";
-import { parse as parseYaml } from "yaml";
 import { noLinkOnTheWay, readRepoPrefixSync } from "./adapters/read.js";
-import { readsAsIni } from "./shared-settings.js";
 
 export type Framework = "rails" | "react" | "react-native" | "nextjs" | "django" | "flask" | "fastapi" | "airflow";
 
@@ -50,9 +43,6 @@ export type RepoFacts = {
   // The nearest project holding this repo-relative path, or null.
   project(rel: string): Project | null;
   content(rel: string): ContentKind | null;
-  // The frameworks a project is known not to use, sorted, with `files` (the
-  // project's changed files) read too (knownAbsent below).
-  knownAbsent(project: Project, files: string[]): Framework[];
 };
 
 // The names that make a folder a project root.
@@ -71,79 +61,14 @@ const MANIFESTS = new Set([
 ]);
 const isManifest = (name: string): boolean => MANIFESTS.has(name) || (name.startsWith("requirements") && name.endsWith(".txt"));
 
-// The files that can name a project's dependencies or settings, each with
-// its ecosystem and how it must read before it can rule a framework out:
-// parsed as TOML, JSON, YAML or INI; read line by line as a requirements
-// file (`.txt`, or pip-tools' `.in`); a Gemfile that pulls in no gemspec or
-// other Gemfile; or any text. A setup.py rules nothing out: only running it
-// tells its dependencies.
-type Ecosystem = "python" | "js" | "ruby" | "other";
-// "changed": a changed file of the project, read for the words only; one that
-// is not text (not UTF-8) names nothing.
-type SourceKind = "toml" | "json" | "yaml" | "ini" | "requirements" | "gemfile" | "text" | "code" | "changed";
-const SOURCES: Record<string, [Ecosystem, SourceKind]> = {
-  "package.json": ["js", "json"],
-  Gemfile: ["ruby", "gemfile"],
-  "Gemfile.lock": ["ruby", "text"],
-  "pyproject.toml": ["python", "toml"],
-  Pipfile: ["python", "toml"],
-  "Pipfile.lock": ["python", "json"],
-  "poetry.lock": ["python", "toml"],
-  "uv.lock": ["python", "toml"],
-  "pdm.lock": ["python", "toml"],
-  "environment.yml": ["python", "yaml"],
-  "environment.yaml": ["python", "yaml"],
-  "setup.cfg": ["python", "ini"],
-  "tox.ini": ["python", "ini"],
-  "pytest.ini": ["python", "ini"],
-  "manage.py": ["python", "text"],
-  "setup.py": ["python", "code"],
-  "go.mod": ["other", "text"],
-  "Cargo.toml": ["other", "toml"],
-  "pom.xml": ["other", "text"],
-  "build.gradle": ["other", "text"],
-  "build.gradle.kts": ["other", "text"],
-  "composer.json": ["other", "json"],
-};
-function sourceOf(name: string): [Ecosystem, SourceKind] | null {
-  if (Object.hasOwn(SOURCES, name)) return SOURCES[name]!;
-  const list = name.startsWith("requirements") || name.startsWith("constraints");
-  return list && (name.endsWith(".txt") || name.endsWith(".in")) ? ["python", "requirements"] : null;
-}
-
-// Each framework's ecosystem and the words that, named anywhere in a source
-// in any case, keep it from being known absent. A word that also names
-// other packages ("next", "rails") only keeps more frameworks unknown.
-const ABSENCE: Record<Framework, { ecosystem: Ecosystem; words: string[] }> = {
-  rails: { ecosystem: "ruby", words: ["rails"] },
-  react: { ecosystem: "js", words: ["react"] },
-  "react-native": { ecosystem: "js", words: ["react-native", "expo"] },
-  nextjs: { ecosystem: "js", words: ["next"] },
-  django: { ecosystem: "python", words: ["django", "rest_framework"] },
-  flask: { ecosystem: "python", words: ["flask"] },
-  fastapi: { ecosystem: "python", words: ["fastapi"] },
-  airflow: { ecosystem: "python", words: ["airflow"] },
-};
-const FRAMEWORKS = Object.keys(ABSENCE) as Framework[];
-
-// What reading one file settled (repoFacts, reading).
-type Reading = { names: Set<Framework>; settles: boolean };
-const UNKNOWN: Reading = { names: new Set(FRAMEWORKS), settles: false };
-
-// Limits: folders looked at for a manifest or a source, the size of a
-// manifest or a source read (a larger one is not read at all), files read
-// for their first bytes, sources read for a framework's absence, and how
-// many bytes.
+// Limits: folders looked at for a manifest, the size of a manifest read (a
+// larger one is not read at all), files read for their first bytes, and
+// how many bytes.
 const MAX_FOLDERS = 20_000;
 export const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_CONTENT_READS = 5_000;
-const MAX_SOURCE_READS = 5_000;
 const SHEBANG_BYTES = 256;
 const YAML_BYTES = 64 * 1024;
-// The YAML parser takes about a second on a hostile megabyte and a fifth of
-// one on 64 KB, so a conda environment file, a few hundred bytes as written,
-// is parsed only up to 16 KB; a larger one is not read, and settles nothing.
-const ENVIRONMENT_BYTES = 16 * 1024;
 
 // Python names compare in their normalized form (PEP 503).
 const pyName = (name: string): string => name.toLowerCase().replace(/[-_.]+/g, "-");
@@ -160,82 +85,9 @@ export function repoFacts(repoDir: string): RepoFacts {
   const projects = new Map<string, Project>();
   const contents = new Map<string, ContentKind | null>();
   let contentReads = 0;
-  // folder -> the sources in it (null: it cannot be listed), and file ->
-  // what reading it settled.
-  type Source = { file: string; ecosystem: Ecosystem; kind: SourceKind; link: boolean };
-  const sourceFolders = new Map<string, Source[] | null>();
-  const readings = new Map<string, Reading>();
-  let sourceReads = 0;
 
   const read = (rel: string, max: number, whole: boolean): string | null =>
     readRepoPrefixSync(realRepo, repoDir, rel, max, whole)?.toString("utf8") ?? null;
-
-  // Whether anything, a link included, stands at this repo-relative path.
-  const exists = (rel: string): boolean => {
-    try {
-      fs.lstatSync(path.join(repoDir, rel));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // A folder inside the repo reached through no link: its absolute path, or
-  // null.
-  function plainFolder(folder: string): string | null {
-    const abs = path.join(repoDir, folder);
-    // A folder that is a link, or is reached through one, is not looked in.
-    const linked = folder !== "" && (!noLinkOnTheWay(repoDir, `${folder}/x`) || fs.lstatSync(abs).isSymbolicLink());
-    const real = fs.realpathSync(abs);
-    return !linked && (real === realRepo || real.startsWith(realRepo + path.sep)) ? abs : null;
-  }
-
-  // The sources in one folder, each with whether it is a link; null when the
-  // folder cannot be listed, is reached through a link, or is past the cap.
-  function sourcesIn(folder: string): Source[] | null {
-    if (sourceFolders.has(folder)) return sourceFolders.get(folder)!;
-    let found: Source[] | null = null;
-    if (sourceFolders.size < MAX_FOLDERS) {
-      try {
-        const abs = plainFolder(folder);
-        if (abs !== null) {
-          found = [];
-          for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
-            const source = sourceOf(e.name);
-            if (source !== null && !e.isDirectory()) found.push({ file: folder === "" ? e.name : `${folder}/${e.name}`, ecosystem: source[0], kind: source[1], link: !e.isFile() });
-          }
-          found.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
-        }
-      } catch {
-        found = null;
-      }
-    }
-    sourceFolders.set(folder, found);
-    return found;
-  }
-
-  // What one file settles: the frameworks it names (any word, in any case,
-  // anywhere in its text), and whether it reads as its kind says
-  // (requirementsSettle, gemfileSettles, a parser that does not throw).
-  // Unreadable, over the size cap, not UTF-8 or past the read cap: it names
-  // every framework and settles nothing.
-  function reading(file: string, kind: SourceKind): Reading {
-    const key = `${kind}\n${file}`;
-    const known = readings.get(key);
-    if (known !== undefined) return known;
-    let out: Reading = UNKNOWN;
-    if (sourceReads < MAX_SOURCE_READS) {
-      sourceReads += 1;
-      const text = read(file, kind === "yaml" ? ENVIRONMENT_BYTES : MAX_MANIFEST_BYTES, true);
-      if (text !== null && kind === "changed" && text.includes("�")) out = { names: new Set(), settles: true };
-      else if (text !== null && !text.includes("�")) {
-        const lower = text.toLowerCase();
-        out = { names: new Set(FRAMEWORKS.filter((f) => ABSENCE[f].words.some((w) => lower.includes(w)))), settles: readsAs(kind, text) };
-      }
-    }
-    readings.set(key, out);
-    return out;
-  }
 
   // The manifests in one folder: regular files only, so a link is never one.
   function manifestsIn(folder: string): string[] | null {
@@ -243,8 +95,11 @@ export function repoFacts(repoDir: string): RepoFacts {
     if (folders.size >= MAX_FOLDERS) return null;
     let found: string[] | null = null;
     try {
-      const abs = plainFolder(folder);
-      if (abs !== null) {
+      const abs = path.join(repoDir, folder);
+      // A folder that is a link, or is reached through one, is not looked in.
+      const linked = folder !== "" && (!noLinkOnTheWay(repoDir, `${folder}/x`) || fs.lstatSync(abs).isSymbolicLink());
+      const real = fs.realpathSync(abs);
+      if (!linked && (real === realRepo || real.startsWith(realRepo + path.sep))) {
         const names = fs
           .readdirSync(abs, { withFileTypes: true })
           .filter((e) => e.isFile() && isManifest(e.name))
@@ -336,89 +191,7 @@ export function repoFacts(repoDir: string): RepoFacts {
       contents.set(rel, kind);
       return kind;
     },
-    // A framework the project does not list is known absent only when every
-    // source settles it. The sources are the dependency and settings files
-    // in the project's folder and in each folder above it, up to the repo
-    // root, and `files`. No source names the framework's words, in any case,
-    // anywhere in its text (any dependency group, marker, URL, import or
-    // setting), so a spelling the dependency readers skip still keeps it
-    // unknown. At least one source of the framework's ecosystem stands
-    // there, and every one is a regular file that reads as its kind, with no
-    // setup.py among them. A folder that cannot be listed settles nothing. A
-    // dependency only another package pulls in, with no lockfile beside it,
-    // is not seen.
-    knownAbsent(project, files) {
-      const sources: Source[] = [];
-      let folder: string | null = project.root;
-      while (folder !== null) {
-        const found = sourcesIn(folder);
-        if (found === null) return [];
-        sources.push(...found);
-        folder = folder === "" ? null : folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
-      }
-      const named = new Set<Framework>();
-      for (const s of sources) for (const f of s.link ? FRAMEWORKS : reading(s.file, s.kind).names) named.add(f);
-      for (const file of [...files].sort()) {
-        // A file the change deleted names nothing any more.
-        if (!exists(file)) continue;
-        for (const f of reading(file, "changed").names) named.add(f);
-      }
-      return FRAMEWORKS.filter((f) => {
-        if (project.frameworks.includes(f) || named.has(f)) return false;
-        const own = sources.filter((s) => s.ecosystem === ABSENCE[f].ecosystem);
-        return own.length > 0 && own.every((s) => !s.link && reading(s.file, s.kind).settles);
-      }).sort();
-    },
   };
-}
-
-// Whether a source's text reads as its kind: a parser that does not throw
-// for TOML, JSON, YAML and INI, requirementsSettle for a requirements file,
-// gemfileSettles for a Gemfile, and any text for the rest. A setup.py never
-// does.
-function readsAs(kind: SourceKind, text: string): boolean {
-  try {
-    if (kind === "toml") parseToml(text);
-    else if (kind === "json") JSON.parse(text);
-    else if (kind === "yaml") parseYaml(text, { logLevel: "error" });
-    else if (kind === "ini") return readsAsIni(text);
-    else if (kind === "requirements") return requirementsSettle(text);
-    else if (kind === "gemfile") return gemfileSettles(text);
-    else if (kind === "code") return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Whether a Gemfile lists its gems itself: no line pulls in a gemspec's
-// dependencies or another Gemfile.
-function gemfileSettles(text: string): boolean {
-  return !lines(text).some((line) => {
-    const t = line.trimStart();
-    return t.startsWith("gemspec") || t.startsWith("eval_gemfile");
-  });
-}
-
-// The pip options that pull in another file or a local package, whose
-// dependencies this file does not list.
-const PULLS_IN = ["-r", "--requirement", "-c", "--constraint", "-e", "--editable"];
-
-// Whether a requirements file lists its packages by name: every line that
-// is not blank, a comment or another pip option is a requirement whose name
-// requirementName reads (not a URL or a path), and no line pulls in another
-// file or a local package.
-function requirementsSettle(text: string): boolean {
-  for (const raw of lines(text)) {
-    const line = beforeComment(raw).trim();
-    if (line === "" || line.startsWith("#")) continue;
-    if (line.startsWith("-")) {
-      if (PULLS_IN.some((o) => line === o || line.startsWith(`${o} `) || line.startsWith(`${o}=`) || line.startsWith(`${o}\t`) || (o.length === 2 && line.startsWith(o)))) return false;
-      continue;
-    }
-    if (requirementName(line) === null) return false;
-  }
-  return true;
 }
 
 // `#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e`: the shells

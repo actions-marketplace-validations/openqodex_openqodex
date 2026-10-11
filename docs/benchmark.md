@@ -224,7 +224,7 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | low-value | style, a nitpick, size, hygiene, no impact | the rule's default or severity |
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
-A drop of any class is tagged `framework-mismatch` when its reason names a framework every project of the change records as `absent` (known unused, every source read; see `docs/scanners.md`). A scan saved before `absent` existed tags a framework it could detect and found in no project, never Flask, which it could not detect. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. Flask is detected but never tagged: a scan saved before Flask was detected records a Flask project with no framework. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
 
 ## What each scanner contributed
 

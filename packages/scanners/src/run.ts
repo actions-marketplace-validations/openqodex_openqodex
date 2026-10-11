@@ -47,7 +47,7 @@ import type {
 } from "@openqodex/core";
 import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
-import { repoFacts, type Project, type RepoFacts } from "./detect.js";
+import { repoFacts, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, NOTHING_TO_CHECK, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
 import type { SettingsReader } from "./shared-settings.js";
@@ -358,21 +358,15 @@ function customSelection(custom: CustomAdapter, changedPaths: string[]): Scanner
   }
 }
 
-// The projects the changed files belong to, with their frameworks and the
-// frameworks each is known not to use (detect.ts knownAbsent), for the
+// The projects the changed files belong to, with their frameworks, for the
 // scan record. A file in no project adds nothing.
-function projectsOf(paths: string[], facts: RepoFacts): { root: string; frameworks: string[]; absent: string[] }[] {
-  const seen = new Map<string, { project: Project; files: string[] }>();
+function projectsOf(paths: string[], facts: RepoFacts): { root: string; frameworks: string[] }[] {
+  const seen = new Map<string, string[]>();
   for (const p of paths) {
     const project = facts.project(p);
-    if (!project) continue;
-    const entry = seen.get(project.root) ?? { project, files: [] };
-    entry.files.push(p);
-    seen.set(project.root, entry);
+    if (project && !seen.has(project.root)) seen.set(project.root, project.frameworks);
   }
-  return [...seen]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([root, { project, files }]) => ({ root, frameworks: project.frameworks, absent: facts.knownAbsent(project, files) }));
+  return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
 }
 
 const SETTINGS_MAX_BYTES = 1024 * 1024;

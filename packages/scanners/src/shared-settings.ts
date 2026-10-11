@@ -151,11 +151,6 @@ function iniSections(text: string): { sections: Map<string, Section>; defaults: 
   return { sections, defaults };
 }
 
-// Whether configparser reads the text without raising, with `=` as its only
-// delimiter. Python's own readers also take `:`, so a file that uses it reads
-// as not parsing here: that errs towards "cannot tell".
-export const readsAsIni = (text: string): boolean => !notUtf8(text) && iniSections(text) !== null;
-
 // SQLFluff reads the sections named `sqlfluff` and `sqlfluff:<more>`, each
 // with the [DEFAULT] keys under its own, in file order.
 export const sqlfluffIni: SettingsReader = (text) => {
