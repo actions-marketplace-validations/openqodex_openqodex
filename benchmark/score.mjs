@@ -15,12 +15,13 @@
 // attempts, issue recall, precision as bounds, unique-issue precision,
 // redundancy, severity agreement and who found each bug (from each review's
 // own scan.json), the location and planted-rule blocks, per-case ratios,
-// per-bug results, the rules block, and a 95% cluster bootstrap interval on
-// each issue-level ratio, lib/interval.mjs, seeded from the run id so a
-// rescore draws the same interval), outcomes.jsonl (one line per finding of
-// every first attempt) and unresolved.jsonl (each finding that still asks a
-// person a question, with its text and the code it cites, for queue.mjs
-// add), into the results folder or --out. It applies the rulings in the
+// per-bug results with the cause of each miss (lib/causes.mjs), the rules
+// block, and a 95% cluster bootstrap interval on each issue-level ratio,
+// lib/interval.mjs, seeded from the run id so a rescore draws the same
+// interval), outcomes.jsonl (one line per finding of every first attempt,
+// with the cause of each counted non-hit) and unresolved.jsonl (each
+// finding that still asks a person a question, with its text and the code
+// it cites, for queue.mjs add), into the results folder or --out. It applies the rulings in the
 // adjudication file, benchmark/review-queue/decisions.jsonl unless
 // --decisions names another, and records that file's sha256. A legacy run (one
 // with a recipe in benchmark/legacy/recipes.json) keeps the score its own
@@ -56,9 +57,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFi
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
+import { CAUSES_VERSION, MISS_CAUSES, NON_HIT_CAUSES, countCauses, runCauses } from "./lib/causes.mjs";
 import { runIntervals } from "./lib/interval.mjs";
 import { unresolvedItems } from "./lib/queue.mjs";
-import { readDecisions } from "./lib/rulings.mjs";
+import { readDecisions, resolveRulings } from "./lib/rulings.mjs";
 import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
@@ -124,9 +126,13 @@ export function loadRun(folder, { specsDir = null } = {}) {
         const brief = readText(join(dir, "report", "brief.md"));
         // The scanners' own record, which decides who found each bug (null when the review saved none).
         const scan = readJson(join(dir, "report", "scan.json"));
+        // What the reviewer answered, the tool calls it made and the correction rounds, for the causes of its misses (lib/causes.mjs).
+        const submission = readJson(join(dir, "report", "submission.json"));
+        const trace = readJson(join(dir, "report", "trace.json"));
+        const rounds = readJson(join(dir, "report", "rounds.json"));
         const sample = scoreSample({ spec, report, brief, row });
         samples.push(sample);
-        attempts.push({ case: c, config, ...which, row, report, brief, scan, sample });
+        attempts.push({ case: c, config, ...which, row, report, brief, scan, submission, trace, rounds, sample });
       }
     }
   }
@@ -234,6 +240,23 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
   // path, so a copy elsewhere draws the same intervals.
   const perCase = caseSums(s.perCase, s.jobs);
   const { byConfig, intervals } = runIntervals({ runId: m.runId ?? basename(run.folder), byConfig: s.byConfig, perCase, groups: repoGroups(originOf(s.suite), s.jobs, run.specs) });
+  // Why each truth item was missed and each counted finding is not a hit
+  // (lib/causes.mjs): a cause per repeat in perBug, one per finding in
+  // outcomes.jsonl, and the counts per configuration.
+  const causes = runCauses({ jobs: s.jobs, attempts: run.attempts, specs: run.specs, rulings: resolveRulings(decisions, people) });
+  for (const j of s.jobs) {
+    const c = causes.byJob.get(j.jobId);
+    for (const b of j.bugs) {
+      const x = s.perBug[j.config][j.caseId][b.id];
+      if (!Array.isArray(x.cause)) x.cause = [];
+      x.cause[j.repeat - 1] = c.bugs[b.id]?.cause ?? null;
+    }
+  }
+  for (const o of s.outcomes) o.cause = causes.byJob.get(o.jobId).findings[o.index]?.cause ?? null;
+  for (const [config, x] of Object.entries(byConfig)) {
+    const mine = (rows) => rows.filter((r) => r.config === config);
+    x.causes = { version: CAUSES_VERSION, misses: countCauses(mine(causes.misses), MISS_CAUSES), nonHits: countCauses(mine(causes.nonHits), NON_HIT_CAUSES) };
+  }
   const score = {
     version: 3,
     rules: RULES,
@@ -263,7 +286,7 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
     briefFailures: s.briefFailures,
   };
   const unresolved = unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
-  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs };
+  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs, causes };
 }
 
 // The legacy run whose folder `path` is or lies in, wherever it is, by the

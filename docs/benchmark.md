@@ -205,6 +205,33 @@ node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <t
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
+## Why a truth item was missed
+
+```
+node benchmark/causes.mjs <run> [--specs <folder>] [<run> [--specs <folder>]]... [--decisions <file>] [--json]
+```
+
+A script gives every truth item a review missed, and every finding counted in precision that finds none, one cause, from the saved files and the rulings only. `score.mjs` writes the same causes into `score.json` (`perBug.<config>.<case>.<bug>.cause`, one per repeat, and the counts per configuration in `byConfig.<config>.causes`) and into `outcomes.jsonl`. `causes.mjs` prints them per run and configuration, then one table across the runs with the reviews each cause holds. `--specs` applies to the run named before it.
+
+For a miss, the first cause that holds wins:
+
+| Cause | When |
+|---|---|
+| incomplete | the review did not complete, failed or never started |
+| spec-disputed | a person ruled the truth item wrong |
+| not-in-brief | no line of the item was in the brief's diff, a correction round or a read |
+| not-read | the item's proof outside the change (its `evidence`) was in none of them |
+| finalize-floor | the reviewer submitted a finding that finds it, under the confidence floor |
+| finalize-threshold | the same, below the severity threshold, so counted and not listed |
+| finalize-rejected | a correction round's answer held such a finding, and the final answer left it out |
+| line-off | a shown finding finds it but for its lines |
+| wrong-kind | a shown finding finds it but for its kind |
+| unresolved | a finding nobody has ruled on may be it: one on its lines, or one in its file that names it, of its kind, by a word no other truth item lists |
+| candidate-dropped | a dropped scanner candidate located it; each drop is kept with its reason and its class above |
+| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it |
+
+A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
+
 ## What it does not measure
 
 - How often real changes carry these bugs. The cases are small and synthetic; the share of bugs found here is not the share found in your repository.
