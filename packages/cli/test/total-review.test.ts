@@ -86,6 +86,11 @@
 //     read outside the snapshot (issue 80); or a read of anything else in
 //     that folder (another session's output, a transcript, the login)
 //     completes.
+// 36. A round's check errors are lost, so a rejected finding reads as never
+//     raised: rounds.json beside the report lacks a correction round's
+//     errors, the answer they judged or the changed ranges the round
+//     carried; or it is missing when no round was needed, so a reader cannot
+//     tell no round from a round not saved.
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -1047,7 +1052,7 @@ describe("the Action's review flags", () => {
     writeFileSync(join(planted, "report.md"), "# PLANTED\n");
     const folder = join(tempDir("oq-report-dir-"), "review");
     expect(await withOptions(dir, fake([good]), { reportDir: folder })).toBe(0);
-    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "scan.json", "submission.json", "trace.json"]);
+    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "rounds.json", "scan.json", "submission.json", "trace.json"]);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report).toEqual(JSON.parse(out) as Report);
@@ -1140,5 +1145,43 @@ describe("the Action's review flags", () => {
     out = "";
     expect(await withOptions(dir, fake([good]), { blockOn: "major" })).toBe(1);
     expect((JSON.parse(out) as Report).block_on_severity).toBe("major");
+  });
+});
+
+describe("36. every correction round beside the report", () => {
+  const withReportDir = (dir: string, driver: ReviewerDriver, reportDir: string): Promise<number> => {
+    const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json"], {});
+    return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "auto", timeoutMs: 60_000, drivers: [driver], reportDir });
+  };
+
+  it("a round's check errors are lost, so a rejected finding reads as never raised", async () => {
+    // A new file too large for the brief's diff, so the first correction
+    // round also carries its changed lines.
+    const dir = repo();
+    writeFileSync(join(dir, "big.txt"), `${Array.from({ length: 3000 }, (_, i) => `added ${String(i).padStart(6, "0")} ${"x".repeat(64)}`).join("\n")}\n`);
+    const rejected = { severity: "minor", category: "style", confidence: 0.8, file_path: "README.md", line_number: 1, title: "Greeting is lower case", problem: "The greeting starts with a lower case letter.", consequence: "The readme looks careless.", fix: "Start the greeting with a capital letter.", source: null, candidate: null };
+    // Answer 1 raises c1 and a finding on a file outside the change; answer 2 drops that finding.
+    const withRejected: Answer = (text) => {
+      const first = JSON.parse(submission(text)) as { findings: unknown[] };
+      return { finalText: JSON.stringify({ ...first, findings: [...first.findings, rejected] }) };
+    };
+    const folder = join(tempDir("oq-report-dir-"), "review");
+    expect(await withReportDir(dir, fake([withRejected, good]), folder)).toBe(0);
+    const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
+    expect(report.findings.map((f) => f.title)).toEqual(["Admin function callable by anyone"]);
+    const rounds = JSON.parse(readFileSync(join(folder, "rounds.json"), "utf8")) as { by: string; round: number; errors: string[]; delivered: unknown[]; later: number; answer: { findings: { title: string; file_path: string }[] } }[];
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]).toMatchObject({ by: "primary", round: 1, later: 0 });
+    expect(rounds[0]!.errors).toEqual([expect.stringMatching(/^findings\[1\] \("Greeting is lower case"\): the file is not in this change/)]);
+    expect(rounds[0]!.answer.findings.map((f) => [f.title, f.file_path])).toEqual([
+      ["Admin function callable by anyone", "db/x.sql"],
+      ["Greeting is lower case", "README.md"],
+    ]);
+    expect(rounds[0]!.delivered).toEqual([{ path: "big.txt", start: 1, end: 3000, deletion: false }]);
+    expect(statSync(join(folder, "rounds.json")).mode & 0o777).toBe(0o600);
+    // A review that needed no round says so.
+    const clean = join(tempDir("oq-report-dir-"), "review");
+    expect(await withReportDir(repo(), fake([good]), clean)).toBe(0);
+    expect(JSON.parse(readFileSync(join(clean, "rounds.json"), "utf8"))).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ import type { Change, Hunk, Report, TraceEntry } from "@openqodex/core";
 import type { Turn } from "./agents/driver.js";
 import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
+import type { ReviewerRole } from "./usage.js";
 
 const MAX_CORRECTIONS = 2;
 const HEARTBEAT_MS = 15_000;
@@ -272,12 +273,23 @@ export type Conversation = {
 // session in the brain's own loop. Each `send` asks for one answer.
 export type Speaker = { send(text: string): Promise<Turn> };
 
+// One correction round, as the tool sent it. `by`: the reviewer it went to
+// (the caller of `converse` adds it). `round`: the answer it corrects (1 for
+// the answer to the brief). `errors`: every check that answer failed, as the
+// reviewer was told it, without its number. `delivered`: the changed ranges
+// the round carried. `later`: how many more it promised for a next round.
+// `answer`: the answer the checks judged, as parsed, null when it was not
+// one JSON object. Kept so a finding a check rejected, and the next answer
+// left out, still shows it was raised.
+export type CorrectionRound = { by: ReviewerRole; round: number; errors: string[]; delivered: Hunk[]; later: number; answer: unknown };
+
 // The brief, then at most two correction rounds. A
 // round goes back when the answer failed a check or when changed ranges are
 // still unread: the tool then puts those ranges in the message itself
 // (deliverRanges), so coverage never depends on the model choosing to open a
-// file. The message is never printed or saved. A read outside the snapshot
-// ends the conversation when the driver's trace is complete.
+// file. The message is never printed or saved; its errors and ranges go to
+// `onRound`. A read outside the snapshot ends the conversation when the
+// driver's trace is complete.
 export async function converse(args: {
   session: Speaker;
   snapshotDir: string;
@@ -291,6 +303,8 @@ export async function converse(args: {
   say: (line: string) => void;
   // The run's clock, epoch milliseconds; `deadline` is on it.
   now: () => number;
+  // Called with each correction round before it is sent.
+  onRound?: (round: Omit<CorrectionRound, "by">) => void;
 }): Promise<Conversation> {
   const startedAt = args.now();
   const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
@@ -340,6 +354,7 @@ export async function converse(args: {
       c.delivered.push(...given.delivered);
       c.carried.push(given.delivered);
       args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
+      args.onRound?.({ round: c.rounds, errors: result.errors.map((e) => e.replace(/^\d+\.\s+/, "")), delivered: given.delivered, later: given.later, answer: "value" in parsed ? parsed.value : null });
       text = [
         ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),
         ...(given.text !== "" ? ["These changed lines were not in front of you yet. Check them now, as part of the change.", "", given.text, ""] : []),

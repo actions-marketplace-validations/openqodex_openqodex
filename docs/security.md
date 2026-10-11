@@ -114,7 +114,7 @@ There is no alarm for Codex. Its event stream does not show every command it run
 
 Codex runs with `--ephemeral`: after real runs with codex-cli 0.160.0, no session file was written for the snapshot folder. Codex's own logs follow its own settings.
 
-The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls: paths and line ranges for Claude Code, and the command lines Codex showed for Codex, never their output. Each file is created readable by you only, and secrets are redacted in all of them.
+The run folder of a review holds the brief, the scan, the reviewer's answer and the list of its tool calls: paths and line ranges for Claude Code, and the command lines Codex showed for Codex, never their output. It also holds `rounds.json`: for each correction round, the checks the earlier answer failed, that answer, and the changed line ranges the round sent, by path and line number, not their text. Each file is created readable by you only, and secrets are redacted in all of them.
 
 ### A model reviewer (the library)
 
