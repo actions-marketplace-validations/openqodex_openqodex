@@ -4,9 +4,21 @@
 // by one line, a wrong kind, two bugs on one line, a bug found at its second
 // location, an accepted side issue, a request for a test, a false finding, a
 // clean change (complete, incomplete and missing), and what a brief did and
-// did not say.
-import { describe, expect, it } from "vitest";
-import { classify, regressions, runDifferences, scoreBrief, scoreSample, specDifferences, summarize, value } from "../lib/score.mjs";
+// did not say. Score format 3 is checked on runs made in temp folders by the
+// runner's own code (executeRun, with the review step that would call a
+// model replaced): its population of planned first attempts, its rules
+// block, and the planted-only precision kept apart.
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, describe, expect, it } from "vitest";
+import { RULES, RULES_VERSION, classify, regressions, ruleCodeHash, ruleSources, rulesDifferences, rulesHash, runDifferences, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
+import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
+import { loadRun, renderV3, scoreRun } from "../score.mjs";
+import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const bug = (id, file, lines, anchorLine, kind, severity, mentions, extra = {}) => ({ id, file, lines, anchor: { line: anchorLine, text: "x" }, mentions, kind, severity, found_by: ["reasoning"], truth: "t", ...extra });
 
@@ -236,5 +248,238 @@ describe("summing and comparing runs", () => {
     expect(runDifferences(a, { ...a, caseHashes: { x: "2" } })).toEqual(["the case x changed between the runs (its files or its spec)"]);
     expect(specDifferences({ x: spec }, { x: { ...spec, extras: [] } })).toEqual(["the spec of x differs between the runs"]);
     expect(specDifferences({ x: spec }, { x: spec })).toEqual([]);
+  });
+});
+
+// --- score format 3 ---
+
+const write = (path, text) => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
+};
+
+const HASH = "ab".repeat(32);
+const CASE_ID = `planted/hand@${HASH.slice(0, 8)}`;
+const CONFIG = "claude-graph-on";
+
+// The jobs run.mjs plans for the hand case: one configuration, `repeat` repeats.
+const planned = (repeat) => planJobs({ cases: ["hand"], caseIds: { hand: CASE_ID }, reviewers: ["claude"], graph: ["on"], repeat }).jobs;
+
+// The manifest run.mjs writes for the hand case, from its settings and plan.
+const handManifest = (jobs, repeat) =>
+  runManifest({
+    startedAt: "2026-10-10T10:00:00.000Z",
+    settings: { build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersion: "0.14.0" }, reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } }, cases: ["hand"], caseIds: [CASE_ID], caseHashes: { hand: HASH }, configs: [CONFIG], repeat },
+    jobs,
+  });
+
+// A run of the hand case made by the runner's own code (executeRun writes
+// the manifest and the spec copy), with each review replaced by the
+// attempts given: one folder per attempt (a retry is <repeat>-attempt<n>),
+// each with its sample.json and, when the review wrote one, its report. A
+// repeat with no attempt given never starts.
+async function savedRun({ repeat, attempts }) {
+  const root = tempDir("oq-bench-v3-");
+  const out = join(root, "run");
+  write(join(root, "hand.json"), JSON.stringify(spec));
+  const jobs = planned(repeat);
+  await executeRun({ out, manifest: handManifest(jobs, repeat), jobs, copies: [[join(root, "hand.json"), "cases/hand.json"]], runJob: async (job) => {
+    for (const a of attempts.filter((x) => x.repeat === job.repeat)) {
+      const dir = attemptDir(out, job, a.attempt);
+      const rec = sampleRecord({ job, attempt: a.attempt, result: { code: a.report ? 0 : 2, signal: null, wallMs: 30_000 }, report: a.report, who: null, startedAt: "t", failure: a.report ? null : { cause: "no report.json" }, stopped: null });
+      write(join(dir, "sample.json"), JSON.stringify(rec));
+      if (a.report) write(join(dir, "report", "report.json"), JSON.stringify(a.report));
+    }
+  } });
+  return out;
+}
+
+const SQLI = finding("app/search.py", 14, "security", "SQL injection");
+const ASK = finding("app/other.py", 5, "maintainability", "Changed formatting has no covering test");
+
+describe("a rule constant changes without a version bump, and old and new scores are compared as equal", () => {
+  // One hash per rules version, added when the version is bumped and never
+  // edited: a change to a constant, a list, the rule order or the matching
+  // code changes the hash, and this test fails until RULES_VERSION is bumped
+  // in lib/score.mjs and the new version's hash is added here.
+  // A change of layout alone moves the hash too, and needs a bump all the same.
+  const KNOWN_RULES = { 3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d" };
+
+  it("pins the hash of the rules block, constants and matching code included, to its version", () => {
+    expect(RULES.version).toBe(RULES_VERSION);
+    expect(RULES.hash).toBe(rulesHash(RULES));
+    expect(RULES.hash, "a scoring rule changed: bump RULES_VERSION in lib/score.mjs and add the new version's hash to KNOWN_RULES").toBe(KNOWN_RULES[RULES_VERSION]);
+    // score.mjs runs in plain Node, not in the test runner, and must write the hash pinned here.
+    const url = new URL("../lib/score.mjs", import.meta.url).href;
+    const inNode = execFileSync(process.execPath, ["--input-type=module", "-e", `import { RULES } from ${JSON.stringify(url)}; process.stdout.write(RULES.hash);`], { encoding: "utf8" });
+    expect(inNode).toBe(RULES.hash);
+  });
+
+  it("changes the hash when any rule changes: a constant, the test-only lists, the rule order, the precision table or the code", () => {
+    const changes = [{ nearLines: 4 }, { aacrLineK: 2 }, { testOnly: { ...RULES.testOnly, kinds: ["style"] } }, { order: [...RULES.order].reverse() }, { precision: { ...RULES.precision, wrong: ["false", "near"] } }, { code: "0".repeat(64) }];
+    for (const change of changes) expect(rulesHash({ ...RULES, ...change })).not.toBe(RULES.hash);
+  });
+
+  it("hashes the attempt selection and every helper a rule calls, in this file or one it imports, and moves the hash when any of them changes", () => {
+    const here = dirname(fileURLToPath(new URL("../lib/score.mjs", import.meta.url)));
+    const read = (file) => readFileSync(join(here, file), "utf8");
+    const sources = ruleSources(read);
+    const ids = sources.map((s) => s.id);
+    // The word matcher's escape, the folder-name rule for first attempts and retries, the scoring of a run's attempts, and the case id parser in cases.mjs.
+    for (const id of ["score.mjs#escape", "score.mjs#attemptOf", "score.mjs#scoreAttempts", "score.mjs#population", "cases.mjs#parseCaseId"]) expect(ids).toContain(id);
+    expect(ruleCodeHash(read)).toBe(RULES.code);
+    for (const { id, text } of sources) {
+      const [file] = id.split("#");
+      const first = text.split("\n")[0];
+      const mutated = (f) => (f === file ? read(f).replace(first, `${first} void 0;`) : read(f));
+      expect(ruleCodeHash(mutated), `a change to ${id} must move the rules hash`).not.toBe(RULES.code);
+    }
+  });
+
+  it("never calls two scores comparable when their rules differ, under one version or two", () => {
+    expect(rulesDifferences(RULES, RULES)).toEqual([]);
+    const edited = { ...RULES, nearLines: 4 };
+    edited.hash = rulesHash(edited);
+    expect(rulesDifferences(RULES, edited).join("\n")).toMatch(/without a version bump/);
+    expect(rulesDifferences(RULES, { ...edited, version: RULES_VERSION + 1 }).join("\n")).toMatch(new RegExp(`version ${RULES_VERSION} then ${RULES_VERSION + 1}`));
+    // A score written before the rules block (format 2) has no rules to compare.
+    expect(rulesDifferences(RULES, undefined)).not.toEqual([]);
+  });
+
+  it("writes the rules block into every score", async () => {
+    const { score } = scoreRun(loadRun(await savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+    expect(score.version).toBe(3);
+    expect(score.rules).toEqual(RULES);
+  });
+});
+
+describe("a job that never started leaves the denominator", () => {
+  it("has the runner write the full manifest, every planned job with its id, before the first review starts, and every attempt name its job", async () => {
+    const root = tempDir("oq-bench-plan-");
+    write(join(root, "hand.json"), JSON.stringify(spec));
+    const { jobs } = planJobs({ cases: ["hand", "other"], caseIds: { hand: CASE_ID, other: "planted/other@12345678" }, reviewers: ["claude"], graph: ["off", "on"], repeat: 2 });
+    expect(jobs[0]).toMatchObject({ jobId: `${CASE_ID}/claude-graph-off/1`, caseId: CASE_ID, case: "hand", config: "claude-graph-off", repeat: 1 });
+    const out = join(root, "run");
+    const seen = [];
+    await executeRun({ out, manifest: handManifest(jobs, 2), jobs, copies: [[join(root, "hand.json"), "cases/hand.json"]], runJob: async () => {
+      seen.push(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")));
+    } });
+    expect(seen).toHaveLength(8);
+    expect(seen[0]).toMatchObject({ version: 3, rulesVersion: RULES_VERSION, planned: 8, ended: null });
+    expect(seen[0].jobs).toEqual(jobs.map(({ jobId, caseId, config, repeat }) => ({ jobId, caseId, config, repeat })));
+    const retry = sampleRecord({ job: jobs[0], attempt: 2, result: { code: 0, signal: null, wallMs: 1 }, report: null, who: null, startedAt: "t", failure: null, stopped: null });
+    expect(retry).toMatchObject({ jobId: jobs[0].jobId, caseId: CASE_ID, firstAttempt: false });
+  });
+
+  it("counts a planned job with no attempt as unstarted: it misses every bug of its case and adds no finding", async () => {
+    const { score, outcomes } = scoreRun(loadRun(await savedRun({ repeat: 2, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+    const c = score.byConfig[CONFIG];
+    expect(c.population).toEqual({ planned: 2, complete: 1, incomplete: 0, failed: 0, unstarted: 1, retries: 0, retryCostUsd: 0 });
+    expect(score.population).toMatchObject({ planned: 2, unstarted: 1, jobsFrom: "manifest" });
+    expect(c.issueRecall.all).toEqual({ hit: 1, of: 10 });
+    expect(c.precision.lower).toEqual({ hit: 1, of: 1 });
+    expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([true, false]);
+    expect(score.perCase[CONFIG][CASE_ID].issueRecall).toEqual({ hit: 1, of: 10 });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ jobId: `${CASE_ID}/${CONFIG}/1`, caseId: CASE_ID, outcome: "hit", truthId: "sqli", evidenceKind: "frozen" });
+    expect(outcomes[0].findingId).toMatch(/^[0-9a-f]{64}$/);
+    // Counting only the saved attempts, as format 2 did, the job vanishes; the difference is stated.
+    expect(c.allAttempts.recall).toEqual({ hit: 1, of: 5 });
+    expect(renderV3(score)).toMatch(/every saved attempt/);
+  });
+});
+
+describe("a successful retry replaces a failed first attempt", () => {
+  it("scores the failed first attempt as a miss, and the retry only as a diagnostic with its cost", async () => {
+    const { score, outcomes } = scoreRun(loadRun(await savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: null }, { repeat: 1, attempt: 2, report: report([SQLI]) }] })));
+    const c = score.byConfig[CONFIG];
+    expect(c.population).toEqual({ planned: 1, complete: 0, incomplete: 0, failed: 1, unstarted: 0, retries: 1, retryCostUsd: 0.5 });
+    expect(c.issueRecall.all).toEqual({ hit: 0, of: 5 });
+    expect(c.precision.lower).toEqual({ hit: 0, of: 0 });
+    expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([false]);
+    expect(outcomes).toEqual([]);
+    // Format 2 scored both attempts; the difference is stated.
+    expect(c.allAttempts.recall).toEqual({ hit: 1, of: 10 });
+    expect(renderV3(score)).toMatch(/every saved attempt/);
+  });
+});
+
+describe("a planted-only precision with test requests set apart is pooled with real-suite precision", () => {
+  const job = (origin, repeat) => scoreJob({ job: { jobId: `${origin}/hand@abababab/c/${repeat}`, caseId: `${origin}/hand@abababab`, config: "c", repeat }, spec, report: report([SQLI, ASK]), brief: null, origin });
+
+  it("keeps today's planted rule, with the planted case's test request, in its own labelled block", () => {
+    const planted = summarizeJobs([job("planted", 1)]);
+    expect(planted.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
+    expect(planted.plantedLegacy.testGaps).toBe(1);
+    expect(planted.plantedLegacy.label).toMatch(/planted/);
+    expect(planted.outcomes["test-gap"]).toBe(1);
+  });
+
+  it("leaves the precision bounds untouched by a planted-suite test request, and widens them with a real-suite one", () => {
+    const hitOnly = summarizeJobs([scoreJob({ job: { jobId: "planted/hand@abababab/c/1", caseId: "planted/hand@abababab", config: "c", repeat: 1 }, spec, report: report([SQLI]), brief: null, origin: "planted" })]);
+    const planted = summarizeJobs([job("planted", 1)]);
+    expect(planted.precision).toEqual(hitOnly.precision);
+    expect(planted.uniqueIssuePrecision).toEqual(hitOnly.uniqueIssuePrecision);
+    expect(planted.redundancy).toEqual(hitOnly.redundancy);
+    // On a real pull request the request for a test is a shown finding nothing frozen rules on: wrong in the lower bound, right in the upper.
+    const real = summarizeJobs([job("real", 1)]);
+    expect(real.precision.lower).toEqual({ hit: 1, of: 2 });
+    expect(real.precision.upper).toEqual({ hit: 2, of: 2 });
+    expect(real.outcomes).toMatchObject({ hit: 1, unresolved: 1 });
+  });
+
+  it("gives a real suite no planted block, and pools planted and real findings under one rule", () => {
+    const real = summarizeJobs([job("real", 1)]);
+    expect(real.plantedLegacy).toBeNull();
+    const pooled = summarizeJobs([job("planted", 1), job("real", 2)]);
+    expect(pooled.precision.lower).toEqual({ hit: 2, of: 3 });
+    expect(pooled.precision.upper).toEqual({ hit: 3, of: 3 });
+    expect(pooled.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
+    expect(pooled.plantedLegacy.testGaps).toBe(1);
+  });
+});
+
+describe("a finding on a clean case that a listed side issue matches is counted correct, and the control passes", () => {
+  it("makes every finding on a clean case false, and fails the control on any shown finding", () => {
+    const clean = { id: "clean", guards: "g", language: "python", framework: "none", clean: true, bugs: [], extras: [{ file: "app/server.py", lines: [30, 32], mentions: ["connection"], why: "listed by mistake" }] };
+    const j = scoreJob({ job: { jobId: "planted/clean@abababab/c/1", caseId: "planted/clean@abababab", config: "c", repeat: 1 }, spec: clean, report: report([finding("app/server.py", 31, "bug", "connection leak")]), brief: null, origin: "planted" });
+    expect(j.findings.map((f) => f.outcome)).toEqual(["false"]);
+    const s = summarizeJobs([j]);
+    expect(s.precision.lower).toEqual({ hit: 0, of: 1 });
+    expect(s.precision.upper).toEqual({ hit: 0, of: 1 });
+    expect(s.controls).toEqual({ hit: 0, of: 1 });
+    expect(s.cleanFindingsPerCase).toEqual({ findings: 1, cases: 1 });
+  });
+});
+
+describe("a legacy run's published folder is written over through --out", () => {
+  // A folder named for a legacy run (benchmark/legacy/recipes.json), with a run and the stored score its own scorer wrote.
+  function legacyFolder(root, runId) {
+    const out = join(root, runId);
+    write(join(out, "manifest.json"), JSON.stringify({ version: 2, cases: ["hand"], configs: [CONFIG], repeat: 1 }));
+    write(join(out, "cases", "hand.json"), JSON.stringify(spec));
+    write(join(out, "samples", "hand", CONFIG, "1", "sample.json"), JSON.stringify({ case: "hand", config: CONFIG, repeat: 1, attempt: 1, status: "complete" }));
+    write(join(out, "samples", "hand", CONFIG, "1", "report", "report.json"), JSON.stringify(report([SQLI])));
+    write(join(out, "score.json"), "stored by its own scorer\n");
+    return out;
+  }
+  const scoreMjs = fileURLToPath(new URL("../score.mjs", import.meta.url));
+  const score = (...args) => spawnSync(process.execPath, [scoreMjs, ...args], { encoding: "utf8" });
+
+  it("refuses --out at the run's own folder, inside it, or at another legacy run's folder, and writes nothing there", () => {
+    const root = tempDir("oq-bench-legacy-");
+    const run = legacyFolder(root, "2026-10-09-5227579");
+    const other = legacyFolder(root, "2026-10-08-752b77f");
+    for (const dest of [run, join(run, "v3"), other, join(run, "..", "2026-10-08-752b77f")]) {
+      const r = score(run, "--out", dest);
+      expect(r.status, dest).toBe(2);
+      expect(r.stderr).toMatch(/legacy run/);
+    }
+    expect(score(run).status).toBe(2);
+    expect(readFileSync(join(run, "score.json"), "utf8")).toBe("stored by its own scorer\n");
+    expect(readFileSync(join(other, "score.json"), "utf8")).toBe("stored by its own scorer\n");
+    const elsewhere = join(root, "v3-scores");
+    expect(score(run, "--out", elsewhere).status).toBe(0);
+    expect(JSON.parse(readFileSync(join(elsewhere, "score.json"), "utf8")).version).toBe(3);
   });
 });

@@ -21,12 +21,199 @@
 //    every file git sees counted, staged or not, untracked included.
 // 7. The Codex model is guessed or taken from a variable Codex never reads:
 //    it is read from the header Codex prints, or recorded as unknown.
-import { createHash } from "node:crypto";
+// 8. A planned review that never starts leaves no trace, so the scorer
+//    cannot count it as a miss: every job gets an id before the run starts,
+//    the manifest lists them all and is written before the first review
+//    starts, and every attempt names its job and whether it is the job's
+//    first attempt.
+// 9. One job is planned twice (--graph on,on, --cases a,a) and counted
+//    twice: a plan with a job id twice is refused.
+// 10. A runner killed after an attempt started, but before its sample.json,
+//    is resumed into the same folder, so a later success replaces the
+//    crash: an attempt folder that exists has started and is kept; the
+//    resume puts its work in the next free attempt folder.
+// 11. Two runners write one run folder, or a restart after a crash writes a
+//    new plan over the old: a run folder has one runner at a time (a lock
+//    file naming its process; a lock whose process has ended is taken
+//    over), and a folder that holds a manifest or samples is refused
+//    without --resume.
+import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
+import { RULES_VERSION, jobIdOf } from "./score.mjs";
+
+// The jobs of a run in run order: per repeat, every case, every
+// configuration, with the configuration order alternating by repeat so
+// drift lands on no one configuration. `caseIds` maps each case name to its
+// frozen id; a job's id is <caseId>/<config>/<repeat>. A plan that holds a
+// job id twice is refused (failure 9).
+export function planJobs({ cases, caseIds, reviewers, graph, repeat }) {
+  const configs = [];
+  for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  const jobs = [];
+  for (let r = 1; r <= repeat; r++) {
+    const order = r % 2 === 1 ? configs : [...configs].reverse();
+    for (const c of cases) for (const cfg of order) jobs.push({ jobId: jobIdOf(caseIds[c], cfg.id, r), caseId: caseIds[c], case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
+  }
+  const seen = new Set();
+  for (const j of jobs) {
+    if (seen.has(j.jobId)) throw new Error(`the plan holds the review ${j.jobId} twice; name each case, reviewer and graph setting once`);
+    seen.add(j.jobId);
+  }
+  return { configs, jobs };
+}
+
+// A new run's manifest: the settings, the rules version, and every planned
+// job with its id.
+export function runManifest({ startedAt, settings, jobs }) {
+  return { version: 3, started_at: startedAt, ...settings, rulesVersion: RULES_VERSION, planned: jobs.length, jobs: jobs.map(({ jobId, caseId, config, repeat }) => ({ jobId, caseId, config, repeat })), ended: null };
+}
+
+// One job in a run folder: whether its first attempt folder exists (it
+// started), whether any attempt was saved with its sample.json (it is done),
+// and the next free attempt number (failure 10).
+export function jobState(out, job) {
+  let next = 1;
+  let done = false;
+  while (existsSync(attemptDir(out, job, next))) {
+    if (existsSync(join(attemptDir(out, job, next), "sample.json"))) done = true;
+    next++;
+  }
+  return { started: next > 1, done, next };
+}
+
+export const LOCK_FILE = ".run.lock";
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+};
+
+// Takes away a lock whose holder `stalePid` has ended, and only that lock:
+// the file is moved aside in one step, and when what was moved is not the
+// stale holder's (another runner put its own lock there after the stale one
+// was read) it is put back. True when the stale lock is gone.
+export function takeOverStale(path, stalePid) {
+  const aside = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync(path, aside);
+  } catch (error) {
+    if (error.code === "ENOENT") return true;
+    throw error;
+  }
+  if (readFileSync(aside, "utf8").trim() === String(stalePid)) {
+    rmSync(aside, { force: true });
+    return true;
+  }
+  // Another runner's lock: back in place, never over a lock made since.
+  try {
+    linkSync(aside, path);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  } finally {
+    rmSync(aside, { force: true });
+  }
+  return false;
+}
+
+// Takes a run folder for this process, or throws when another live process
+// holds it. A lock file with no process number is being written, and counts
+// as held. Returns the function that gives the folder back (failure 11).
+export function lockRun(out) {
+  mkdirSync(out, { recursive: true });
+  const path = join(out, LOCK_FILE);
+  for (let tries = 0; tries < 2; tries++) {
+    try {
+      writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
+      return () => {
+        if (existsSync(path) && readFileSync(path, "utf8").trim() === String(process.pid)) rmSync(path, { force: true });
+      };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const text = existsSync(path) ? readFileSync(path, "utf8").trim() : "";
+      const pid = Number(text);
+      if (!/^\d+$/.test(text) || alive(pid)) break;
+      // A lock left by a runner that died: take it over, unless another runner got there first.
+      if (!takeOverStale(path, pid)) break;
+    }
+  }
+  const holder = existsSync(path) ? readFileSync(path, "utf8").trim() : "unknown";
+  const empty = holder === "" ? `; its lock names no process yet, and if it stays empty, a runner died while writing it: move ${path} away by hand` : "";
+  throw new Error(`${out} is in use by another run (process ${holder || "unknown"}); wait for it to end, or use another --out${empty}`);
+}
+
+const readJsonFile = (path) => {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+// Runs a planned run in its folder, the way run.mjs does, with `runJob`
+// doing one job's reviews:
+// 1. takes the folder (lockRun); a new run is refused when the folder holds
+//    a manifest or samples, and writes `manifest` before any review; a
+//    resume reads the folder's manifest and is refused when
+//    `checkResume(earlier)` names a difference;
+// 2. copies each [from, path in the run] in `copies` that is not there yet
+//    (the specs the run scores against);
+// 3. runs every job with no saved attempt, `concurrency` at a time, as
+//    runJob(job, attempt), where attempt is the job's next free attempt
+//    number, until `stopReason()` names a reason;
+// 4. records how it ended in the manifest (a new run) or resumes.jsonl (a
+//    resume), and gives the folder back.
+// Throws before any review when the folder is refused.
+export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {} }) {
+  const release = lockRun(out);
+  try {
+    const manifestPath = join(out, "manifest.json");
+    const resumesPath = join(out, "resumes.jsonl");
+    if (resume) {
+      const earlier = readJsonFile(manifestPath);
+      if (!earlier) throw new Error(`${out} has no manifest.json; there is no run to resume`);
+      const differ = checkResume(earlier);
+      if (differ.length > 0) throw new Error(`${out} cannot be resumed: resuming would mix two runs. Start a new run with --out.\n${differ.map((d) => `- ${d}`).join("\n")}`);
+    } else {
+      if (existsSync(manifestPath) || existsSync(join(out, "samples"))) throw new Error(`${out} already holds a run (a manifest or samples); pass --resume to finish it, or --out for a new folder`);
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }
+    for (const [from, path] of copies) {
+      const to = join(out, path);
+      if (existsSync(to)) continue;
+      mkdirSync(dirname(to), { recursive: true });
+      cpSync(from, to);
+    }
+    const queue = jobs.map((job) => ({ job, state: jobState(out, job) })).filter((x) => !x.state.done);
+    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: queue.length })}\n`);
+    const total = queue.length;
+    let done = 0;
+    const worker = async () => {
+      while (stopReason() === null && queue.length > 0) {
+        const { job } = queue.shift();
+        // Read again now: the attempt number is the next free folder at the time the job starts.
+        await runJob(job, jobState(out, job).next);
+        done++;
+        log(done, total);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
+    const why = stopReason();
+    const ended = { at: new Date().toISOString(), how: why === null ? "finished" : "stopped", why, reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length, planned: jobs.length };
+    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended })}\n`);
+    else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ended }, null, 2)}\n`);
+    return { ended, ran: total };
+  } finally {
+    release();
+  }
+}
 
 export function attemptDir(out, job, attempt) {
   const base = join(out, "samples", job.case, job.config);
@@ -52,6 +239,9 @@ export function failureOf(result, report) {
 // The saved record of one attempt, whatever happened to it.
 export function sampleRecord({ job, attempt, result, report, who, startedAt, failure, stopped }) {
   return {
+    jobId: job.jobId ?? null,
+    caseId: job.caseId ?? null,
+    firstAttempt: attempt === 1,
     case: job.case,
     config: job.config,
     reviewer: job.reviewer,
