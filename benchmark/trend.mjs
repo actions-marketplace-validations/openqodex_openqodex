@@ -63,8 +63,10 @@
 //    two rules hashes stops the trend.
 // 6. A run that cannot be a baseline is accepted: a legacy run, a run
 //    already accepted, a draft, a dirty build, a run that did not finish or
-//    has planned reviews that never started, and a run that does not
-//    record every scanner installed are refused.
+//    has planned reviews that never started, a run that does not record
+//    every scanner installed, a run whose samples consumed different
+//    Semgrep rule packs ("mixed"), and a scanner-only run whose packs are
+//    not recorded are refused (lib/external.mjs externalRefusals).
 // 7. A rerun of the trend draws other numbers: every sampled test is
 //    seeded from the two run ids, the configuration and the metric.
 // 8. An entry edited before it is accepted, so its numbers no longer match
@@ -77,6 +79,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { repoRoot } from "./lib/cases.mjs";
+import { externalRefusals } from "./lib/external.mjs";
 import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
 import { ISSUE_METRICS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
 import { canonical, rulesDifferences } from "./lib/score.mjs";
@@ -267,6 +270,8 @@ export function acceptRefusals(e) {
   // becomes a baseline.
   if (e.scannersComplete !== true) out.push("it does not record every scanner its cases need as installed (scannersComplete is not true)");
   for (const [config, s] of Object.entries(e.scores ?? {})) if ((s.population?.unstarted ?? 0) > 0) out.push(`${config}: ${s.population.unstarted} planned reviews never started`);
+  // What its scans consumed: one rule set for every sample, and recorded.
+  out.push(...externalRefusals(e));
   return out;
 }
 
