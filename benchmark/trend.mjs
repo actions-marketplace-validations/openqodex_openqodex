@@ -3,7 +3,7 @@
 // step:
 //
 //   node benchmark/trend.mjs [--suite <suite>] [--mode review|scan] [--config <config>] [--alpha 0.05] [--index <folder>]
-//   node benchmark/trend.mjs --accept <run-id> --by <name> [--index <folder>]
+//   node benchmark/trend.mjs --accept <run-id> --by <name> [--index <folder>] [--results <folder>]
 //
 // The trend reads every entry under benchmark/index/runs (or <folder>/runs)
 // and the accepted pointer benchmark/index/accepted.json, groups the runs by
@@ -15,18 +15,23 @@
 // both hold, and the alarm is raised when:
 // - an issue-level ratio (issue recall, critical and major issue recall,
 //   and each precision bound against the same bound) drops outside the
-//   noise: the paired cluster bootstrap's one-sided upper bound of the
-//   change is below zero at the alarm's alpha split equally across those
-//   four ratios, and the drop is at least MIN_DROP; or
+//   noise: the paired sign-flip test over clusters (lib/interval.mjs
+//   pairedBounds) puts the change's one-sided upper bound below zero at
+//   the alarm's alpha split equally across those four ratios, and the drop
+//   is at least MIN_DROP; or
 // - a hard rule breaks: a critical issue found in two or more reviews of
 //   the accepted run is found in at most one now (with at least two
 //   reviews), or a clean change fails its control in two or more reviews
 //   where it failed in at most one before.
 // Location metrics are printed as diagnostics and never raise the alarm.
 //
-// --accept marks one run's entry accepted and points every group the run
-// holds at it in accepted.json, with the run id, its build commit and the
-// entry's score hash (lib/index.mjs scoreHash); the top level names the run
+// --accept first checks the entry against its run: the run folder
+// <results>/<run-id> (benchmark/results unless --results names another)
+// must be the folder the run was published from or a copy fetched from its
+// asset, and the entry built again from it must equal the committed one.
+// Then it marks the entry accepted and points every group the run holds at
+// it in accepted.json, with the run id, its build commit and the entry's
+// score hash (lib/index.mjs scoreHash); the top level names the run
 // accepted last, whose commit is the reviewer loop's base. Commit both
 // files in the pull request that carries the decision.
 //
@@ -37,9 +42,11 @@
 //
 // Failure list, written before the code:
 // 1. A drop inside the noise fails the trend: a ratio's drop counts only
-//    when the paired bootstrap over clusters (cases, or repository groups
-//    on real suites, with every repeat kept in its cluster) puts it below
-//    zero at the split alpha, and it is at least MIN_DROP.
+//    when the paired sign-flip test over clusters (cases, or repository
+//    groups on real suites, with every repeat kept in its cluster) rejects
+//    no change at the split alpha, and it is at least MIN_DROP. A bootstrap
+//    is not used here: it calls a drop carried by a few cases significant
+//    at any number of cases (lib/interval.mjs says why).
 // 2. A real drop passes it: every issue-level ratio is compared, and each
 //    precision bound against the same bound of the accepted run, so a drop
 //    in confirmed findings raises the alarm though unresolved ones hide it
@@ -58,15 +65,21 @@
 //    already accepted, a draft, a dirty build, a run that did not finish or
 //    has planned reviews that never started, and a run that does not
 //    record every scanner installed are refused.
-// 7. A rerun of the trend draws other numbers: every bootstrap is seeded
-//    from the two run ids, the configuration and the metric.
+// 7. A rerun of the trend draws other numbers: every sampled test is
+//    seeded from the two run ids, the configuration and the metric.
+// 8. An entry edited before it is accepted, so its numbers no longer match
+//    the run's published score, is accepted all the same: --accept hashes
+//    the run folder and checks it against the entry's list hashes, builds
+//    the entry again from the folder's manifest, resumes and score.json
+//    the way publish-run.mjs does, and refuses on any difference, before
+//    it writes either file.
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { repoRoot } from "./lib/cases.mjs";
-import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, entryProblems, groupKeys, indexRoot, listEntries, scoreHash, writeEntry } from "./lib/index.mjs";
-import { ISSUE_METRICS, MIN_CLUSTERS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
-import { rulesDifferences } from "./lib/score.mjs";
+import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
+import { ISSUE_METRICS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
+import { canonical, rulesDifferences } from "./lib/score.mjs";
 
 // The alarm's one-sided error over the four issue-level ratios, split
 // equally across them, and the smallest drop it names (3 points).
@@ -110,7 +123,8 @@ export function hardRules(accepted, candidate, config) {
 // bound, the hard rules, and whether the alarm is raised. Each run is an
 // index entry, or anything with its runId, perCase, perBug and intervals.
 export function compareConfig(accepted, candidate, config, { alpha = ALPHA, resamples = RESAMPLES, minDrop = MIN_DROP } = {}) {
-  const clusterOf = clusterFn(candidate.intervals?.groups ?? accepted.intervals?.groups ?? null);
+  const groups = candidate.intervals?.groups ?? accepted.intervals?.groups ?? null;
+  const clusterOf = clusterFn(groups);
   const before = accepted.perCase?.[config] ?? {};
   const now = candidate.perCase?.[config] ?? {};
   const shared = Object.keys(before).filter((id) => now[id] !== undefined).sort();
@@ -119,11 +133,11 @@ export function compareConfig(accepted, candidate, config, { alpha = ALPHA, resa
     const pick = (cases) => Object.fromEntries(shared.map((id) => [id, m.perCase(cases[id])]));
     const pairs = pairedSums(pick(before), pick(now), clusterOf);
     const r = pairedBounds({ pairs, seed: seedOf("trend", accepted.runId, candidate.runId, config, m.name), alpha: share, resamples });
-    const alarm = r.upper !== null && r.upper < 0 && r.delta <= -minDrop;
-    return { name: m.name, label: m.label, before: ratioOf(sumSide(pairs, "a")), after: ratioOf(sumSide(pairs, "b")), delta: r.delta, upper: r.upper, clusters: r.clusters, alarm };
+    const alarm = r.upper < 0 && r.delta <= -minDrop;
+    return { name: m.name, label: m.label, before: ratioOf(sumSide(pairs, "a")), after: ratioOf(sumSide(pairs, "b")), delta: r.delta, upper: r.upper, pLower: r.pLower, method: r.method, changed: r.changed, clusters: r.clusters, alarm };
   });
   const hard = hardRules(accepted, candidate, config);
-  return { config, shared: shared.length, alpha: share, metrics, hard, regressed: hard.length > 0 || metrics.some((m) => m.alarm) };
+  return { config, shared: shared.length, unit: groups === null ? "cases" : "repository groups", alpha: share, metrics, hard, regressed: hard.length > 0 || metrics.some((m) => m.alarm) };
 }
 
 const pct1 = (x) => `${(x * 100).toFixed(1)}%`;
@@ -135,7 +149,6 @@ const startOf = (e) => e.startedAt ?? e.date;
 const byStart = (a, b) => (startOf(a) < startOf(b) ? -1 : startOf(a) > startOf(b) ? 1 : a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0);
 
 function verdict(m) {
-  if (m.upper === null) return `too few shared ${m.clusters === 1 ? "cluster" : "clusters"} to tell a drop from noise (${m.clusters}, fewer than ${MIN_CLUSTERS})`;
   if (m.alarm) return "outside the noise";
   if (m.upper < 0) return `a drop smaller than ${Math.round(MIN_DROP * 100)} points`;
   return "inside the noise";
@@ -218,10 +231,10 @@ export function runTrend({ index = indexRoot, suite = null, mode = null, config 
     const rules = rulesDifferences({ version: accepted.rulesVersion, hash: accepted.rulesHash }, { version: newest.rulesVersion, hash: newest.rulesHash });
     if (rules.length > 0) throw new Refusal(`${newest.runId} cannot be compared with the accepted run ${acceptedId}: ${rules.join("; ")}`);
     const c = compareConfig(accepted, newest, g.config, { alpha });
-    log(`The newest run ${newest.runId} against the accepted run ${acceptedId}, on ${c.shared} shared cases (one-sided, alpha ${c.alpha} per ratio):`);
+    log(`The newest run ${newest.runId} against the accepted run ${acceptedId}, on ${c.shared} shared cases (paired sign-flip test over ${c.unit}, one-sided, alpha ${c.alpha} per ratio):`);
     for (const m of c.metrics) {
-      const bound = m.upper === null ? "" : `; upper bound ${points(m.upper)}`;
-      log(`- ${m.label}: ${pct1(m.after)} against ${pct1(m.before)}, a change of ${points(m.delta)}${bound}: ${verdict(m)}`);
+      const how = `${m.method}, ${m.changed} changed ${m.changed === 1 ? c.unit.replace(/s$/, "") : c.unit}`;
+      log(`- ${m.label}: ${pct1(m.after)} against ${pct1(m.before)}, a change of ${points(m.delta)}; upper bound ${points(m.upper)}, one-sided p ${(m.pLower * 100).toFixed(2)}% (${how}): ${verdict(m)}`);
     }
     if (c.hard.length > 0) {
       log("Hard rules broken:");
@@ -257,13 +270,40 @@ export function acceptRefusals(e) {
   return out;
 }
 
+// Why a committed entry is not the one its run gives (failure 8); empty
+// when it is. The folder <results>/<run-id> must be the one the run was
+// published from (its file list hash is the entry's privateListHash) or a
+// copy fetched from the asset (its list hash is the asset's), and the entry
+// built from its files the way publish-run.mjs builds it must equal the
+// committed one, the accepted mark aside.
+export function runMismatch(entry, results) {
+  const folder = join(results, entry.runId);
+  if (!existsSync(join(folder, "manifest.json"))) return [`the run folder ${folder} is missing: fetch it with node benchmark/fetch-run.mjs ${entry.runId}, or name the folder that holds it with --results`];
+  const { listHash: hash } = hashFolder(folder);
+  if (hash !== entry.privateListHash && hash !== entry.asset.listHash) return [`${folder} is neither the published asset nor the folder it was published from (its file list hash is ${hash}): fetch the run again into an empty folder`];
+  let rebuilt;
+  try {
+    const read = (file) => JSON.parse(readFileSync(join(folder, file), "utf8"));
+    const resumes = existsSync(join(folder, "resumes.jsonl")) ? readFileSync(join(folder, "resumes.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+    rebuilt = buildEntry({ runId: entry.runId, manifest: read("manifest.json"), resumes, score: read("score.json"), asset: entry.asset, privateListHash: entry.privateListHash });
+  } catch (error) {
+    return [`the entry cannot be built again from ${folder}: ${error.message}`];
+  }
+  const committed = { ...entry, accepted: false, acceptedAt: null, acceptedBy: null };
+  const differ = [...new Set([...Object.keys(rebuilt), ...Object.keys(committed)])].filter((k) => canonical(rebuilt[k] ?? null) !== canonical(committed[k] ?? null)).sort();
+  const out = entryProblems(rebuilt);
+  if (differ.length > 0) out.push(`the entry does not match its run: ${differ.join(", ")} differ from what ${folder} gives`);
+  return out;
+}
+
 // Marks one run accepted and points every group it holds at it.
-export function acceptRun({ index = indexRoot, runId, by, now = new Date().toISOString(), log = console.log }) {
+export function acceptRun({ index = indexRoot, results = resultsRoot, runId, by, now = new Date().toISOString(), log = console.log }) {
   if (typeof by !== "string" || by.trim() === "") throw new Refusal("--accept needs --by <name>: who accepts the run");
   const { byId, pointer } = readIndex(index);
   const entry = byId.get(runId);
   if (!entry) throw new Refusal(`refused: the index holds no entry ${runId}`);
   const why = acceptRefusals(entry);
+  if (why.length === 0) why.push(...runMismatch(entry, results));
   if (why.length > 0) throw new Refusal(`refused: ${runId} cannot be accepted:\n${why.map((w) => `- ${w}`).join("\n")}`);
   const marked = { ...entry, accepted: true, acceptedAt: now, acceptedBy: by };
   const written = writeEntry(marked, join(index, "runs"));
@@ -280,7 +320,7 @@ export function acceptRun({ index = indexRoot, runId, by, now = new Date().toISO
 
 function main() {
   const args = process.argv.slice(2);
-  const o = { index: indexRoot, suite: null, mode: null, config: null, alpha: ALPHA, accept: null, by: null };
+  const o = { index: indexRoot, results: resultsRoot, suite: null, mode: null, config: null, alpha: ALPHA, accept: null, by: null };
   const value = (i) => {
     if (i + 1 >= args.length) throw new Refusal(`${args[i]} needs a value`);
     return args[i + 1];
@@ -294,13 +334,14 @@ function main() {
       else if (a === "--config") o.config = value(i++);
       else if (a === "--accept") o.accept = value(i++);
       else if (a === "--by") o.by = value(i++);
+      else if (a === "--results") o.results = resolve(value(i++));
       else if (a === "--alpha") {
         o.alpha = Number(value(i++));
         if (!(o.alpha > 0 && o.alpha < 1)) throw new Refusal("--alpha must be a number between 0 and 1");
-      } else throw new Refusal(`unknown argument ${a}\nusage: node benchmark/trend.mjs [--suite <suite>] [--mode review|scan] [--config <config>] [--alpha 0.05] [--index <folder>]\n       node benchmark/trend.mjs --accept <run-id> --by <name> [--index <folder>]`);
+      } else throw new Refusal(`unknown argument ${a}\nusage: node benchmark/trend.mjs [--suite <suite>] [--mode review|scan] [--config <config>] [--alpha 0.05] [--index <folder>]\n       node benchmark/trend.mjs --accept <run-id> --by <name> [--index <folder>] [--results <folder>]`);
     }
     if (o.accept !== null) {
-      acceptRun({ index: o.index, runId: o.accept, by: o.by });
+      acceptRun({ index: o.index, results: o.results, runId: o.accept, by: o.by });
       process.exit(0);
     }
     process.exit(runTrend(o) ? 1 : 0);

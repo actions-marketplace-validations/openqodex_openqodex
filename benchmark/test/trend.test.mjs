@@ -12,6 +12,9 @@
 //    reviews instead of cases is narrower than the evidence allows.
 // 3. A drop inside the noise fails the trend: a few whole cases flipping,
 //    which happens between two runs of one build, is read as a regression.
+//    A bootstrap of the paired change does this whenever few cases carry
+//    it (four of eight, or five of a hundred, all one way): an exact paired
+//    test puts those at 6.25 and 3.1 percent.
 // 4. A real drop passes it: a build that loses issues on every case, or
 //    raises findings nobody has confirmed, is read as noise.
 // 5. A critical issue found in every review before and in one now, or a
@@ -20,14 +23,17 @@
 // 6. A run that cannot be a baseline (legacy, draft, a dirty build, stopped,
 //    missing scanners) is accepted, or the accepted entry is edited after it
 //    was accepted and the trend compares against numbers nobody accepted,
-//    or loses its accepted mark when publish-run.mjs writes it again.
+//    or loses its accepted mark when publish-run.mjs writes it again, or an
+//    entry edited before it is accepted no longer matches its run's score
+//    and is accepted all the same.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { assetUrl, buildEntry, entryProblems, groupKeys, listEntries } from "../lib/index.mjs";
+import { extractAsset } from "../fetch-run.mjs";
+import { assetUrl, entryProblems, groupKeys, listEntries } from "../lib/index.mjs";
 import { mulberry32, seedOf } from "../lib/interval.mjs";
 import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { publishRun } from "../publish-run.mjs";
@@ -107,12 +113,10 @@ async function savedRun({ parent, runId, cases, repeat, found, unlisted = () => 
   return out;
 }
 
-// The index entry publish-run.mjs would write for a scored run folder.
-function entryOf(folder, runId) {
-  const run = loadRun(folder);
-  const { score } = scoreRun(run);
-  return buildEntry({ runId, manifest: run.manifest, resumes: [], score, asset: { url: assetUrl(runId), sha256: "e".repeat(64), bytes: 1000, files: 12, listHash: "f".repeat(64) }, privateListHash: "9".repeat(64) });
-}
+// Publishes a run folder the way the session does, without the upload:
+// score.mjs scores it, publish-run.mjs packages it and writes its entry
+// into <index>/runs. Returns what publishRun returns (the asset's tarball).
+const publish = (folder, index) => publishRun(folder, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-trend-asset-") });
 
 const putEntry = (index, entry) => write(join(index, "runs", `${entry.runId}.json`), `${JSON.stringify(entry, null, 2)}\n`);
 const readEntryAt = (index, runId) => JSON.parse(readFileSync(join(index, "runs", `${runId}.json`), "utf8"));
@@ -124,18 +128,17 @@ const TWENTY = Array.from({ length: 20 }, (_, i) => ({ name: `case-${String(i).p
 const ACCEPTED = { runId: "2026-10-11-aaaaaaa-base", commit: "a".repeat(40), startedAt: "2026-10-11T09:00:00.000Z" };
 const NEWER = { runId: "2026-10-11-bbbbbbb-next", commit: "b".repeat(40), startedAt: "2026-10-11T10:00:00.000Z" };
 
-// An index holding an accepted run and a newer run of the same cases, the
-// newer one written but not accepted.
+// An index holding an accepted run and a newer run of the same cases, both
+// published from run folders under `root`, the newer one not accepted.
 async function indexWith({ cases = TWENTY, before, after, unlistedBefore, unlistedAfter, repeat = 3 }) {
   const root = tempDir("oq-bench-trend-");
   const index = join(root, "index");
   const a = await savedRun({ parent: root, ...ACCEPTED, cases, repeat, found: before, unlisted: unlistedBefore });
   const b = await savedRun({ parent: root, ...NEWER, cases, repeat, found: after, unlisted: unlistedAfter });
-  putEntry(index, entryOf(a, ACCEPTED.runId));
-  putEntry(index, entryOf(b, NEWER.runId));
-  const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index]);
+  const published = { base: publish(a, index), next: publish(b, index) };
+  const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index, "--results", root]);
   expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
-  return index;
+  return { index, root, published };
 }
 
 describe("two scorings of one run give different intervals", () => {
@@ -199,7 +202,7 @@ describe("three repeats of one bug count as three independent trials", () => {
 describe("a drop inside the noise fails the trend", () => {
   it("passes a newer run where three of twenty whole cases stop being found and one starts, a ten point drop", async () => {
     const lost = new Set([0, 1, 2]);
-    const index = await indexWith({
+    const { index } = await indexWith({
       before: (c) => c < 15,
       after: (c) => (c < 15 && !lost.has(c)) || c === 15,
     });
@@ -207,6 +210,30 @@ describe("a drop inside the noise fails the trend", () => {
     expect(shown.stdout).toMatch(/issue recall: 65\.0% against 75\.0%/);
     expect(shown.stdout).toMatch(/inside the noise/);
     expect(shown.status, shown.stdout + shown.stderr).toBe(0);
+  });
+
+  it("passes eight equal cases where four stop being found in all three reviews, a fifty point drop an exact paired test puts at 6.25 percent", async () => {
+    const cases = Array.from({ length: 8 }, (_, i) => ({ name: `eq-${i}`, severities: ["major"] }));
+    const { index } = await indexWith({ cases, before: () => true, after: (c) => c >= 4 });
+    const shown = trend(["--index", index]);
+    expect(shown.stdout).toMatch(/- issue recall: 50\.0% against 100\.0%.*one-sided p 6\.25% \(exact, 4 changed cases\).*inside the noise/);
+    expect(shown.status, shown.stdout + shown.stderr).toBe(0);
+  });
+
+  it("passes a hundred cases where five stop being found, and fails one where eight do: the cases that changed set the noise, not how many cases there are", () => {
+    const view = (runId, changed) => {
+      const perCase = {};
+      for (let i = 0; i < 100; i++) {
+        const hit = i < changed ? 0 : 3;
+        perCase[`planted/h${i}@${sha(`h${i}`).slice(0, 8)}`] = { issueRecall: { hit, of: 3 }, criticalMajor: { hit, of: 3 }, precision: { lower: { hit, of: hit }, upper: { hit, of: hit } }, controls: { hit: 0, of: 0 } };
+      }
+      return { runId, perCase: { [CONFIG]: perCase }, perBug: { [CONFIG]: {} }, intervals: { cluster: "case", groups: null } };
+    };
+    const five = compareConfig(view("2026-10-11-a", 0), view("2026-10-11-b", 5), CONFIG);
+    expect(five.metrics[0].delta).toBeCloseTo(-0.05, 12);
+    expect(five.metrics[0]).toMatchObject({ pLower: 1 / 32, method: "exact" });
+    expect(five.regressed).toBe(false);
+    expect(compareConfig(view("2026-10-11-a", 0), view("2026-10-11-b", 8), CONFIG).regressed).toBe(true);
   });
 
   it("raises the alarm on at most one null pair in ten, over two hundred pairs drawn from one build's noise", () => {
@@ -246,7 +273,7 @@ describe("a drop inside the noise fails the trend", () => {
 
 describe("a real drop passes the trend", () => {
   it("fails a newer run that finds two issues of five on every case where the accepted run found four, and shows three findings nobody confirmed per review", async () => {
-    const index = await indexWith({
+    const { index } = await indexWith({
       before: (c, b) => b < 4,
       after: (c, b) => b < 2,
       unlistedAfter: () => 3,
@@ -262,7 +289,7 @@ describe("a real drop passes the trend", () => {
     const cases = [...TWENTY.slice(0, 19), { name: "case-crit", severities: ["critical", "major"] }, { name: "case-clean", severities: [] }];
     const crit = cases.findIndex((c) => c.name === "case-crit");
     const clean = cases.findIndex((c) => c.name === "case-clean");
-    const index = await indexWith({
+    const { index } = await indexWith({
       cases,
       before: () => true,
       after: (c, b, r) => !(c === crit && b === 0 && r !== 1),
@@ -278,7 +305,7 @@ describe("a real drop passes the trend", () => {
 
 describe("a run that cannot be a baseline is accepted, or the accepted entry changes after it was accepted", () => {
   it("writes the accepted pointer with the run id, its commit and the score hash, for every group the run holds, and marks the entry", async () => {
-    const index = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
+    const { index, published } = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
     const pointer = JSON.parse(readFileSync(join(index, "accepted.json"), "utf8"));
     const entry = readEntryAt(index, ACCEPTED.runId);
     const [group] = groupKeys(entry);
@@ -289,8 +316,11 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
     expect(pointer.groups[group.key]).toMatchObject({ runId: ACCEPTED.runId, commit: ACCEPTED.commit, scoreHash: pointer.scoreHash, acceptedBy: "Sid" });
     expect(entry).toMatchObject({ accepted: true, acceptedBy: "Sid" });
     expect(entryProblems(entry)).toEqual([]);
-    // Accepting the newer run moves the pointer and keeps the older entry's mark.
-    const next = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index]);
+    // Accepting the newer run, from a copy fetched from its published asset,
+    // moves the pointer and keeps the older entry's mark.
+    const fetched = tempDir("oq-bench-fetched-");
+    extractAsset(published.next.asset.tarPath, readEntryAt(index, NEWER.runId).asset, fetched, NEWER.runId);
+    const next = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", fetched]);
     expect(next.status, next.stdout + next.stderr).toBe(0);
     const moved = JSON.parse(readFileSync(join(index, "accepted.json"), "utf8"));
     expect(moved).toMatchObject({ commit: NEWER.commit, runId: NEWER.runId });
@@ -299,7 +329,7 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
   });
 
   it("refuses a legacy run, a draft, a dirty build, a stopped run, a run with scanners missing, and a run already accepted", async () => {
-    const index = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
+    const { index, root } = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
     const base = readEntryAt(index, NEWER.runId);
     const legacyId = readdirSync(fileURLToPath(new URL("../index/runs/", import.meta.url))).find((f) => f.endsWith(".json")).replace(/\.json$/, "");
     cpSync(fileURLToPath(new URL(`../index/runs/${legacyId}.json`, import.meta.url)), join(index, "runs", `${legacyId}.json`));
@@ -315,12 +345,12 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
       putEntry(index, entry);
     }
     for (const [runId, , why] of [[legacyId, null, /legacy/], ...variants]) {
-      const refused = trend(["--accept", runId, "--by", "Sid", "--index", index]);
+      const refused = trend(["--accept", runId, "--by", "Sid", "--index", index, "--results", root]);
       expect(refused.status, `${runId}: ${refused.stdout}${refused.stderr}`).toBe(2);
       expect(refused.stderr).toMatch(why);
       expect(readEntryAt(index, runId).accepted).toBe(false);
     }
-    const again = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index]);
+    const again = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index, "--results", root]);
     expect(again.status).toBe(2);
     expect(again.stderr).toMatch(/already accepted/);
     expect(JSON.parse(readFileSync(join(index, "accepted.json"), "utf8")).runId).toBe(ACCEPTED.runId);
@@ -330,18 +360,41 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
     const root = tempDir("oq-bench-republish-");
     const runs = join(root, "index", "runs");
     const folder = await savedRun({ parent: root, ...ACCEPTED, cases: TWENTY.slice(0, 8), repeat: 1, found: (c) => c < 6 });
-    const publish = () => publishRun(folder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-bench-republish-out-") });
-    publish();
-    const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", join(root, "index")]);
+    const again = () => publishRun(folder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-bench-republish-out-") });
+    again();
+    const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", join(root, "index"), "--results", root]);
     expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
-    publish();
+    again();
     expect(readEntryAt(join(root, "index"), ACCEPTED.runId)).toMatchObject({ accepted: true, acceptedBy: "Sid" });
     const shown = trend(["--index", join(root, "index")]);
     expect(shown.status, shown.stdout + shown.stderr).toBe(0);
   });
 
+  it("refuses an entry whose numbers no longer match its run's score, a missing run folder and a changed one, before writing either file", async () => {
+    const { index, root } = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
+    const accept = (results) => trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", results]);
+    const published = readFileSync(join(index, "runs", `${NEWER.runId}.json`), "utf8");
+    const edited = JSON.parse(published);
+    edited.scores[CONFIG].issueRecall.all.hit -= 1;
+    expect(entryProblems(edited)).toEqual([]);
+    putEntry(index, edited);
+    const refused = accept(root);
+    expect(refused.status, refused.stdout + refused.stderr).toBe(2);
+    expect(refused.stderr).toMatch(/does not match its run[^]*scores/);
+    write(join(index, "runs", `${NEWER.runId}.json`), published);
+    const missing = accept(tempDir("oq-bench-no-runs-"));
+    expect(missing.status).toBe(2);
+    expect(missing.stderr).toMatch(/fetch-run\.mjs/);
+    write(join(root, NEWER.runId, "notes.txt"), "a file the published run does not hold\n");
+    const changed = accept(root);
+    expect(changed.status).toBe(2);
+    expect(changed.stderr).toMatch(/neither the published asset nor the folder it was published from/);
+    expect(readEntryAt(index, NEWER.runId).accepted).toBe(false);
+    expect(JSON.parse(readFileSync(join(index, "accepted.json"), "utf8")).runId).toBe(ACCEPTED.runId);
+  });
+
   it("refuses to compare against an accepted entry whose numbers changed after it was accepted", async () => {
-    const index = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
+    const { index } = await indexWith({ before: (c) => c < 15, after: (c) => c < 15 });
     const entry = readEntryAt(index, ACCEPTED.runId);
     const first = Object.keys(entry.perCase[CONFIG])[0];
     entry.perCase[CONFIG][first].issueRecall = { hit: 0, of: entry.perCase[CONFIG][first].issueRecall.of };

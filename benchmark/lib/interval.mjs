@@ -1,14 +1,37 @@
-// Intervals for the benchmark's ratios, by cluster bootstrap. Used by
-// score.mjs (each run's intervals), trend.mjs (the regression alarm) and the
-// reviewer loop's paired comparison (P3-04 passes its own seed and alpha).
+// Intervals and paired comparisons for the benchmark's ratios. Used by
+// score.mjs (each run's interval, a cluster bootstrap shown beside its
+// numbers), trend.mjs (the regression alarm) and the reviewer loop's paired
+// comparison (P3-04 passes its own seed and alpha). The alarm and the
+// acceptance bounds come from a paired sign-flip test, never the bootstrap.
 //
-// A cluster is the unit that is resampled: the case on planted suites, the
-// repository group on real ones. All of a cluster's truth items, findings
-// and repeats travel together, because reviews of one case share its code
-// and its brief and are not independent trials. Every metric is a ratio of
-// sums ({hit, of}: hits over checks, or dollars over reviews), recomputed
-// from the drawn clusters on each resample, never an average of per-case
+// A cluster is the unit that is drawn or flipped: the case on planted
+// suites, the repository group on real ones. All of a cluster's truth items,
+// findings and repeats travel together, because reviews of one case share
+// its code and its brief and are not independent trials. Every metric is a
+// ratio of sums ({hit, of}: hits over checks, or dollars over reviews),
+// recomputed from the clusters on each draw, never an average of per-case
 // ratios.
+//
+// Why the paired comparison is a sign-flip test at every size. When k of n
+// clusters change, all the same way, and the rest stay put, a paired
+// bootstrap reads "no change" only on a resample that draws none of the k,
+// which happens with probability (1 - k/n)^n, below e^-k at every n. The
+// exact paired test (under no change, either run's result of a cluster is
+// as likely to be the other's, so each of the 2^k swaps of the changed
+// clusters is equally likely) gives 2^-k. Since e^-k < 2^-k for every k,
+// the bootstrap calls a drop significant at alpha whenever ln(1/alpha) < k
+// < log2(1/alpha), however many clusters there are: at the alarm's 0.0125,
+// five or six cases moving one way, whether among 8, 100 or 1,000 (four of
+// eight: 0.39 percent against an exact 6.25; five of a hundred: 0.59
+// against 3.1). No cluster count can be the threshold, so pairedBounds runs
+// the sign-flip test itself: every swap when at most EXACT_MAX clusters
+// changed, a seeded sample of swaps beyond.
+//
+// A run's own interval stays a percentile bootstrap. It describes the run
+// and decides nothing. It is shown from MIN_CLUSTERS = 8 clusters, above
+// the 7 at which the exact paired test can reach the alarm's level at all
+// (2^-7 < 0.0125 < 2^-6), so no interval is shown on clusters too few for
+// any decision; below, the score says "too few clusters".
 //
 // Failure list, written before the code:
 // 1. Two scorings of one run give different intervals: nothing here reads a
@@ -28,14 +51,22 @@
 // 5. A percentile is picked with floating arithmetic, so 95% lands one order
 //    statistic off on some resample counts: the index is computed with a
 //    tolerance, from alpha and the count.
-// 6. A paired comparison resamples the two runs independently, so the noise
-//    the runs share inflates the difference's spread: one draw of cluster
-//    indices serves both sides of every resample.
+// 6. A paired comparison treats the two runs as independent, so the noise
+//    they share inflates the difference's spread: the test swaps the two
+//    runs' results within a cluster, never across clusters.
+// 7. A drop carried by a few clusters is called significant because the
+//    bootstrap rarely draws a resample without them (the reasoning above):
+//    the paired comparison is the sign-flip test, exact up to EXACT_MAX
+//    changed clusters, and its bounds can pass zero only where the test
+//    rejects no change.
 import { createHash } from "node:crypto";
 
 export const RESAMPLES = 10_000;
 export const LEVEL = 0.95;
 export const MIN_CLUSTERS = 8;
+// Up to 16 changed clusters every one of the 2^16 = 65,536 swaps is tried,
+// about six times the sampled draws; beyond, RESAMPLES seeded swaps are.
+export const EXACT_MAX = 16;
 
 // A 32-bit seed from named parts: the first four bytes of sha256 over the
 // parts joined by NUL.
@@ -121,32 +152,87 @@ export function clusterInterval({ clusters, seed, level = LEVEL, resamples = RES
   return { ci: [sorted[k], sorted[resamples - 1 - k]], clusters: used.length };
 }
 
-// The paired difference b minus a of a ratio of sums, with one-sided bounds
-// at `alpha`: { delta, lower, upper, clusters }. `lower` is the alpha
-// quantile of the resampled differences (b is better than a by more than it
-// with probability 1 - alpha), `upper` the 1 - alpha quantile. Both are null
-// below `minClusters` clusters with something to count on either side.
-// `pairs` comes from pairedSums; the same draw serves both sides.
-export function pairedBounds({ pairs, seed, alpha, resamples = RESAMPLES, minClusters = MIN_CLUSTERS }) {
+// The change b minus a of a ratio of sums under every swap of the changed
+// clusters' two results, the observed one first. Swaps are visited in Gray
+// code order, so each differs from the one before by one cluster.
+function everySwap(total, changed) {
+  const out = new Float64Array(2 ** changed.length);
+  let { hit: ah, of: ao } = total.a;
+  let { hit: bh, of: bo } = total.b;
+  const swapped = new Uint8Array(changed.length);
+  out[0] = ratioOf(bh, bo) - ratioOf(ah, ao);
+  for (let t = 1; t < out.length; t++) {
+    const j = 31 - Math.clz32(t & -t);
+    const p = changed[j];
+    const way = swapped[j] === 0 ? 1 : -1;
+    const dh = (p.b.hit - p.a.hit) * way;
+    const dof = (p.b.of - p.a.of) * way;
+    ah += dh;
+    ao += dof;
+    bh -= dh;
+    bo -= dof;
+    swapped[j] ^= 1;
+    out[t] = ratioOf(bh, bo) - ratioOf(ah, ao);
+  }
+  return out;
+}
+
+// The same, over the observed swap and `resamples` seeded random swaps,
+// each changed cluster swapped with probability one half.
+function someSwaps(total, changed, { seed, resamples }) {
+  const rand = mulberry32(seed);
+  const out = new Float64Array(resamples + 1);
+  out[0] = ratioOf(total.b.hit, total.b.of) - ratioOf(total.a.hit, total.a.of);
+  for (let r = 1; r <= resamples; r++) {
+    let { hit: ah, of: ao } = total.a;
+    let { hit: bh, of: bo } = total.b;
+    for (const p of changed) {
+      if (rand() >= 0.5) continue;
+      ah += p.b.hit - p.a.hit;
+      ao += p.b.of - p.a.of;
+      bh -= p.b.hit - p.a.hit;
+      bo -= p.b.of - p.a.of;
+    }
+    out[r] = ratioOf(bh, bo) - ratioOf(ah, ao);
+  }
+  return out;
+}
+
+// The paired change b minus a of a ratio of sums, by the sign-flip test
+// (failure 7): { delta, lower, upper, pLower, pUpper, clusters, changed,
+// method }. pLower is the chance, with no real change, of a change as low
+// as delta or lower, pUpper as high or higher; under no change either run's
+// result of a cluster is as likely to be the other's. `upper` is the
+// one-sided bound at `alpha` above which the change is unlikely: below zero
+// exactly when pLower <= alpha; `lower` the same from below (above zero
+// exactly when pUpper <= alpha). The bounds shift the no-change spread to
+// delta; that is exact at zero, which the alarm and the primary metric
+// test, and close elsewhere, which a guard's loss tests. `method` is
+// "exact" (every swap) or "sampled" (the observed swap and `resamples`
+// seeded ones, counted as the p-values' denominator). `pairs` comes from
+// pairedSums; a cluster whose two results are equal is never swapped.
+export function pairedBounds({ pairs, seed, alpha, resamples = RESAMPLES }) {
   const used = pairs.filter((p) => p.a.of > 0 || p.b.of > 0);
   const total = used.reduce((t, p) => ({ a: plus(t.a, p.a), b: plus(t.b, p.b) }), { a: { hit: 0, of: 0 }, b: { hit: 0, of: 0 } });
-  const delta = ratioOf(total.b.hit, total.b.of) - ratioOf(total.a.hit, total.a.of);
-  if (used.length < minClusters) return { delta, lower: null, upper: null, clusters: used.length };
-  const sorted = draw(used.length, { seed, resamples }, (picks) => {
-    let ah = 0;
-    let ao = 0;
-    let bh = 0;
-    let bo = 0;
-    for (const i of picks) {
-      ah += used[i].a.hit;
-      ao += used[i].a.of;
-      bh += used[i].b.hit;
-      bo += used[i].b.of;
-    }
-    return ratioOf(bh, bo) - ratioOf(ah, ao);
-  });
-  const k = tail(alpha, resamples);
-  return { delta, lower: sorted[k], upper: sorted[resamples - 1 - k], clusters: used.length };
+  const changed = used.filter((p) => p.a.hit !== p.b.hit || p.a.of !== p.b.of);
+  const exact = changed.length <= EXACT_MAX;
+  const values = exact ? everySwap(total, changed) : someSwaps(total, changed, { seed, resamples });
+  const delta = values[0];
+  let atOrBelow = 0;
+  let atOrAbove = 0;
+  for (const v of values) {
+    if (v <= delta) atOrBelow++;
+    if (v >= delta) atOrAbove++;
+  }
+  const n = values.length;
+  values.sort();
+  // The largest count of swaps at or below delta at which the test still
+  // rejects no change is floor(alpha n); the next order statistic is the
+  // edge of the no-change spread.
+  const k = Math.floor(alpha * n + 1e-9);
+  const upper = k < n ? delta - values[k] : Number.POSITIVE_INFINITY;
+  const lower = k < n ? delta - values[n - 1 - k] : Number.NEGATIVE_INFINITY;
+  return { delta, lower, upper, pLower: atOrBelow / n, pUpper: atOrAbove / n, clusters: used.length, changed: changed.length, method: exact ? "exact" : "sampled" };
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +249,7 @@ export const ISSUE_METRICS = [
   { name: "precision.upper", label: "precision, upper bound", perCase: (c) => c.precision.upper, headline: (h) => h.precision.upper },
 ];
 
-export const INTERVAL_METHOD = "Percentile bootstrap over clusters drawn with replacement; each metric is a ratio of sums recomputed on every resample, and a cluster keeps all its truth items, findings and repeats together. A cluster with nothing to count for a metric is left out of it.";
+export const INTERVAL_METHOD = "Percentile bootstrap over clusters drawn with replacement; each metric is a ratio of sums recomputed on every resample, and a cluster keeps all its truth items, findings and repeats together. A cluster with nothing to count for a metric is left out of it. The interval describes this run and decides nothing: the trend's alarm and the acceptance rule compare two runs with a paired sign-flip test. With fewer than minClusters clusters it is null, listed under tooFewClusters.";
 export const SEED_RULE = "mulberry32 seeded with the first 32 bits of sha256 over the run id, the configuration and the metric name, joined by NUL";
 
 // The cluster of each case: the case itself on a planted suite, its
