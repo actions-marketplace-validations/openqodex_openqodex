@@ -11,9 +11,37 @@ const text = (value) => typeof value === "string" && value.trim().length > 0;
 const https = (value) => {
   try { return new URL(value).protocol === "https:"; } catch { return false; }
 };
-const date = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value));
+const date = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 const sha = (value, length) => typeof value === "string" && new RegExp(`^[a-f0-9]{${length}}$`).test(value);
 const pr = (value) => typeof value === "string" && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[1-9]\d*$/.test(value);
+const pinnedSource = (value, board, rawOnly = false) => {
+  try {
+    const url = new URL(value);
+    const prefix = url.origin === "https://raw.githubusercontent.com" ? `/${board.repo}/${board.commit}/`
+      : !rawOnly && url.origin === "https://github.com" ? `/${board.repo}/blob/${board.commit}/` : null;
+    return prefix !== null && !url.username && !url.password && !url.search && !url.hash
+      && url.pathname.startsWith(prefix) && url.pathname.length > prefix.length;
+  } catch { return false; }
+};
+
+// Retail meter labels encode the model, context, token direction and deployment type.
+const meterMatches = (meter, price, modelId, field) => {
+  const model = /^gpt-(\d+(?:\.\d+)?(?:-[a-z0-9.]+)?)$/.exec(modelId)?.[1];
+  if (!model || price.deploymentType !== "Global Standard") return false;
+  const short = typeof price.context === "string" && price.context.startsWith("Short context (");
+  const base = typeof price.context === "string" && price.context.startsWith(`GPT ${model} base model;`);
+  if (!short && !base) return false;
+  const direction = { input: "Inp", cachedInput: "Cd Inp", output: "Opt" }[field];
+  const sku = short ? `${model} ShortCo ${direction} Std Gl` : `GPT ${model} ${direction} Gl`;
+  const regionTokens = (value) => typeof value === "string" ? value.toLowerCase().trim().split(/\s+/).sort().join(" ") : null;
+  return meter.unitOfMeasure === "1M"
+    && text(meter.meterName) && meter.meterName.toLowerCase() === `${sku} 1M Tokens`.toLowerCase()
+    && text(meter.skuName) && meter.skuName.toLowerCase() === sku.toLowerCase()
+    && meter.productName === `Azure OpenAI GPT${model.split(/[.-]/)[0]}`
+    && text(price.region) && regionTokens(meter.region) === regionTokens(price.region)
+    && meter.armRegionName === price.region.toLowerCase().replace(/\s+/g, "");
+};
 
 /** Validate saved facts without fetching data or calling a model. */
 export function boardProblems(pins, prices, { ready = false } = {}) {
@@ -28,7 +56,8 @@ export function boardProblems(pins, prices, { ready = false } = {}) {
   const checkFile = (file, board, name) => {
     if (!object(file)) { need(false, name); return; }
     need(text(file.path) && !file.path.startsWith("/") && !file.path.split("/").includes(".."), `${name}.path`);
-    need(file.url === `https://raw.githubusercontent.com/${board.repo}/${board.commit}/${file.path}`, `${name}.url`);
+    need(file.url === `https://raw.githubusercontent.com/${board.repo}/${board.commit}/${file.path}`
+      && pinnedSource(file.url, board, true), `${name}.url`);
     need(sha(file.sha256, 64), `${name}.sha256`);
   };
   for (const id of ["martian", "aacr", "reviewbench"]) {
@@ -43,7 +72,13 @@ export function boardProblems(pins, prices, { ready = false } = {}) {
     checkFile(board.licenceFile, board, `${name}.licenceFile`);
     if (!Array.isArray(board.data) || board.data.length === 0) need(false, `${name}.data`);
     else {
-      for (const [i, file] of board.data.entries()) checkFile(file, board, `${name}.data[${i}]`);
+      for (const [i, file] of board.data.entries()) {
+        checkFile(file, board, `${name}.data[${i}]`);
+        // The agent contract is a supporting document, not a PR dataset.
+        if (id !== "reviewbench" || file?.path !== "AGENT_CONTRACT.md") {
+          need(Number.isSafeInteger(file?.prCount) && file.prCount > 0, `${name}.data[${i}].prCount`);
+        }
+      }
       need(new Set(board.data.map((file) => file?.path)).size === board.data.length, `${name}.data paths`);
       const paths = board.data.map((file) => file?.path);
       if (id === "martian") {
@@ -63,7 +98,7 @@ export function boardProblems(pins, prices, { ready = false } = {}) {
       need(Array.isArray(urls) && urls.length === count, `${name}.reservedPrUrls count`);
     }
     const judge = board.judge;
-    need(object(judge) && https(judge.source), `${name}.judge`);
+    need(object(judge) && pinnedSource(judge.source, board), `${name}.judge`);
     if (id === "reviewbench") {
       need(text(judge?.id), `${name}.judge.id`);
       need(sha(judge?.sha256, 64), `${name}.judge.sha256`);
@@ -101,6 +136,7 @@ export function boardProblems(pins, prices, { ready = false } = {}) {
       const meter = price.meters?.[field];
       if (!object(meter)) { need(false, `${fieldName}.meter`); continue; }
       for (const key of ["meterName", "productName", "region", "unitOfMeasure"]) need(text(meter[key]), `${fieldName}.${key}`);
+      need(meterMatches(meter, price, deployment.id, field), `${fieldName}.meter unit, direction, model and scope`);
       need(https(meter.source), `${fieldName}.source`);
       need(date(meter.readDate), `${fieldName}.readDate`);
     }
@@ -114,10 +150,11 @@ export function boardProblems(pins, prices, { ready = false } = {}) {
 /** Check field presence only. Never capture, return or log a field value. */
 export function azureEnvProblems(content) {
   const problems = [];
-  const base = /^\s*(?:export\s+)?(?:AZURE_OPENAI_BASE_URL|OPENAI_BASE_URL|AZURE_OPENAI_ENDPOINT|BASE_URL)\s*=\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s#'"\r\n]+)\s*(?:#.*)?$/m;
-  const key = /^\s*(?:export\s+)?(?:AZURE_OPENAI_API_KEY|OPENAI_API_KEY|AZURE_OPENAI_KEY|API_KEY)\s*=\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s#'"\r\n]+)\s*(?:#.*)?$/m;
-  if (!base.test(content)) problems.push("azure.env is missing a nonempty base URL field");
-  if (!key.test(content)) problems.push("azure.env is missing a nonempty key field");
+  const base = /^[ \t]*(?:export[ \t]+)?(?:AZURE_OPENAI_BASE_URL|OPENAI_BASE_URL|AZURE_OPENAI_ENDPOINT|BASE_URL)[ \t]*=[ \t]*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s#'"\r\n]+)[ \t]*(?:#.*)?$/;
+  const key = /^[ \t]*(?:export[ \t]+)?(?:AZURE_OPENAI_API_KEY|OPENAI_API_KEY|AZURE_OPENAI_KEY|API_KEY)[ \t]*=[ \t]*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s#'"\r\n]+)[ \t]*(?:#.*)?$/;
+  const lines = content.split(/\r\n|\n|\r/);
+  if (!lines.some((line) => base.test(line))) problems.push("azure.env is missing a nonempty base URL field");
+  if (!lines.some((line) => key.test(line))) problems.push("azure.env is missing a nonempty key field");
   return problems;
 }
 

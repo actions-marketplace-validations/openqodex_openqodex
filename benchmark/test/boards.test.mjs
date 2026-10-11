@@ -1,5 +1,7 @@
 // Failure cases declared before implementation: missing or floating board pins,
 // unhashed data, unknown reserved lists, unprobed deployments and missing prices.
+// Review failures: encoded traversal, multiline assignments, floating judges,
+// invalid dataset counts, mismatched meters and impossible calendar dates.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { boardProblems, azureEnvProblems } from "../outside/check-boards.mjs";
@@ -103,6 +105,78 @@ describe("outside board pins", () => {
       expect(problems).not.toBe("");
       expect(problems).not.toContain(base);
       expect(problems).not.toContain(key);
+    }
+  });
+
+  it("refuses an encoded data path that removes the pinned commit", () => {
+    const input = metadata();
+    const board = input.boards.boards.aacr;
+    const path = "%2e%2e/main/dataset/positive_samples.json";
+    board.data.push({
+      ...board.data[0], path,
+      url: `https://raw.githubusercontent.com/${board.repo}/${board.commit}/${path}`,
+    });
+    expect(boardProblems(input.boards, input.prices).join("\n")).toMatch(/aacr.*data\[2\].*url/);
+  });
+
+  it("refuses an empty Azure base assignment followed by a nonempty key", () => {
+    expect(azureEnvProblems("AZURE_OPENAI_BASE_URL=\nAZURE_OPENAI_API_KEY=test-only-value\n"))
+      .toEqual(["azure.env is missing a nonempty base URL field"]);
+  });
+
+  it("refuses judge sources outside the board's pinned repository and commit", () => {
+    for (const id of ["reviewbench", "martian", "aacr"]) {
+      for (const change of ["commit", "repo", "traversal"]) {
+        const input = metadata();
+        const board = input.boards.boards[id];
+        board.judge.source = change === "repo"
+          ? board.judge.source.replace(board.repo, "other/repository")
+          : board.judge.source.replace(board.commit, change === "commit" ? "main" : `${board.commit}/%2e%2e/main`);
+        expect(boardProblems(input.boards, input.prices).join("\n")).toMatch(new RegExp(`${id}.*judge`));
+      }
+    }
+  });
+
+  it("refuses missing or invalid dataset PR counts", () => {
+    for (const count of [undefined, "unknown", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      for (const [id, index] of [["aacr", 0], ["martian", 0], ["reviewbench", 1]]) {
+        const input = metadata();
+        const file = input.boards.boards[id].data[index];
+        if (count === undefined) delete file.prCount;
+        else file.prCount = count;
+        expect(boardProblems(input.boards, input.prices).join("\n")).toMatch(new RegExp(`${id}.*prCount`));
+      }
+    }
+  });
+
+  it("refuses meters with the wrong unit, token direction, model or rate scope", () => {
+    for (const id of ["gpt-6.1-sol", "gpt-5.2"]) {
+      for (const field of ["input", "cachedInput", "output"]) {
+        for (const change of ["unit", "direction", "model", "deploymentType", "region", "context"]) {
+          const input = metadata();
+          const price = input.prices.models[id];
+          const meter = price.meters[field];
+          if (change === "unit") meter.unitOfMeasure = "1K";
+          if (change === "direction") price.meters[field] = price.meters[field === "output" ? "input" : "output"];
+          if (change === "model") price.meters[field] = input.prices.models[id === "gpt-5.2" ? "gpt-6.1-sol" : "gpt-5.2"].meters[field];
+          if (change === "deploymentType") price.deploymentType = "Regional Standard";
+          if (change === "region") meter.region = "West Europe";
+          if (change === "context") price.context = "Long context";
+          expect(boardProblems(input.boards, input.prices).join("\n")).toContain(`${id}.${field}`);
+        }
+      }
+    }
+  });
+
+  it("refuses an impossible calendar read date in boards, prices and meters", () => {
+    for (const target of ["board", "price", "meter"]) {
+      const input = metadata();
+      const price = input.prices.models["gpt-6.1-sol"];
+      const entry = target === "board" ? input.boards.boards.aacr : target === "price" ? price : price.meters.input;
+      entry.readDate = "2026-02-30";
+      expect(boardProblems(input.boards, input.prices).join("\n")).toMatch(/readDate/);
+      entry.readDate = "2024-02-29";
+      expect(boardProblems(input.boards, input.prices)).toEqual([]);
     }
   });
 });
