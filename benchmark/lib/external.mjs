@@ -6,13 +6,14 @@
 //
 // Failure list, written before the code:
 // 1. Two samples of one run are scanned with different Semgrep rule packs
-//    and the run is scored as one rule set: the packs each sample's scan
-//    recorded (the adapter's `rules`, the sha256 and size of the bytes
-//    semgrep read) are compared, and a run whose samples consumed different
-//    bytes of one pack is "mixed", which accept refuses.
-// 2. A sample whose packs were not recorded is taken as matching the
-//    others: the run's packs are then "unknown", and accept refuses a scan
-//    run with unknown packs too.
+//    and the run is scored as one rule set: the complete set of packs each
+//    sample's scan recorded (the adapter's `rules`, the sha256 and size of
+//    the bytes semgrep read) is compared, never a union of them, and a run
+//    whose samples' sets differ in any pack or byte is "mixed", which accept
+//    refuses.
+// 2. A sample whose packs were not recorded, or recorded as an empty list,
+//    is taken as matching the others: the run's packs are then "unknown",
+//    and accept refuses a scan run with unknown packs too.
 // 3. osv.dev answers differently between two runs and the change reads as a
 //    product change: what osv-scanner returned in each sample (its status,
 //    every raw finding in the scan trail by advisory id and severity, and
@@ -50,27 +51,36 @@ export function scannerPreflight(doctor, { home = homedir() } = {}) {
 }
 
 // The Semgrep rule packs a run's scans consumed: the packs, sorted, when
-// every sample in which semgrep ran consumed the same bytes; "mixed" when
-// two samples consumed different bytes of one pack; "unknown" when a sample
-// in which semgrep ran recorded none. [] when semgrep ran nowhere.
+// every sample in which semgrep ran consumed the same set of packs with the
+// same bytes; "mixed" when two samples' sets differ in any pack or byte, or
+// one sample read two versions of one pack; "unknown" when a sample in which
+// semgrep ran recorded no pack (no record, or an empty one). [] when
+// semgrep ran nowhere.
 export function semgrepPacksOf(scans) {
-  const seen = new Map();
+  const sets = new Set();
+  let first = null;
   let unknown = false;
   for (const scan of scans) {
     const s = (scan?.scanners ?? []).find((x) => x.scanner === "semgrep");
     if (!s || s.status !== "ran") continue;
-    if (!Array.isArray(s.rules)) {
+    if (!Array.isArray(s.rules) || s.rules.length === 0) {
       unknown = true;
       continue;
     }
+    // One pack read twice with other bytes, in one sample, is two rule sets already.
+    const byPack = new Map();
     for (const r of s.rules) {
-      const had = seen.get(r.pack);
+      const had = byPack.get(r.pack);
       if (had && (had.sha256 !== r.sha256 || had.bytes !== r.bytes)) return "mixed";
-      seen.set(r.pack, { pack: r.pack, sha256: r.sha256, bytes: r.bytes });
+      byPack.set(r.pack, { pack: r.pack, sha256: r.sha256, bytes: r.bytes });
     }
+    const set = [...byPack.values()].sort((a, b) => byText(a.pack, b.pack));
+    sets.add(JSON.stringify(set));
+    if (sets.size > 1) return "mixed";
+    first ??= set;
   }
   if (unknown) return "unknown";
-  return [...seen.values()].sort((a, b) => byText(a.pack, b.pack));
+  return first ?? [];
 }
 
 // What osv-scanner returned across a run's samples ({ caseId, scan }), as

@@ -46,6 +46,10 @@
 //    a version and a hash over its constants and the text of every
 //    declaration the scoring reaches, here and in the modules it imports
 //    from; a test pins the hash to SCAN_RULES_VERSION.
+// 8. A custom scanner that names a rule openqodex.suppression-added is
+//    credited as the product's own suppression finder: an own rule counts
+//    only for a built-in scanner's candidate, and only a rule id OWN_RULES
+//    itself holds (never one a plain object inherits, such as constructor).
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -57,6 +61,8 @@ export const SCAN_CONFIG = "scan";
 // Finders a spec names that are the reviewer, never a candidate.
 export const REVIEWER_FINDERS = ["reasoning", "graph"];
 // OpenQodex's own candidates, by rule id, and the finder each counts as.
+// Only a built-in scanner's candidate can be one (core finalize.ts
+// isOwnCandidate): a custom scanner may name a rule anything.
 export const OWN_RULES = { "openqodex.suppression-added": "suppression", "settings-file": "settings" };
 export const SCAN_OUTCOME_ORDER = ["accepted", "hit", "near", "unresolved", "false"];
 // How each outcome counts: a duplicate is set apart from precision and
@@ -77,7 +83,7 @@ function splitToken(token) {
   return at === -1 ? { source: t, ruleId: "" } : { source: t.slice(0, at), ruleId: t.slice(at + 1) };
 }
 
-const finderName = (source, ruleId) => OWN_RULES[ruleId] ?? source;
+const finderName = (source, ruleId) => (!String(source).startsWith("custom:") && Object.hasOwn(OWN_RULES, ruleId) ? OWN_RULES[ruleId] : source);
 
 // Every finder a candidate speaks for: its own, then each scanner whose
 // finding dedup merged into it.

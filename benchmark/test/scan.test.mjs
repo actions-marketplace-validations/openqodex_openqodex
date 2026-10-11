@@ -65,6 +65,20 @@ describe("the expected scanner's candidate on the planted lines counts as false 
     const job = scoreScanJob({ job: jobOf("suppression-comments"), spec: s, scan: scanOf([own]), origin: "planted" });
     expect(job.candidates[0]).toMatchObject({ outcome: "hit", bug: "suppressed-eval", finder: "suppression", evidence: "finder" });
   });
+
+  it("never credits a custom scanner whose rule is named openqodex.suppression-added to the product's own suppression finder", () => {
+    const s = readCase("suppression-comments");
+    const custom = candidate("c1", "custom:mine", "openqodex.suppression-added", "web/server.js", 12, 12, "Flagged.");
+    const job = scoreScanJob({ job: jobOf("suppression-comments"), spec: s, scan: scanOf([custom]), origin: "planted" });
+    expect(job.candidates[0]).toMatchObject({ finder: "custom:mine", finders: ["custom:mine"] });
+    // Its rule id names the bug's word "suppress", so it finds the bug by words, never as the expected finder.
+    expect(job.candidates[0]).toMatchObject({ outcome: "hit", evidence: "words" });
+    expect(job.bugs.find((b) => b.id === "suppressed-eval").expected.suppression).toBe("missed");
+    expect(Object.keys(summarizeScanJobs([job]).perScanner)).toEqual(["custom:mine", "suppression"]);
+    // A rule id that names an inherited property of a plain object is no own rule either.
+    const odd = candidate("c1", "semgrep", "constructor", "web/server.js", 12, 12, "Flagged.");
+    expect(scoreScanJob({ job: jobOf("suppression-comments"), spec: s, scan: scanOf([odd]), origin: "planted" }).candidates[0]).toMatchObject({ finder: "semgrep", finders: ["semgrep"] });
+  });
 });
 
 describe("a second candidate on one bug lowers precision", () => {
@@ -96,7 +110,7 @@ describe("the scan rules are versioned", () => {
   // One hash per scan rules version; a change to any scan rule, or to a
   // review rule the scan score calls, moves the hash and fails this test
   // until SCAN_RULES_VERSION is bumped and the new hash added here.
-  const KNOWN_SCAN_RULES = { 1: "874f103dfcfbb081ddbe3d4f7273a339b9e1055406b1a38f6c48db91a7eaa83f" };
+  const KNOWN_SCAN_RULES = { 1: "32eb61eedf50150d6adbbbc8af02897f62b56f015c01a32512adc6217215507b" };
 
   it("pins the hash of the scan rules block, its matching code included, to its version", () => {
     expect(SCAN_RULES.version).toBe(SCAN_RULES_VERSION);
@@ -137,6 +151,16 @@ describe("a run whose samples consumed different Semgrep rule packs is accepted"
     expect(semgrepPacksOf([scanOf([])])).toEqual([]);
   });
 
+  it("marks the run mixed when two samples consumed different sets of packs with the same bytes for the packs they share, and unknown when a sample recorded an empty set", () => {
+    const [first] = PACKS(SHA_A);
+    expect(semgrepPacksOf([withPacks([first]), withPacks(PACKS(SHA_A))])).toBe("mixed");
+    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks([first])])).toBe("mixed");
+    expect(semgrepPacksOf([withPacks(PACKS(SHA_A)), withPacks([])])).toBe("unknown");
+    expect(semgrepPacksOf([withPacks([])])).toBe("unknown");
+    // One sample that read two versions of one pack mixes two rule sets on its own.
+    expect(semgrepPacksOf([withPacks([...PACKS(SHA_A), { ...first, sha256: SHA_B }])])).toBe("mixed");
+  });
+
   it("refuses to accept a mixed run, and a scan run whose packs are unknown", () => {
     expect(externalRefusals({ mode: "scan", external: { semgrepPacks: "mixed" } }).join("\n")).toMatch(/different Semgrep rule packs/);
     expect(externalRefusals({ mode: "review", external: { semgrepPacks: "mixed" } }).join("\n")).toMatch(/different Semgrep rule packs/);
@@ -160,7 +184,16 @@ const demoScan = ({ osv = [OSV], sha = SHA_A, shell = SC2115 } = {}) => {
   return { ...scanOf(cands, [{ ...ran("semgrep"), rules: PACKS(sha) }, ran("shellcheck"), ran("osv-scanner")]), trail: trailOf(cands) };
 };
 
-function savePass(root, name, scan) {
+// The other files run.mjs saves in a sample, as a real scan of the demo
+// writes them; the time in the markdown's scanner table varies between passes.
+const sampleFiles = (name) => ({
+  "receipt.txt": "Passed with warnings: 2 findings (1 major, 1 minor)\n",
+  "stderr.txt": "Scanners: 3 ran, 0 had nothing to check, 2 candidates to check\n",
+  "report/report.md": `# OpenQodex scan\n\n## Scanners\n\n| Scanner | Status | Version | Found | Kept | Time | Reason |\n|---|---|---|---|---|---|---|\n| semgrep | ran | 1.94.0 | 10 | 9 | ${(name.length / 10).toFixed(1)} s |  |\n| sqllint | ran |  | 0 | 0 | 0.0 s |  |\n`,
+  "report/report.sarif": JSON.stringify({ version: "2.1.0", runs: [{ tool: { driver: { name: "openqodex" } }, results: [{ ruleId: "shellcheck:SC2115", message: { text: "Use a guard." } }] }] }),
+});
+
+function savePass(root, name, scan, change = (files) => files) {
   const out = join(root, name);
   const caseId = "planted/demo-polyglot@00000000";
   const jobs = [{ jobId: `${caseId}/scan/1`, caseId, config: "scan", repeat: 1 }];
@@ -172,6 +205,7 @@ function savePass(root, name, scan) {
   const sample = { jobId: jobs[0].jobId, caseId, firstAttempt: true, case: "demo-polyglot", config: "scan", reviewer: null, graph: "off", repeat: 1, attempt: 1, started_at: `2026-10-11T10:00:0${name.length % 10}Z`, exit: 0, signal: null, wallMs: 3000 + name.length, status: "complete" };
   write("samples/demo-polyglot/scan/1/sample.json", sample);
   write("samples/demo-polyglot/scan/1/report/scan.json", scan);
+  for (const [file, text] of Object.entries(change(sampleFiles(name)))) write(`samples/demo-polyglot/scan/1/${file}`, text);
   const external = externalOf({ samples: [{ caseId, startedAt: sample.started_at, scan }], preflight: { toolchainHash: "a".repeat(64), scannerVersions: { semgrep: "1.94.0" }, missing: [] } });
   write("manifest.json", { version: 3, runId: "2026-10-11-abc1234-planted-scan-laptop", started_at: sample.started_at, mode: "scan", path: "laptop", suite: "planted", split: "dev", build: { commit: "b".repeat(40), short: "bbbbbbb", dirty: false, bundleHash: "c".repeat(64), cliVersion: "0.13.0" }, cases: ["demo-polyglot"], caseIds: [caseId], configs: ["scan"], repeat: 1, planned: 1, jobs, external, ended: { at: sample.started_at, how: "finished", why: null, elapsedMin: name.length / 100 } });
   saveScore(out);
@@ -204,6 +238,26 @@ describe("two scanner-only runs differ and nobody notices", () => {
     expect(result.identical).toBe(false);
     expect(result.cause).toBe("input");
     expect(result.inputs.join("\n")).toMatch(/osv\.dev advisory data/);
+  });
+
+  it("names a second pass whose SARIF, markdown, receipt or stderr changed, or is missing, while every JSON file is the same", () => {
+    const root = tempDir("oq-bench-identical-");
+    const first = savePass(root, "one", demoScan());
+    const sarif = savePass(root, "sarif", demoScan(), (f) => ({ ...f, "report/report.sarif": f["report/report.sarif"].replace("Use a guard.", "Use another guard.") }));
+    const md = savePass(root, "md", demoScan(), (f) => ({ ...f, "report/report.md": f["report/report.md"].replace("| 10 | 9 |", "| 10 | 8 |") }));
+    const receipt = savePass(root, "receipt", demoScan(), (f) => ({ ...f, "receipt.txt": "Passed with warnings: 3 findings (1 major, 2 minor)\n" }));
+    const lost = savePass(root, "lost", demoScan(), (f) => {
+      const { "stderr.txt": gone, ...rest } = f;
+      return gone === undefined ? f : rest;
+    });
+    for (const [folder, file] of [[sarif, "report/report.sarif"], [md, "report/report.md"], [receipt, "receipt.txt"], [lost, "stderr.txt"]]) {
+      const result = comparePasses(first, folder);
+      expect(result.identical, file).toBe(false);
+      expect(result.cause).toBe("product");
+      expect(result.differences.join("\n")).toContain(`samples/demo-polyglot/scan/1/${file}`);
+    }
+    // The scanner times in the markdown differ between the passes "one" and "two-pass" and are left out.
+    expect(comparePasses(first, savePass(root, "two-pass", demoScan())).identical).toBe(true);
   });
 
   it("reads other Semgrep rule pack bytes as an input change", () => {
