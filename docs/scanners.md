@@ -113,6 +113,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Needs: Python 3.11, which OpenQodex downloads through uv. About 86 MB with uv and bandit, measured on Apple Silicon.
 - Rules: the registry packs `p/default`, `p/security-audit` and `p/secrets`.
 - Sends: semgrep fetches those rule packs from the Semgrep registry on each run. It runs with its metrics switched off. The rules are never bundled in the OpenQodex package.
+- Records: semgrep's entry under `scanners` in `report.json` and `scan.json` lists the packs the scan used, in `rules`. Each pack is `{pack, sha256, bytes}`: the sha256 and size of the exact bytes semgrep read for it. So two scans that used different rules show it there. OpenQodex reads these bytes from the files semgrep leaves in its temporary folder, before it removes that folder. Nothing is downloaded twice and nothing more is printed. A change with so many files that semgrep runs more than once fetches the packs once per run, and a pack that changed between runs is listed once per version. When semgrep did not leave one file per pack, `rules` is left out.
 - `--offline` skips it. The report lists it as disabled.
 
 ## gitleaks

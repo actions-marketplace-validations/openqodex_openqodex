@@ -80,7 +80,13 @@ export type ScannerRunSummary = {
   durationMs: number;
   // One plain line for every status except "ran" and "no_matching_files".
   reason: string | null;
+  // semgrep only: each registry rule pack the scan consumed, by the sha256
+  // and size of the bytes semgrep read. Absent when the packs could not be
+  // told apart, and in a scan an older version saved.
+  rules?: RulePack[];
 };
+
+export type RulePack = { pack: string; sha256: string; bytes: number };
 
 // A secret a scanner matched, kept only as its length and sha256 so later
 // steps can redact it from text without the secret ever being stored.
@@ -114,6 +120,8 @@ export type AdapterResult = {
   // checked them on. A review pattern (lens) one of them covers stands down
   // for those files.
   checked?: { token: string; files: string[] }[];
+  // The rule packs the run consumed, kept on the scanner's summary.
+  rules?: RulePack[];
 };
 
 // One row of `openqodex doctor`.

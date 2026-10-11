@@ -468,7 +468,7 @@ function skippedOutcome(
 // to findings (one Go module of several failed, one .sql file unreadable)
 // keeps the findings and the note. A note (a folder held back) is the reason
 // of a scanner that ran. An adapter that chose not to run is disabled, with
-// its reason.
+// its reason. The rule packs it consumed (semgrep) go on its summary.
 function ranOutcome(
   scanner: ScannerSource,
   result: AdapterResult,
@@ -486,6 +486,7 @@ function ranOutcome(
       keptCount: 0,
       durationMs: Date.now() - started,
       reason: result.error ?? result.note ?? null,
+      ...(result.rules ? { rules: result.rules } : {}),
     },
     findings: result.findings,
     secrets: result.secrets ?? [],

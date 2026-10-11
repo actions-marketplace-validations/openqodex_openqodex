@@ -55,7 +55,7 @@
 //     a review that filled large scanner caches reports a total_ms that
 //     misses the cleanup reviewChange still waits for; or the JSON report's
 //     timings differ from the result's.
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,22 +90,11 @@ const SUBTRACTION: Finding = {
   candidate: null,
 };
 
-type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[]; wallMs: number };
-
-// `count` small files in `dir`, a hundred to a folder: what a Go or Cargo
-// cache leaves in the scratch folder.
-function fillFolder(dir: string, count: number): void {
-  for (let d = 0; d < count / 100; d++) {
-    mkdirSync(join(dir, `d${d}`), { recursive: true });
-    for (let f = 0; f < 100; f++) writeFileSync(join(dir, `d${d}`, `f${f}`), "x");
-  }
-}
+type Run = { result: ReviewResult; model: Fixture; asked: AuthorizeRequest[]; workDir: string; clone: string; lines: string[] };
 
 // `tmp`: a folder TMPDIR names while reviewChange runs, made read-only for
 // that time, so any write to the system temp folder fails the review.
-// `fill`: that many small files already in the scratch folder's cache, which
-// the review removes with the rest of its scratch.
-async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number; tmp?: string; fill?: number } = {}): Promise<Run> {
+async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: number; floor?: number; tmp?: string } = {}): Promise<Run> {
   const repo = changeRepo({ big: opts.big });
   const workDir = tempDir("oq-rc-work-");
   const installRoot = tempDir("oq-rc-install-");
@@ -132,11 +121,9 @@ async function run(opts: { big?: boolean; fixture?: FixtureOptions; refuseAt?: n
     vi.stubEnv("TMPDIR", opts.tmp);
     chmodSync(opts.tmp, 0o500);
   }
-  if (opts.fill !== undefined) fillFolder(join(workDir, "scratch", "cache", "filled"), opts.fill);
   try {
-    const started = Date.now();
     const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, model, options);
-    return { result, model, asked, workDir, clone: repo.dir, lines, wallMs: Date.now() - started };
+    return { result, model, asked, workDir, clone: repo.dir, lines };
   } finally {
     if (opts.tmp !== undefined) chmodSync(opts.tmp, 0o700);
     vi.unstubAllEnvs();
@@ -552,21 +539,42 @@ describe("what a host gets and gives", () => {
 
 describe("the result's timings", () => {
   it("23. total_ms covers the scratch folder's removal, and the JSON report holds the result's timings", async () => {
-    // How long removing that many files takes here, measured on a copy: the
-    // case proves nothing on a machine where it is quick.
-    const FILES = 20_000;
-    const probe = join(tempDir("oq-rc-fill-"), "cache");
-    fillFolder(probe, FILES);
-    const removing = Date.now();
-    rmSync(probe, { recursive: true, force: true });
-    const removeMs = Date.now() - removing;
-    expect(removeMs, "removing the filled cache is too quick to measure here").toBeGreaterThanOrEqual(200);
-    const r = await run({ fill: FILES });
-    expect(r.result.status).toBe("complete");
-    expect(readdirSync(r.workDir)).toEqual([]);
-    const timings = r.result.timings!;
-    expect(timings.total_ms, JSON.stringify({ timings, wallMs: r.wallMs, removeMs })).toBeGreaterThan(r.wallMs - removeMs / 2);
-    expect(JSON.parse(r.result.render.json()).timings).toEqual(timings);
+    const repo = changeRepo();
+    const workDir = tempDir("oq-rc-work-");
+    const scratch = join(workDir, "scratch");
+    const options: ReviewChangeOptions = {
+      profile: "server",
+      workDir,
+      installRoot: tempDir("oq-rc-install-"),
+      tools: { web: false, shell: false },
+      scanners: "preinstalled",
+      budget: { deadlineMs: 120_000, authorize: async () => true },
+    };
+    // Each Date.now reading during the call, the phase clock's among them
+    // (reviewChange hands Date.now to it), with whether the scratch folder
+    // was still there. The real value is passed on.
+    const realNow = Date.now;
+    const readings: { at: number; scratch: boolean }[] = [];
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => {
+      const at = realNow();
+      readings.push({ at, scratch: existsSync(scratch) });
+      return at;
+    });
+    let result: ReviewResult;
+    try {
+      result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, fixtureModel(), options);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(result.status).toBe("complete");
+    expect(readdirSync(workDir)).toEqual([]);
+    const timings = result.timings!;
+    // The last reading is the one total_ms ends on (an earlier reading is
+    // its start), and it came after the scratch folder was removed.
+    const last = readings.at(-1)!;
+    expect(readings.some((r) => last.at - r.at === timings.total_ms), JSON.stringify({ timings, last })).toBe(true);
+    expect(last.scratch, "the clock was read before the scratch folder was removed").toBe(false);
+    expect(JSON.parse(result.render.json()).timings).toEqual(timings);
   });
 });
 
