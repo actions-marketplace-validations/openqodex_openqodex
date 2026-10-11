@@ -81,7 +81,8 @@ export type ScannerRunSummary = {
   // One plain line for every status except "ran" and "no_matching_files".
   reason: string | null;
   // semgrep only: each registry rule pack the scan consumed, by the sha256
-  // and size of the bytes semgrep read. Absent when the packs could not be
+  // of its rules in a normal form (rulePackHash in the scanners package) and
+  // the size of the bytes semgrep read. Absent when the packs could not be
   // told apart, and in a scan an older version saved.
   rules?: RulePack[];
   // The wall time of finding, checking or installing the scanner's tool

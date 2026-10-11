@@ -2,6 +2,7 @@ export * from "./exec.js";
 export * from "./adapters/index.js";
 export * from "./run.js";
 export { isFixturePath } from "./filter.js";
+export { readRulePack, rulePackHash, type PackRule } from "./adapters/semgrep.js";
 export * from "./toolchain/index.js";
 export * from "./toolchain/check-cases.js";
 export * from "./toolchain/preinstall.js";
