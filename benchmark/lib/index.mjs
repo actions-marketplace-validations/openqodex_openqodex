@@ -36,6 +36,9 @@
 // 8. The accepted pointer names numbers that are later edited, and the
 //    trend compares against something nobody accepted: the pointer records
 //    each accepted entry's score hash, over every number the trend reads.
+// 9. A run stopped by its budget, or one that lacked a scanner its cases
+//    need, is marked accepted and becomes a baseline: an accepted entry must
+//    have ended finished with scannersComplete true.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -323,10 +326,15 @@ export function entryProblems(e) {
   need(typeof e.accepted === "boolean", "accepted must be true or false");
   need(e.accepted || (e.acceptedAt === null && e.acceptedBy === null), "an entry that is not accepted has no acceptedAt or acceptedBy");
   need(!e.accepted || (typeof e.acceptedAt === "string" && typeof e.acceptedBy === "string" && e.acceptedBy !== ""), "an accepted entry names when it was accepted and the person who accepted it");
+  // A baseline is a full run: one its budget, a halt or a person stopped is listed, never accepted (failure 9).
+  need(!e.accepted || e.ended?.how === "finished", `an accepted entry must have finished; this one ended "${e.ended?.how ?? "unknown"}"`);
+  need(!e.accepted || e.scannersComplete === true, "an accepted entry must record every scanner its cases need as installed (scannersComplete true)");
   need(typeof e.legacy === "boolean", "legacy must be true or false");
   if (e.legacy === false) {
-    // A run scored with format 3: its rules, its rulings and its case set.
-    need(isInt(e.rulesVersion, 3), "rulesVersion must be the rules version of the format 3 score the entry cites");
+    // A run scored with format 3: its rules, its rulings and its case set. A
+    // scanner-only run is scored under the scan rules (lib/scan-score.mjs),
+    // versioned from 1.
+    need(isInt(e.rulesVersion, e.mode === "scan" ? 1 : 3), "rulesVersion must be the rules version of the format 3 score the entry cites");
     need(HEX64.test(e.rulesHash ?? ""), "rulesHash must be the sha256 of that score's rules block");
     need(e.decisionsHash === null || HEX64.test(e.decisionsHash ?? ""), "decisionsHash must be the sha256 of the adjudication file the score read, or null");
     need(Array.isArray(e.caseIds) && e.caseIds.length > 0, "caseIds must list the run's cases");
