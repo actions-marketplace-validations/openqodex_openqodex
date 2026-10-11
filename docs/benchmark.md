@@ -157,6 +157,24 @@ node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>
 
 This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
+## Replays
+
+Three replays use saved reviewer submissions without calling a reviewer:
+
+- `threshold` shows findings down to info severity at the product's confidence floor.
+- `union` merges repeats 1 and 2 for each case and configuration, counting each planted bug once. It needs more than one repeat: both repeats must be saved for every case, or it reports `insufficient repeats`.
+- `floor` compares confidence floors of 0.6, 0.7, 0.8 and 0.9. A lens's higher floor still applies.
+
+They import the product's own `checkSubmission` and `mergeFindings` from the built packages. Counts use the planted matching rules, without human rulings. They never write into a run folder: output is printed, and optional `--out <file>` must name a file outside the run folders.
+
+```
+node benchmark/loop/replay.mjs threshold benchmark/results/<run>
+node benchmark/loop/replay.mjs union benchmark/results/<run>
+node benchmark/loop/replay.mjs floor benchmark/results/<run>
+```
+
+Each command accepts more runs; `--specs <folder>` follows the run it applies to.
+
 ## Scanner-only runs
 
 ```

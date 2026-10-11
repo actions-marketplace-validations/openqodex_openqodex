@@ -25,6 +25,7 @@ export type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolL
 export type { CorrectionRound } from "./conversation.js";
 export { agentRoundCall, meterSession } from "./agent-usage.js";
 export { modelRecord, modelReport, reviewRender } from "./model-record.js";
+export { mergeFindings } from "./second.js";
 export { MODEL_SYSTEM, callModel, modelSession, modelToolEntry } from "./model-loop.js";
 export type { ModelCaller, ModelSession } from "./model-loop.js";
 export { TOOL_DEFINITIONS, TOOL_NAMES, TOOL_REPLY_BYTES, runTool } from "./tools/index.js";
