@@ -174,7 +174,8 @@ describe("a resumed run reruns a crashed first attempt in its folder, so a later
     expect(readdirSync(attemptDir(out, jobs[0], 1))).toEqual(["stderr.txt"]);
     const { score } = scoreRun(loadRun(out));
     expect(score.byConfig["claude-graph-on"].population).toMatchObject({ planned: 1, failed: 1, complete: 0, retries: 1 });
-    expect(score.byConfig["claude-graph-on"].issueRecall.all).toEqual({ hit: 0, of: 1 });
+    // One case is too few clusters for an interval.
+    expect(score.byConfig["claude-graph-on"].issueRecall.all).toEqual({ hit: 0, of: 1, ci: null });
   });
 });
 
