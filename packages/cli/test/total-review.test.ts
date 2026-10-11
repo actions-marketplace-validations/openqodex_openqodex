@@ -96,7 +96,9 @@
 // 37. A review typed with no --timeout runs under the old ten minute cap: a
 //     change, a branch or a pull request gets less than 30 minutes, or the
 //     whole repository (--all) less than 2 hours.
-// 38. --timeout no longer wins over the default, for a change or for --all.
+// 38. --timeout no longer wins over the default, for a change or for --all;
+//     or a --timeout longer than a timer holds stops the reviewer at once
+//     and reports a cap it never reached.
 // 39. A review stopped at its cap does not say which cap it hit and which
 //     flag raises it, on the terminal or in the report; or a reviewer that
 //     never answers is not stopped at the cap it was given.
@@ -1267,6 +1269,14 @@ describe("37, 38, 39. the review's time cap", () => {
       const r = await typed(fake([stopped]), [...flags, "--timeout", "5"]);
       expectCap(r.cap, 5_000);
       expect(err).toContain(capLine("5 second"));
+    }
+  });
+
+  it("38. a --timeout longer than a timer holds is refused before anything runs", async () => {
+    for (const value of ["2147484", "3000000", "9".repeat(400)]) {
+      const driver = fake([stopped]);
+      await expect(reviewCommand(["--cwd", repo(), "--no-color", "--only", "sqllint", "--no-graph", "--timeout", value], [driver])).rejects.toThrow(/--timeout takes a whole number of seconds from 1 to 2147483/);
+      expect(driver.deadlines).toEqual([]);
     }
   });
 

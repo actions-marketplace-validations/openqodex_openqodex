@@ -163,12 +163,16 @@ export async function run(args: string[], drivers?: ReviewerDriver[]): Promise<n
   return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
 }
 
+// The longest --timeout: a timer longer than 2^31 - 1 milliseconds fires at
+// once, which would stop the reviewer as it starts.
+const MAX_TIMEOUT_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
 // --timeout, or the cap for the scope: the whole repository (--all) gets
 // longer than a change, a branch or a pull request.
 function timeoutSeconds(value: string | undefined, all: boolean): number {
   if (value === undefined) return all ? ALL_TIMEOUT_SECONDS : CHANGE_TIMEOUT_SECONDS;
   const n = Number(value);
-  if (!/^\d+$/.test(value) || n < 1) throw new OpenQodexError(`--timeout takes a whole number of seconds, not ${value}`);
+  if (!/^\d+$/.test(value) || n < 1 || n > MAX_TIMEOUT_SECONDS) throw new OpenQodexError(`--timeout takes a whole number of seconds from 1 to ${MAX_TIMEOUT_SECONDS}, not ${value}`);
   return n;
 }
 
