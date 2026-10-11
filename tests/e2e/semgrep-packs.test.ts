@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
 import type { RulePack, ScannerRunSummary } from "@openqodex/core";
-import { createToolResolver, rulePackHash } from "../../packages/scanners/dist/index.js";
+import { createToolResolver, readRulePack, rulePackHash } from "../../packages/scanners/dist/index.js";
 import { demo, git, report, run, toolsHome } from "./support.js";
 import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
 
@@ -25,6 +25,27 @@ const hashOf = (bytes: Buffer): string => {
   if (hash === null) throw new Error(`semgrep saved ${bytes.length} bytes that are not a rule pack`);
   return hash;
 };
+
+// The byte offset of one letter inside the `pattern` value of one rule of
+// the pack, found by parsing: the first rule whose pattern is plain ASCII
+// text (no quote or backslash, so the JSON and the YAML forms spell it as
+// it is) and whose `pattern` key and value occur once in the raw text.
+function patternLetter(raw: Buffer): { rule: number; at: number } {
+  const rules = readRulePack(raw);
+  if (rules === null) throw new Error("semgrep saved bytes that are not a rule pack");
+  const text = raw.toString("latin1");
+  for (const [i, r] of rules.entries()) {
+    const p = r.pattern;
+    if (typeof p !== "string" || !/^[\x20-\x7e]+$/.test(p) || /["'\\]/.test(p) || !/[a-z]/.test(p)) continue;
+    for (const spelled of [`"pattern":"${p}"`, `pattern: ${p}\n`, `pattern: '${p}'`, `pattern: "${p}"`]) {
+      const at = text.indexOf(spelled);
+      if (at === -1 || text.indexOf(spelled, at + 1) !== -1) continue;
+      const value = at + spelled.lastIndexOf(p);
+      return { rule: i, at: value + p.search(/[a-z]/) };
+    }
+  }
+  throw new Error("no rule of the pack has a plain pattern that occurs once");
+}
 
 // The pinned semgrep, run by hand with the adapter's arguments and a temp
 // folder of its own, on the changed files of `dir`. Its own log names the
@@ -109,14 +130,16 @@ describe.skipIf(offline)("two samples of one run use different semgrep rules unn
   });
   it("records a different sha256 for a pack whose rules differ by one byte", () => {
     const original = hand.bytes.get("p/default")!;
-    // The first letter of the first rule's pattern, in the JSON or the YAML
-    // form, moved to the next letter, so the pack still parses.
-    const key = /"pattern":"|\n\s*-?\s*pattern: /.exec(original.toString("latin1"));
-    expect(key).not.toBeNull();
-    let at = key!.index + key![0].length;
-    while (at < original.length && !(original[at]! >= 0x61 && original[at]! <= 0x7a)) at++;
+    // One letter of one rule's pattern moved to the next letter: the pack
+    // still parses, with the same rules, and only that pattern changed.
+    const { rule, at } = patternLetter(original);
     const altered = Buffer.from(original);
     altered[at] = original[at] === 0x7a ? 0x61 : original[at]! + 1;
+    const before = readRulePack(original)!;
+    const after = readRulePack(altered);
+    expect(after?.map((r) => r.id)).toEqual(before.map((r) => r.id));
+    expect(after![rule]!.pattern).not.toBe(before[rule]!.pattern);
+    expect(after!.filter((r, i) => i !== rule && JSON.stringify(r) !== JSON.stringify(before[i]))).toEqual([]);
     const recorded = scans[0]!.semgrep?.rules?.find((r) => r.pack === "p/default");
     expect(recorded?.sha256).toBe(hashOf(original));
     expect(hashOf(altered)).not.toBe(recorded?.sha256);

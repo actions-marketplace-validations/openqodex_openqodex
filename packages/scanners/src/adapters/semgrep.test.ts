@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseSemgrepJson, rulePackHash } from "./semgrep.js";
+import { parseSemgrepJson, readRulePack, rulePackHash } from "./semgrep.js";
 
 describe("parseSemgrepJson", () => {
   it("empty output yields no findings instead of a parse error", () => {
@@ -131,6 +131,25 @@ describe("rulePackHash", () => {
     const pack = JSON.stringify({ missed: 3, rules: [{ message: "m", id: "b", pattern: "x" }, { pattern: "y", id: "a", metadata: { z: 1, a: [2, 1] } }] });
     const documented = '{"rules":[{"id":"a","metadata":{"a":[2,1],"z":1},"pattern":"y"},{"id":"b","message":"m","pattern":"x"}]}';
     expect(rulePackHash(pack)).toBe(createHash("sha256").update(documented).digest("hex"));
+  });
+
+  it("two rules with one id are ordered by their own normal form, as the docs say, so either order gets one sha256", () => {
+    const later = { id: "a", pattern: "z" };
+    const earlier = { pattern: "b", id: "a" };
+    const documented = '{"rules":[{"id":"a","pattern":"b"},{"id":"a","pattern":"z"}]}';
+    const expected = createHash("sha256").update(documented).digest("hex");
+    expect(rulePackHash(JSON.stringify({ rules: [later, earlier] }))).toBe(expected);
+    expect(rulePackHash(JSON.stringify({ rules: [earlier, later] }))).toBe(expected);
+  });
+
+  it("a rules list with an entry that is not a rule with a string id gets no sha256, so the record never names a hash of something else", () => {
+    expect(rulePackHash('{"rules":[null]}')).toBeNull();
+    expect(rulePackHash('{"rules":[["c.gets"]]}')).toBeNull();
+    expect(rulePackHash('{"rules":[{"pattern":"gets(...)"}]}')).toBeNull();
+    expect(rulePackHash('{"rules":[{"id":3,"pattern":"gets(...)"}]}')).toBeNull();
+    expect(rulePackHash(JSON.stringify({ rules: [gets, null] }))).toBeNull();
+    expect(readRulePack(JSON.stringify({ rules: [gets, evalRule], missed: 2 }))).toEqual([gets, evalRule]);
+    expect(readRulePack('{"rules":[null]}')).toBeNull();
   });
 
   it("bytes that are not a rule pack get no sha256, so the record never names a hash of something else", () => {

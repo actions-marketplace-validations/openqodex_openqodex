@@ -163,15 +163,33 @@ async function consumedPacks(tmp: string, seen: Set<string>): Promise<RulePack[]
 // cache key ignores the Accept header semgrep sends.
 //
 // The normal form: the text is read as JSON, or as YAML when it is not
-// JSON; only its `rules` array is kept (the JSON form's `missed`, a count of
-// the rules this caller is not given, is dropped, as is any other top-level
-// key); the rules are sorted by `id` in plain character order (by UTF-16
-// code unit, as JavaScript compares strings; two with one id by their own
-// normal form); every object's keys are sorted the same way,
-// at every depth; arrays inside a rule keep their order; and it is written
-// as JSON with no whitespace: {"rules":[...]}. The sha256 is of that text in
-// UTF-8. Null when the text is not a mapping with a `rules` array.
+// JSON, with every number read as a JavaScript number (so an integer above
+// 2^53 loses precision); only its `rules` array is kept (the JSON form's
+// `missed`, a count of the rules this caller is not given, is dropped, as is
+// any other top-level key); the rules are sorted by `id` in plain character
+// order (by UTF-16 code unit, as JavaScript compares strings), and two rules
+// with one id by their own normal-form text, compared the same way; every
+// object's keys are sorted the same way, at every depth; arrays inside a
+// rule keep their order; and it is written as JSON with no whitespace:
+// {"rules":[...]}. The sha256 is of that text in UTF-8. Null when the text
+// is not a rule pack (readRulePack).
 export function rulePackHash(content: Buffer | string): string | null {
+  const rules = readRulePack(content);
+  if (rules === null) return null;
+  const sorted = rules
+    .map((rule) => ({ id: rule.id, text: normalJson(rule) }))
+    .sort((a, b) => byText(a.id, b.id) || byText(a.text, b.text));
+  const normal = `{"rules":[${sorted.map((r) => r.text).join(",")}]}`;
+  return createHash("sha256").update(normal, "utf8").digest("hex");
+}
+
+export type PackRule = Record<string, unknown> & { id: string };
+
+// The rules of a registry pack, in the order the text lists them. Null when
+// the text is not a rule pack: neither JSON nor YAML, not a mapping with a
+// `rules` array, or an entry of that array that is not a mapping with a
+// string `id`.
+export function readRulePack(content: Buffer | string): PackRule[] | null {
   const text = typeof content === "string" ? content : content.toString("utf8");
   let doc: unknown;
   try {
@@ -184,19 +202,15 @@ export function rulePackHash(content: Buffer | string): string | null {
       return null;
     }
   }
-  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return null;
-  const rules = (doc as { rules?: unknown }).rules;
+  if (!isMapping(doc)) return null;
+  const rules = doc.rules;
   if (!Array.isArray(rules)) return null;
-  const sorted = rules
-    .map((rule) => ({ id: ruleId(rule), text: normalJson(rule) }))
-    .sort((a, b) => byText(a.id, b.id) || byText(a.text, b.text));
-  const normal = `{"rules":[${sorted.map((r) => r.text).join(",")}]}`;
-  return createHash("sha256").update(normal, "utf8").digest("hex");
+  if (!rules.every((rule) => isMapping(rule) && typeof rule.id === "string")) return null;
+  return rules as PackRule[];
 }
 
-function ruleId(rule: unknown): string {
-  const id = rule && typeof rule === "object" ? (rule as { id?: unknown }).id : undefined;
-  return typeof id === "string" ? id : "";
+function isMapping(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 function byText(a: string, b: string): number {
