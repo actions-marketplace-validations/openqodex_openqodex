@@ -37,9 +37,9 @@
 //    file naming its process; a lock whose process has ended is taken
 //    over), and a folder that holds a manifest or samples is refused
 //    without --resume.
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
@@ -96,8 +96,36 @@ const alive = (pid) => {
   }
 };
 
+// Takes away a lock whose holder `stalePid` has ended, and only that lock:
+// the file is moved aside in one step, and when what was moved is not the
+// stale holder's (another runner put its own lock there after the stale one
+// was read) it is put back. True when the stale lock is gone.
+export function takeOverStale(path, stalePid) {
+  const aside = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync(path, aside);
+  } catch (error) {
+    if (error.code === "ENOENT") return true;
+    throw error;
+  }
+  if (readFileSync(aside, "utf8").trim() === String(stalePid)) {
+    rmSync(aside, { force: true });
+    return true;
+  }
+  // Another runner's lock: back in place, never over a lock made since.
+  try {
+    linkSync(aside, path);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  } finally {
+    rmSync(aside, { force: true });
+  }
+  return false;
+}
+
 // Takes a run folder for this process, or throws when another live process
-// holds it. Returns the function that gives it back (failure 11).
+// holds it. A lock file with no process number is being written, and counts
+// as held. Returns the function that gives the folder back (failure 11).
 export function lockRun(out) {
   mkdirSync(out, { recursive: true });
   const path = join(out, LOCK_FILE);
@@ -109,14 +137,16 @@ export function lockRun(out) {
       };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      const pid = Number(readFileSync(path, "utf8").trim());
-      if (Number.isInteger(pid) && pid > 0 && alive(pid)) break;
-      // A lock left by a runner that died: take it over.
-      rmSync(path, { force: true });
+      const text = existsSync(path) ? readFileSync(path, "utf8").trim() : "";
+      const pid = Number(text);
+      if (!/^\d+$/.test(text) || alive(pid)) break;
+      // A lock left by a runner that died: take it over, unless another runner got there first.
+      if (!takeOverStale(path, pid)) break;
     }
   }
   const holder = existsSync(path) ? readFileSync(path, "utf8").trim() : "unknown";
-  throw new Error(`${out} is in use by another run (process ${holder}); wait for it to end, or use another --out`);
+  const empty = holder === "" ? `; its lock names no process yet, and if it stays empty, a runner died while writing it: move ${path} away by hand` : "";
+  throw new Error(`${out} is in use by another run (process ${holder || "unknown"}); wait for it to end, or use another --out${empty}`);
 }
 
 const readJsonFile = (path) => {

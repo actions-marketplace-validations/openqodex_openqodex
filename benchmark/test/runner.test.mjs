@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "../lib/cases.mjs";
-import { attemptDir, codexModelFrom, executeRun, failureOf, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, treeState } from "../lib/runner.mjs";
+import { attemptDir, codexModelFrom, executeRun, failureOf, lockRun, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, takeOverStale, treeState } from "../lib/runner.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -210,5 +210,26 @@ describe("two runners share one run folder, or a restart replaces a crashed run'
     await executeRun({ out: a.out, manifest: null, resume: true, jobs: a.jobs, copies: a.copies, runJob: async (job, attempt) => ran.push(attempt) });
     expect(ran).toEqual([1]);
     expect(existsSync(join(a.out, ".run.lock"))).toBe(false);
+  });
+
+  it("never takes over a lock that is being written (empty), or one a live runner put in place after the dead holder was read", () => {
+    const out = tempDir("oq-bench-lock-");
+    const lock = join(out, ".run.lock");
+    writeFileSync(lock, "");
+    expect(() => lockRun(out)).toThrow(/in use by another run/);
+    expect(readFileSync(lock, "utf8")).toBe("");
+    // The holder read as dead, but by the takeover a live runner's lock is there: it stays.
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(lock, `${process.pid}\n`);
+    expect(takeOverStale(lock, dead)).toBe(false);
+    expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
+    // Still the dead holder's: it is taken away, and the folder can be locked.
+    writeFileSync(lock, `${dead}\n`);
+    expect(takeOverStale(lock, dead)).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+    const release = lockRun(out);
+    expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
+    release();
+    expect(readdirSync(out)).toEqual([]);
   });
 });
