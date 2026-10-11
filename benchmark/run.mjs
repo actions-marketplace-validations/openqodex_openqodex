@@ -12,12 +12,36 @@
 //                          [--add-repeats <n>] [--change <RC-id>]
 //                          [--model <id>] [--web off|on] [--dry-run]
 //                          [--draft] [--allow-retired] [--allow-missing-scanners]
+//   node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1]
+//                          [--check-identical] [--scanner-config <file>]
+//                          [--allow-missing-scanners] [--timeout 120]
+//                          [--out <folder>] [--dry-run] [--draft]
 //
 // Without --cases, every case the lock does not mark retired runs.
 //
 // Exit codes: 0 finished; 1 stopped (a limit or login wall, the budget, the
 // same failure twice, Ctrl-C); 2 refused (flags, build, lock, budget
-// estimate, scanners) or the benchmark itself failed.
+// estimate, scanners) or the benchmark itself failed; 3 the two passes of a
+// scanner-only run with --check-identical are not identical.
+//
+// --mode scan is the scanner-only run: per case, `openqodex scan
+// --report-dir`, with no reviewer and no model, one case at a time, in the
+// run's own OpenQodex home (its tool folders are links to the warm tools
+// of $OPENQODEX_HOME or ~/.openqodex, so nothing installs during a pass and
+// the developer's approvals are never read or written). The run refuses to
+// start when a scanner is not ready, unless --allow-missing-scanners, and
+// the manifest then lists each missing one. --scanner-config <file> passes
+// --config <file> to every scan, after one `openqodex trust --yes` in the
+// run's own home for the one repository path each case is built at in
+// turn. At the end of a pass the manifest records `external` (the toolchain
+// hash, the scanner versions, the Semgrep rule packs the scans consumed and
+// a hash of the osv.dev advisories, lib/external.mjs) and the pass is scored
+// (score.json, outcomes.jsonl, lib/scan-score.mjs). --check-identical runs
+// a second pass on the same build into <out>-pass2, with fresh case
+// repositories, and compares the two scores and every sample's files with
+// the time fields left out (lib/identical.mjs); identical.json in both
+// folders says how it went. A scanner-only run spends nothing, so it takes
+// no budget flags.
 //
 // One results folder per run, benchmark/results/<date>-<commit>/ unless
 // --out names another:
@@ -126,22 +150,54 @@
 // 20. A run's reviews are compared under different loop changes: --change
 //    records the reviewer-loop change id the run measures, and a resume
 //    with another is refused.
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
-import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+// Scanner-only runs (--mode scan):
+// 21. Two scanner-only passes on one build differ and nobody notices:
+//    --check-identical runs the second pass and compares (lib/identical.mjs);
+//    a difference exits 3 and names each file and field, and whether the
+//    inputs changed (other Semgrep rule packs, other osv.dev advisories) or
+//    the product did.
+// 22. A scanner that is not installed reads as a scanner that found
+//    nothing: `openqodex doctor --json` in the run's own home lists every
+//    scanner first, and one that is not ready refuses the run unless
+//    --allow-missing-scanners, with which the manifest names each one and
+//    says scannersComplete false; scans run with --no-install, so no pass
+//    installs a tool the other did not have.
+// 23. An overlay scanner runs without the trust step, or the run reads or
+//    changes the developer's own approvals: --scanner-config runs `openqodex
+//    trust --yes` once, in the run's own home, for the one repository path
+//    every case is built at in turn (one scan at a time); a trust step that
+//    fails refuses the run before any scan, and the manifest records what
+//    was approved.
+// 24. A scan's numbers move with inputs the build does not fix: the
+//    manifest's `external` records the toolchain hash, the scanner versions,
+//    the Semgrep rule packs each sample consumed ("mixed" when two differ)
+//    and a hash of the osv.dev advisories, read from the saved scans, never
+//    downloaded again (lib/external.mjs).
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { cpus, homedir, totalmem, tmpdir, platform, arch, release } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, git, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { estimateRun, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
+import { externalOf, toolchainOf } from "./lib/external.mjs";
+import { comparePasses } from "./lib/identical.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
+import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
+import { renderScan, saveScore } from "./score.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]";
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]";
 
 // What this runner reviews today: the planted suite, through the laptop
 // reviewers (Claude Code and Codex).
 const SUITE = "planted";
 const PATH_KIND = "laptop";
+
+// Flags only a review run reads, and flags only a scanner-only run reads.
+const REVIEW_ONLY = ["--reviewers", "--graph", "--web", "--model", "--resume", "--max-usd", "--max-minutes", "--max-tokens", "--max-reviews", "--review-max-usd", "--add-repeats", "--change", "--allow-over"];
+const SCAN_ONLY = ["--scanner-config", "--check-identical"];
 
 const positive = (flag, value, whole = false) => {
   const n = Number(value);
@@ -150,15 +206,20 @@ const positive = (flag, value, whole = false) => {
 };
 
 function parseArgs(argv) {
-  const o = { repeat: 3, repeatGiven: false, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { mode: "review", repeat: null, repeatGiven: false, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: null, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, scannerConfig: null, checkIdentical: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const given = new Set();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    given.add(a);
     const next = () => {
       const v = argv[++i];
       if (v === undefined) throw new Error(`${a} needs a value`);
       return v;
     };
-    if (a === "--repeat") {
+    if (a === "--mode") o.mode = next();
+    else if (a === "--scanner-config") o.scannerConfig = resolve(next());
+    else if (a === "--check-identical") o.checkIdentical = true;
+    else if (a === "--repeat") {
       o.repeat = Number(next());
       o.repeatGiven = true;
     } else if (a === "--max-usd") o.maxUsd = positive(a, next());
@@ -186,7 +247,18 @@ function parseArgs(argv) {
     else if (a === "--allow-retired") o.allowRetired = true;
     else throw new Error(`unknown flag ${a}`);
   }
-  if (o.maxUsd === null || o.maxMinutes === null) throw new Error("--max-usd and --max-minutes are required: every run names what it may spend and how long it may take");
+  if (o.mode !== "review" && o.mode !== "scan") throw new Error("--mode takes review or scan");
+  const scan = o.mode === "scan";
+  // A scan is deterministic (--check-identical proves it), so one repeat; a scan has no reviewer to wait on.
+  o.repeat ??= scan ? 1 : 3;
+  o.timeout ??= scan ? 120 : 900;
+  const wrong = (scan ? REVIEW_ONLY : SCAN_ONLY).filter((f) => given.has(f));
+  if (wrong.length > 0) {
+    throw new Error(scan ? `${wrong.join(", ")}: a scanner-only run (--mode scan) runs no reviewer and spends nothing, and is run again rather than resumed` : `${wrong.join(", ")}: only a scanner-only run (--mode scan) reads ${wrong.length === 1 ? "it" : "them"}`);
+  }
+  if (scan && o.concurrency !== 1) throw new Error("--mode scan runs one scan at a time: every case is built at the one repository path the overlay's approval names, and scan times compare only at concurrency 1");
+  if (o.scannerConfig !== null && !existsSync(o.scannerConfig)) throw new Error(`--scanner-config: there is no file ${o.scannerConfig}`);
+  if (!scan && (o.maxUsd === null || o.maxMinutes === null)) throw new Error("--max-usd and --max-minutes are required: every run names what it may spend and how long it may take");
   if (!Number.isInteger(o.repeat) || o.repeat < 1 || o.repeat > 6) throw new Error("--repeat takes a whole number from 1 to 6");
   if (o.repeat > 3 && !o.allowMore) throw new Error("--repeat over 3 spends more than the benchmark needs; add --allow-more to mean it");
   if (o.addRepeats !== null) {
@@ -284,7 +356,7 @@ function filesUnder(dir) {
 
 const children = new Set();
 
-function runCli(cli, args, env, cwd, timeoutMs) {
+function runCli(cli, args, env, cwd, timeoutMs, graceMs = 120_000) {
   return new Promise((done) => {
     const started = Date.now();
     const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
@@ -293,14 +365,15 @@ function runCli(cli, args, env, cwd, timeoutMs) {
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
     child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
-    // The CLI has its own reviewer deadline; this one catches a hang of the CLI itself.
+    // A review has its own reviewer deadline, so this one, graceMs past it,
+    // catches a hang of the CLI itself; a scan has none, so its grace is 0.
     const timer = setTimeout(() => {
       try {
         process.kill(-child.pid, "SIGTERM");
       } catch {
         // gone already
       }
-    }, timeoutMs + 120_000);
+    }, timeoutMs + graceMs);
     child.on("error", (e) => (stderr += `\ncould not start the CLI: ${e.message}`));
     child.on("close", (code, signal) => {
       clearTimeout(timer);
@@ -318,6 +391,292 @@ function killAll() {
       // gone already
     }
   }
+}
+
+// --- scanner-only runs (--mode scan) ---
+
+// A path as the manifest may hold it: the home folder written as ~.
+const hideHome = (p) => (homedir() && p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
+
+// A file the run was given, as the manifest names it: its path in this
+// repository, or its name when it lies outside.
+function shownPath(file) {
+  const r = relative(repoRoot, file);
+  return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : basename(file);
+}
+
+// The run's own OpenQodex home, in the run's temp folder: each tool folder
+// of the warm install root ($OPENQODEX_HOME/tools or ~/.openqodex/tools) is
+// linked in, so the scans read the developer's installed scanners, while
+// trust.json, the custom scanners an overlay installs and every cache are
+// the run's own (failure 20). "cold" when there was nothing to link.
+function runHome(tempRoot) {
+  const warm = join(process.env.OPENQODEX_HOME ? resolve(process.env.OPENQODEX_HOME) : join(homedir(), ".openqodex"), "tools");
+  const dir = join(tempRoot, "home");
+  mkdirSync(join(dir, "tools"), { recursive: true });
+  let linked = 0;
+  if (existsSync(warm)) {
+    for (const e of readdirSync(warm, { withFileTypes: true })) {
+      if ((!e.isDirectory() && !e.isSymbolicLink()) || e.name === "custom") continue;
+      symlinkSync(join(warm, e.name), join(dir, "tools", e.name));
+      linked++;
+    }
+  }
+  return { dir, toolsHome: linked > 0 ? "warm" : "cold", installRoot: hideHome(warm) };
+}
+
+// The environment every CLI command of a scanner-only run gets: the run's
+// own home, no update check, no colour, and none of the caller's git
+// variables.
+function cliEnv(home) {
+  const env = { ...process.env, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1", OPENQODEX_HOME: home };
+  for (const k of Object.keys(env)) if (k.startsWith("GIT_") || k === "FORCE_COLOR") delete env[k];
+  return env;
+}
+
+// `openqodex doctor --json` of the bundle the run uses, in the run's own
+// home: it installs nothing and asks nothing of the network (failure 19).
+function doctorRecord(cli, env, cwd) {
+  const p = spawnSync(process.execPath, [cli, "doctor", "--json", "--cwd", cwd], { cwd, env, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+  try {
+    return JSON.parse(p.stdout);
+  } catch {
+    throw new Error(`openqodex doctor --json gave no record (exit ${p.status ?? p.signal}): ${String(p.stderr ?? "").trim().split("\n").slice(-3).join(" | ")}`);
+  }
+}
+
+// The overlay's trust step (failure 20): the file is copied into the run,
+// an empty repository is made at the path every case is built at in turn,
+// and `openqodex trust --yes --config <copy>` approves the overlay's custom
+// scanners for that path, in the run's own home. The empty repository is
+// then moved aside. Returns the copy to pass to every scan and what the
+// manifest records, or why the step failed.
+function trustOverlay({ cli, env, file, tempRoot, repoPath, home, hide }) {
+  const copy = join(tempRoot, "overlay", basename(file));
+  mkdirSync(dirname(copy), { recursive: true });
+  copyFileSync(file, copy);
+  const sha256 = createHash("sha256").update(readFileSync(copy)).digest("hex");
+  mkdirSync(repoPath, { recursive: true });
+  git(repoPath, "init", "-q");
+  const key = realpathSync(repoPath);
+  const p = spawnSync(process.execPath, [cli, "trust", "--yes", "--no-color", "--config", copy, "--cwd", repoPath], { cwd: repoPath, env, encoding: "utf8", timeout: 900_000, maxBuffer: 16 * 1024 * 1024 });
+  const aside = join(tempRoot, "repos", "trust");
+  mkdirSync(dirname(aside), { recursive: true });
+  renameSync(repoPath, aside);
+  if (p.status !== 0) {
+    const why = hide(String(p.stderr ?? p.error ?? "")).trim().split("\n").slice(-4).join(" | ");
+    return { error: `openqodex trust --yes --config ${shownPath(file)} failed (exit ${p.status ?? p.signal}), so no scanner of the overlay may run: ${why}` };
+  }
+  const records = readJson(join(home, "trust.json"))?.records ?? [];
+  const trusted = records
+    .filter((r) => r.repoRoot === key)
+    .map((r) => ({ name: r.name, entryHash: r.entryHash, version: r.artifact?.version ?? null, sha256: r.artifact?.sha256 ?? null, checksumSource: r.artifact?.checksumSource ?? null }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { file: copy, record: { path: shownPath(file), sha256, trusted } };
+}
+
+// The first attempt of each planned job of a pass, as lib/external.mjs reads
+// it: its case id, when it started and its saved scan.json.
+function firstAttempts(folder, jobs) {
+  return jobs.map((job) => {
+    const dir = attemptDir(folder, job, 1);
+    return { caseId: job.caseId, startedAt: readJson(join(dir, "sample.json"))?.started_at ?? null, scan: readJson(join(dir, "report", "scan.json")) };
+  });
+}
+
+// A scanner-only run: the preflight, the overlay's trust step, one pass (or
+// two with --check-identical), each scored, and the comparison.
+async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
+  const date = new Date().toISOString().slice(0, 10);
+  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-planted-scan-laptop`);
+  const runId = basename(out);
+  const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
+  const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
+  const idOf = Object.fromEntries(cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
+  const { jobs } = planJobs({ cases, caseIds: idOf, repeat: o.repeat, mode: "scan" });
+  for (const folder of folders) {
+    if (existsSync(join(folder, "samples")) || existsSync(join(folder, "manifest.json"))) {
+      console.error(`${folder} already holds a run (a manifest or samples); use --out for a new folder`);
+      leave(2);
+    }
+  }
+  console.log(`Scanner-only benchmark: ${cases.length} cases x ${o.repeat} repeats = ${jobs.length} scans, one at a time${o.checkIdentical ? ", in two passes that must be identical" : ""}.`);
+  console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${folders.map(shown).join(" and ")}`);
+  console.log(`Cases: ${cases.map((c) => idOf[c]).join(", ")}`);
+  if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
+  if (o.dryRun) {
+    for (const j of jobs) console.log(`  ${j.case} ${j.config} #${j.repeat}`);
+    leave(0);
+  }
+
+  const realTemp = realpathSync(tempRoot);
+  const replacements = (more) => [...more, [join(realTemp, "scan-repo"), "<repo>"], [realTemp, "<temp>"], [tempRoot, "<temp>"], [process.env.HOME, "~"]];
+  const hide = (text) => sanitize(text, replacements([]));
+  const home = runHome(tempRoot);
+  const env = cliEnv(home.dir);
+  let preflight;
+  try {
+    preflight = toolchainOf(doctorRecord(o.cli, env, tempRoot));
+  } catch (error) {
+    console.error(`The run cannot start: ${error.message}`);
+    leave(2);
+  }
+  if (preflight.missing.length > 0) {
+    const list = preflight.missing.map((m) => `${m.scanner} (${m.detail ?? m.state})`).join(", ");
+    if (!o.allowMissingScanners) {
+      console.error(`The run cannot start: ${preflight.missing.length} scanners are not ready in ${home.installRoot}: ${list}. Install them with node ${relative(repoRoot, o.cli)} doctor --install --all-scanners (brakeman and rubocop need Ruby, golangci Go, cargo-deny Cargo), or pass --allow-missing-scanners to run without them: the manifest then names each one, and the run is never accepted.`);
+      leave(2);
+    }
+    console.log(`Not ready, so not run (--allow-missing-scanners): ${list}`);
+  }
+  console.log(`Case repositories and the run's own OpenQodex home (tools linked from ${home.installRoot}): ${tempRoot}`);
+  const repoPath = join(tempRoot, "scan-repo");
+  let overlay = null;
+  if (o.scannerConfig !== null) {
+    overlay = trustOverlay({ cli: o.cli, env, file: o.scannerConfig, tempRoot, repoPath, home: home.dir, hide });
+    if (overlay.error) {
+      console.error(`The run cannot start: ${overlay.error}`);
+      leave(2);
+    }
+    console.log(`Overlay ${overlay.record.path} (${overlay.record.sha256.slice(0, 12)}): approved in the run's own home: ${overlay.record.trusted.map((t) => `${t.name} ${t.version ?? ""}`.trim()).join(", ") || "no custom scanner"}`);
+  }
+
+  const settings = {
+    runId,
+    mode: "scan",
+    path: "laptop",
+    suite: "planted",
+    split: "dev",
+    build,
+    machine: machine(),
+    reviewer: null,
+    reviewers: {},
+    scan: { timeoutSeconds: o.timeout, flags: `scan --cwd <repo> --report-dir <sample>/report --no-color --no-install${overlay ? " --config <overlay>" : ""}` },
+    toolsHome: home.toolsHome,
+    installRoot: home.installRoot,
+    scannerOverlay: overlay?.record ?? null,
+    scannersComplete: preflight.missing.length === 0,
+    scannersMissing: preflight.missing,
+    checkIdentical: o.checkIdentical,
+    cases,
+    caseIds: cases.map((c) => idOf[c]),
+    caseHashes: hashes,
+    draft: o.draft,
+    configs: [SCAN_CONFIG],
+    repeat: o.repeat,
+    concurrency: 1,
+  };
+  const secrets = new Set();
+  for (const c of cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
+
+  let stop = null;
+  const halt = (why) => {
+    if (stop !== null) return;
+    stop = why;
+    console.error(`Stopping the run: ${why}`);
+    killAll();
+  };
+  process.on("SIGINT", () => halt("stopped by Ctrl-C"));
+  process.on("SIGTERM", () => halt("stopped by SIGTERM"));
+
+  // One pass into `folder`: every scan, then the external inputs into the manifest.
+  const pass = async (folder, n) => {
+    console.log(n === 1 ? `Pass 1 into ${shown(folder)}` : `Pass 2, on the same build with fresh case repositories, into ${shown(folder)}`);
+    const manifest = { ...runManifest({ startedAt: new Date().toISOString(), settings: n === 1 ? settings : { ...settings, identicalPass: { pass: 2, of: runId } }, jobs }), rulesVersion: SCAN_RULES_VERSION };
+    let failedBefore = null;
+    const attempt = async (job, k) => {
+      const dir = attemptDir(folder, job, k);
+      mkdirSync(dir, { recursive: true });
+      const reportDir = join(dir, "report");
+      // Every case is built at the one path the overlay's approval names, and moved aside after its scan.
+      const { dir: repo } = buildCase(job.case, repoPath, snap);
+      const args = ["scan", "--cwd", repo, "--report-dir", reportDir, "--no-color", "--no-install", ...(overlay ? ["--config", overlay.file] : [])];
+      const startedAt = new Date().toISOString();
+      let result;
+      try {
+        result = await runCli(o.cli, args, env, repo, o.timeout * 1000, 0);
+      } finally {
+        const aside = join(tempRoot, "repos", `pass${n}`, `${job.case}-${job.repeat}-${k}`);
+        mkdirSync(dirname(aside), { recursive: true });
+        renameSync(repoPath, aside);
+      }
+      const more = [[reportDir, "<sample>/report"], [folder, "<results>"]];
+      writeFileSync(join(dir, "receipt.txt"), sanitize(result.stdout, replacements(more)));
+      const stderr = sanitize(result.stderr, replacements(more));
+      writeFileSync(join(dir, "stderr.txt"), stderr);
+      const scan = readJson(join(reportDir, "scan.json"));
+      const report = readJson(join(reportDir, "report.json"));
+      const failure = scan ? null : { cause: stop !== null ? `stopped by the run: ${stop}` : `no scan.json (exit ${result.code ?? result.signal}): ${stderr.trim().split("\n").slice(-4).join(" | ")}` };
+      const rec = scanSampleRecord({ job, attempt: k, result, scan, report, startedAt, failure, stopped: stop });
+      writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
+      appendFileSync(join(folder, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+      console.log(`  ${job.case} #${job.repeat}: ${rec.status}, ${rec.candidates ?? "no"} candidates, ${(rec.wallMs / 1000).toFixed(1)} s${failure ? ` (${failure.cause.slice(0, 200)})` : ""}`);
+      for (const file of filesUnder(dir)) {
+        const text = readFileSync(file, "utf8");
+        for (const s of secrets) if (text.includes(s)) halt(`the generated secret is in ${relative(folder, file)}; nothing more runs until that is fixed`);
+      }
+      return failure;
+    };
+    const runJob = async (job, k) => {
+      try {
+        const failure = await attempt(job, k);
+        // The same step failing twice stops the run.
+        if (failure && failedBefore && stop === null) halt(`two scans in a row wrote no scan.json; the last: ${failure.cause}`);
+        failedBefore = failure;
+      } catch (error) {
+        halt(`${job.case} #${job.repeat}: the benchmark itself failed: ${error.message}`);
+      }
+    };
+    const { ended } = await executeRun({
+      out: folder,
+      manifest,
+      copies: cases.map((c) => [join(snap, c, "case.json"), join("cases", `${c}.json`)]),
+      jobs,
+      concurrency: 1,
+      runJob,
+      stopReason: () => stop,
+      // The inputs every first attempt consumed, read from its saved scan (failure 21).
+      finish: () => ({ external: externalOf({ samples: firstAttempts(folder, jobs), preflight }) }),
+    });
+    console.log(`Pass ${n}: ${ended.reviewsWithAnAttempt} of ${jobs.length} scans saved in ${ended.elapsedMin} minutes`);
+    return ended;
+  };
+
+  const ends = [];
+  for (const [i, folder] of folders.entries()) {
+    try {
+      ends.push(await pass(folder, i + 1));
+    } catch (error) {
+      console.error(error.message);
+      process.exit(2);
+    }
+    if (stop !== null) {
+      console.log(`Stopped: ${stop}`);
+      process.exit(1);
+    }
+    try {
+      const { score, run } = saveScore(folder);
+      if (i === 0) console.log(`\n${renderScan(score, run.manifest)}\n`);
+    } catch (error) {
+      console.error(`The scan of ${shown(folder)} could not be scored: ${error.message}`);
+      process.exit(2);
+    }
+  }
+  console.log(`Score: ${folders.map((f) => shown(join(f, "score.json"))).join(" and ")}`);
+  if (!o.checkIdentical) process.exit(0);
+  const cmp = comparePasses(folders[0], folders[1]);
+  const record = { version: 1, runId, identical: cmp.identical, cause: cmp.cause, inputs: cmp.inputs, differences: cmp.differences, passes: folders.map((f, i) => ({ folder: basename(f), elapsedMin: ends[i].elapsedMin })) };
+  for (const f of folders) writeFileSync(join(f, "identical.json"), `${JSON.stringify(record, null, 2)}\n`);
+  const times = `pass 1 took ${ends[0].elapsedMin} minutes, pass 2 ${ends[1].elapsedMin}`;
+  if (cmp.identical) {
+    console.log(`The two passes are identical: the same scores and the same samples, time fields left out (${times}).${cmp.inputs.length > 0 ? ` Their inputs differed without changing anything: ${cmp.inputs.join("; ")}` : ""}`);
+    process.exit(0);
+  }
+  console.error(`The two passes are not identical (${cmp.cause === "input" ? "their inputs differ, so this pass cannot tell whether the product is deterministic; run it again" : "with the same inputs: the product's output is not deterministic"}; ${times}):`);
+  for (const line of cmp.inputs) console.error(`- ${line}`);
+  for (const line of cmp.differences.slice(0, 20)) console.error(`- ${line}`);
+  if (cmp.differences.length > 20) console.error(`- and ${cmp.differences.length - 20} more, in identical.json`);
+  process.exit(3);
 }
 
 async function main() {
@@ -340,6 +699,7 @@ async function main() {
     for (const p of problems) console.error(p);
     leave(2);
   }
+  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave });
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
   // --add-repeats: the run's own repeats plus the added ones, as a resume of
@@ -442,6 +802,8 @@ async function main() {
   }
 
   const settings = {
+    runId: basename(out),
+    mode: "review",
     build,
     machine: machine(),
     reviewer: o.reviewers.length === 1 ? reviewers[o.reviewers[0]] : null,

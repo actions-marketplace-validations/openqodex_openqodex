@@ -331,8 +331,10 @@ export function entryProblems(e) {
   need(!e.accepted || e.scannersComplete === true, "an accepted entry must record every scanner its cases need as installed (scannersComplete true)");
   need(typeof e.legacy === "boolean", "legacy must be true or false");
   if (e.legacy === false) {
-    // A run scored with format 3: its rules, its rulings and its case set.
-    need(isInt(e.rulesVersion, 3), "rulesVersion must be the rules version of the format 3 score the entry cites");
+    // A run scored with format 3: its rules, its rulings and its case set. A
+    // scanner-only run is scored under the scan rules (lib/scan-score.mjs),
+    // versioned from 1.
+    need(isInt(e.rulesVersion, e.mode === "scan" ? 1 : 3), "rulesVersion must be the rules version of the format 3 score the entry cites");
     need(HEX64.test(e.rulesHash ?? ""), "rulesHash must be the sha256 of that score's rules block");
     need(e.decisionsHash === null || HEX64.test(e.decisionsHash ?? ""), "decisionsHash must be the sha256 of the adjudication file the score read, or null");
     need(Array.isArray(e.caseIds) && e.caseIds.length > 0, "caseIds must list the run's cases");
