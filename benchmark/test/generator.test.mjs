@@ -1,10 +1,10 @@
 // The benchmark corpus is what the scores are measured against, so each case
 // must build, and every planted bug must be where its spec says: the anchor
 // text on the anchor line, and a line in its range that a finding may cite.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildCase, changedLines, git, listCases, readCase, specProblems } from "../lib/cases.mjs";
+import { buildCase, changedLines, git, listCases, readCase, readLock, specProblems } from "../lib/cases.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -13,12 +13,15 @@ afterAll(removeTempDirs);
 const build = (id) => buildCase(id, join(tempDir(`oq-bench-${id}-`), "repo"));
 
 const ids = listCases();
+// A retired case keeps its folder so old runs can be rebuilt, but no new run uses it.
+const lock = readLock();
+const active = ids.filter((id) => lock.cases[id]?.retired !== true);
 
 describe("the benchmark corpus", () => {
-  it("has twelve to twenty-four cases, at least one of them clean", () => {
-    expect(ids.length).toBeGreaterThanOrEqual(12);
-    expect(ids.length).toBeLessThanOrEqual(24);
-    expect(ids.some((id) => readCase(id).clean)).toBe(true);
+  it("has twelve to twenty-four active cases, at least one of them clean", () => {
+    expect(active.length).toBeGreaterThanOrEqual(12);
+    expect(active.length).toBeLessThanOrEqual(24);
+    expect(active.some((id) => readCase(id).clean)).toBe(true);
   });
 
   for (const id of ids) {
@@ -33,6 +36,13 @@ describe("the benchmark corpus", () => {
           const set = changed.get(loc.file) ?? new Set();
           const citable = [...set].some((n) => n >= loc.lines[0] && n <= loc.lines[1]);
           expect(citable, `${bug.id}: ${loc.file} lines ${loc.lines.join("-")} hold no changed line, so no finding can cite them`).toBe(true);
+        }
+        // Evidence is the proof that lives outside the changed lines: each place exists and changes nothing.
+        for (const ev of bug.evidence) {
+          expect(existsSync(join(dir, ev.file)), `${bug.id}: evidence ${ev.file} is not in the repository`).toBe(true);
+          expect(readFileSync(join(dir, ev.file), "utf8").split("\n").length, `${bug.id}: ${ev.file} is shorter than its evidence`).toBeGreaterThanOrEqual(ev.lines[1]);
+          const set = changed.get(ev.file) ?? new Set();
+          expect([...set].filter((n) => n >= ev.lines[0] && n <= ev.lines[1]), `${bug.id}: evidence ${ev.file} lines ${ev.lines.join("-")} hold changed lines`).toEqual([]);
         }
       }
       for (const x of spec.extras ?? []) {
@@ -76,7 +86,7 @@ describe("the benchmark corpus", () => {
   });
 
   it("refuses a plant or an accepted side issue without the words that name it", () => {
-    const sound = { id: "b", file: "a.py", lines: [1, 3], anchor: { line: 1, text: "x" }, mentions: ["injection"], kind: ["security"], severity: "major", found_by: ["reasoning"], truth: "t" };
+    const sound = { id: "b", file: "a.py", lines: [1, 3], anchor: { line: 1, text: "x" }, mentions: ["injection"], kind: ["security"], class: "sql-injection", tags: [], evidence: [], severity: "major", found_by: ["reasoning"], truth: "t" };
     const base = { id: "x", guards: "g", language: "python", framework: "none", clean: false };
     expect(specProblems({ ...base, bugs: [sound] }, "x")).toEqual([]);
     expect(specProblems({ ...base, bugs: [{ ...sound, mentions: undefined }] }, "x").join("\n")).toMatch(/mentions/);

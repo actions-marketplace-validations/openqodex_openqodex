@@ -35,16 +35,34 @@
 // 8. A spec with a typo (a kind or severity the product does not have, a
 //    reversed range, a duplicate bug id, an anchor outside its range) scores
 //    wrongly without anyone noticing: readCase validates and throws.
+// 9. A case edited after a run keeps its name, so an old run and a new one
+//    compare across different code: every case has the id
+//    planted/<name>@<first 8 hex of caseHash>, cases.lock.json freezes each
+//    hash, and lockProblems (F1: every folder hashes to its entry) and
+//    indexProblems (F2: every case id a run index entry names resolves to an
+//    entry with that hash) fail the tests with "a spec edit after a run is a
+//    new case". An edit goes into a new folder; the old entry is retired.
+// 10. A planted bug without a class, or with a class outside the list, is
+//    accepted, so the scanner tables group truth by labels nobody chose:
+//    every bug must carry a class from lib/classes.mjs, its tags and its
+//    evidence, and a label added later is an edit that makes a new case.
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { CLASSES } from "./classes.mjs";
 
 export const benchRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoRoot = resolve(benchRoot, "..");
 export const casesRoot = join(benchRoot, "cases");
+export const lockPath = join(benchRoot, "cases.lock.json");
+export const indexRunsRoot = join(benchRoot, "index", "runs");
+
+// The words every freeze failure carries, so a person reading a red test
+// knows the rule before the details.
+export const NEW_CASE = "a spec edit after a run is a new case";
 
 // The product's own vocabularies (packages/core/src/types.ts and severity.ts).
 export const CATEGORIES = ["bug", "security", "performance", "maintainability", "style"];
@@ -52,6 +70,15 @@ export const SEVERITIES = ["info", "nitpick", "minor", "major", "critical"];
 // Who is expected to find a bug: a scanner by name, the reviewer's reading
 // of the diff, or the reviewer helped by the code graph's caller list.
 export const FINDERS = ["gitleaks", "semgrep", "bandit", "ruff", "oxlint", "osv-scanner", "hadolint", "shellcheck", "actionlint", "brakeman", "rubocop", "golangci", "zizmor", "trivy", "squawk", "kube-linter", "tflint", "kubeconform", "cargo-deny", "checkov", "sqlfluff", "suppression", "reasoning", "graph"];
+// Per bug, beside its class (lib/classes.mjs):
+//   tags      needs-callers: the proof lives in a caller or a registration
+//             outside the change (a call, an import, a route or URL entry);
+//             deletion: the bug is code the change removed, with no line
+//             left in its place.
+//   evidence  [{ file, lines }]: the unchanged places, outside the bug's own
+//             lines, that hold a fact the bug rests on and the changed
+//             lines do not show; empty when the change alone proves it.
+export const TAGS = ["needs-callers", "deletion"];
 
 const FIXED_DATE = "2026-01-01T00:00:00Z";
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -66,8 +93,11 @@ export function listCases(root = casesRoot) {
 const isWords = (w) => Array.isArray(w) && w.length > 0 && w.every((m) => typeof m === "string" && m.trim() !== "");
 const isRange = (r) => Array.isArray(r) && r.length === 2 && r.every((n) => Number.isInteger(n) && n >= 1) && r[0] <= r[1];
 
-// Every problem with a spec, one line each; empty when it is sound.
-export function specProblems(spec, id) {
+// Every problem with a spec, one line each; empty when it is sound. The
+// labels (class, tags, evidence) are required of the corpus; the scorer
+// passes labels: false, because it reads none of them yet and the specs
+// saved by runs made before the freeze have none.
+export function specProblems(spec, id, { labels = true } = {}) {
   const p = [];
   const need = (cond, what) => {
     if (!cond) p.push(`${id}: ${what}`);
@@ -99,6 +129,12 @@ export function specProblems(spec, id) {
     // The words that name the issue: without them no finding can match it (lib/score.mjs).
     need(isWords(b.mentions), `${at}: mentions must be a non-empty list of words that name the issue`);
     need(b.also === undefined || (Array.isArray(b.also) && b.also.every((a) => typeof a.file === "string" && isRange(a.lines))), `${at}: also must be a list of { file, lines }`);
+    // The labels the scanner and reviewer loops read; they are inside the hash, so they are frozen with the case.
+    if (!labels) continue;
+    need(CLASSES.includes(b.class), `${at}: class must be one of the ${CLASSES.length} classes in lib/classes.mjs`);
+    need(Array.isArray(b.tags) && b.tags.every((t) => TAGS.includes(t)) && new Set(b.tags).size === b.tags.length, `${at}: tags must be a list of ${TAGS.join(", ")}, each at most once (empty when none applies)`);
+    need(Array.isArray(b.evidence) && b.evidence.every((e) => e && typeof e.file === "string" && e.file !== "" && isRange(e.lines)), `${at}: evidence must be a list of { file, lines } (empty when the changed lines hold the proof)`);
+    if (Array.isArray(b.tags) && b.tags.includes("needs-callers")) need(Array.isArray(b.evidence) && b.evidence.length > 0, `${at}: needs-callers needs the callers in evidence`);
   }
   for (const [i, x] of (spec.extras ?? []).entries()) {
     need(typeof x.file === "string" && isRange(x.lines) && typeof x.why === "string", `extras[${i}]: must be { file, lines, mentions, why }`);
@@ -223,6 +259,131 @@ export function caseHash(id, root = casesRoot) {
   const del = join(caseDir, "delete.txt");
   if (existsSync(del)) h.update(readFileSync(del));
   return h.digest("hex");
+}
+
+// The id scores, the index and the review queue key a case by: its name and
+// the first 8 hex of its hash, so an edited case is a different id.
+export function caseIdFromHash(name, hash) {
+  return `planted/${name}@${hash.slice(0, 8)}`;
+}
+
+export function caseId(name, root = casesRoot) {
+  return caseIdFromHash(name, caseHash(name, root));
+}
+
+// `<suite>/<name>@<8 hex>` into its parts; null when it is not a case id.
+export function parseCaseId(id) {
+  const m = typeof id === "string" ? /^([a-z][a-z0-9-]*)\/(.+)@([0-9a-f]{8})$/.exec(id) : null;
+  return m ? { suite: m[1], name: m[2], hash8: m[3] } : null;
+}
+
+// cases.lock.json: { version: 1, historyFrom?, cases: { <name>: { hash,
+// frozenAt, history, retired } } }. Written by benchmark/lock.mjs.
+export function readLock(path = lockPath) {
+  let lock;
+  try {
+    lock = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(`the case lock ${relative(repoRoot, path) || path} cannot be read (${error.message}); write it with node benchmark/lock.mjs`);
+  }
+  const p = [];
+  if (lock?.version !== 1) p.push("version must be 1");
+  if (!lock?.cases || typeof lock.cases !== "object" || Array.isArray(lock.cases)) p.push("cases must be an object of case names");
+  for (const [name, e] of Object.entries(lock?.cases ?? {})) {
+    if (!/^[0-9a-f]{64}$/.test(e?.hash ?? "")) p.push(`${name}: hash must be 64 hex characters`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(e?.frozenAt ?? "")) p.push(`${name}: frozenAt must be a date, YYYY-MM-DD`);
+    if (e?.history !== null && typeof e?.history !== "string") p.push(`${name}: history must be a sentence or null`);
+    if (typeof e?.retired !== "boolean") p.push(`${name}: retired must be true or false`);
+  }
+  if (p.length > 0) throw new Error(`the case lock ${relative(repoRoot, path) || path} is not sound:\n${p.join("\n")}`);
+  return lock;
+}
+
+const editedMessage = (name, now, frozen) =>
+  `${name}: its files hash to ${now.slice(0, 8)}, but the lock froze it at ${frozen.slice(0, 8)}, and ${NEW_CASE}. Put the edit in a new folder (${name}-v2) with its own lock entry and mark this entry retired. Only a case no run has named yet may be edited in place, with its entry rewritten by node benchmark/lock.mjs.`;
+
+// Rule F1: every case folder hashes to its lock entry, and every entry has
+// its folder (a retired case keeps its folder, so old runs can be rebuilt).
+export function lockProblems(lock, root = casesRoot) {
+  const names = listCases(root);
+  const p = [];
+  for (const name of names) {
+    const entry = lock.cases[name];
+    if (!entry) {
+      p.push(`${name}: the case has no lock entry; add it with node benchmark/lock.mjs`);
+      continue;
+    }
+    let hash;
+    try {
+      hash = caseHash(name, root);
+    } catch (error) {
+      p.push(`${name}: ${error.message}`);
+      continue;
+    }
+    if (hash !== entry.hash) p.push(editedMessage(name, hash, entry.hash));
+  }
+  for (const name of Object.keys(lock.cases)) if (!names.includes(name)) p.push(`${name}: the lock holds a case with no folder; a retired case keeps its folder so old runs can be rebuilt`);
+  return p;
+}
+
+// The run index entries, each with its file name; an unreadable one carries its error.
+export function readIndexEntries(dir = indexRunsRoot) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((file) => {
+      try {
+        return { file, entry: JSON.parse(readFileSync(join(dir, file), "utf8")) };
+      } catch (error) {
+        return { file, error: error.message };
+      }
+    });
+}
+
+// Rule F2: every case id a run index entry names resolves to a lock entry
+// (current or retired) with that hash. Legacy entries, the runs made before
+// the freeze, are kept with their own specs and are not held to the lock.
+// Other suites pin their cases in their own files.
+export function indexProblems(lock, dir = indexRunsRoot) {
+  const p = [];
+  for (const { file, entry, error } of readIndexEntries(dir)) {
+    if (error) {
+      p.push(`index ${file}: cannot be read: ${error}`);
+      continue;
+    }
+    if (entry?.legacy === true) continue;
+    if (!Array.isArray(entry?.caseIds)) {
+      p.push(`index ${file}: caseIds is missing, so its cases cannot be checked against the lock`);
+      continue;
+    }
+    for (const id of entry.caseIds) {
+      const c = parseCaseId(id);
+      if (c === null) p.push(`index ${file}: ${JSON.stringify(id)} is not a case id (<suite>/<name>@<8 hex>)`);
+      else if (c.suite !== "planted") continue;
+      else if (!lock.cases[c.name]) p.push(`index ${file}: ${id} names ${c.name}, which the lock does not hold`);
+      else if (!lock.cases[c.name].hash.startsWith(c.hash8)) p.push(`index ${file}: ${id} was run, but the lock now holds ${c.name} at ${lock.cases[c.name].hash.slice(0, 8)}, and ${NEW_CASE}. Restore the lock entry and put the edit in a new folder (${c.name}-v2).`);
+    }
+  }
+  return p;
+}
+
+// Why a run of these cases must not start: a case whose files differ from
+// its lock entry, or that has none, runs only as a draft (never accepted);
+// a retired case runs only when retired cases are allowed.
+export function lockRefusals(names, lock, { draft = false, allowRetired = false } = {}, root = casesRoot) {
+  const out = [];
+  for (const name of names) {
+    const entry = lock.cases[name];
+    if (entry?.retired === true && !allowRetired) out.push(`${name}: the case is retired, so no new run uses it; pass --allow-retired to rebuild an old run with it`);
+    if (draft) continue;
+    if (!entry) out.push(`${name}: the case has no lock entry, so its id is not frozen; add it with node benchmark/lock.mjs, or run it as a draft with --draft`);
+    else {
+      const hash = caseHash(name, root);
+      if (hash !== entry.hash) out.push(`${editedMessage(name, hash, entry.hash)} A draft run (--draft) may use it; a draft run is never accepted.`);
+    }
+  }
+  return out;
 }
 
 // The lines a finding may start on, per file, as the review counts them:

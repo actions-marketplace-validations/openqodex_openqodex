@@ -8,6 +8,9 @@
 //                          [--reviewers claude[,codex]] [--concurrency 1]
 //                          [--timeout 900] [--out <folder>] [--resume]
 //                          [--model <id>] [--web on|off] [--dry-run]
+//                          [--draft] [--allow-retired]
+//
+// Without --cases, every case the lock does not mark retired runs.
 //
 // One results folder per run, benchmark/results/<date>-<commit>/ unless
 // --out names another:
@@ -71,19 +74,25 @@
 //    reaches Claude Code through ANTHROPIC_MODEL, which its driver passes
 //    on; Codex runs with --ignore-user-config and takes no model setting, so
 //    --model with Codex is refused.
+// 16. A case edited after a run is run again under its old name, so the two
+//    runs compare across different code: a case whose files do not hash to
+//    its entry in benchmark/cases.lock.json, or that has none, is refused
+//    unless --draft (the manifest then says draft, and a draft run is never
+//    accepted); a retired case is refused unless --allow-retired; the
+//    manifest lists every case's id, planted/<name>@<first 8 hex of its hash>.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { benchRoot, buildCase, caseHash, casesRoot, generatedValue, listCases, readCase, repoRoot } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, caseIdFromHash, casesRoot, generatedValue, listCases, lockRefusals, readCase, readLock, repoRoot } from "./lib/cases.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, failureOf, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run]";
+const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run] [--draft] [--allow-retired]";
 
 function parseArgs(argv) {
-  const o = { repeat: 3, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, model: null, web: "on", dryRun: false, allowMore: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { repeat: 3, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, model: null, web: "on", dryRun: false, allowMore: false, draft: false, allowRetired: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -104,6 +113,8 @@ function parseArgs(argv) {
     else if (a === "--resume") o.resume = true;
     else if (a === "--dry-run") o.dryRun = true;
     else if (a === "--allow-more") o.allowMore = true;
+    else if (a === "--draft") o.draft = true;
+    else if (a === "--allow-retired") o.allowRetired = true;
     else throw new Error(`unknown flag ${a}`);
   }
   if (!Number.isInteger(o.repeat) || o.repeat < 1) throw new Error("--repeat takes a whole number from 1");
@@ -118,8 +129,29 @@ function parseArgs(argv) {
   }
   const all = listCases();
   for (const c of o.cases ?? []) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
-  o.cases ??= all;
   return o;
+}
+
+// The lock, and the cases this run may use (failure 16). Exits 2 on a refusal.
+function lockedCases(o) {
+  let lock;
+  try {
+    lock = readLock();
+  } catch (error) {
+    if (!o.draft) {
+      console.error(`${error.message}\nWithout the lock no case id is frozen; a draft run (--draft) may still run, and is never accepted.`);
+      process.exit(2);
+    }
+    lock = { version: 1, cases: {} };
+  }
+  const cases = o.cases ?? listCases().filter((c) => lock.cases[c]?.retired !== true);
+  const refusals = lockRefusals(cases, lock, { draft: o.draft, allowRetired: o.allowRetired });
+  if (refusals.length > 0) {
+    console.error("The run cannot start:");
+    for (const r of refusals) console.error(`- ${r}`);
+    process.exit(2);
+  }
+  return cases;
 }
 
 const readJson = (path) => {
@@ -224,6 +256,7 @@ async function main() {
     console.error(`${error.message}\n${USAGE}`);
     process.exit(2);
   }
+  o.cases = lockedCases(o);
   const { problems, build } = buildInfo(o.cli);
   if (problems.length > 0) {
     for (const p of problems) console.error(p);
@@ -242,6 +275,10 @@ async function main() {
   const todo = jobs.filter((j) => !saved(j));
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
   console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
+  const hashes = Object.fromEntries(o.cases.map((c) => [c, caseHash(c)]));
+  const caseIds = o.cases.map((c) => caseIdFromHash(c, hashes[c]));
+  console.log(`Cases: ${caseIds.join(", ")}`);
+  if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
   if (o.dryRun) {
     for (const j of todo) console.log(`  ${j.case} ${j.config} #${j.repeat}`);
     return;
@@ -269,7 +306,6 @@ async function main() {
 
   const manifestPath = join(out, "manifest.json");
   const resumesPath = join(out, "resumes.jsonl");
-  const hashes = Object.fromEntries(o.cases.map((c) => [c, caseHash(c)]));
   const settings = {
     build,
     machine: machine(),
@@ -277,8 +313,12 @@ async function main() {
     reviewers,
     review: { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
+    // The frozen ids (planted/<name>@<hash8>) that scores and the index key by.
+    caseIds,
     // What each case was built from, so a comparison can tell an edited case from a product change.
     caseHashes: hashes,
+    // A draft run used cases that need not match the lock; it is never accepted.
+    draft: o.draft,
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,

@@ -27,11 +27,14 @@
       "kind": [
         "security"
       ],
+      "class": "access-control",
       "severity": "critical",
       "found_by": [
         "reasoning"
       ],
-      "truth": "The delete route has no requireAdmin, unlike the other admin routes, so any caller can delete any user. The fix is admin.delete(\"/users/:id\", requireAdmin, ...)."
+      "truth": "The delete route has no requireAdmin, unlike the other admin routes, so any caller can delete any user. The fix is admin.delete(\"/users/:id\", requireAdmin, ...).",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "foreach-async-not-awaited",
@@ -54,11 +57,14 @@
       "kind": [
         "bug"
       ],
+      "class": "async",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "forEach does not wait for the async callbacks, so the answer says every user was removed before any removal ran, and a failed removal becomes an unhandled rejection. The fix is await Promise.all(ids.map((id) => db.removeUser(id))), or a for...of loop with await."
+      "truth": "forEach does not wait for the async callbacks, so the answer says every user was removed before any removal ran, and a failed removal becomes an unhandled rejection. The fix is await Promise.all(ids.map((id) => db.removeUser(id))), or a for...of loop with await.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

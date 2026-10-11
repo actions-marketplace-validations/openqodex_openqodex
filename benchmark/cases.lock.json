@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "historyFrom": {
+    "before": "2026-10-10",
+    "runs": [
+      "2026-10-08-752b77f",
+      "2026-10-08-588a38c",
+      "2026-10-09-ac9cdae",
+      "2026-10-09-ac9cdae-django-retry",
+      "2026-10-09-95efb19",
+      "2026-10-09-602a140",
+      "2026-10-09-602a140-django-graph-off",
+      "2026-10-09-4850f66",
+      "2026-10-09-881318b",
+      "2026-10-09-5227579",
+      "2026-10-09-4a7d198"
+    ],
+    "withoutCaseHashes": [
+      "2026-10-08-752b77f"
+    ]
+  },
+  "cases": {
+    "clean-python-feature": {
+      "hash": "9ec4022ca47b63f6fe7c99e8a31c09b6f314bcff4cfed21137e434af39c3ba77",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "clean-ts-refactor": {
+      "hash": "932afbb62f53b81bc8cf72395239b56104a26b91a8077ad0cb31317333ad6b4f",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "demo-polyglot": {
+      "hash": "3c35635682daa86ff9ac060f3eb7b803a7bddae7836f641c7cb1f98eea07ae13",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "django-model-view": {
+      "hash": "b8943550261ff92259309fe9a7855943a5cc18c9b72f0da05820736cdfc25351",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "django-renamed-view": {
+      "hash": "3e2f6117e83a7c6ee488855422a2f810e87153399917dbdac889364c89e4cfb7",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "express-admin-routes": {
+      "hash": "8e398e7cefc35a80ecce2a635c65a949a2a79fce390d1ce809d652e95182e35d",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "express-route-param": {
+      "hash": "501a3d246ce11c222febf909d4effca9217fbb388f16b569a108d095ede12a52",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "flask-path-traversal": {
+      "hash": "1e8cb2eb052938feb1a559e834756000aae4e66c8405c0b44af5ed9e2cd05337",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "go-http-handler": {
+      "hash": "3fb1f3a775b8431f12dd7dd172142edfcc8d9209b3109ef4f6742aa97faa209c",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "js-dynamic-dispatch-gap": {
+      "hash": "fb44e019b82c9b7e11ece684ac43342fc9fe68d3c32078bf7234f724fed0a31e",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "kubernetes-host-access": {
+      "hash": "efd74bb7f4a2ab7cd2794c068f3685708dd9ca58af2c48d05b413ba38a24394a",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "nextjs-react-hooks": {
+      "hash": "1ab1277da14429fb6d7c7682a33f0bc430f32d78bcad93c7697bf5835501dbc5",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "postgres-migration-locks": {
+      "hash": "82793920a2270320f47cbd789ccad345c2bd13de890593dfd1aac1cd92c5a0f7",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "python-caller-break": {
+      "hash": "acec4bf84709ae3f813d7ffe04343d815269c26ed411a0baeabcd0f48eb33bc7",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "rails-controller-model": {
+      "hash": "2c98375d07c375fec1638171859b1cb5f61ead85553dcaf572b4cf2396dea82b",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "suppression-comments": {
+      "hash": "93727135805fbc478f382f1150554204c21997d67ca76f596188cbab11ca30da",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "terraform-open-ingress": {
+      "hash": "b96326b57421517f43cba1c53eb19e740f722f89d53ba581faa57584fd2b7f28",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "ts-interface-dispatch-break": {
+      "hash": "22dbd210c2d6f16c59663a6e19c76f9f4ff2ef37198ced5eed7219c1ac950a37",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "ts-removed-export": {
+      "hash": "75a7347efb4f1132659ca63bbf1d8e2d78a2d4c29872dee34652256298f2f1a5",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "ts-workspace-caller-break": {
+      "hash": "f5ad74c2050c00a370d8727daffd0de878ea136d070913a86d88aec1b895a440",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "workflow-untrusted-checkout": {
+      "hash": "c90f15ce981bdcf67ca773ba5493b7e418560510e2e0c8fc7b6df231363b23c9",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    }
+  }
+}

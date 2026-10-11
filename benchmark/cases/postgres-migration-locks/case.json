@@ -25,12 +25,15 @@
       "kind": [
         "bug"
       ],
+      "class": "migration-data",
       "severity": "major",
       "found_by": [
         "squawk",
         "reasoning"
       ],
-      "truth": "orders already holds rows, and a NOT NULL column with no default leaves them null, so the migration fails on any database with orders in it. The fix is to add the column with a default, such as DEFAULT 'placed', or to add it nullable, backfill it, then set NOT NULL."
+      "truth": "orders already holds rows, and a NOT NULL column with no default leaves them null, so the migration fails on any database with orders in it. The fix is to add the column with a default, such as DEFAULT 'placed', or to add it nullable, backfill it, then set NOT NULL.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "index-without-concurrently",
@@ -52,12 +55,15 @@
         "performance",
         "bug"
       ],
+      "class": "migration-lock",
       "severity": "major",
       "found_by": [
         "squawk",
         "reasoning"
       ],
-      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on orders until the index is built, so checkout stalls for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction."
+      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on orders until the index is built, so checkout stalls for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [
