@@ -6,7 +6,8 @@
 //                            [--from <folder>]
 //
 // For each suite (both when --suite is left out) and each side of its split
-// (every Martian case is held out, so its test side only), it runs
+// (the held-out test side first; every Martian case is held out, so its
+// test side only), it runs
 //   node benchmark/run.mjs --materialise-only --suite <suite> --split <side>
 // into benchmark/results/proof-<time>/<suite>-<side>/proof.json, in the
 // shape a model review reads (server: the base and the head as two
@@ -209,7 +210,8 @@ function main(argv) {
   let failed = 0;
   for (const suite of o.suites) {
     const def = SUITES[suite];
-    const sides = def.heldOutOnly ? ["test"] : ["dev", "test"];
+    // The held-out side first: it is the side a release run needs proved.
+    const sides = def.heldOutOnly ? ["test"] : ["test", "dev"];
     const proofs = [];
     for (const side of sides) {
       const folder = join(runRoot, `${suite}-${side}`);
