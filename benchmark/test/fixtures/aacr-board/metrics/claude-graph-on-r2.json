@@ -1,0 +1,225 @@
+{
+  "ex_info": {
+    "start_time": "2026-10-11T00:00:00",
+    "results_dir": "<results>",
+    "reviewer": "ocr",
+    "line_k": 1,
+    "limit": null,
+    "missing_instance_ids": []
+  },
+  "summary": {
+    "total_instances": 5,
+    "candidate_instances": 5,
+    "evaluated_instances": 5,
+    "missing_instances": 0,
+    "expected_notes": 16,
+    "generated_notes": 1,
+    "matched_line_notes": 1,
+    "matched_semantic_notes": 0,
+    "semantic_match_rate": 0,
+    "line_match_rate": 1,
+    "semantic_recall_rate": 0,
+    "line_recall_rate": 0.062,
+    "semantic_f1": 0,
+    "line_f1": 0.117,
+    "total_duration_seconds": 450,
+    "avg_duration_seconds": 90,
+    "total_input_tokens": 6000,
+    "total_output_tokens": 1500,
+    "total_tokens": 7500,
+    "avg_input_tokens": 1200,
+    "avg_output_tokens": 300
+  },
+  "eval_res": [
+    {
+      "instance_id": "cline__cline@cb4d5c9",
+      "repo": "cline/cline",
+      "comments": [
+        {
+          "note": "1 q7 x9",
+          "path": "src/core/task.ts",
+          "side": "right",
+          "from_line": 10,
+          "to_line": 12,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "2 q7 x9",
+          "path": "src/core/task.ts",
+          "side": "right",
+          "from_line": 14,
+          "to_line": 14,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "3 q7 x9",
+          "path": "src/core/old.ts",
+          "side": "left",
+          "from_line": 5,
+          "to_line": 5,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        }
+      ]
+    },
+    {
+      "instance_id": "dotnet__aspnetcore@2f372e8",
+      "repo": "dotnet/aspnetcore",
+      "comments": [
+        {
+          "note": "1 q7 x9",
+          "path": "src/Http/Request.cs",
+          "side": "right",
+          "from_line": 20,
+          "to_line": 20,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "2 q7 x9",
+          "path": "src/Http/Request.cs",
+          "side": "right",
+          "from_line": 22,
+          "to_line": 25,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "3 q7 x9",
+          "path": "src/Http/Request.cs",
+          "side": "right",
+          "from_line": 40,
+          "to_line": 40,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "4 q7 x9",
+          "path": "src/Http/Response.cs",
+          "side": "right",
+          "from_line": 1,
+          "to_line": 3,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "5 q7 x9",
+          "path": "src/Http/Response.cs",
+          "side": "right",
+          "from_line": 100,
+          "to_line": 102,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        }
+      ]
+    },
+    {
+      "instance_id": "infiniflow__ragflow@a63caa1",
+      "repo": "infiniflow/ragflow",
+      "comments": [
+        {
+          "note": "1 q7 x9",
+          "path": "api/db/services.py",
+          "side": "right",
+          "from_line": 30,
+          "to_line": 30,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "2 q7 x9",
+          "path": "api/db/services.py",
+          "side": "right",
+          "from_line": 31,
+          "to_line": 31,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "3 q7 x9",
+          "path": "api/db/services.py",
+          "side": "right",
+          "from_line": 32,
+          "to_line": 32,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "4 q7 x9",
+          "path": "api/apps/kb_app.py",
+          "side": "right",
+          "from_line": 7,
+          "to_line": 9,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "5 q7 x9",
+          "path": "api/apps/kb_app.py",
+          "side": "right",
+          "from_line": 50,
+          "to_line": 50,
+          "line_match": true,
+          "semantic_match": false,
+          "matched_note": ""
+        },
+        {
+          "note": "6 q7 x9",
+          "path": "rag/nlp/query.py",
+          "side": "right",
+          "from_line": 3,
+          "to_line": 3,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        }
+      ]
+    },
+    {
+      "instance_id": "laravel__framework@0a5238a",
+      "repo": "laravel/framework",
+      "comments": [
+        {
+          "note": "1 q7 x9",
+          "path": "src/Illuminate/Support/Str.php",
+          "side": "right",
+          "from_line": 7,
+          "to_line": 7,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        }
+      ]
+    },
+    {
+      "instance_id": "linera-io__linera-protocol@8fb32bb",
+      "repo": "linera-io/linera-protocol",
+      "comments": [
+        {
+          "note": "1 q7 x9",
+          "path": "linera-core/src/client.rs",
+          "side": "right",
+          "from_line": 30,
+          "to_line": 31,
+          "line_match": false,
+          "semantic_match": false,
+          "matched_note": ""
+        }
+      ]
+    }
+  ]
+}
