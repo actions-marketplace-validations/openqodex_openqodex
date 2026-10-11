@@ -4,7 +4,7 @@
 //
 //   node benchmark/score.mjs <results folder> [--against <earlier folder>]
 //                            [--specs <folder of <case>.json>] [--judge <judge.json>]
-//                            [--out <folder>] [--json]
+//                            [--out <folder>] [--decisions <file>] [--json]
 //
 // The specs are the run's own copies (cases/ in the run). --specs scores the
 // saved reviews against other specs, such as an amended copy; the output and
@@ -18,9 +18,13 @@
 // per-bug results, the rules block, and a 95% cluster bootstrap interval on
 // each issue-level ratio, lib/interval.mjs, seeded from the run id so a
 // rescore draws the same interval, and each configuration's wording verdict
-// from the run's judge.json, or the file --judge names, which no rule reads)
-// and outcomes.jsonl (one line per finding
-// of every first attempt), into the results folder or --out. A legacy run (one
+// from the run's judge.json, or the file --judge names, which no rule
+// reads), outcomes.jsonl (one line per finding of every first attempt) and
+// unresolved.jsonl (each finding that still asks a person a question, with
+// its text and the code it cites, for queue.mjs add), into the results
+// folder or --out. It applies the rulings in the adjudication file,
+// benchmark/review-queue/decisions.jsonl unless --decisions names another,
+// and records that file's sha256. A legacy run (one
 // with a recipe in benchmark/legacy/recipes.json) keeps the score its own
 // scorer wrote: its folder is the published original, so its format 3 score
 // is written only with --out. Prints markdown tables (or, with --json, the
@@ -54,12 +58,13 @@
 //    each configuration after the scoring (lib/score.mjs wordingBlock), and
 //    a run's judge.json that cannot be read leaves the wording null with a
 //    line on stderr, never a failed scoring.
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
 import { runIntervals } from "./lib/interval.mjs";
+import { unresolvedItems } from "./lib/queue.mjs";
+import { readDecisions } from "./lib/rulings.mjs";
 import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value, wordingBlock } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
@@ -232,12 +237,14 @@ function repoGroups(origin, jobs, specs) {
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
-// Score format 3 of a loaded run: `score` is score.json, `outcomes` the lines
-// of outcomes.jsonl, `jobs` the scored jobs (for a comparison).
-export function scoreRun(run, { decisionsHash = null } = {}) {
+// Score format 3 of a loaded run under the rulings in `decisions` (the
+// adjudication file's lines, lib/rulings.mjs readDecisions): `score` is
+// score.json, `outcomes` the lines of outcomes.jsonl, `unresolved` those of
+// unresolved.jsonl, `jobs` the scored jobs (for a comparison).
+export function scoreRun(run, { decisionsHash = null, decisions = [], people = [] } = {}) {
   const m = run.manifest;
-  // The scoring itself, attempt selection included, is lib/score.mjs scoreAttempts, which the rules hash covers.
-  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs });
+  // The scoring itself, attempt selection and rulings included, is lib/score.mjs scoreAttempts, which the rules hash covers.
+  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs, decisions, people });
   // The intervals are seeded from the run id, the folder's name, never its
   // path, so a copy elsewhere draws the same intervals.
   const perCase = caseSums(s.perCase, s.jobs);
@@ -258,6 +265,7 @@ export function scoreRun(run, { decisionsHash = null } = {}) {
     caseIds: s.caseIds,
     caseSetHash: s.caseIds.every((id) => parseCaseId(id) !== null) ? caseSetHash(s.caseIds) : null,
     decisionsHash,
+    rulings: s.rulings,
     external: m.external ?? null,
     repeat: m.repeat ?? null,
     population: { ...s.population, unrecorded: run.unrecorded },
@@ -271,7 +279,8 @@ export function scoreRun(run, { decisionsHash = null } = {}) {
     perBug: s.perBug,
     briefFailures: s.briefFailures,
   };
-  return { score, outcomes: s.outcomes, jobs: s.jobs };
+  const unresolved = unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
+  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs };
 }
 
 // The legacy run whose folder `path` is or lies in, wherever it is, by the
@@ -322,6 +331,8 @@ export function renderV3(s) {
   if (p.unplanned.length > 0) out.push(`Left out: ${p.unplanned.length} first attempts of no planned review (${p.unplanned.join(", ")}).`);
   if (p.unrecorded > 0) out.push(`${p.unrecorded} attempts the runner never finished recording are scored from their folders.`);
   if (s.specsFrom !== "the run's own cases/") out.push(`Scored against the specs in ${s.specsFrom}, not the run's own; they differ for: ${s.specsDiffer.join(", ") || "no case"}.`);
+  const r = s.rulings ?? { read: 0, ignored: [] };
+  out.push(`Rulings: ${r.read} lines of the adjudication file read${s.decisionsHash ? ` (sha256 ${s.decisionsHash.slice(0, 12)})` : ""}, ${r.ignored.length} ignored${r.ignored.length > 0 ? `: ${r.ignored.map((x) => `line ${x.line}, ${x.why}`).join("; ")}` : ""}.`);
   // The difference from score format 2, which counted every saved attempt.
   for (const c of configs) {
     const x = s.byConfig[c];
@@ -441,11 +452,8 @@ export function renderCompare(older, newer, so, sn, regs) {
   return out.join("\n");
 }
 
-// The adjudication file's hash, or null while there is none (P1-T8 adds it).
-function decisionsHash() {
-  const path = join(benchRoot, "review-queue", "decisions.jsonl");
-  return existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
-}
+// The adjudication file the scorer reads unless --decisions names another.
+export const decisionsPath = join(benchRoot, "review-queue", "decisions.jsonl");
 
 function main() {
   const args = process.argv.slice(2);
@@ -453,6 +461,7 @@ function main() {
   let specsDir = null;
   let judgeFile = null;
   let outDir = null;
+  let decisionsFile = decisionsPath;
   let json = false;
   const pos = [];
   for (let i = 0; i < args.length; i++) {
@@ -461,10 +470,11 @@ function main() {
     else if (args[i] === "--specs") specsDir = args[++i];
     else if (args[i] === "--judge") judgeFile = args[++i];
     else if (args[i] === "--out") outDir = args[++i];
+    else if (args[i] === "--decisions") decisionsFile = args[++i];
     else pos.push(args[i]);
   }
-  if (pos.length !== 1 || against === undefined || specsDir === undefined || judgeFile === undefined || outDir === undefined) {
-    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--judge <judge.json>] [--out <folder>] [--json]");
+  if (pos.length !== 1 || against === undefined || specsDir === undefined || judgeFile === undefined || outDir === undefined || decisionsFile === undefined) {
+    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--judge <judge.json>] [--out <folder>] [--decisions <file>] [--json]");
     process.exit(2);
   }
   let run;
@@ -482,14 +492,14 @@ function main() {
       throw new Error(`${dest} is, or lies in, the folder of the legacy run ${legacy}, which is the published original and holds the scores its own scorers wrote. Write the format 3 score into another folder with --out <folder>.`);
     }
     if (against) older = loadRun(resolve(against));
-    const hash = decisionsHash();
-    scored = scoreRun(run, { decisionsHash: hash });
-    if (older) olderScored = scoreRun(older, { decisionsHash: hash });
+    const d = readDecisions(resolve(decisionsFile));
+    scored = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
+    if (older) olderScored = scoreRun(older, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
   } catch (error) {
     console.error(error.message);
     process.exit(2);
   }
-  const { score, outcomes, jobs } = scored;
+  const { score, outcomes, unresolved, jobs } = scored;
   const regs = older ? regressions(olderScored.jobs, jobs) : [];
   const doc = { ...score, comparedWith: older ? { run: older.name, build: older.manifest.build, differences: differences(older, run), regressions: regs } : null };
   // Scored against other specs, the score gets its own files, so the score
@@ -498,12 +508,13 @@ function main() {
   mkdirSync(dest, { recursive: true });
   writeFileSync(join(dest, `score${suffix}.json`), `${JSON.stringify(doc, null, 2)}\n`);
   writeFileSync(join(dest, `outcomes${suffix}.jsonl`), outcomes.map((o) => `${JSON.stringify(o)}\n`).join(""));
+  writeFileSync(join(dest, `unresolved${suffix}.jsonl`), unresolved.map((o) => `${JSON.stringify(o)}\n`).join(""));
   if (json) console.log(JSON.stringify(doc, null, 2));
   else {
     console.log(renderV3(score));
     if (older) console.log(`\n${renderCompare(older, run, olderScored.score, score, regs)}`);
     const shown = (p) => (relative(repoRoot, p).startsWith("..") ? p : relative(repoRoot, p));
-    console.log(`\nScore saved: ${shown(join(dest, `score${suffix}.json`))}, with ${outcomes.length} finding outcomes in ${shown(join(dest, `outcomes${suffix}.jsonl`))}`);
+    console.log(`\nScore saved: ${shown(join(dest, `score${suffix}.json`))}, with ${outcomes.length} finding outcomes in ${shown(join(dest, `outcomes${suffix}.jsonl`))} and ${unresolved.length} findings for the review queue in ${shown(join(dest, `unresolved${suffix}.jsonl`))} (node benchmark/queue.mjs add ${shown(join(dest, `unresolved${suffix}.jsonl`))})`);
   }
   process.exit(regs.length > 0 ? 1 : 0);
 }
