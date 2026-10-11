@@ -124,14 +124,23 @@ describe("a server review writes outside its workDir", () => {
       const { jobs } = planJobs({ cases: [a.case], caseIds: { [a.case]: a.caseId }, reviewers: ["model:scripted"], graph: ["on"], repeat: 1 });
       const budget = runBudget({ dir: a.out, caps: a.caps, path: "server", prices: { scripted: SCRIPTED_PRICES } });
       const ticket = budget.admit(jobs[0]);
-      const { record } = await serverAttempt({ reviewChange, job: jobs[0], attempt: 1, out: a.out, repo: a.repo, reviewer, meter: ticket.review, deadlineMs: 120000, workRoot: a.workRoot, installRoot: a.installRoot });
+      // Whether the library's own result carried the scan record, read as it
+      // returns, so the test knows whether the sample should hold scan.json.
+      let scanned = null;
+      const observed = async (...args) => {
+        const result = await reviewChange(...args);
+        scanned = result.scan !== undefined && result.scan !== null;
+        return result;
+      };
+      const { record } = await serverAttempt({ reviewChange: observed, job: jobs[0], attempt: 1, out: a.out, repo: a.repo, reviewer, meter: ticket.review, deadlineMs: 120000, workRoot: a.workRoot, installRoot: a.installRoot });
       ticket.review.close();
-      process.stdout.write(JSON.stringify(record));
+      process.stdout.write(JSON.stringify({ record, scanned }));
     `;
     const env = { ...process.env, HOME: sandbox.home, TMPDIR: sandbox.tmp, OPENQODEX_HOME: sandbox.oqhome, OQ_TEST_ARGS: JSON.stringify({ script: script(), case: CASE, caseId: CASE_ID, out, caps: CAPS, repo, workRoot: sandbox.work, installRoot: join(sandbox.oqhome, "tools") }) };
     const p = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env, encoding: "utf8", cwd: root, maxBuffer: 64 * 1024 * 1024 });
     expect(p.status, p.stderr).toBe(0);
-    const record = JSON.parse(p.stdout);
+    const { record, scanned } = JSON.parse(p.stdout);
+    expect(typeof scanned).toBe("boolean");
     expect(record.status).toBe("complete");
     expect(record.outside).toEqual([]);
     // The clone: the same files, the same head, the same refs.
@@ -147,7 +156,11 @@ describe("a server review writes outside its workDir", () => {
     // The results folder holds the sample's own files and the run's ledger,
     // and none of the reviewed code.
     const sampleDir = join("samples", CASE, "model-scripted-graph-on", "1");
-    expect(filesUnder(out)).toEqual(["budget.jsonl", ...["completion.json", "dispositions.json", "progress.txt", "report/report.json", "report/report.md", "rounds.json", "sample.json", "usage.json"].map((f) => join(sampleDir, f))].sort());
+    // report/scan.json is the library's scan record, which its result
+    // carries since PR 135 (ReviewResult.scan) and the scorer reads to judge
+    // who found each issue: the sample holds it exactly when the result does.
+    const own = ["completion.json", "dispositions.json", "progress.txt", "report/report.json", "report/report.md", ...(scanned ? ["report/scan.json"] : []), "rounds.json", "sample.json", "usage.json"];
+    expect(filesUnder(out)).toEqual(["budget.jsonl", ...own.map((f) => join(sampleDir, f))].sort());
     const app = readFileSync(join(repo.dir, "files", "app.py"), "utf8");
     for (const f of filesUnder(out)) expect(readFileSync(join(out, f), "utf8")).not.toContain(app.trim().split("\n").slice(0, 6).join("\n"));
   });
