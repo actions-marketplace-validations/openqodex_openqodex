@@ -23,6 +23,10 @@
 //  8. The trail carries message text, which can quote a secret.
 //  9. A review writes no trail, or another trail than a scan of the same
 //     change.
+// Added with semgrep's framework gate:
+// 10. A finding the gate left out leaves no record: semgrep's django rules
+//     on the demo's Flask app are not other-framework entries, or the scan
+//     does not say which family it left out of which project and why.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,7 +40,7 @@ afterAll(removeTempDirs);
 
 type Selection = { scanner: string; wanted: boolean; paths: string[]; projects: string[]; skip: string | null };
 type Entry = { token: string; file: string; lineStart: number; lineEnd: number; severity: string; stage: string; id?: string; into?: string };
-type Stages = { changedLines: number; fixtures: number; rules: number; merged: number };
+type Stages = { changedLines: number; fixtures: number; rules: number; merged: number; otherFramework: number };
 type Summary = ScannerRunSummary & { stages?: Stages; resolveMs?: number; files?: number };
 type Scan = { candidates: Candidate[]; scanners: Summary[]; fixturesDropped: number; selection?: Selection[]; trail?: Entry[]; trailOmitted?: number };
 
@@ -45,7 +49,7 @@ const BUILTINS = [
   "checkov", "tflint", "kube-linter", "kubeconform", "shellcheck", "ruff", "brakeman", "rubocop", "bandit", "oxlint", "golangci",
 ];
 const ENTRY_KEYS = ["token", "file", "lineStart", "lineEnd", "severity", "stage", "id", "into"];
-const STAGES = ["outside-change", "changed-lines", "fixture", "disabled-rule", "merged", "kept"];
+const STAGES = ["outside-change", "changed-lines", "fixture", "disabled-rule", "other-framework", "merged", "kept"];
 // OpenQodex's own candidates about the change (a changed settings file, an
 // added suppression comment) are trail entries too, but no scanner raised
 // them, so they are not part of its rawCount.
@@ -88,6 +92,7 @@ function wellFormed(scan: Scan): void {
       fixtures: count(entries, "fixture"),
       rules: count(entries, "disabled-rule"),
       merged: count(entries, "merged"),
+      otherFramework: count(entries, "other-framework"),
     });
     expect(count(entries, "kept")).toBe(s.keptCount);
     expect(s.resolveMs, `${s.scanner} resolveMs`).toBeGreaterThanOrEqual(0);
@@ -153,6 +158,18 @@ describe("the demo scan", () => {
     expect(text).not.toContain(secret);
     const messages = new Set(scan.candidates.map((c) => c.message));
     for (const e of scan.trail!) for (const value of Object.values(e)) expect(messages.has(String(value))).toBe(false);
+  });
+
+  it("10. records semgrep's django rules on the demo's Flask app as another framework's, and says why", () => {
+    if (skipNetwork("semgrep's framework gate")) return;
+    const left = of(scan, "semgrep").filter((e) => e.stage === "other-framework");
+    expect(left.map((e) => e.token)).toContain("semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string");
+    for (const e of left) expect([e.file, e.token.startsWith("semgrep:python.django.")]).toEqual(["app/search.py", true]);
+    expect(scan.candidates.filter((c) => c.ruleId.startsWith("python.django."))).toEqual([]);
+    expect(scan.candidates.map((c) => c.ruleId)).toContain("python.flask.security.injection.tainted-sql-string.tainted-sql-string");
+    expect(scan.scanners.find((s) => s.scanner === "semgrep")!.excludedFamilies).toEqual([
+      { family: "python.django", project: "", why: "flask in requirements.txt, and no source names django or rest_framework", sources: ["app/search.py", "requirements.txt"] },
+    ]);
   });
 });
 

@@ -11,12 +11,26 @@
 // summary names each pack it consumed by the sha256 of its rules (rulePackHash)
 // and the size of the bytes semgrep read, taken from that folder before it is
 // removed.
+//
+// The packs carry a rule family per web framework, and a family's request
+// rules match any framework's request object. On a Flask app, django's rules
+// raise the SQL injection, the HTML and the eval that flask's own rules
+// raise on the same lines, and the reviewer drops them as repeats. So a
+// family is left out of a Python file whose project uses the other
+// framework, and where no source names this one (frameworkGate). The gate
+// fails closed: whatever cannot be read or settled keeps the family.
+// semgrep still runs every rule: its --exclude-rule takes exact rule ids,
+// which are known only once it has fetched the packs, and one file list per
+// gate would fetch them once per list. The adapter drops those findings
+// after the run instead, and the runner records them in the trail. No rule
+// is edited or bundled.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import type { AdapterResult, ResolvedTool, RulePack, StaticFinding } from "@openqodex/core";
+import type { AdapterResult, ExcludedFamily, ResolvedTool, RulePack, StaticFinding } from "@openqodex/core";
+import type { RepoFacts } from "../detect.js";
 import { describeFailure, execTool, runInChunks, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
 import type { Scratch } from "../scratch.js";
@@ -53,7 +67,76 @@ export type SemgrepRunArgs = {
   changedPaths: string[];
   tool: ResolvedTool | null;
   scratch: Scratch;
+  facts: RepoFacts;
 };
+
+// The framework families the gate knows: the words that, named anywhere in
+// a source, keep a family on (its packages; djangorestframework holds
+// "django"), and the framework whose own family raises the same request
+// rules. Measured with the 1.94.0 binary and the registry packs of
+// 2026-10-11: on a Flask app every django hit had a flask hit on its line.
+// Left out of the gate, since there the other framework has no family of its
+// own and a sibling's rules are the only ones that find the bug: express in
+// a Fastify app or a Next.js route (the injected HTML, the open redirect),
+// rails in a Sinatra app (send_file), and django and flask in a FastAPI app
+// (the injected HTML).
+const FAMILIES = [
+  { family: "python.django", framework: "django", words: ["django", "rest_framework"], coveredBy: "flask" },
+  { family: "python.flask", framework: "flask", words: ["flask"], coveredBy: "django" },
+] as const;
+
+const PYTHON = /\.pyi?$/i;
+
+// The families left out of one file, each with why and the sources read: a
+// Python file whose project uses the framework that covers the family (its
+// manifests say so, detect.ts) and does not use the family's own, where no
+// source names the family's words (detect.ts absentFrom: the dependency and
+// settings files of the project and the folders above it, and the file
+// itself, every one read and parsed). Anything else keeps every family: a
+// file in no project, a source that cannot be read or does not parse, a
+// setup.py. Never from a file name alone.
+export function frameworkGate(file: string, facts: RepoFacts): Map<string, ExcludedFamily> {
+  const out = new Map<string, ExcludedFamily>();
+  if (!PYTHON.test(file)) return out;
+  const project = facts.project(file);
+  if (project === null) return out;
+  for (const f of FAMILIES) {
+    if (project.frameworks.includes(f.framework) || !project.frameworks.includes(f.coveredBy)) continue;
+    const sources = facts.absentFrom(file, [...f.words]);
+    if (sources === null) continue;
+    const why = `${project.evidence[f.coveredBy]}, and no source names ${f.words.join(" or ")}`;
+    out.set(f.family, { family: f.family, project: project.root, why, sources });
+  }
+  return out;
+}
+
+// The findings the gate leaves out of their files, apart from the rest, and
+// each family left out of a project, sorted by family and project, with the
+// sources read for all its files. Each file is asked once, in sorted order,
+// so a read cap stops at the same file on every run.
+export function byFramework(findings: StaticFinding[], facts: RepoFacts): { kept: StaticFinding[]; excluded: { findings: StaticFinding[]; families: ExcludedFamily[] } } {
+  const familyOf = (ruleId: string): string | null => FAMILIES.find((f) => ruleId.startsWith(`${f.family}.`))?.family ?? null;
+  const files = [...new Set(findings.filter((f) => familyOf(f.ruleId) !== null).map((f) => f.filePath))].sort(byText);
+  const gates = new Map(files.map((file) => [file, frameworkGate(file, facts)]));
+  const kept: StaticFinding[] = [];
+  const left: StaticFinding[] = [];
+  const families = new Map<string, ExcludedFamily>();
+  for (const f of findings) {
+    const family = familyOf(f.ruleId);
+    const gate = family === null ? undefined : gates.get(f.filePath)?.get(family);
+    if (gate === undefined) {
+      kept.push(f);
+      continue;
+    }
+    left.push(f);
+    const key = `${gate.family}\n${gate.project}`;
+    const seen = families.get(key);
+    const sources = seen === undefined ? gate.sources : [...new Set([...seen.sources, ...gate.sources])].sort(byText);
+    families.set(key, { ...gate, sources });
+  }
+  const sorted = [...families.values()].sort((a, b) => byText(a.family, b.family) || byText(a.project, b.project));
+  return { kept, excluded: { findings: left, families: sorted } };
+}
 
 export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
   // Drop flag-shaped paths (argv smuggling via a file named, say,
@@ -116,7 +199,8 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
         throw new Error(`parse: ${message.slice(0, 200)}`);
       }
     });
-    return { findings, error: null, ...(rulesKnown ? { rules } : {}) };
+    const { kept, excluded } = byFramework(findings, args.facts);
+    return { findings: kept, error: null, ...(rulesKnown ? { rules } : {}), excluded };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };

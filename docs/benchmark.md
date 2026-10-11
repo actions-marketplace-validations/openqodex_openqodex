@@ -224,7 +224,7 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | low-value | style, a nitpick, size, hygiene, no impact | the rule's default or severity |
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
-A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. Flask counts only in a scan whose semgrep entry has `excludedFamilies`: an older build could not detect it. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
 
 ## What each scanner contributed
 
@@ -237,6 +237,7 @@ A script reads each planned job's first attempt that saved a `scan.json`, in a r
 
 - A scanner finds a truth item when one of its candidates sits on the item's lines and either the spec expects that scanner or the candidate's rule or message names the item's words. This is the scanner-only scorer's rule. A finding that dedup merged into another scanner's candidate counts for its own scanner. A candidate on the lines that names nothing of the item is a location match: shown in its own column, never counted as finding it.
 - Counts are (sample, truth item) pairs. Every ratio is summed hits over summed checks, never an average of ratios, and every time carries its sample count.
+- A raw finding on a truth item that the changed-line filter, the fixture filter or semgrep's framework gate (the trail's `other-framework` stage) removed is listed as a filter loss, and the scanner table counts what each of them removed.
 - Unique: a scanner found the item and no other scanner did. Leave one out: the items only that scanner found, and its candidates that absorbed no other scanner's finding.
 - The remit is the files the scan handed the scanner (the scan's `selection`), for items on lines the change touched. A miss is an item in the remit of a scanner that ran and did not find it. An item in the remit of a scanner that did not run (not installed, failed, disabled) is an infra miss, counted apart. A scan saved before the selection existed leaves the remit unknown, and the table says so rather than guess.
 - A rule meets the default-off bar with at least 30 kept candidates, at least 90% of them dropped, from at least 3 repositories, and no truth item found. Evidence from planted cases alone is provisional.

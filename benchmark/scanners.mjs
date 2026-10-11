@@ -171,9 +171,9 @@ export function render(r, { specsFrom }) {
   const names = Object.keys(r.scanners);
   const notRun = (s) => Object.entries(s.samples.notRun).map(([k, n]) => `${k} ${n}`).join(", ") || "0";
   out.push("", "## Scanners: what each raised and what became of it", "");
-  out.push(table(["Scanner", "Ran", "No files", "Not run", "Raw", "Removed: changed lines / fixtures / rules / merged", "Kept", "Raised", "Dropped", "Held / unanswered"], names.map((n) => {
+  out.push(table(["Scanner", "Ran", "No files", "Not run", "Raw", "Removed: changed lines / fixtures / rules / other framework / merged", "Kept", "Raised", "Dropped", "Held / unanswered"], names.map((n) => {
     const s = r.scanners[n];
-    const removed = s.samples.ran === 0 ? "n/a" : s.removed ? `${s.removed.changedLines} / ${s.removed.fixtures} / ${s.removed.rules} / ${s.removed.merged}` : `not recorded (raw less kept: ${s.raw - s.kept}${s.mergedAway > 0 ? `, of which ${s.mergedAway} merged` : ""})`;
+    const removed = s.samples.ran === 0 ? "n/a" : s.removed ? `${s.removed.changedLines} / ${s.removed.fixtures} / ${s.removed.rules} / ${s.removed.otherFramework} / ${s.removed.merged}` : `not recorded (raw less kept: ${s.raw - s.kept}${s.mergedAway > 0 ? `, of which ${s.mergedAway} merged` : ""})`;
     return [n, String(s.samples.ran), String(s.samples.noFiles), notRun(s), String(s.raw), removed, String(s.kept), String(s.raised), String(s.dropped), `${s.held} / ${s.unanswered}`];
   })));
   out.push("", "## Scanners: the truth they found", "");

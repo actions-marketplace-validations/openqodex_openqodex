@@ -331,7 +331,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -348,7 +349,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -365,7 +367,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -382,7 +385,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -399,7 +403,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -416,7 +421,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -433,7 +439,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 1
+        "merged": 1,
+        "otherFramework": 0
       }
     },
     {
@@ -450,7 +457,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -467,7 +475,8 @@
         "changedLines": 2,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -484,7 +493,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -501,7 +511,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -518,7 +529,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -535,7 +547,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -552,7 +565,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -569,7 +583,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -586,7 +601,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -603,7 +619,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -620,7 +637,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -637,7 +655,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     },
     {
@@ -654,7 +673,8 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0
+        "merged": 0,
+        "otherFramework": 0
       }
     }
   ],
@@ -668,7 +688,9 @@
   "projects": [
     {
       "root": "",
-      "frameworks": []
+      "frameworks": [
+        "flask"
+      ]
     }
   ],
   "selection": [

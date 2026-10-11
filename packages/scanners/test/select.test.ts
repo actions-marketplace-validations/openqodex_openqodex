@@ -57,6 +57,23 @@
 //      that names those words only nested, in a string or in a comment is.
 //  21. A hostile JSON or YAML file of 1 MB makes the CloudFormation check
 //      take more than linear time.
+// Added with semgrep's framework gate:
+//  22. A Flask project (flask in requirements, pyproject or Pipfile) is not
+//      told from its manifest, so semgrep's django rules reach the reviewer
+//      from a Flask app.
+//  23. A framework reads as absent from a Python file's project where a
+//      source names it, in any form: a dependency group the dependency
+//      readers skip, an environment marker, a URL or an editable install, a
+//      lockfile, setup.cfg, a settings file (tox.ini, pytest.ini,
+//      manage.py), a manifest in a folder above the project, or the file
+//      itself (an import, a string, any case).
+//  24. A framework reads as absent where a source cannot settle it: a
+//      manifest or lockfile that does not parse, one over the size cap or
+//      behind a link, a setup.py (only running it tells its dependencies), a
+//      requirements file that pulls in another file or a local package, or
+//      a file in no project.
+//  25. A hostile source of 1 MB makes the absence check take more than
+//      linear time.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -295,6 +312,104 @@ describe("manifests are data, read within limits", () => {
     expect(facts.project("a/x.py")).toMatchObject({ frameworks: ["airflow"] });
     expect(facts.project("b/x.py")).toMatchObject({ frameworks: ["django"] });
   });
+
+  it("tells a Flask project from its requirements, pyproject or Pipfile (22)", () => {
+    const dir = repo({
+      "a/requirements.txt": "Flask[async]==3.1.3\n",
+      "a/app.py": "x = 1\n",
+      "b/pyproject.toml": '[project]\nname = "b"\ndependencies = ["flask>=3"]\n',
+      "b/app.py": "x = 1\n",
+      "c/Pipfile": '[packages]\nflask = "*"\n',
+      "c/app.py": "x = 1\n",
+      "d/requirements.txt": "flask-login==0.6\n",
+      "d/app.py": "x = 1\n",
+    });
+    const facts = repoFacts(dir);
+    for (const p of ["a", "b", "c"]) expect(facts.project(`${p}/app.py`), p).toMatchObject({ frameworks: ["flask"] });
+    expect(facts.project("a/app.py")?.evidence).toEqual({ flask: "flask in requirements.txt" });
+    // An extension is not the framework.
+    expect(facts.project("d/app.py")).toMatchObject({ frameworks: [] });
+  });
+
+  const DJANGO = ["django", "rest_framework"];
+  const FLASK = "flask==3.1.3\n";
+  const APP = "from flask import Flask\n";
+
+  it("calls a framework absent only when no source names it, and lists every source it read (23)", () => {
+    const dir = repo({
+      "clean/requirements.txt": FLASK,
+      "clean/pyproject.toml": '[project]\nname = "clean"\ndependencies = ["flask>=3"]\n',
+      "clean/poetry.lock": '[[package]]\nname = "flask"\nversion = "3.1.3"\n',
+      "clean/Pipfile.lock": '{"default": {"flask": {"version": "==3.1.3"}}}\n',
+      "clean/environment.yml": "dependencies:\n  - flask\n",
+      "clean/setup.cfg": "[metadata]\nname = clean\n",
+      "clean/app.py": APP,
+      "clean/sub/app.py": APP,
+      "group/requirements.txt": FLASK,
+      "group/pyproject.toml": '[project]\nname = "group"\n\n[tool.pdm.dev-dependencies]\ntest = ["Django>=5"]\n',
+      "group/app.py": APP,
+      "marker/requirements.txt": `${FLASK}djangorestframework ; python_version >= "3.10"\n`,
+      "marker/app.py": APP,
+      "url/requirements.txt": `${FLASK}https://example.com/pkgs/Django-5.0.tar.gz\n`,
+      "url/app.py": APP,
+      "lock/requirements.txt": FLASK,
+      "lock/uv.lock": '[[package]]\nname = "django"\nversion = "5.0"\n',
+      "lock/app.py": APP,
+      "settings/requirements.txt": FLASK,
+      "settings/tox.ini": "[testenv]\nsetenv =\n    DJANGO_SETTINGS_MODULE = site.settings\n",
+      "settings/app.py": APP,
+      "manage/requirements.txt": FLASK,
+      "manage/manage.py": 'import os\nos.environ.setdefault("DJANGO_SETTINGS_MODULE", "site.settings")\n',
+      "manage/app.py": APP,
+      "own/requirements.txt": FLASK,
+      "own/app.py": `${APP}BACKEND = "Django.db.backends.sqlite3"\n`,
+      "own/views.py": `${APP}def f():\n    from rest_framework.views import APIView\n`,
+      "above/setup.cfg": "[options]\ninstall_requires =\n    django>=5\n",
+      "above/svc/requirements.txt": FLASK,
+      "above/svc/app.py": APP,
+    });
+    const facts = repoFacts(dir);
+    expect(facts.absentFrom("clean/app.py", DJANGO)).toEqual(["clean/Pipfile.lock", "clean/app.py", "clean/environment.yml", "clean/poetry.lock", "clean/pyproject.toml", "clean/requirements.txt", "clean/setup.cfg"]);
+    expect(facts.absentFrom("clean/sub/app.py", DJANGO)).toEqual(["clean/Pipfile.lock", "clean/environment.yml", "clean/poetry.lock", "clean/pyproject.toml", "clean/requirements.txt", "clean/setup.cfg", "clean/sub/app.py"]);
+    for (const p of ["group", "marker", "url", "lock", "settings", "manage", "own", "above/svc"]) expect(facts.absentFrom(`${p}/app.py`, DJANGO), p).toBeNull();
+    expect(facts.absentFrom("own/views.py", DJANGO)).toBeNull();
+  });
+
+  it("refuses to call a framework absent where a source cannot settle it (24)", () => {
+    const dir = repo({
+      "toml/requirements.txt": FLASK,
+      "toml/pyproject.toml": '[project\nname = "toml"\n',
+      "toml/app.py": APP,
+      "json/requirements.txt": FLASK,
+      "json/Pipfile.lock": '{"default": {',
+      "json/app.py": APP,
+      "yaml/requirements.txt": FLASK,
+      "yaml/environment.yml": "dependencies: [flask\n",
+      "yaml/app.py": APP,
+      "ini/requirements.txt": FLASK,
+      "ini/setup.cfg": "name = no section\n",
+      "ini/app.py": APP,
+      "big/requirements.txt": `${FLASK}${"# x\n".repeat(MAX_MANIFEST_BYTES / 4 + 1)}`,
+      "big/app.py": APP,
+      "setup/requirements.txt": FLASK,
+      "setup/setup.py": "from setuptools import setup\nsetup(name='s')\n",
+      "setup/app.py": APP,
+      "include/requirements.txt": `${FLASK}-r base.txt\n`,
+      "include/app.py": APP,
+      "editable/requirements.txt": `${FLASK}-e ./libs/core\n`,
+      "editable/app.py": APP,
+      "local/requirements.txt": `${FLASK}./libs/core\n`,
+      "local/app.py": APP,
+      "real/requirements.txt": FLASK,
+      "linked/app.py": APP,
+      "loose.py": APP,
+    });
+    fs.symlinkSync(path.join(dir, "real", "requirements.txt"), path.join(dir, "linked", "requirements.txt"));
+    fs.writeFileSync(path.join(dir, "linked", "pyproject.toml"), '[project]\nname = "linked"\n');
+    const facts = repoFacts(dir);
+    for (const p of ["toml", "json", "yaml", "ini", "big", "setup", "include", "editable", "local", "linked"]) expect(facts.absentFrom(`${p}/app.py`, DJANGO), p).toBeNull();
+    expect(facts.absentFrom("loose.py", DJANGO)).toBeNull();
+  });
 });
 
 describe("the lockfiles osv-scanner gets (13)", () => {
@@ -337,6 +452,32 @@ describe("hostile files read in linear time (14)", () => {
     expect(facts.content("bin/run")).toBeNull();
     expect(facts.content("k8s/a.yaml")).toBeNull();
     expect(facts.content("k8s/b.yaml")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("hostile sources of 1 MB each are checked for a framework's absence in well under a second (25)", () => {
+    // Each hostile source in a project of its own, beside a clean
+    // requirements file, so one that fails cannot spare the others a read.
+    const hostile: Record<string, string> = {
+      "requirements.txt": `flask==3.1.3\n${`a${blanks(N / 8)}x \\\n`.repeat(4)}`,
+      "pyproject.toml": `a = ${"[".repeat(N / 4)}`,
+      "Pipfile.lock": `{"a":${"[".repeat(N / 4)}`,
+      "environment.yml": "- [".repeat(N / 12),
+      // Under the 64 KB a YAML source is parsed to.
+      "environment.yaml": "- [".repeat(21_000),
+      "setup.cfg": `[a]\nb = ${blanks(N / 2)}\n${" c\n".repeat(N / 8)}`,
+    };
+    const files: Record<string, string> = {};
+    for (const [name, text] of Object.entries(hostile)) {
+      const sub = name.replace(/\W/g, "-");
+      files[`${sub}/requirements.txt`] = "flask==3.1.3\n";
+      files[`${sub}/${name}`] = text;
+      files[`${sub}/a.py`] = "djang".repeat(N / 5);
+    }
+    const dir = repo(files, false);
+    const facts = repoFacts(dir);
+    const started = performance.now();
+    for (const name of Object.keys(hostile)) facts.absentFrom(`${name.replace(/\W/g, "-")}/a.py`, ["django", "rest_framework"]);
     expect(performance.now() - started).toBeLessThan(500);
   });
 

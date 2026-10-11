@@ -53,8 +53,12 @@
 //    classed a duplicate: the candidate's own rule is read first.
 // 5. A framework the project does use is called a mismatch: the tag needs
 //    a framework the scan can detect and found in no project. A framework
-//    the scan cannot detect (Flask, SQLAlchemy), and an older scan that
-//    recorded no projects, give no tag rather than a guess.
+//    the scan cannot detect (SQLAlchemy), and an older scan that recorded no
+//    projects, give no tag rather than a guess.
+// 5a. A framework the detector learned later reads as absent from a scan
+//    an older build saved: Flask counts only in a scan whose semgrep summary
+//    has `excludedFamilies`, which the build that detects Flask writes on
+//    every semgrep run (semgrep's framework gate).
 // 6. A framework rule dropped as a repeat hides that it fired on the wrong
 //    framework: the tag is read from the reason whatever the class.
 // 7. A drop that cites its own line is called a repeat because a raised
@@ -79,7 +83,8 @@
 import { isFixturePath } from "../../packages/scanners/dist/index.js";
 import { normPath } from "./score.mjs";
 
-export const DROPS_VERSION = 1;
+// 2: Flask joined the frameworks a tag can name (5a).
+export const DROPS_VERSION = 2;
 export const DROP_CLASSES = Object.freeze(["config-owned", "fixture", "test", "duplicate", "out-of-change", "low-value", "rule-fp"]);
 // What each class points at, printed beside its count.
 export const POINTS_AT = Object.freeze({
@@ -126,6 +131,7 @@ const LOW_VALUE_WORDS = /\bstyle\b|\bnitpicks?\b|\bpreferences?\b|\bsize\b|\benl
 // everyday words are matched only as capitalised names.
 const FRAMEWORKS = [
   ["django", /\bdjango\b/i],
+  ["flask", /\bflask\b/i],
   ["fastapi", /\bfastapi\b/i],
   ["airflow", /\bairflow\b/i],
   ["nextjs", /\bnext\.?js\b/i],
@@ -134,6 +140,16 @@ const FRAMEWORKS = [
   ["rails", /\bRails\b/],
 ];
 export const DETECTED_FRAMEWORKS = Object.freeze(FRAMEWORKS.map(([slug]) => slug));
+// The frameworks the detector learned later, each with how a scan shows its
+// build had learned it (5a). Flask came with semgrep's framework gate, whose
+// build writes excludedFamilies on every semgrep run.
+const LEARNED_LATER = { flask: (scan) => (scan?.scanners ?? []).some((s) => Array.isArray(s?.excludedFamilies)) };
+
+// The frameworks this scan's build could detect; without a scan, those it
+// always could.
+export function detectableFrameworks(scan = null) {
+  return DETECTED_FRAMEWORKS.filter((slug) => LEARNED_LATER[slug] === undefined || (scan !== null && LEARNED_LATER[slug](scan)));
+}
 
 // Paths a reason quotes: any token with a slash, and a bare file name that
 // starts in lower case with a known extension (a capitalised name such as
@@ -174,14 +190,15 @@ export function raisedSpans(report, scan) {
 
 // One drop's class: { class, tags, matched: { rule, text } }. `matched`
 // names the rule that decided and the text it matched, so a person can see
-// why. Context: the raised candidates' spans and the scan's frameworks.
-export function classifyDrop(drop, { raised = [], frameworks = null } = {}) {
+// why. Context: the raised candidates' spans, the scan's frameworks, and the
+// frameworks its build could detect (5a).
+export function classifyDrop(drop, { raised = [], frameworks = null, detectable = detectableFrameworks() } = {}) {
   const out = classOf(drop, raised);
   // The tag is the reason's, whatever the class: a framework rule dropped as
   // a repeat still fired on a framework the change does not use.
   const present = new Set(frameworks ?? []);
   const words = withoutPaths(drop?.reason);
-  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => !present.has(slug) && re.test(words))) out.tags.push("framework-mismatch");
+  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => detectable.includes(slug) && !present.has(slug) && re.test(words))) out.tags.push("framework-mismatch");
   return out;
 }
 
@@ -232,7 +249,7 @@ function classOf(drop, raised) {
 // Every drop of one saved review, in its order, with its class. `report` is
 // report.json, `scan` is scan.json (null when the sample has none).
 export function classifyReportDrops(report, scan) {
-  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan) };
+  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan), detectable: detectableFrameworks(scan) };
   return (report?.dropped ?? []).map((d) => ({ candidate: d.candidate, reason: d.reason, cited: d.cited ?? null, ...classifyDrop(d, context) }));
 }
 

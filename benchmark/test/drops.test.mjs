@@ -115,9 +115,22 @@ describe("structure before words", () => {
   });
 
   it("a framework the scan cannot detect is called missing from the project", () => {
-    // detect.ts reads no Flask or SQLAlchemy, so the scan cannot say they are absent.
+    // detect.ts reads no SQLAlchemy, and read no Flask before semgrep's
+    // framework gate: without the scan's word that it could, neither is
+    // known to be absent.
     const d = drop(candidate("c7", "semgrep:python.flask.security.xss.audit.template-unescaped", "app/views.py", 9), "Flask escapes this value in its Jinja templates; SQLAlchemy is not involved.");
     expect(classifyDrop(d, { raised: [], frameworks: [] })).toMatchObject({ class: "rule-fp", tags: [] });
+  });
+
+  it("a Flask rule on a Django project is tagged once the scan can tell Flask, and never by a scan from before it could", () => {
+    const flaskRule = candidate("c2", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "orders/views.py", 8);
+    const report = { findings: [], dropped: [{ candidate: "c2", reason: "This is a Django view; the Flask rule does not apply.", cited: null }] };
+    const semgrep = { scanner: "semgrep", status: "ran", version: "1.94.0", rawCount: 1, keptCount: 1, durationMs: 1, reason: null };
+    const scanOf = (summary) => ({ candidates: [flaskRule], scanners: [summary], projects: [{ root: "", frameworks: ["django"] }] });
+    // The build that gates by framework writes excludedFamilies on every semgrep run, and detects Flask.
+    expect(classifyReportDrops(report, scanOf({ ...semgrep, excludedFamilies: [] }))[0]).toMatchObject({ class: "rule-fp", tags: ["framework-mismatch"] });
+    // An older build could not detect Flask, so its absence from the projects says nothing.
+    expect(classifyReportDrops(report, scanOf(semgrep))[0]).toMatchObject({ class: "rule-fp", tags: [] });
   });
 
   it("a framework the scan detects is missing from the classifier's names, so its mismatches go untagged", () => {
