@@ -18,13 +18,13 @@ const ready = () => {
 };
 
 describe("outside board pins", () => {
-  it("checks metadata while leaving both deployments explicitly unprobed", () => {
+  it("checks metadata with both deployments probed from this Mac (2026-10-11), served as their own ids", () => {
     const input = metadata();
     expect(boardProblems(input.boards, input.prices)).toEqual([]);
     expect(Object.values(input.boards.deployments)).toHaveLength(2);
     for (const deployment of Object.values(input.boards.deployments)) {
-      expect(deployment.probed).toBeNull();
-      expect(deployment.served).toBeNull();
+      expect(Number.isFinite(Date.parse(deployment.probed))).toBe(true);
+      expect(deployment.served).toBe(deployment.id);
     }
   });
 
