@@ -36,6 +36,7 @@ import { extractAsset } from "../fetch-run.mjs";
 import { assetUrl, entryProblems, groupKeys, listEntries } from "../lib/index.mjs";
 import { mulberry32, seedOf } from "../lib/interval.mjs";
 import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
+import { RULES_VERSION } from "../lib/score.mjs";
 import { publishRun } from "../publish-run.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { compareConfig } from "../trend.mjs";
@@ -309,7 +310,7 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
     const pointer = JSON.parse(readFileSync(join(index, "accepted.json"), "utf8"));
     const entry = readEntryAt(index, ACCEPTED.runId);
     const [group] = groupKeys(entry);
-    expect(group.key).toBe(`planted|dev|none|review|laptop|claude|claude-opus-5-5|${CONFIG}|3`);
+    expect(group.key).toBe(`planted|dev|none|review|laptop|claude|claude-opus-5-5|${CONFIG}|${RULES_VERSION}`);
     // propose.mjs reads the loop's base from the top-level commit.
     expect(pointer).toMatchObject({ version: 1, commit: ACCEPTED.commit, runId: ACCEPTED.runId, acceptedBy: "Sid" });
     expect(pointer.scoreHash).toMatch(/^[0-9a-f]{64}$/);

@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { assetUrl, buildEntry, entryProblems, listEntries } from "../lib/index.mjs";
 import { planJobs, sampleRecord } from "../lib/runner.mjs";
+import { RULES_VERSION } from "../lib/score.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -58,6 +59,7 @@ function scoredRun() {
   const dir = join(out, "samples", "one", "claude-graph-on", "1");
   write(join(dir, "sample.json"), JSON.stringify(sampleRecord({ job: jobs[0], attempt: 1, result: { code: 0, signal: null, wallMs: 20_000 }, report, who: null, startedAt: "t", failure: null, stopped: null })));
   write(join(dir, "report", "report.json"), JSON.stringify(report));
+  write(join(dir, "report", "scan.json"), JSON.stringify({ candidates: [] }));
   const { score } = scoreRun(loadRun(out));
   return buildEntry({ runId: RUN_ID, manifest, resumes: [], score, asset: { url: assetUrl(RUN_ID), sha256: "e".repeat(64), bytes: 1000, files: 12, listHash: "f".repeat(64) }, privateListHash: "9".repeat(64) });
 }
@@ -66,10 +68,15 @@ describe("a test-split entry without a release is accepted", () => {
   it("takes a development entry built from a format 3 score, with its rules, population and per-case ratios", () => {
     const entry = scoredRun();
     expect(entryProblems(entry)).toEqual([]);
-    expect(entry).toMatchObject({ rulesVersion: 3, legacy: false, caseIds: [CASE_ID] });
+    expect(entry).toMatchObject({ rulesVersion: RULES_VERSION, legacy: false, caseIds: [CASE_ID] });
     expect(entry.rulesHash).toMatch(/^[0-9a-f]{64}$/);
     expect(entry.scores["claude-graph-on"].population).toMatchObject({ planned: 1, complete: 1 });
     expect(entry.perCase["claude-graph-on"][CASE_ID].issueRecall).toEqual({ hit: 1, of: 1 });
+    // Severity agreement and the finder of each found bug, as the score gives them.
+    const head = entry.scores["claude-graph-on"];
+    expect(head.severity).toMatchObject({ exact: { hit: 1, of: 1, ci: null }, withinOne: { hit: 1, of: 1, ci: null }, over: 0, under: 0 });
+    expect(head.finder).toMatchObject({ match: { hit: 1, of: 1, ci: null }, byExpected: { reasoning: { hit: 1, of: 1 } }, scannerExpectedReviewerFound: 0 });
+    expect(entryProblems({ ...entry, scores: { "claude-graph-on": { ...head, finder: undefined } } }).join("\n")).toMatch(/finder/);
   });
 
   it("refuses a held-out entry that names no release, accepted or not, and one that carries per-case detail", () => {
