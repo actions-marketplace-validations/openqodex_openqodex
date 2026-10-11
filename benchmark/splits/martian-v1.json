@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "name": "martian-v1",
+  "suite": "martian",
+  "rule": "Every Martian pull request is held out (test): its golden comments are public, so any tuning on them is contamination. The development side is empty and there is no subset. Each pull request of the golden files is listed whatever its status; listCases offers only the usable ones, and lib/suites.mjs refuses a split that places one in development.",
+  "dataset": {
+    "repo": "withmartian/code-review-benchmark",
+    "revision": "e616e849755441da38f18bf3adba2c9583b03803",
+    "files": [
+      {
+        "path": "offline/golden_comments/cal_dot_com.json",
+        "sha256": "f8d88e88392b4349c418ea844fce5d19b29b48c5ebc34a1501d849f126478750"
+      },
+      {
+        "path": "offline/golden_comments/discourse.json",
+        "sha256": "d5d8d02f32823d7196333f463d6a154b3ac55da93ef3bb067464dff88918c854"
+      },
+      {
+        "path": "offline/golden_comments/grafana.json",
+        "sha256": "beeb065e0127232b663a68d174be5223ef0cf6068541306cd30e4bac72bab04b"
+      },
+      {
+        "path": "offline/golden_comments/keycloak.json",
+        "sha256": "aa89db36f36fe61bf86d367e8b07dfc9aec291a08cdbf3ef4c4d5bf5305b413d"
+      },
+      {
+        "path": "offline/golden_comments/sentry.json",
+        "sha256": "02342962b0d11a9ba190401e066a2c4e5d58c5ca561ca10d812194069b4a7d01"
+      }
+    ]
+  },
+  "cases": {
+    "dev": [],
+    "test": [
+      "ai-code-review-evaluation__discourse-graphite-1",
+      "ai-code-review-evaluation__discourse-graphite-10",
+      "ai-code-review-evaluation__discourse-graphite-2",
+      "ai-code-review-evaluation__discourse-graphite-3",
+      "ai-code-review-evaluation__discourse-graphite-4",
+      "ai-code-review-evaluation__discourse-graphite-5",
+      "ai-code-review-evaluation__discourse-graphite-6",
+      "ai-code-review-evaluation__discourse-graphite-7",
+      "ai-code-review-evaluation__discourse-graphite-8",
+      "ai-code-review-evaluation__discourse-graphite-9",
+      "ai-code-review-evaluation__keycloak-greptile-1",
+      "ai-code-review-evaluation__sentry-greptile-1",
+      "ai-code-review-evaluation__sentry-greptile-2",
+      "ai-code-review-evaluation__sentry-greptile-3",
+      "ai-code-review-evaluation__sentry-greptile-5",
+      "calcom__cal.com-10600",
+      "calcom__cal.com-10967",
+      "calcom__cal.com-11059",
+      "calcom__cal.com-14740",
+      "calcom__cal.com-14943",
+      "calcom__cal.com-22345",
+      "calcom__cal.com-22532",
+      "calcom__cal.com-7232",
+      "calcom__cal.com-8087",
+      "calcom__cal.com-8330",
+      "getsentry__sentry-67876",
+      "getsentry__sentry-77754",
+      "getsentry__sentry-80168",
+      "getsentry__sentry-80528",
+      "getsentry__sentry-93824",
+      "getsentry__sentry-95633",
+      "grafana__grafana-103633",
+      "grafana__grafana-106778",
+      "grafana__grafana-107534",
+      "grafana__grafana-76186",
+      "grafana__grafana-79265",
+      "grafana__grafana-80329",
+      "grafana__grafana-90045",
+      "grafana__grafana-90939",
+      "grafana__grafana-94942",
+      "grafana__grafana-97529",
+      "keycloak__keycloak-32918",
+      "keycloak__keycloak-33832",
+      "keycloak__keycloak-36880",
+      "keycloak__keycloak-36882",
+      "keycloak__keycloak-37038",
+      "keycloak__keycloak-37429",
+      "keycloak__keycloak-37634",
+      "keycloak__keycloak-38446",
+      "keycloak__keycloak-40940"
+    ]
+  },
+  "subsets": {},
+  "counts": {
+    "dev": 0,
+    "test": 50
+  }
+}
