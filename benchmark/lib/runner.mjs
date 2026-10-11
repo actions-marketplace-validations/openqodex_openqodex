@@ -432,6 +432,12 @@ export function resumeProblems(earlier, now) {
   // The tools folder a model review reads its scanners from.
   same("install root", earlier.review?.installRoot, now.review?.installRoot);
   same("concurrency", earlier.concurrency, now.concurrency);
+  // The cases' suite and where in it they come from; a run made before the
+  // manifest named them is a planted run on the dev split.
+  same("suite", earlier.suite ?? "planted", now.suite ?? "planted");
+  same("split", earlier.split ?? "dev", now.split ?? "dev");
+  same("split file hash", earlier.splitHash ?? null, now.splitHash ?? null);
+  same("subset", earlier.subset ?? null, now.subset ?? null);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);
   if (earlier.repeat !== undefined || now.repeat !== undefined) same("repeats", earlier.repeat, now.repeat);

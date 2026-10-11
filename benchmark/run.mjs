@@ -22,8 +22,18 @@
 //                          [--check-identical] [--scanner-config <file>]
 //                          [--allow-missing-scanners] [--timeout 120]
 //                          [--out <folder>] [--dry-run] [--draft]
+//   either mode also takes --suite planted|aacr [--split dev]
+//                          [--subset <name>|all] [--cases <suite>/<name>,...]
 //
-// Without --cases, every case the lock does not mark retired runs.
+// Without --cases, every case the lock does not mark retired runs. --suite
+// names the suite the cases come from (planted unless --cases names pull
+// request cases); for a real suite (aacr), without --cases, every usable
+// case on the development side of its split file runs, or the subset that
+// --subset names there (dev-smoke, dev-laptop). The test split is held out
+// and refused: no held-out case runs before a release (lib/suites.mjs
+// selectCases). The manifest records suite, split, splitHash and subset.
+// A real suite's cases run in scan mode, and in review mode by model
+// reviewers only.
 //
 // --reviewers model:<id> is the server path (lib/server-review.mjs): each
 // review is the library's reviewChange in the server profile, on the case
@@ -209,6 +219,14 @@
 // 28. The scanner preflight reads another tools folder than the reviews:
 //    --install-root names the tools folder of an OpenQodex home, and the
 //    doctor runs with that home.
+// 29. A held-out (test split) case is run, or a case outside the subset a
+//    run names is run under that subset's name: --split test is refused,
+//    and every case comes from lib/suites.mjs selectCases, which refuses a
+//    held-out, excluded or out-of-subset case before anything is fetched.
+// 30. A real suite's run is scored as planted, or against all of its
+//    comments: the manifest names the suite, split, split hash and subset,
+//    and each case's truth copy holds the accepted comments its suite
+//    entry counts, no more and no fewer (lib/suites.mjs specCopy).
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
@@ -225,10 +243,10 @@ import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, pref
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
-import { materialise, readCase as readSuiteCase, readSuite, realCaseId, truthOf } from "./lib/suites.mjs";
+import { SUITES, materialise, selectCases, specCopy, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]";
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]\n       either mode: [--suite planted|aacr] [--split dev] [--subset <name>|all] [--cases <suite>/<name>,...]";
 
 // Flags only a review run reads, flags only a scanner-only run reads, and
 // flags only a model reviewer reads.
@@ -247,7 +265,7 @@ const positive = (flag, value, whole = false) => {
 };
 
 function parseArgs(argv) {
-  const o = { mode: "review", repeat: null, repeatGiven: false, cases: null, graph: null, reviewers: ["claude"], concurrency: null, timeout: null, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, scannerConfig: null, checkIdentical: false, modelEffort: undefined, maxOutputTokens: 32000, modelScript: DEFAULT_SCRIPT, installRoot: null, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { mode: "review", suite: null, split: null, subset: null, repeat: null, repeatGiven: false, cases: null, graph: null, reviewers: ["claude"], concurrency: null, timeout: null, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, scannerConfig: null, checkIdentical: false, modelEffort: undefined, maxOutputTokens: 32000, modelScript: DEFAULT_SCRIPT, installRoot: null, cli: join(repoRoot, "packages/cli/dist/bin.js") };
   const given = new Set();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -258,6 +276,9 @@ function parseArgs(argv) {
       return v;
     };
     if (a === "--mode") o.mode = next();
+    else if (a === "--suite") o.suite = next();
+    else if (a === "--split") o.split = next();
+    else if (a === "--subset") o.subset = next();
     else if (a === "--scanner-config") o.scannerConfig = resolve(next());
     else if (a === "--check-identical") o.checkIdentical = true;
     else if (a === "--repeat") {
@@ -300,9 +321,19 @@ function parseArgs(argv) {
   o.path = server ? "server" : "laptop";
   const real = (o.cases ?? []).filter(isRealRef);
   o.realRefs = real.length > 0 ? real : null;
+  // The suite: --suite, else the one the pull request cases --cases names, else planted.
+  const named = [...new Set(real.map((r) => r.slice(0, r.indexOf("/"))))];
+  if (named.length > 1) throw new Error(`--cases names cases of ${named.join(" and ")}; one run reviews one suite`);
+  if (o.suite !== null && named.length === 1 && named[0] !== o.suite) throw new Error(`--cases names cases of ${named[0]}, and --suite names ${o.suite}`);
+  o.suite ??= named[0] ?? "planted";
+  if (o.suite !== "planted" && !SUITES[o.suite]) throw new Error(`--suite takes planted or ${Object.keys(SUITES).join(", ")}, not ${o.suite}`);
+  o.real = o.suite !== "planted";
+  if (!o.real && o.split !== null && o.split !== "dev") throw new Error(`--split ${o.split}: the planted suite has one split, dev`);
+  if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
+  o.split ??= "dev";
   // A scan is deterministic (--check-identical proves it), so one repeat; a scan has no reviewer to wait on.
   o.repeat ??= scan ? 1 : 3;
-  o.timeout ??= scan ? 120 : o.realRefs ? 1800 : 900;
+  o.timeout ??= scan ? 120 : o.real ? 1800 : 900;
   // The server profile always builds the code graph.
   o.graph ??= server ? ["on"] : ["off", "on"];
   // Model reviews wait on the endpoint, not this machine, so two run at once.
@@ -313,9 +344,9 @@ function parseArgs(argv) {
   }
   if (scan && o.concurrency !== 1) throw new Error("--mode scan runs one scan at a time: every case is built at the one repository path the overlay's approval names, and scan times compare only at concurrency 1");
   if (!scan) modelChecks(o, given, models);
-  if (o.realRefs !== null) {
-    if (real.length !== o.cases.length) throw new Error("--cases names planted cases and pull request cases together; one run reviews one suite");
-    if (!server) throw new Error("pull request cases (--cases <suite>/<name>) are reviewed here by model reviewers only (--reviewers model:<id>); the laptop reviewers run the planted cases");
+  if (o.real) {
+    if (o.cases !== null && real.length !== o.cases.length) throw new Error(`--cases names planted cases in a run of the ${o.suite} suite; name pull request cases as ${o.suite}/<name> or a full case id`);
+    if (!scan && !server) throw new Error("pull request cases are reviewed here by model reviewers only (--reviewers model:<id>); the laptop reviewers run the planted cases, and a scanner-only run (--mode scan) scans either");
     for (const f of ["--draft", "--allow-retired"]) if (given.has(f)) throw new Error(`${f} is for planted cases, whose lock it reads; a pull request case is frozen by its suite entry`);
   }
   if (o.scannerConfig !== null && !existsSync(o.scannerConfig)) throw new Error(`--scanner-config: there is no file ${o.scannerConfig}`);
@@ -336,7 +367,7 @@ function parseArgs(argv) {
     throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
   }
   const all = listCases();
-  for (const c of o.cases ?? []) if (!isRealRef(c) && !all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
+  for (const c of o.real ? [] : (o.cases ?? [])) if (!isRealRef(c) && !all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   return o;
 }
 
@@ -361,11 +392,14 @@ function modelChecks(o, given, models) {
   if (o.installRoot !== null && basename(o.installRoot) !== "tools") throw new Error("--install-root names the tools folder of an OpenQodex home (<home>/tools): the scanner preflight reads that home's doctor, so it must be the folder the reviews read");
 }
 
-// The pull request cases --cases names (<suite>/<name> or a full case id),
-// read from their suite, with the truth each is scored against, and the
-// spec copy the run saves in its cases/ folder. Exits 2 on a refusal,
-// leaving no temp folder.
-function realCases(refs) {
+// The pull request cases of a real suite this run uses (failure 29): the
+// cases --cases names (<suite>/<name> or a full case id), or every usable
+// case on the split's development side or in --subset, through
+// lib/suites.mjs selectCases; then the truth each is scored against, read
+// now from the pinned files, saved as the run's spec copy with the accepted
+// comments only (failure 30, lib/suites.mjs specCopy). Exits 2 on a
+// refusal, leaving no temp folder.
+function realCases(o) {
   const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
   const refuse = (lines) => {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -373,36 +407,26 @@ function realCases(refs) {
     for (const r of lines) console.error(`- ${r}`);
     process.exit(2);
   };
+  let picked = [];
+  try {
+    picked = selectCases({ suite: o.suite, split: o.split, subset: o.subset, refs: o.realRefs });
+  } catch (error) {
+    refuse(error.message.split("\n"));
+  }
   const byName = {};
   const problems = [];
-  for (const ref of refs) {
+  for (const c of picked) {
     try {
-      let c;
-      if (/^[a-z]+\/[^@\s]+@[0-9a-f]{8}$/.test(ref)) c = readSuiteCase(ref);
-      else {
-        const [suite, name] = ref.split("/");
-        const entry = readSuite(suite).byName.get(name);
-        if (!entry) throw new Error(`suite ${suite} holds no case named ${name}`);
-        c = readSuiteCase(realCaseId(suite, name, entry.hash));
-      }
-      if (c.status !== "usable") throw new Error(`${c.id} is excluded: ${c.excludedWhy ?? "no reason recorded"}`);
-      if (c.split !== "dev") throw new Error(`${c.id} is ${c.split === "test" ? "held out: only a release run reviews it" : "on no side of its split"}`);
-      if (byName[c.name]) throw new Error(`${c.id} is named twice`);
-      // The truth it is scored against, read now from the pinned files, and
-      // saved with the case as the run's spec copy.
-      const spec = { ...c, bugs: truthOf(c).items };
       const file = join(tempRoot, "specs", `${c.name}.json`);
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify(spec, null, 2)}\n`);
+      writeFileSync(file, `${JSON.stringify(specCopy(c, truthOf(c)), null, 2)}\n`);
       byName[c.name] = { case: c, specFile: file };
     } catch (error) {
-      problems.push(`${ref}: ${error.message.split("\n")[0]}`);
+      problems.push(`${c.id}: ${error.message.split("\n")[0]}`);
     }
   }
   if (problems.length > 0) refuse(problems);
-  const suites = [...new Set(Object.values(byName).map((x) => x.case.suite))];
-  if (suites.length > 1) refuse([`--cases names cases of ${suites.join(" and ")}; one run reviews one suite`]);
-  return { tempRoot, byName, suite: suites[0] };
+  return { tempRoot, byName, suite: o.suite, split: o.split, splitHash: picked[0]?.splitHash ?? null, subset: o.subset };
 }
 
 // The cases this run may use, copied once into a temp folder (failures 16
@@ -612,13 +636,13 @@ function firstAttempts(folder, jobs) {
 
 // A scanner-only run: the preflight, the overlay's trust step, one pass (or
 // two with --check-identical), each scored, and the comparison.
-async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
+async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real }) {
   const date = new Date().toISOString().slice(0, 10);
-  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-planted-scan-laptop`);
+  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-${o.suite}-scan-laptop`);
   const runId = basename(out);
   const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
-  const idOf = Object.fromEntries(cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
+  const idOf = Object.fromEntries(cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c])]));
   const { jobs } = planJobs({ cases, caseIds: idOf, repeat: o.repeat, mode: "scan" });
   for (const folder of folders) {
     if (existsSync(join(folder, "samples")) || existsSync(join(folder, "manifest.json"))) {
@@ -671,8 +695,10 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
     runId,
     mode: "scan",
     path: "laptop",
-    suite: "planted",
-    split: "dev",
+    suite: o.suite,
+    split: o.split,
+    splitHash: real?.splitHash ?? null,
+    subset: o.subset,
     build,
     machine: machine(),
     reviewer: null,
@@ -693,7 +719,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
     concurrency: 1,
   };
   const secrets = new Set();
-  for (const c of cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
+  for (const c of real ? [] : cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
 
   let stop = null;
   const halt = (why) => {
@@ -714,17 +740,24 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
       const dir = attemptDir(folder, job, k);
       mkdirSync(dir, { recursive: true });
       const reportDir = join(dir, "report");
-      // Every case is built at the one path the overlay's approval names, and moved aside after its scan.
-      const { dir: repo } = buildCase(job.case, repoPath, snap);
+      // Every case is built at the one path the overlay's approval names, and
+      // moved aside after its scan; a pull request case in the laptop shape,
+      // from the clone cache (lib/suites.mjs materialise).
+      const { dir: repo } = real ? materialise(real.byName[job.case].case, repoPath, { shape: "laptop" }) : buildCase(job.case, repoPath, snap);
       const args = ["scan", "--cwd", repo, "--report-dir", reportDir, "--no-color", "--no-install", ...(overlay ? ["--config", overlay.file] : [])];
       const startedAt = new Date().toISOString();
       let result;
       try {
         result = await runCli(o.cli, args, env, repo, o.timeout * 1000, 0);
       } finally {
-        const aside = join(tempRoot, "repos", `pass${n}`, `${job.case}-${job.repeat}-${k}`);
-        mkdirSync(dirname(aside), { recursive: true });
-        renameSync(repoPath, aside);
+        // A pull request case's checkout can be large and is built again from
+        // the clone cache in seconds, so it is removed rather than kept.
+        if (real) rmSync(repoPath, { recursive: true, force: true });
+        else {
+          const aside = join(tempRoot, "repos", `pass${n}`, `${job.case}-${job.repeat}-${k}`);
+          mkdirSync(dirname(aside), { recursive: true });
+          renameSync(repoPath, aside);
+        }
       }
       const more = [[reportDir, "<sample>/report"], [folder, "<results>"]];
       writeFileSync(join(dir, "receipt.txt"), sanitize(result.stdout, replacements(more)));
@@ -756,7 +789,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave }) {
     const { ended } = await executeRun({
       out: folder,
       manifest,
-      copies: cases.map((c) => [join(snap, c, "case.json"), join("cases", `${c}.json`)]),
+      copies: cases.map((c) => [real ? real.byName[c].specFile : join(snap, c, "case.json"), join("cases", `${c}.json`)]),
       jobs,
       concurrency: 1,
       runJob,
@@ -815,7 +848,7 @@ async function main() {
   }
   // Planted cases come from a copy checked against the lock; pull request
   // cases from their suite, with their truth read now.
-  const real = o.realRefs ? realCases(o.realRefs) : null;
+  const real = o.real ? realCases(o) : null;
   const { cases, snap, hashes, tempRoot } = real
     ? { cases: Object.keys(real.byName), snap: null, hashes: Object.fromEntries(Object.entries(real.byName).map(([n, x]) => [n, x.case.hash])), tempRoot: real.tempRoot }
     : lockedCases(o);
@@ -832,7 +865,7 @@ async function main() {
     for (const p of problems) console.error(p);
     leave(2);
   }
-  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave });
+  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real });
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", server ? `${date}-${build.short}-${suite}-review-server` : `${date}-${build.short}`);
   // The repository a review of the case reads, in the shape its path needs:
@@ -973,8 +1006,9 @@ async function main() {
     runId: basename(out),
     mode: "review",
     suite,
-    split: "dev",
-    splitHash: real ? (Object.values(real.byName)[0].case.splitHash ?? null) : null,
+    split: o.split,
+    splitHash: real?.splitHash ?? null,
+    subset: o.subset,
     path: o.path,
     build,
     machine: machine(),
