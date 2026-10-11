@@ -40,7 +40,8 @@
 //    a proposal holds <ledger>.lock, created exclusively, from before the
 //    ledger is read until after its line is appended. A lock whose process
 //    is gone, or older than ten minutes, is stale and taken over.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -240,30 +241,44 @@ function staleLock(path, held) {
   }
 }
 
-// Takes <ledger>.lock, created exclusively, and returns its release. A held
-// lock is waited for up to LOCK_WAIT_MS; a stale one is taken over.
+// Takes <ledger>.lock, created exclusively. Returns { held, release }:
+// held() says whether the lock is still this proposal's, release() frees it.
+// A held lock is waited for up to LOCK_WAIT_MS. A stale one is taken over by
+// renaming it aside, never by removing a path read earlier: when what was
+// moved is not the stale lock (another proposal took it over and wrote its
+// own in between), it is linked back, which never overwrites a newer lock.
 export function lockLedger(ledger) {
   const path = `${ledger}.lock`;
-  const mine = JSON.stringify({ pid: process.pid, at: new Date().toISOString() });
+  const mine = JSON.stringify({ pid: process.pid, at: new Date().toISOString(), nonce: randomBytes(8).toString("hex") });
   const until = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       writeFileSync(path, mine, { flag: "wx" });
-      return () => {
-        if (readOrNull(path) === mine) unlinkSync(path);
+      return {
+        held: () => readOrNull(path) === mine,
+        release: () => {
+          if (readOrNull(path) === mine) unlinkSync(path);
+        },
       };
     } catch (error) {
       if (error.code !== "EEXIST") throw new ToolError(`the ledger lock ${path} cannot be written (${error.message})`);
     }
     const held = readOrNull(path);
     if (held !== null && staleLock(path, held)) {
-      if (readOrNull(path) === held) {
+      const aside = `${path}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
+      try {
+        renameSync(path, aside);
+      } catch {
+        continue; // another proposal moved it first
+      }
+      if (readOrNull(aside) !== held) {
         try {
-          unlinkSync(path);
+          linkSync(aside, path);
         } catch {
-          // another proposal took it over first
+          // a newer lock is in place; the moved one's owner finds it lost before it appends
         }
       }
+      unlinkSync(aside);
       continue;
     }
     if (Date.now() > until) throw new ToolError(`the ledger lock ${path} is held by another proposal (${held ?? "gone"}); try again when it ends`);
@@ -277,15 +292,15 @@ export function lockLedger(ledger) {
 export function propose(record, options = {}) {
   const ledger = options.ledger ?? LEDGER;
   mkdirSync(dirname(ledger), { recursive: true });
-  const release = lockLedger(ledger);
+  const lock = lockLedger(ledger);
   try {
-    return proposeLocked(record, { ...options, ledger });
+    return proposeLocked(record, { ...options, ledger, lockHeld: lock.held });
   } finally {
-    release();
+    lock.release();
   }
 }
 
-function proposeLocked(record, { repo = repoRoot, ledger, reg = loadLevers(), env = process.env, now = new Date() }) {
+function proposeLocked(record, { repo = repoRoot, ledger, lockHeld, reg = loadLevers(), env = process.env, now = new Date() }) {
   const refusals = recordProblems(record, reg);
   const lines = readLedger(ledger);
   const lever = reg.levers.find((l) => l.id === record?.lever);
@@ -368,6 +383,7 @@ function proposeLocked(record, { repo = repoRoot, ledger, reg = loadLevers(), en
     minutes: 0,
     pr: null,
   };
+  if (!lockHeld()) throw new ToolError(`the ledger lock ${ledger}.lock was taken over while this proposal ran; nothing is written, propose again`);
   appendFileSync(ledger, `${JSON.stringify(line)}\n`);
   return { refusals: [], line };
 }
