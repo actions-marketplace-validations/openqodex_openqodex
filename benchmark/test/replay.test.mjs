@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
@@ -156,7 +156,7 @@ it("refuses output inside another manifest folder outside the results store", ()
   for (const out of [join(other, "nested", "new.md"), join(root, "other.md")]) {
     const result = spawnSync(process.execPath, [cli, "threshold", run, "--out", out], { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(2);
-    expect(result.stderr.trim().split("\n")).toEqual([`replay: --out cannot write into a run folder: ${other}`]);
+    expect(result.stderr.trim().split("\n")).toEqual([`replay: --out cannot write into a run folder: ${realpathSync(other)}`]);
   }
   expect(hashFolder(other)).toEqual(before);
 });
