@@ -8,10 +8,14 @@ A script runs it and a script scores it. No model decides what runs or how a rev
 
 Each case is a small git repository with a base commit and an uncommitted change, the same shape a developer has before a push. The change carries planted bugs, each with a file, a line range, a kind (`bug`, `security`, `performance`, `maintainability` or `style`), a severity and the scanner or the reasoning expected to find it. The benchmark runs the real built CLI on each case, with the real reviewer, with the code graph off and on, three times each.
 
-From the saved reports it counts:
+From the saved reports it counts (score format 3):
 
-- Recall: planted bugs found, over planted bugs, overall and by severity. A bug found by two findings counts once.
-- Precision: findings that are planted bugs, over findings. A second finding on a bug already found, a side issue the case lists as real but not planted, and a request for a test are left out.
+- The population: every review the run planned, scored by its first attempt. A review that failed or never started misses every bug of its case and adds no finding. A retry is reported apart, with its cost, and never replaces the first attempt.
+- Issue recall: planted bugs found, over planted bugs, overall and for critical and major bugs. A bug found by two findings counts once.
+- Precision, as a lower and an upper bound over every finding the developer is shown, except a request for a test on a planted case. A hit, a second hit on a bug already found and a side issue the case lists as real are correct; a finding on a clean case is false. Any other finding (one the case does not list, a near miss, a wrong kind) is unresolved until a person rules on it: the lower bound counts it as wrong, the upper as right.
+- Unique-issue precision counts each issue once, and redundancy is the share of findings beyond one per issue.
+- Planted-rule precision: the earlier rule, which leaves out duplicates, listed side issues and requests for a test, with the count of those requests. It is computed on planted cases only and never pooled with other numbers.
+- A location diagnostic: findings within one line of a planted bug's lines, whatever they say (the line rule of AACR-Bench). It never decides anything.
 - Clean controls: two cases have no bug. Any finding on them is false. A clean case passes only when its review completed with no finding; an incomplete or failed review fails it.
 - Graph disclosure, for the cases that need the graph: whether the brief named the callers the change breaks, and whether it said what the graph could not see (a caller list that is a floor, a call it could not bind).
 - Time per review (from the start of the CLI to its exit), reviewer turns, tokens and cost, as the report records them.
@@ -22,13 +26,15 @@ A script matches each finding in `report.json` to its case. A finding matches a 
 
 The checks run in this order, and the first that holds decides:
 
-1. Test gap: a finding of kind `maintainability` or `style` whose title asks for a test ("has no covering test", "lacks tests", "untested"). On a case with planted bugs it is true (the planted cases ship no tests), so it is counted apart and left out of precision, even when its lines span a planted bug. On a clean case, which ships its tests, it is false.
-2. Accepted: a side issue the case lists as real but not planted, matched by place and words. It is left out of precision.
-3. Hit: a planted bug, matched by place, kind and words. When two bugs share the lines, the one whose anchor line is nearest wins. A second hit on a bug already found in the same review is a duplicate: it is reported apart and never counted in precision.
-4. Near miss or wrong kind: a hit in every way but the lines (within three lines of the range), or in every way but the kind. Neither is a hit; both count against precision. A near miss is listed so a spec that names the wrong line can be fixed.
-5. False: anything else.
+1. Test gap: a finding of kind `maintainability` or `style` whose title asks for a test ("has no covering test", "lacks tests", "untested"), even when its lines span a planted bug. On a case with planted bugs it is left out of both precision bounds and counted apart in the planted-rule block (the planted cases ship no tests). On a clean case, which ships its tests, it is false.
+2. Accepted: a side issue the case lists as real but not planted, matched by place and words. It is correct in precision and left out of planted-rule precision.
+3. Hit: a planted bug, matched by place, kind and words. When two bugs share the lines, the one whose anchor line is nearest wins. A second hit on a bug already found in the same review is a duplicate: it is correct in precision, counts once in unique-issue precision, and is left out of planted-rule precision.
+4. Near miss or wrong kind: a hit in every way but the lines (within three lines of the range), or in every way but the kind. Neither is a hit; both are unresolved in precision and count against planted-rule precision. A near miss is listed so a spec that names the wrong line can be fixed.
+5. Unlisted: anything else. It is unresolved in precision, false in planted-rule precision, and false on a clean case.
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
+
+Every score carries its rules block: the rules version (3), every constant and list above, and a hash over them and the code that applies them. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 
@@ -80,16 +86,16 @@ Each review runs as `openqodex review --report-dir <sample>/report --reviewer <n
 
 A run writes one folder, `benchmark/results/<date>-<commit>/`:
 
-- `manifest.json`: the build and where it came from, the machine, every reviewer with its version and model, web access, the timeout, the concurrency, the plan, and how the first invocation ended. A resume never writes it.
+- `manifest.json`: the build and where it came from, the machine, every reviewer with its version and model, web access, the timeout, the concurrency, every planned review with its id (`jobs`), written before the first one starts, and how the first invocation ended. A resume never writes it.
 - `resumes.jsonl`: one line when a resume starts and one when it ends.
 - `cases/`: the specs the run used. The scorer reads these, so a later edit to a case never changes an old run's score.
 - `samples/<case>/<configuration>/<n>/`: one attempt at one review: its own files (`report.json`, `brief.md`, `submission.json`, `trace.json`, `scan.json`), `receipt.txt` (what the review printed), `stderr.txt` and `sample.json` (exit code, time, usage, scanner versions). A second attempt of the same review goes to `<n>-attempt2/`.
-- `rows.jsonl`: one line per attempt.
-- `score.json`: written by `score.mjs`; `score-<folder>.json` when it scored against other specs with `--specs <folder>`.
+- `rows.jsonl`: one line per attempt. Each attempt names its review's id and whether it is the first attempt.
+- `score.json` and `outcomes.jsonl`: written by `score.mjs`; `score-<folder>.json` and `outcomes-<folder>.jsonl` when it scored against other specs with `--specs <folder>`. `outcomes.jsonl` has one line per finding of every first attempt, with the finding's id (a hash of the case, its lines and its text) and its outcome. A legacy run (below) keeps the score its own scorer wrote; `score.mjs` writes its format 3 score only into the folder `--out <folder>` names.
 
 `benchmark/results/` is not committed; each run folder stays on the machine that ran it until it is published.
 
-Every attempt is saved as a sample before anything stops, and is scored: a review that failed, timed out or was stopped is a failure in the table, never a missing row. A reviewer failure gets one more attempt, in its own folder. The run stops at once when the reviewer hits a usage limit, a rate limit or a login wall, and when the same review fails twice with the same cause. It probes the reviewer before the first review and after any review whose reviewer failed. `--resume` runs the reviews that have no attempt yet; it is refused when the bundle, the machine, a reviewer's version or model, web access, the timeout, the concurrency, the cases, the configurations or the repeats differ from the run's.
+Every attempt is saved as a sample before anything stops. A review that failed, timed out, was stopped or never started is a failure in the table, never a missing row. A reviewer failure gets one more attempt, in its own folder; the score reports that retry apart and keeps the failed first attempt. The run stops at once when the reviewer hits a usage limit, a rate limit or a login wall, and when the same review fails twice with the same cause. It probes the reviewer before the first review and after any review whose reviewer failed. A folder that already holds a run (a manifest or samples) is refused without `--resume`, and one folder takes one runner at a time. `--resume` runs the reviews that have no saved attempt; a review whose first attempt started and never saved keeps that folder, which the score counts as its first attempt, and runs again in its next attempt folder. A resume is refused when the bundle, the machine, a reviewer's version or model, web access, the timeout, the concurrency, the cases, the configurations or the repeats differ from the run's.
 
 ## Where the runs are kept
 
@@ -130,7 +136,7 @@ node benchmark/score.mjs benchmark/results/<new> --against benchmark/results/<ol
 
 A published run is fetched first with `node benchmark/fetch-run.mjs <run-id>`.
 
-The comparison first lists anything that differs besides the build: every reviewer with its version and model, the machine, the concurrency, web access, the timeout, the cases and their specs, the repeats. A different model is not a product change. It then shows recall, precision, clean controls, graph disclosure, time and cost per configuration, before and after, and lists regressions: a planted bug missed in two or more reviews of a configuration, more often than before, or more clean changes with findings. One missed review is a reason to look; two are a bug.
+The comparison first lists anything that differs besides the build: every reviewer with its version and model, the machine, the concurrency, web access, the timeout, the cases and their specs, the repeats. A different model is not a product change. It scores both runs with the same rules, then shows issue recall, the precision bounds, clean controls, reviews that failed or never started, graph disclosure, time and cost per configuration, before and after, and lists regressions: a planted bug missed in two or more reviews of a configuration, more often than before, or more clean changes with findings. One missed review is a reason to look; two are a bug.
 
 `score.mjs` exits 0 when it scored, 1 when the comparison shows a regression, and 2 when a folder cannot be scored. The exit code is information. Do not gate a release on it alone: a person reads the regression and the reviews behind it.
 
@@ -140,7 +146,7 @@ The comparison first lists anything that differs besides the build: every review
 node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>/cases
 ```
 
-This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` into the old run's folder and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
+This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
 ## The wording pass
 

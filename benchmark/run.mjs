@@ -16,7 +16,8 @@
 // --out names another:
 //   manifest.json                     the build and where it came from, the machine, the
 //                                     reviewers with their versions and models, the
-//                                     settings, the plan, how the first invocation ended
+//                                     settings, every planned job with its id (`jobs`),
+//                                     how the first invocation ended
 //   resumes.jsonl                     one line when a resume starts and one when it ends
 //   cases/<case>.json                 the specs this run used (the scorer reads these)
 //   samples/<case>/<config>/<n>/      one attempt at one review: report/ (the CLI's
@@ -54,11 +55,14 @@
 //    receipt's paths are replaced by placeholders, and every saved file is
 //    checked for the generated value; one found stops the run.
 // 9. An earlier run is overwritten or mixed with a new one: a folder that
-//    holds samples is refused unless --resume; a resume keeps every saved
-//    attempt, the specs the run copied and its manifest untouched, runs the
-//    reviews that have no attempt, and is refused when the bundle, the
-//    machine, a reviewer's version or model, web access, the timeout, the
-//    concurrency, the cases, the configurations or the repeats differ.
+//    holds a manifest or samples is refused unless --resume, and one run
+//    folder has one runner at a time (lib/runner.mjs executeRun); a resume
+//    keeps every saved attempt, the specs the run copied and its manifest
+//    untouched, runs the reviews that have no saved attempt (one whose first
+//    attempt started and never saved runs in its next attempt folder, and
+//    the crashed one stays), and is refused when the bundle, the machine, a
+//    reviewer's version or model, web access, the timeout, the concurrency,
+//    the cases, the configurations or the repeats differ.
 // 10. Wall time includes building the case: the clock runs from the start
 //    of the CLI to its exit only.
 // 11. The run spends more than asked: more than three repeats needs
@@ -88,13 +92,13 @@
 //    examples/demo-repo included) into its temp folder, and every hash,
 //    lock check, spec copy and attempt comes from that copy.
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, failureOf, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord } from "./lib/runner.mjs";
 
 const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run] [--draft] [--allow-retired]";
 
@@ -203,19 +207,6 @@ function machine() {
   return { platform: platform(), release: release(), arch: arch(), cpu: cpus()[0]?.model ?? null, cpus: cpus().length, memoryGb: Math.round(totalmem() / 1024 ** 3), node: process.version };
 }
 
-// The jobs in run order: per repeat, every case, every configuration, with
-// the configuration order alternating by repeat (failure 7).
-function plan(o) {
-  const configs = [];
-  for (const reviewer of o.reviewers) for (const g of o.graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
-  const jobs = [];
-  for (let r = 1; r <= o.repeat; r++) {
-    const order = r % 2 === 1 ? configs : [...configs].reverse();
-    for (const c of o.cases) for (const cfg of order) jobs.push({ case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
-  }
-  return { configs, jobs };
-}
-
 function sanitize(text, replacements) {
   let out = text;
   for (const [from, to] of replacements) if (from) out = out.split(from).join(to);
@@ -287,18 +278,27 @@ async function main() {
   }
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
-  const { configs, jobs } = plan(o);
-  const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
-  // A review counts as done once its first attempt is saved, failed or not.
-  const saved = (job) => existsSync(join(attemptDir(out, job, 1), "sample.json"));
-  if (existsSync(join(out, "samples")) && !o.resume) {
-    console.error(`${out} already holds samples; pass --resume to finish that run, or --out for a new folder`);
+  // The jobs in run order, each with its id (lib/runner.mjs planJobs; failure 7).
+  const idOf = Object.fromEntries(o.cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
+  let configs;
+  let jobs;
+  try {
+    ({ configs, jobs } = planJobs({ cases: o.cases, caseIds: idOf, reviewers: o.reviewers, graph: o.graph, repeat: o.repeat }));
+  } catch (error) {
+    console.error(error.message);
     leave(2);
   }
-  const todo = jobs.filter((j) => !saved(j));
+  const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
+  // Refused here before any probe is spent; executeRun refuses again under the folder's lock.
+  if ((existsSync(join(out, "samples")) || existsSync(join(out, "manifest.json"))) && !o.resume) {
+    console.error(`${out} already holds a run (a manifest or samples); pass --resume to finish it, or --out for a new folder`);
+    leave(2);
+  }
+  // A review is done once any of its attempts is saved; one whose first attempt never saved runs again in its next attempt folder.
+  const todo = jobs.filter((j) => !jobState(out, j).done);
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
   console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
-  const caseIds = o.cases.map((c) => caseIdFromHash(c, hashes[c]));
+  const caseIds = o.cases.map((c) => idOf[c]);
   console.log(`Cases: ${caseIds.join(", ")}`);
   if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
   if (o.dryRun) {
@@ -326,8 +326,6 @@ async function main() {
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
   }
 
-  const manifestPath = join(out, "manifest.json");
-  const resumesPath = join(out, "resumes.jsonl");
   const settings = {
     build,
     machine: machine(),
@@ -345,32 +343,15 @@ async function main() {
     repeat: o.repeat,
     concurrency: o.concurrency,
   };
-  let manifest = null;
-  if (o.resume) {
-    const earlier = readJson(manifestPath);
-    if (!earlier) {
-      console.error(`${shown(out)} has no manifest.json; there is no run to resume`);
-      leave(2);
-    }
+  // A resume is refused when any setting, or the spec copy of any case, differs from the run's.
+  const checkResume = (earlier) => {
     const differ = resumeProblems(earlier, settings);
     for (const c of o.cases) {
       const copy = join(out, "cases", `${c}.json`);
       if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(snap, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
     }
-    if (differ.length > 0) {
-      console.error(`${shown(out)} cannot be resumed: resuming would mix two runs. Start a new run with --out.`);
-      for (const d of differ) console.error(`- ${d}`);
-      leave(2);
-    }
-    appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: todo.length })}\n`);
-  } else {
-    manifest = { version: 2, started_at: new Date().toISOString(), ...settings, planned: jobs.length, ended: null };
-    mkdirSync(out, { recursive: true });
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  }
-  // The specs this run scores against; a resume keeps the copies it made first.
-  mkdirSync(join(out, "cases"), { recursive: true });
-  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(snap, c, "case.json"), join(out, "cases", `${c}.json`));
+    return differ;
+  };
 
   console.log(`Case repositories: ${tempRoot}`);
   const secrets = new Set();
@@ -416,43 +397,52 @@ async function main() {
     return failure;
   };
 
-  const runJob = async (job) => {
-    const first = await attempt(job, 1);
-    if (stop !== null) return;
-    if (first?.unavailable) return halt(`${job.case} ${job.config}: ${first.cause}`);
-    if (!first?.infra) return;
-    const p = await probeReviewer(job.reviewer, { env });
-    if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`);
-    if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`);
-    console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${first.cause}); running it once more`);
-    const second = await attempt(job, 2);
-    if (stop !== null) return;
-    if (second?.infra && second.cause.split(":")[0] === first.cause.split(":")[0]) halt(`${job.case} ${job.config}: the same reviewer failure twice: ${second.cause}`);
-  };
-
-  const queue = [...todo];
-  let done = 0;
-  const worker = async () => {
-    while (stop === null && queue.length > 0) {
-      const job = queue.shift();
-      try {
-        await runJob(job);
-      } catch (error) {
-        halt(`${job.case} ${job.config} #${job.repeat}: the benchmark itself failed: ${error.message}`);
-      }
-      done++;
-      if (done % 10 === 0) console.log(`${done} of ${todo.length} reviews done`);
+  // One job's reviews: its next free attempt (a first attempt that started
+  // and never saved is kept, and the work goes to the next folder), and one
+  // more after a reviewer failure.
+  const runJob = async (job, k) => {
+    try {
+      const first = await attempt(job, k);
+      if (stop !== null) return;
+      if (first?.unavailable) return halt(`${job.case} ${job.config}: ${first.cause}`);
+      if (!first?.infra) return;
+      const p = await probeReviewer(job.reviewer, { env });
+      if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`);
+      if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`);
+      console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${first.cause}); running it once more`);
+      const second = await attempt(job, jobState(out, job).next);
+      if (stop !== null) return;
+      if (second?.infra && second.cause.split(":")[0] === first.cause.split(":")[0]) halt(`${job.case} ${job.config}: the same reviewer failure twice: ${second.cause}`);
+    } catch (error) {
+      halt(`${job.case} ${job.config} #${job.repeat}: the benchmark itself failed: ${error.message}`);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(o.concurrency, todo.length) }, worker));
 
-  const finished = jobs.filter(saved).length;
-  const ended = { at: new Date().toISOString(), how: stop === null ? "finished" : "stopped", why: stop, reviewsWithAnAttempt: finished, planned: jobs.length };
-  // The manifest is the first invocation's; a resume never writes it (failure 9).
-  if (manifest) {
-    manifest.ended = ended;
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  } else appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended })}\n`);
+  // The folder is taken, the manifest with every planned job written (or the
+  // resume checked) and the specs copied before the first review starts
+  // (lib/runner.mjs executeRun). The manifest is the first invocation's; a
+  // resume never writes it (failure 9).
+  let ended;
+  try {
+    ({ ended } = await executeRun({
+      out,
+      manifest: o.resume ? null : runManifest({ startedAt: new Date().toISOString(), settings, jobs }),
+      resume: o.resume,
+      checkResume,
+      copies: o.cases.map((c) => [join(snap, c, "case.json"), join("cases", `${c}.json`)]),
+      jobs,
+      concurrency: o.concurrency,
+      runJob,
+      stopReason: () => stop,
+      log: (done, total) => {
+        if (done % 10 === 0) console.log(`${done} of ${total} reviews done`);
+      },
+    }));
+  } catch (error) {
+    console.error(error.message);
+    leave(2);
+  }
+  const finished = ended.reviewsWithAnAttempt;
   console.log(stop === null ? `Done: ${finished} reviews saved in ${shown(out)}` : `Stopped after ${finished} of ${jobs.length} reviews: ${stop}`);
   console.log(`Score it: node benchmark/score.mjs ${shown(out)}`);
   process.exit(stop === null ? 0 : 1);

@@ -20,15 +20,25 @@
 // 4. A hand-edited entry drifts from its shape: entryProblems() lists every
 //    missing or malformed field, and writeEntry() and fetch-run.mjs refuse
 //    an entry that has any.
+// 5. A held-out (test split) run made outside a release is indexed as a
+//    sound entry, or its per-case detail reaches the index: a test-split
+//    entry must name its release and holds aggregates only (perCase null).
+// 6. Entries scored under different rules are read as comparable: every
+//    entry of a format 3 score carries the rules version and the rules hash
+//    it was scored with (lib/score.mjs rulesDifferences compares them).
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { benchRoot } from "./cases.mjs";
+import { caseSetHash } from "./score.mjs";
 
 export const INDEX_VERSION = 1;
 export const indexRoot = join(benchRoot, "index");
 export const runsRoot = join(indexRoot, "runs");
 export const resultsRoot = join(benchRoot, "results");
+// The two loops' ledgers: append-only JSON lines, one per event
+// (PLAN-benchmark 4.8): ledger/scanner.jsonl and ledger/reviewer.jsonl.
+export const ledgerPath = (loop) => join(indexRoot, "ledger", `${loop}.jsonl`);
 // Where published runs live: one pre-release of the public repository,
 // never marked latest. A second container is used when this one is full.
 export const REPOSITORY = "openqodex/openqodex";
@@ -91,8 +101,8 @@ export function writeEntry(entry) {
   return entryPath(entry.runId);
 }
 
-// The headline numbers of one configuration, from a score.json byConfig
-// entry. Legacy and v2 scores have no intervals, so `ci` is null.
+// The headline numbers of one configuration, from a format 2 score.json
+// byConfig entry (a legacy run). It has no intervals, so `ci` is null.
 export function headline(c) {
   const ratio = (r) => ({ hit: r.hit, of: r.of, ci: null });
   return {
@@ -110,6 +120,29 @@ export function headline(c) {
   };
 }
 
+// The headline numbers of one configuration, from a format 3 score: the
+// population, the issue-level metrics with their bounds, and cost and time.
+// The location and planted-rule blocks come along as labelled diagnostics.
+// `ci` is null until the score carries intervals.
+export function headlineV3(c) {
+  const r = (x) => ({ hit: x.hit, of: x.of, ci: null });
+  return {
+    population: c.population,
+    issueRecall: { all: r(c.issueRecall.all), criticalMajor: r(c.issueRecall.criticalMajor) },
+    precision: { lower: r(c.precision.lower), upper: r(c.precision.upper) },
+    uniqueIssuePrecision: { lower: r(c.uniqueIssuePrecision.lower), upper: r(c.uniqueIssuePrecision.upper) },
+    redundancy: { hit: c.redundancy.hit, of: c.redundancy.of },
+    f1: c.f1,
+    controls: { hit: c.controls.hit, of: c.controls.of },
+    cleanFindingsPerCase: c.cleanFindingsPerCase,
+    location: { precision: c.location.precision, recall: c.location.recall, knownNoise: c.location.knownNoise },
+    plantedLegacy: c.plantedLegacy ? { precision: c.plantedLegacy.precision, testGaps: c.plantedLegacy.testGaps } : null,
+    wallMsMean: c.wallMs.mean,
+    costUsdMean: c.costUsd.mean,
+    costUsdTotal: c.costUsd.total,
+  };
+}
+
 // A run's last word on how it ended: the last resume's end when it was
 // resumed, else the first invocation's.
 export function endedOf(manifest, resumes = []) {
@@ -118,28 +151,36 @@ export function endedOf(manifest, resumes = []) {
   return { how: e.how ?? null, why: e.why ?? null };
 }
 
-// The entry for a run, from its manifest and the score file it is cited by.
-// `legacy` is that run's recipe (benchmark/legacy/recipes.json), or null.
+// The entry for a run, from its manifest and the score file it is cited by:
+// a format 3 score for a new run, the stored format 2 score for a legacy
+// one. `legacy` is that run's recipe (benchmark/legacy/recipes.json), or
+// null. A test-split entry gets no per-case detail.
 export function buildEntry({ runId, manifest, resumes, score, asset, privateListHash, legacy = null }) {
   const b = manifest.build ?? {};
+  const v3 = score.version === 3;
+  const split = manifest.split ?? "dev";
   const reviewers = {};
   for (const [name, r] of Object.entries(manifest.reviewers ?? (manifest.reviewer ? { [manifest.reviewer.name]: manifest.reviewer } : {}))) reviewers[name] = { version: r.version ?? null, model: r.model ?? null };
   const scores = {};
-  const perCase = {};
-  for (const [config, c] of Object.entries(score.byConfig ?? {})) scores[config] = headline(c);
-  for (const [name, byConfig] of Object.entries(score.byCase ?? {})) {
-    for (const [config, c] of Object.entries(byConfig)) {
-      perCase[config] ??= {};
-      perCase[config][name] = { recall: [c.recall.hit, c.recall.of], precision: [c.precision.hit, c.precision.of] };
+  for (const [config, c] of Object.entries(score.byConfig ?? {})) scores[config] = v3 ? headlineV3(c) : headline(c);
+  // Format 3 keys cases by id with { hit, of } ratios; format 2 by name with [hit, of] pairs.
+  let perCase = v3 ? score.perCase : {};
+  if (!v3) {
+    for (const [name, byConfig] of Object.entries(score.byCase ?? {})) {
+      for (const [config, c] of Object.entries(byConfig)) {
+        perCase[config] ??= {};
+        perCase[config][name] = { recall: [c.recall.hit, c.recall.of], precision: [c.precision.hit, c.precision.of] };
+      }
     }
   }
-  const caseIds = manifest.caseHashes ? Object.keys(manifest.caseHashes).sort(byBytes).map((name) => `planted/${name}@${manifest.caseHashes[name].slice(0, 8)}`) : null;
+  if (split === "test") perCase = null;
+  const caseIds = v3 ? score.caseIds : manifest.caseHashes ? Object.keys(manifest.caseHashes).sort(byBytes).map((name) => `planted/${name}@${manifest.caseHashes[name].slice(0, 8)}`) : null;
   const entry = {
     version: INDEX_VERSION,
     runId,
     date: String(manifest.started_at ?? "").slice(0, 10),
     suite: manifest.suite ?? "planted",
-    split: manifest.split ?? "dev",
+    split,
     splitHash: manifest.splitHash ?? null,
     mode: manifest.mode ?? "review",
     path: manifest.path ?? "laptop",
@@ -148,9 +189,11 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     configs: manifest.configs ?? Object.keys(scores),
     repeat: manifest.repeat ?? null,
     web: manifest.web ?? manifest.review?.web ?? null,
-    caseSetHash: manifest.caseSetHash ?? null,
+    caseSetHash: v3 ? score.caseSetHash : (manifest.caseSetHash ?? null),
     caseIds,
-    rulesVersion: manifest.rulesVersion ?? null,
+    rulesVersion: v3 ? score.rules.version : (manifest.rulesVersion ?? null),
+    // The rules a format 3 score was computed with, and the rulings it read.
+    ...(v3 ? { rulesHash: score.rules.hash, decisionsHash: score.decisionsHash ?? null } : {}),
     scannersComplete: manifest.scannersComplete ?? null,
     external: manifest.external ?? null,
     ended: endedOf(manifest, resumes),
@@ -185,6 +228,24 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const isInt = (n, min = 0) => Number.isInteger(n) && n >= min;
 const isRatio = (r) => r && isInt(r.hit) && isInt(r.of) && r.hit <= r.of;
 
+// A format 3 headline (headlineV3): the population adds up, every ratio is
+// hits over checks, and each pair of bounds is over the same findings.
+function headlineProblems(s, at) {
+  const p = [];
+  const need = (cond, what) => {
+    if (!cond) p.push(`${at}: ${what}`);
+  };
+  const pop = s?.population ?? {};
+  need(["planned", "complete", "incomplete", "failed", "unstarted", "retries"].every((k) => isInt(pop[k])) && pop.complete + pop.incomplete + pop.failed + pop.unstarted === pop.planned, "population must count every planned review as complete, incomplete, failed or never started, and the retries");
+  need(isRatio(s?.issueRecall?.all) && isRatio(s?.issueRecall?.criticalMajor), "issueRecall must give all and critical plus major as hits over checks");
+  for (const name of ["precision", "uniqueIssuePrecision"]) {
+    const b = s?.[name];
+    need(isRatio(b?.lower) && isRatio(b?.upper) && b.lower.of === b.upper.of && b.lower.hit <= b.upper.hit, `${name} must be a lower and an upper bound over the same findings`);
+  }
+  need(isRatio(s?.redundancy) && isRatio(s?.controls), "redundancy and controls must be hits over checks");
+  return p;
+}
+
 // Every problem with an entry, one line each; empty when it is sound.
 export function entryProblems(e) {
   const p = [];
@@ -210,16 +271,36 @@ export function entryProblems(e) {
   need(e.scores && typeof e.scores === "object" && Object.keys(e.scores).length > 0, "scores must hold each configuration's headline numbers");
   for (const [config, s] of Object.entries(e.scores ?? {})) {
     need(e.configs?.includes(config), `scores names ${config}, which configs does not list`);
-    need(isRatio(s.recall) && isRatio(s.precision) && isRatio(s.controls), `scores.${config}: recall, precision and controls must be hits over checks`);
-    need(isInt(s.samples) && isInt(s.complete) && isInt(s.incomplete) && isInt(s.failed) && s.complete + s.incomplete + s.failed === s.samples, `scores.${config}: complete, incomplete and failed must add up to samples`);
+    if (e.legacy) {
+      need(isRatio(s.recall) && isRatio(s.precision) && isRatio(s.controls), `scores.${config}: recall, precision and controls must be hits over checks`);
+      need(isInt(s.samples) && isInt(s.complete) && isInt(s.incomplete) && isInt(s.failed) && s.complete + s.incomplete + s.failed === s.samples, `scores.${config}: complete, incomplete and failed must add up to samples`);
+    } else headlineProblems(s, `scores.${config}`).forEach((what) => need(false, what));
   }
-  need(e.perCase && typeof e.perCase === "object", "perCase is missing");
+  need(e.release === null || (typeof e.release === "string" && e.release !== ""), "release must be a version or null");
+  if (e.split === "test") {
+    need(typeof e.release === "string" && e.release !== "", "a held-out (test split) entry must name the release it was run for; no held-out case runs outside a release");
+    need(e.perCase === null, "a held-out (test split) entry holds aggregates only: perCase must be null, and the per-case detail stays in the asset");
+  } else need(e.perCase && typeof e.perCase === "object", "perCase is missing");
   const a = e.asset ?? {};
   need(typeof a.url === "string" && a.url.endsWith(`/${e.runId}.tar.gz`) && HEX64.test(a.sha256 ?? "") && isInt(a.bytes, 1) && isInt(a.files, 1) && HEX64.test(a.listHash ?? ""), "asset must give the url of <run-id>.tar.gz, its sha256, bytes, file count and list hash");
   need(HEX64.test(e.privateListHash ?? ""), "privateListHash must be the list hash of the full local folder");
   need(typeof e.accepted === "boolean", "accepted must be true or false");
   need(e.accepted || (e.acceptedAt === null && e.acceptedBy === null), "an entry that is not accepted has no acceptedAt or acceptedBy");
+  need(!e.accepted || (typeof e.acceptedAt === "string" && typeof e.acceptedBy === "string" && e.acceptedBy !== ""), "an accepted entry names when it was accepted and the person who accepted it");
   need(typeof e.legacy === "boolean", "legacy must be true or false");
+  if (e.legacy === false) {
+    // A run scored with format 3: its rules, its rulings and its case set.
+    need(isInt(e.rulesVersion, 3), "rulesVersion must be the rules version of the format 3 score the entry cites");
+    need(HEX64.test(e.rulesHash ?? ""), "rulesHash must be the sha256 of that score's rules block");
+    need(e.decisionsHash === null || HEX64.test(e.decisionsHash ?? ""), "decisionsHash must be the sha256 of the adjudication file the score read, or null");
+    need(Array.isArray(e.caseIds) && e.caseIds.length > 0, "caseIds must list the run's cases");
+    need(Array.isArray(e.caseIds) && e.caseSetHash === caseSetHash(e.caseIds), "caseSetHash must be the hash of caseIds");
+    for (const [config, cases] of Object.entries(e.perCase ?? {})) {
+      for (const [id, c] of Object.entries(cases ?? {})) {
+        need(e.caseIds?.includes(id) && isRatio(c?.issueRecall) && isRatio(c?.precision?.lower) && isRatio(c?.precision?.upper), `perCase.${config}.${id}: must be one of caseIds, with issueRecall and precision bounds as hits over checks`);
+      }
+    }
+  }
   if (e.legacy) {
     need(e.accepted === false, "a legacy run is never accepted");
     need(Object.values(e.scores ?? {}).every((s) => s.recall?.ci === null && s.precision?.ci === null), "a legacy run has no intervals");
