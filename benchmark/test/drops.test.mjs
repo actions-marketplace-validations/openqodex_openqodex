@@ -122,15 +122,27 @@ describe("structure before words", () => {
     expect(classifyDrop(d, { raised: [], frameworks: [] })).toMatchObject({ class: "rule-fp", tags: [] });
   });
 
-  it("a Flask rule on a Django project is tagged once the scan can tell Flask, and never by a scan from before it could", () => {
+  it("a Flask rule on a Django project is tagged only where the scan knows Flask absent", () => {
     const flaskRule = candidate("c2", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "orders/views.py", 8);
     const report = { findings: [], dropped: [{ candidate: "c2", reason: "This is a Django view; the Flask rule does not apply.", cited: null }] };
-    const semgrep = { scanner: "semgrep", status: "ran", version: "1.94.0", rawCount: 1, keptCount: 1, durationMs: 1, reason: null };
-    const scanOf = (summary) => ({ candidates: [flaskRule], scanners: [summary], projects: [{ root: "", frameworks: ["django"] }] });
-    // The build that gates by framework writes excludedFamilies on every semgrep run, and detects Flask.
-    expect(classifyReportDrops(report, scanOf({ ...semgrep, excludedFamilies: [] }))[0]).toMatchObject({ class: "rule-fp", tags: ["framework-mismatch"] });
-    // An older build could not detect Flask, so its absence from the projects says nothing.
-    expect(classifyReportDrops(report, scanOf(semgrep))[0]).toMatchObject({ class: "rule-fp", tags: [] });
+    const scanOf = (projects) => ({ candidates: [flaskRule], scanners: [], projects });
+    // Every source of the project settled, and none names Flask.
+    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"], absent: ["airflow", "fastapi", "flask"] }]))[0]).toMatchObject({ class: "rule-fp", tags: ["framework-mismatch"] });
+    // A source could not be settled, or names Flask: Flask is unknown, not absent.
+    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"], absent: ["airflow", "fastapi"] }]))[0]).toMatchObject({ class: "rule-fp", tags: [] });
+    // One of two projects of the change may use Flask.
+    expect(classifyReportDrops(report, scanOf([{ root: "a", frameworks: ["django"], absent: ["flask"] }, { root: "b", frameworks: [], absent: [] }]))[0]).toMatchObject({ tags: [] });
+    // An older build recorded no absent list and could not detect Flask at all.
+    expect(classifyReportDrops(report, scanOf([{ root: "", frameworks: ["django"] }]))[0]).toMatchObject({ class: "rule-fp", tags: [] });
+  });
+
+  it("a Django rule on a project whose sources do not settle Django is not tagged, though Django was not found", () => {
+    const djangoRule = candidate("c4", "semgrep:python.django.security.injection.tainted-sql-string", "app/search.py", 14);
+    const report = { findings: [], dropped: [{ candidate: "c4", reason: "The app uses Flask, not Django.", cited: null }] };
+    const unsettled = { candidates: [djangoRule], scanners: [], projects: [{ root: "", frameworks: ["flask"], absent: [] }] };
+    expect(classifyReportDrops(report, unsettled)[0]).toMatchObject({ tags: [] });
+    const settled = { ...unsettled, projects: [{ root: "", frameworks: ["flask"], absent: ["airflow", "django", "fastapi"] }] };
+    expect(classifyReportDrops(report, settled)[0]).toMatchObject({ tags: ["framework-mismatch"] });
   });
 
   it("a framework the scan detects is missing from the classifier's names, so its mismatches go untagged", () => {

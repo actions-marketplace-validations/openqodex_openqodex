@@ -57,21 +57,24 @@
 //      that names those words only nested, in a string or in a comment is.
 //  21. A hostile JSON or YAML file of 1 MB makes the CloudFormation check
 //      take more than linear time.
-// Added with semgrep's framework gate:
+// Added with Flask and the known-absent list (P2-12):
 //  22. A Flask project (flask in requirements, pyproject or Pipfile) is not
-//      told from its manifest, so semgrep's django rules reach the reviewer
-//      from a Flask app.
-//  23. A framework reads as absent from a Python file's project where a
-//      source names it, in any form: a dependency group the dependency
-//      readers skip, an environment marker, a URL or an editable install, a
-//      lockfile, setup.cfg, a settings file (tox.ini, pytest.ini,
-//      manage.py), a manifest in a folder above the project, or the file
-//      itself (an import, a string, any case).
-//  24. A framework reads as absent where a source cannot settle it: a
-//      manifest or lockfile that does not parse, one over the size cap or
-//      behind a link, a setup.py (only running it tells its dependencies), a
-//      requirements file that pulls in another file or a local package, or
-//      a file in no project.
+//      told from its manifest, so the scan records no Flask.
+//  23. A project's record calls a framework absent where a source names it,
+//      in any form: a dependency group the dependency readers skip, an
+//      environment marker, a URL, a lockfile, setup.cfg, a settings file
+//      (tox.ini, pytest.ini, manage.py), a manifest in a folder above the
+//      project, or a changed file of the project (an import, a string, any
+//      case); or a framework of an ecosystem none of its sources belongs to
+//      (Django where no Python file lists dependencies). The drop classifier
+//      reads the record, so a wrong absence tags a drop as a framework
+//      mismatch.
+//  24. A project's record calls a framework absent where a source of its
+//      ecosystem cannot settle it: a manifest or lockfile that does not
+//      parse, one over the size cap or behind a link, a setup.py (only
+//      running it tells its dependencies), a requirements file that pulls in
+//      another file or a local package, a Gemfile that pulls in a gemspec, or
+//      a changed file over the size cap.
 //  25. A hostile source of 1 MB makes the absence check take more than
 //      linear time.
 import { execFileSync } from "node:child_process";
@@ -331,11 +334,13 @@ describe("manifests are data, read within limits", () => {
     expect(facts.project("d/app.py")).toMatchObject({ frameworks: [] });
   });
 
-  const DJANGO = ["django", "rest_framework"];
   const FLASK = "flask==3.1.3\n";
   const APP = "from flask import Flask\n";
+  // What the scan records as known absent for a file's project, with that
+  // file as the change.
+  const absentFor = (facts: ReturnType<typeof repoFacts>, file: string) => facts.knownAbsent(facts.project(file)!, [file]);
 
-  it("calls a framework absent only when no source names it, and lists every source it read (23)", () => {
+  it("calls a framework absent only when no source names it, in any form (23)", () => {
     const dir = repo({
       "clean/requirements.txt": FLASK,
       "clean/pyproject.toml": '[project]\nname = "clean"\ndependencies = ["flask>=3"]\n',
@@ -345,6 +350,7 @@ describe("manifests are data, read within limits", () => {
       "clean/setup.cfg": "[metadata]\nname = clean\n",
       "clean/app.py": APP,
       "clean/sub/app.py": APP,
+      "clean/logo.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00]),
       "group/requirements.txt": FLASK,
       "group/pyproject.toml": '[project]\nname = "group"\n\n[tool.pdm.dev-dependencies]\ntest = ["Django>=5"]\n',
       "group/app.py": APP,
@@ -367,12 +373,23 @@ describe("manifests are data, read within limits", () => {
       "above/setup.cfg": "[options]\ninstall_requires =\n    django>=5\n",
       "above/svc/requirements.txt": FLASK,
       "above/svc/app.py": APP,
+      "web/package.json": JSON.stringify({ dependencies: { express: "4.21.0" } }),
+      "web/server.js": "const express = require('express');\n",
+      "shop/Gemfile": "source 'https://rubygems.org'\ngem 'sinatra'\n",
+      "shop/app.rb": "require 'sinatra'\n",
     });
     const facts = repoFacts(dir);
-    expect(facts.absentFrom("clean/app.py", DJANGO)).toEqual(["clean/Pipfile.lock", "clean/app.py", "clean/environment.yml", "clean/poetry.lock", "clean/pyproject.toml", "clean/requirements.txt", "clean/setup.cfg"]);
-    expect(facts.absentFrom("clean/sub/app.py", DJANGO)).toEqual(["clean/Pipfile.lock", "clean/environment.yml", "clean/poetry.lock", "clean/pyproject.toml", "clean/requirements.txt", "clean/setup.cfg", "clean/sub/app.py"]);
-    for (const p of ["group", "marker", "url", "lock", "settings", "manage", "own", "above/svc"]) expect(facts.absentFrom(`${p}/app.py`, DJANGO), p).toBeNull();
-    expect(facts.absentFrom("own/views.py", DJANGO)).toBeNull();
+    // Every Python source parses and names no other framework; no JavaScript
+    // or Ruby source stands there. A changed file that is not text, or that
+    // the change deleted, names nothing.
+    expect(absentFor(facts, "clean/app.py")).toEqual(["airflow", "django", "fastapi"]);
+    expect(facts.knownAbsent(facts.project("clean/sub/app.py")!, ["clean/sub/app.py", "clean/logo.png", "clean/gone.py"])).toEqual(["airflow", "django", "fastapi"]);
+    for (const p of ["group", "marker", "lock", "settings", "manage", "own", "above/svc"]) expect(absentFor(facts, `${p}/app.py`), p).toEqual(["airflow", "fastapi"]);
+    // A package listed by URL names Django, and settles nothing else either.
+    expect(absentFor(facts, "url/app.py")).toEqual([]);
+    expect(absentFor(facts, "own/views.py")).toEqual(["airflow", "fastapi"]);
+    expect(absentFor(facts, "web/server.js")).toEqual(["nextjs", "react", "react-native"]);
+    expect(absentFor(facts, "shop/app.rb")).toEqual(["rails"]);
   });
 
   it("refuses to call a framework absent where a source cannot settle it (24)", () => {
@@ -402,13 +419,22 @@ describe("manifests are data, read within limits", () => {
       "local/app.py": APP,
       "real/requirements.txt": FLASK,
       "linked/app.py": APP,
+      "huge/requirements.txt": FLASK,
+      "huge/app.py": `${APP}${"# x\n".repeat(MAX_MANIFEST_BYTES / 4 + 1)}`,
+      "nojs/package.json": '{"dependencies": {',
+      "nojs/server.js": "x\n",
+      "gem/Gemfile": "source 'https://rubygems.org'\ngemspec\n",
+      "gem/app.rb": "x\n",
       "loose.py": APP,
     });
     fs.symlinkSync(path.join(dir, "real", "requirements.txt"), path.join(dir, "linked", "requirements.txt"));
     fs.writeFileSync(path.join(dir, "linked", "pyproject.toml"), '[project]\nname = "linked"\n');
     const facts = repoFacts(dir);
-    for (const p of ["toml", "json", "yaml", "ini", "big", "setup", "include", "editable", "local", "linked"]) expect(facts.absentFrom(`${p}/app.py`, DJANGO), p).toBeNull();
-    expect(facts.absentFrom("loose.py", DJANGO)).toBeNull();
+    for (const p of ["toml", "json", "yaml", "ini", "big", "setup", "include", "editable", "local", "linked", "huge"]) expect(absentFor(facts, `${p}/app.py`), p).toEqual([]);
+    expect(absentFor(facts, "nojs/server.js")).toEqual([]);
+    expect(absentFor(facts, "gem/app.rb")).toEqual([]);
+    // A file in no project is in no project's record.
+    expect(facts.project("loose.py")).toBeNull();
   });
 });
 
@@ -463,8 +489,8 @@ describe("hostile files read in linear time (14)", () => {
       "pyproject.toml": `a = ${"[".repeat(N / 4)}`,
       "Pipfile.lock": `{"a":${"[".repeat(N / 4)}`,
       "environment.yml": "- [".repeat(N / 12),
-      // Under the 64 KB a YAML source is parsed to.
-      "environment.yaml": "- [".repeat(21_000),
+      // Under the 16 KB a YAML source is parsed to.
+      "environment.yaml": "- [".repeat(5_000),
       "setup.cfg": `[a]\nb = ${blanks(N / 2)}\n${" c\n".repeat(N / 8)}`,
     };
     const files: Record<string, string> = {};
@@ -472,12 +498,17 @@ describe("hostile files read in linear time (14)", () => {
       const sub = name.replace(/\W/g, "-");
       files[`${sub}/requirements.txt`] = "flask==3.1.3\n";
       files[`${sub}/${name}`] = text;
-      files[`${sub}/a.py`] = "djang".repeat(N / 5);
+      files[`${sub}/a.py`] = "x = 1\n";
     }
+    // A changed file comes from the change too: one that almost names a
+    // framework all the way through.
+    files["changed/requirements.txt"] = "flask==3.1.3\n";
+    files["changed/a.py"] = "djang".repeat(N / 5);
+    hostile["changed"] = "";
     const dir = repo(files, false);
     const facts = repoFacts(dir);
     const started = performance.now();
-    for (const name of Object.keys(hostile)) facts.absentFrom(`${name.replace(/\W/g, "-")}/a.py`, ["django", "rest_framework"]);
+    for (const name of Object.keys(hostile)) facts.knownAbsent(facts.project(`${name.replace(/\W/g, "-")}/a.py`)!, [`${name.replace(/\W/g, "-")}/a.py`]);
     expect(performance.now() - started).toBeLessThan(500);
   });
 

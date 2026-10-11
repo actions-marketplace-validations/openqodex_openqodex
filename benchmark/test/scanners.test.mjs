@@ -230,29 +230,6 @@ describe("a location match on the same lines counts as preserved coverage of a d
   });
 });
 
-// semgrep's framework gate leaves a rule of another framework's family out
-// of a file before any filter: a truth item's finding it dropped must show,
-// as a filter loss and in the scanner's removed counts, or a scanner change
-// that gates too much reads as a plain miss with no trace.
-describe("a finding the framework gate dropped leaves no trace", () => {
-  const name = "demo-polyglot";
-  const flask = cand("c1", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "app/search.py", 14, 14, "Detected user input used to manually construct a SQL string.");
-  const django = "semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string";
-  const trail = [
-    { token: flask.token, file: "app/search.py", lineStart: 14, lineEnd: 14, severity: "high", stage: "kept", id: "c1" },
-    { token: django, file: "app/search.py", lineStart: 14, lineEnd: 14, severity: "high", stage: "other-framework" },
-  ];
-  const stages = { changedLines: 0, fixtures: 0, rules: 0, merged: 0, otherFramework: 1 };
-
-  it("lists it as a filter loss at its stage, and counts it removed by the gate", () => {
-    const run = runOf([name], [attempt(name, scanOf([flask], [{ ...ran("semgrep", 1), rawCount: 2, stages }], { trail }))], { changed: { [name]: new Map([["app/search.py", new Set([14])]]) } });
-    const r = scannerReport(run);
-    expect(r.filterLosses).toEqual([{ sample: expect.any(String), caseId: idOf(name), truth: "sql-injection", scanner: "semgrep", token: django, stage: "other-framework" }]);
-    expect(r.scanners.semgrep.removed).toEqual(stages);
-    expect(r.scanners.semgrep.found).toBe(1);
-  });
-});
-
 describe("a candidate the final answer raised and finalize hid reads as unanswered", () => {
   const name = "demo-polyglot";
   const latest = cand("c1", "hadolint:DL3042", "Dockerfile", 7, 7, "Avoid use of cache directory with pip.");

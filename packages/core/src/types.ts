@@ -85,10 +85,6 @@ export type ScannerRunSummary = {
   // the size of the bytes semgrep read. Absent when the packs could not be
   // told apart, and in a scan an older version saved.
   rules?: RulePack[];
-  // semgrep only, when it ran: each framework's rule family it left out of a
-  // project's files, and why (the semgrep adapter's framework gate). Empty
-  // when it left none out. Absent in a scan an older version saved.
-  excludedFamilies?: ExcludedFamily[];
   // The wall time of finding, checking or installing the scanner's tool
   // before it ran; 0 when no tool was looked up. Absent in a scan an older
   // version saved, as are `files` and `stages`.
@@ -103,20 +99,10 @@ export type ScannerRunSummary = {
 
 export type RulePack = { pack: string; sha256: string; bytes: number };
 
-// A rule family left out of one project's files: `family` is the rule id
-// prefix ("python.django"), `project` the project folder ("" for the repo
-// root), `why` the evidence, and `sources` every file read to rule the
-// family's framework out (the project's dependency and settings files, those
-// of the folders above it, and the files left out), sorted.
-export type ExcludedFamily = { family: string; project: string; why: string; sources: string[] };
-
 // `changedLines`: the changed-line filter (a file outside the change, or no
 // changed line in the span); `fixtures`: the fixture filter; `rules`:
-// review.disabled_rules; `merged`: dedup, into another candidate;
-// `otherFramework`: the scanner's own framework gate (a rule of another
-// framework's family). A scan an older version saved has no
-// `otherFramework`.
-export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number; otherFramework: number };
+// review.disabled_rules; `merged`: dedup, into another candidate.
+export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number };
 
 // What the selector chose for one scanner on this change: whether it runs,
 // the changed files that call for it, the project folders that decide how
@@ -126,11 +112,9 @@ export type ScannerSelection = { scanner: ScannerSource; wanted: boolean; paths:
 
 // Where a scanner finding left the pipeline: "outside-change" (its file is
 // not in the change), "changed-lines" (its file is, but no line of its span
-// changed), "fixture", "disabled-rule", "other-framework" (its rule belongs
-// to the family of a framework its file's project does not use, which the
-// adapter left out; ExcludedFamily says why), "merged" (dedup folded it into
-// the candidate `into`) or "kept" (it is the candidate `id`).
-export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "other-framework" | "merged" | "kept";
+// changed), "fixture", "disabled-rule", "merged" (dedup folded it into the
+// candidate `into`) or "kept" (it is the candidate `id`).
+export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept";
 
 // One raw finding of one scanner, or one of OpenQodex's own candidates
 // about the change, and what became of it. Never the message, which can
@@ -156,9 +140,14 @@ export type ScanResult = {
   fixturesDropped: number;
   secretFingerprints: SecretFingerprint[];
   // The projects the changed files belong to (the nearest folder holding a
-  // manifest, "" for the repo root) and the frameworks read from their
-  // dependency lists. Absent in a scan an older version saved.
-  projects?: { root: string; frameworks: string[] }[];
+  // manifest, "" for the repo root), the frameworks read from their
+  // dependency lists, and `absent`, the frameworks each is known not to use:
+  // every dependency and settings file of the project and the folders above
+  // it reads and parses, and none of them nor a changed file of the project
+  // names the framework. A framework in neither list is unknown. Missing in
+  // a scan an older version saved, and `absent` is missing in one saved
+  // before Flask was detected.
+  projects?: { root: string; frameworks: string[]; absent?: string[] }[];
   // What the selector chose for every built-in scanner, then for every
   // custom one, whether or not --only or --skip left it out of this run.
   // Absent in a scan an older version saved, as are `trail` and
@@ -166,8 +155,7 @@ export type ScanResult = {
   selection?: ScannerSelection[];
   // One entry per raw finding of every scanner that ran and per candidate
   // OpenQodex raised about the change, kept entries first, then merged,
-  // disabled-rule, other-framework, fixture, changed-lines and
-  // outside-change; within a
+  // disabled-rule, fixture, changed-lines and outside-change; within a
   // stage in the order the pipeline sorts findings (scanner, file, lines,
   // rule). At most 5,000 entries; `trailOmitted` counts the rest, which the
   // scanners' `stages` still count.
@@ -194,11 +182,6 @@ export type AdapterResult = {
   checked?: { token: string; files: string[] }[];
   // The rule packs the run consumed, kept on the scanner's summary.
   rules?: RulePack[];
-  // What the adapter left out by framework (semgrep's framework gate): the
-  // findings, which the trail records at the "other-framework" stage and
-  // never hands the reviewer, and each family left out of a project, with
-  // why, kept on the scanner's summary.
-  excluded?: { findings: StaticFinding[]; families: ExcludedFamily[] };
 };
 
 // One row of `openqodex doctor`.

@@ -145,39 +145,33 @@ describe("builtin scanner subprocesses", () => {
     expect(JSON.stringify(result.scan)).not.toContain(generatedSecret);
   }, 300_000);
 
-  // semgrep's registry packs carry a rule family per web framework, and the
-  // families' request rules match any Python request object: on a Flask
-  // app, django rules raise the SQL injection that flask's own rule raises
-  // on the same line, and the reviewer drops them as repeats (the demo app,
-  // run 752b77f). Ways it could fail, written before the code:
-  //  1. A django rule reaches the reviewer from a Flask project.
-  //  2. The flask rule that finds the injection is lost with them.
-  //  3. A django rule is lost where Django is used: in a Django project, or
-  //     in a file of a Flask project that imports django.
-  //  4. A family is lost where no other framework's family covers the
-  //     request: in a FastAPI project, django's and flask's rules are the
-  //     only ones that find the injected HTML.
-  //  5. The dropped findings leave no record, or no reason: the trail names
-  //     no stage for them, the counts disagree, or the scan does not say
-  //     which family it left out of which project, why, and from which
-  //     sources.
-  // Added after the commit scan (the gate must fail closed):
-  //  6. A family is left out where a source the detector cannot read decides
-  //     it: a manifest that does not parse, or a setup.py, whose
-  //     dependencies only running it would tell.
-  //  7. A family is left out where a source names its framework in a form
-  //     the detector's parsers skip: a dependency group they do not read, an
-  //     editable install from a URL, an environment marker, a settings file,
-  //     a string in the file itself, or a manifest in a folder above the
-  //     project.
-  it("django rules fire on a Flask project", async () => {
+  // The scan records, for each project of the change, the frameworks it uses
+  // and those it is known not to use (detect.ts knownAbsent), and the drop
+  // classifier reads that record. semgrep's registry packs carry a rule
+  // family per web framework whose request rules fire on other frameworks'
+  // apps; leaving a family out by that record was measured and rejected
+  // (SC-0002), so both families still reach the review. Ways it could fail,
+  // written before the code:
+  //  1. A Flask project's record calls Django absent where a source names it
+  //     in a form the dependency readers skip: a dependency group they do not
+  //     read, an editable install from a URL, an environment marker, a
+  //     settings file, a string in a changed file, or a manifest in a folder
+  //     above the project.
+  //  2. It calls Django absent where a source cannot settle it: a manifest
+  //     that does not parse, or a setup.py, whose dependencies only running
+  //     it would tell.
+  //  3. A framework a project uses is called absent, or one it does not use,
+  //     with every source settled, is left out of the record.
+  //  4. A rule family is left out on the strength of the record: semgrep's
+  //     django rules stop reaching the review from a Flask app.
+  it("a Flask project's record calls Django absent only where every source settles it, and django rules still reach the review", async () => {
     if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
     const SEARCH = (request: string) => `    q = ${request}.get("q", "")\n`;
     const flaskApp = (extra = "") =>
       `import sqlite3\n\nfrom flask import Flask, request\n\napp = Flask(__name__)\n${extra}\n\n@app.get("/search")\ndef search():\n${SEARCH("request.args")}    conn = sqlite3.connect("items.db")\n    cur = conn.cursor()\n    cur.execute(f"SELECT id FROM items WHERE name = '{q}'")\n    return str(cur.fetchall())\n`;
     const FLASK = "flask==3.1.3\n";
-    // Flask projects where Django is named, or cannot be ruled out (6, 7).
-    const keeps: Record<string, Record<string, string>> = {
+    // Flask projects where Django is named, or cannot be ruled out (1, 2).
+    const unknown: Record<string, Record<string, string>> = {
       unparsed: { "requirements.txt": FLASK, "pyproject.toml": '[project\nname = "unparsed"\n' },
       setup: { "requirements.txt": FLASK, "setup.py": 'from setuptools import setup\nsetup(name="s", install_requires=open("deps.in").read().split())\n' },
       group: { "requirements.txt": FLASK, "pyproject.toml": '[project]\nname = "group"\n\n[tool.pdm.dev-dependencies]\ntest = ["Django>=5"]\n' },
@@ -192,42 +186,36 @@ describe("builtin scanner subprocesses", () => {
       "flask/app.py": flaskApp(),
       "above/pyproject.toml": '[project]\nname = "above"\ndependencies = ["django>=5"]\n',
       ...Object.fromEntries(
-        Object.entries(keeps).flatMap(([dir, manifests]) => [
+        Object.entries(unknown).flatMap(([dir, manifests]) => [
           ...Object.entries(manifests).map(([name, text]) => [`${dir}/${name}`, text]),
           [`${dir}/app.py`, flaskApp(dir === "string" ? 'BACKEND = "django.db.backends.sqlite3"\n' : "")],
         ]),
       ),
       "django/requirements.txt": "Django==5.0\n",
       "django/views.py": `from django.db import connection\nfrom django.http import HttpResponse\n\n\ndef search(request):\n${SEARCH("request.GET")}    with connection.cursor() as cur:\n        cur.execute(f"SELECT id FROM items WHERE name = '{q}'")\n        return HttpResponse(str(cur.fetchall()))\n`,
-      "mixed/requirements.txt": "flask==3.1.3\n",
+      "mixed/requirements.txt": FLASK,
       "mixed/legacy.py": `from django.db import connection\n\n\ndef search(request):\n${SEARCH("request.GET")}    with connection.cursor() as cur:\n        cur.execute(f"SELECT id FROM items WHERE name = '{q}'")\n        return cur.fetchall()\n`,
       "fastapi/requirements.txt": "fastapi==0.115.0\n",
       "fastapi/app.py": `from fastapi import FastAPI, Request\nfrom fastapi.responses import HTMLResponse\n\napp = FastAPI()\n\n\n@app.get("/hello", response_class=HTMLResponse)\ndef hello(request: Request):\n    name = request.query_params.get("name", "")\n    return "<p>Hello " + name + "</p>"\n`,
     };
     const result = await scan({ scanner: "semgrep", rule: "", files, anchor: "" });
-    const summary = result.scan.scanners[0]!;
-    expect(summary.status).toBe("ran");
-    const rules = (file: string, family: string) => result.scan.candidates.filter((c) => c.filePath === file && c.ruleId.startsWith(family)).map((c) => c.ruleId);
-    // 1, 2.
-    expect(rules("flask/app.py", "python.django.")).toEqual([]);
-    expect(rules("flask/app.py", "python.flask.")).toContain("python.flask.security.injection.tainted-sql-string.tainted-sql-string");
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    const record = new Map((result.scan.projects ?? []).map((p) => [p.root, { frameworks: p.frameworks, absent: p.absent }]));
     // 3.
-    expect(rules("django/views.py", "python.django.")).toContain("python.django.security.injection.tainted-sql-string.tainted-sql-string");
-    expect(rules("mixed/legacy.py", "python.django.")).toContain("python.django.security.injection.tainted-sql-string.tainted-sql-string");
-    // 6, 7.
-    for (const dir of Object.keys(keeps)) expect(rules(`${dir}/app.py`, "python.django."), dir).toContain("python.django.security.injection.tainted-sql-string.tainted-sql-string");
+    expect(record.get("flask")).toEqual({ frameworks: ["flask"], absent: ["airflow", "django", "fastapi"] });
+    expect(record.get("django")).toEqual({ frameworks: ["django"], absent: ["airflow", "fastapi", "flask"] });
+    expect(record.get("fastapi")).toEqual({ frameworks: ["fastapi"], absent: ["airflow", "django", "flask"] });
+    expect(record.get("above")).toEqual({ frameworks: ["django"], absent: ["airflow", "fastapi", "flask"] });
+    // 1, 2: a change that names Django keeps it unknown, as do sources that
+    // cannot settle the Python dependencies.
+    expect(record.get("mixed")).toEqual({ frameworks: ["flask"], absent: ["airflow", "fastapi"] });
+    for (const dir of ["group", "settings", "string", "above/svc"]) expect(record.get(dir), dir).toEqual({ frameworks: ["flask"], absent: ["airflow", "fastapi"] });
+    expect(record.get("marker")).toEqual({ frameworks: ["django", "flask"], absent: ["airflow", "fastapi"] });
+    for (const dir of ["unparsed", "setup", "url"]) expect(record.get(dir), dir).toEqual({ frameworks: ["flask"], absent: [] });
     // 4.
-    expect(rules("fastapi/app.py", "python.django.")).toContain("python.django.security.injection.raw-html-format.raw-html-format");
-    expect(rules("fastapi/app.py", "python.flask.")).toContain("python.flask.security.audit.directly-returned-format-string.directly-returned-format-string");
-    // 5.
-    const dropped = (result.scan.trail ?? []).filter((e) => e.stage === "other-framework");
-    expect(dropped.length).toBeGreaterThan(0);
-    for (const e of dropped) expect([e.file, e.token.startsWith("semgrep:python.django.")]).toEqual(["flask/app.py", true]);
-    expect(dropped.map((e) => e.token)).toContain("semgrep:python.django.security.injection.tainted-sql-string.tainted-sql-string");
-    expect(summary.stages?.otherFramework).toBe(dropped.length);
-    expect(summary.excludedFamilies).toEqual([
-      { family: "python.django", project: "flask", why: "flask in requirements.txt, and no source names django or rest_framework", sources: ["flask/app.py", "flask/requirements.txt"] },
-    ]);
+    const rules = (file: string, family: string) => result.scan.candidates.filter((c) => c.filePath === file && c.ruleId.startsWith(family)).map((c) => c.ruleId);
+    expect(rules("flask/app.py", "python.django.")).toContain("python.django.security.injection.tainted-sql-string.tainted-sql-string");
+    expect(rules("flask/app.py", "python.flask.")).toContain("python.flask.security.injection.tainted-sql-string.tainted-sql-string");
   }, 300_000);
 
   // The fixture filter drops the finding, so only the trail keeps its file,

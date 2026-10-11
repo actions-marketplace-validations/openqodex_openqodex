@@ -331,8 +331,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -349,8 +348,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -367,8 +365,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -385,8 +382,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -403,8 +399,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -421,8 +416,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -439,8 +433,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 1,
-        "otherFramework": 0
+        "merged": 1
       }
     },
     {
@@ -457,8 +450,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -475,8 +467,7 @@
         "changedLines": 2,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -493,8 +484,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -511,8 +501,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -529,8 +518,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -547,8 +535,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -565,8 +552,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -583,8 +569,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -601,8 +586,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -619,8 +603,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -637,8 +620,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -655,8 +637,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     },
     {
@@ -673,8 +654,7 @@
         "changedLines": 0,
         "fixtures": 0,
         "rules": 0,
-        "merged": 0,
-        "otherFramework": 0
+        "merged": 0
       }
     }
   ],
@@ -690,6 +670,13 @@
       "root": "",
       "frameworks": [
         "flask"
+      ],
+      "absent": [
+        "airflow",
+        "django",
+        "fastapi",
+        "nextjs",
+        "react"
       ]
     }
   ],

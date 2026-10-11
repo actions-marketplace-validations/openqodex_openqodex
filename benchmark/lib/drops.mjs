@@ -55,10 +55,11 @@
 //    a framework the scan can detect and found in no project. A framework
 //    the scan cannot detect (SQLAlchemy), and an older scan that recorded no
 //    projects, give no tag rather than a guess.
-// 5a. A framework the detector learned later reads as absent from a scan
-//    an older build saved: Flask counts only in a scan whose semgrep summary
-//    has `excludedFamilies`, which the build that detects Flask writes on
-//    every semgrep run (semgrep's framework gate).
+// 5a. A framework the detector cannot rule out is called a mismatch: a
+//    scan that records `absent` per project (the frameworks known unused,
+//    every source of the project read and parsed and none naming them) tags
+//    only a framework every project lists there. An older scan has no
+//    `absent` and could not detect Flask, so there Flask never counts.
 // 6. A framework rule dropped as a repeat hides that it fired on the wrong
 //    framework: the tag is read from the reason whatever the class.
 // 7. A drop that cites its own line is called a repeat because a raised
@@ -83,7 +84,8 @@
 import { isFixturePath } from "../../packages/scanners/dist/index.js";
 import { normPath } from "./score.mjs";
 
-// 2: Flask joined the frameworks a tag can name (5a).
+// 2: Flask joined the frameworks a tag can name, and a scan's `absent`
+// decides the tag (5a).
 export const DROPS_VERSION = 2;
 export const DROP_CLASSES = Object.freeze(["config-owned", "fixture", "test", "duplicate", "out-of-change", "low-value", "rule-fp"]);
 // What each class points at, printed beside its count.
@@ -140,16 +142,9 @@ const FRAMEWORKS = [
   ["rails", /\bRails\b/],
 ];
 export const DETECTED_FRAMEWORKS = Object.freeze(FRAMEWORKS.map(([slug]) => slug));
-// The frameworks the detector learned later, each with how a scan shows its
-// build had learned it (5a). Flask came with semgrep's framework gate, whose
-// build writes excludedFamilies on every semgrep run.
-const LEARNED_LATER = { flask: (scan) => (scan?.scanners ?? []).some((s) => Array.isArray(s?.excludedFamilies)) };
-
-// The frameworks this scan's build could detect; without a scan, those it
-// always could.
-export function detectableFrameworks(scan = null) {
-  return DETECTED_FRAMEWORKS.filter((slug) => LEARNED_LATER[slug] === undefined || (scan !== null && LEARNED_LATER[slug](scan)));
-}
+// The frameworks a build that records no `absent` could detect: Flask came
+// with `absent` (5a).
+const DETECTED_BEFORE_ABSENT = Object.freeze(DETECTED_FRAMEWORKS.filter((slug) => slug !== "flask"));
 
 // Paths a reason quotes: any token with a slash, and a bare file name that
 // starts in lower case with a known extension (a capitalised name such as
@@ -171,6 +166,15 @@ export function projectFrameworks(scan) {
   return [...new Set(scan.projects.flatMap((p) => p.frameworks ?? []))].sort();
 }
 
+// The frameworks every project of the change is known not to use (5a), or
+// null when the scan records no `absent` (an older scan.json, read by the
+// detectable-and-not-found rule instead).
+export function absentFrameworks(scan) {
+  const projects = scan?.projects;
+  if (!Array.isArray(projects) || projects.length === 0 || !projects.every((p) => Array.isArray(p?.absent))) return null;
+  return DETECTED_FRAMEWORKS.filter((slug) => projects.every((p) => p.absent.includes(slug)));
+}
+
 // The lines of every candidate the reviewer raised: a finding that names
 // its candidate, on or off the change, at the candidate's own place (the
 // finding's when the scan is missing).
@@ -190,15 +194,17 @@ export function raisedSpans(report, scan) {
 
 // One drop's class: { class, tags, matched: { rule, text } }. `matched`
 // names the rule that decided and the text it matched, so a person can see
-// why. Context: the raised candidates' spans, the scan's frameworks, and the
-// frameworks its build could detect (5a).
-export function classifyDrop(drop, { raised = [], frameworks = null, detectable = detectableFrameworks() } = {}) {
+// why. Context: the raised candidates' spans, and either the frameworks
+// known absent from every project (`absent`, 5a) or, for an older scan, the
+// frameworks it found (`frameworks`).
+export function classifyDrop(drop, { raised = [], frameworks = null, absent = null } = {}) {
   const out = classOf(drop, raised);
   // The tag is the reason's, whatever the class: a framework rule dropped as
   // a repeat still fired on a framework the change does not use.
   const present = new Set(frameworks ?? []);
+  const missing = (slug) => (absent !== null ? absent.includes(slug) : frameworks !== null && DETECTED_BEFORE_ABSENT.includes(slug) && !present.has(slug));
   const words = withoutPaths(drop?.reason);
-  if (frameworks !== null && FRAMEWORKS.some(([slug, re]) => detectable.includes(slug) && !present.has(slug) && re.test(words))) out.tags.push("framework-mismatch");
+  if (FRAMEWORKS.some(([slug, re]) => missing(slug) && re.test(words))) out.tags.push("framework-mismatch");
   return out;
 }
 
@@ -249,7 +255,7 @@ function classOf(drop, raised) {
 // Every drop of one saved review, in its order, with its class. `report` is
 // report.json, `scan` is scan.json (null when the sample has none).
 export function classifyReportDrops(report, scan) {
-  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan), detectable: detectableFrameworks(scan) };
+  const context = { raised: raisedSpans(report, scan), frameworks: projectFrameworks(scan), absent: absentFrameworks(scan) };
   return (report?.dropped ?? []).map((d) => ({ candidate: d.candidate, reason: d.reason, cited: d.cited ?? null, ...classifyDrop(d, context) }));
 }
 

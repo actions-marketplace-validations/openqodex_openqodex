@@ -47,7 +47,7 @@ import type {
 } from "@openqodex/core";
 import { sameProblemClass } from "./same-problem.js";
 import { ADAPTERS, IN_PROCESS, SETTINGS_FILES } from "./adapters/index.js";
-import { repoFacts, type RepoFacts } from "./detect.js";
+import { repoFacts, type Project, type RepoFacts } from "./detect.js";
 import { DISABLED_REASON, NOTHING_TO_CHECK, selectScanners, type ScannerChoice } from "./select.js";
 import type { SettingsFile } from "./adapters/index.js";
 import type { SettingsReader } from "./shared-settings.js";
@@ -90,9 +90,6 @@ type Outcome = {
   findings: StaticFinding[];
   secrets: string[];
   checked?: { token: string; files: string[] }[];
-  // The findings the adapter left out by framework: in the trail, never
-  // candidates.
-  otherFramework?: StaticFinding[];
 };
 
 export async function runScanners(args: {
@@ -161,10 +158,6 @@ export async function runScanners(args: {
   const raw = outcomes.flatMap((o) => toRunDirRelative(o.findings, args.repoDir));
   // The stage that dropped each finding one did: the trail's record of it.
   const dropped = new Map<StaticFinding, TrailStage>();
-  // What an adapter left out by framework never reaches a filter: the trail
-  // records it at its own stage.
-  const otherFramework = outcomes.flatMap((o) => toRunDirRelative(o.otherFramework ?? [], args.repoDir));
-  for (const f of otherFramework) dropped.set(f, "other-framework");
   const lineStage = (f: StaticFinding): TrailStage | null => {
     if (coverage ? overlapsCoverage(f, coverage) : inScope.has(f.filePath)) return null;
     return inScope.has(f.filePath) ? "changed-lines" : "outside-change";
@@ -249,7 +242,7 @@ export async function runScanners(args: {
       ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
     };
   });
-  const { trail, omitted, stages } = trailOf(raw.concat(otherFramework, own), { dropped, absorbed, ids, order, secrets });
+  const { trail, omitted, stages } = trailOf(raw.concat(own), { dropped, absorbed, ids, order, secrets });
 
   const kept = new Map<ScannerSource, number>();
   for (const c of candidates) kept.set(c.source, (kept.get(c.source) ?? 0) + 1);
@@ -257,11 +250,7 @@ export async function runScanners(args: {
     ...o.summary,
     keptCount: kept.get(o.summary.scanner) ?? 0,
     reason: o.summary.reason === null ? null : oneLine(redactCut(o.summary.reason, secrets)),
-    // A matched secret can sit in a folder's or a manifest's name.
-    ...(o.summary.excludedFamilies
-      ? { excludedFamilies: o.summary.excludedFamilies.map((e) => ({ ...e, project: redactSecrets(e.project, secrets), why: redactSecrets(e.why, secrets), sources: e.sources.map((s) => redactSecrets(s, secrets)) })) }
-      : {}),
-    stages: stages.get(o.summary.scanner) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0, otherFramework: 0 },
+    stages: stages.get(o.summary.scanner) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 },
   }));
   args.onProgress?.(stageLine(scanners, candidates.length));
 
@@ -298,7 +287,7 @@ const TRAIL_MAX = 5000;
 
 // Kept and merged first: past TRAIL_MAX the trail loses the findings
 // farthest from the change, never a candidate or what dedup folded into one.
-const TRAIL_ORDER: readonly TrailStage[] = ["kept", "merged", "disabled-rule", "other-framework", "fixture", "changed-lines", "outside-change"];
+const TRAIL_ORDER: readonly TrailStage[] = ["kept", "merged", "disabled-rule", "fixture", "changed-lines", "outside-change"];
 
 // One trail entry per finding, a scanner's or OpenQodex's own: the stage
 // that dropped it, the candidate it became (`id`), or the candidate dedup
@@ -323,14 +312,13 @@ function trailOf(
     "changed-lines": "changedLines",
     fixture: "fixtures",
     "disabled-rule": "rules",
-    "other-framework": "otherFramework",
     merged: "merged",
   };
   const staged = findings.map((f) => {
     const stage: TrailStage = at.dropped.get(f) ?? (at.absorbed.has(f) ? "merged" : "kept");
     const field = COUNTED[stage];
     if (field !== undefined) {
-      const counts = stages.get(f.source) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0, otherFramework: 0 };
+      const counts = stages.get(f.source) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 };
       counts[field] += 1;
       stages.set(f.source, counts);
     }
@@ -370,15 +358,21 @@ function customSelection(custom: CustomAdapter, changedPaths: string[]): Scanner
   }
 }
 
-// The projects the changed files belong to, with their frameworks, for the
+// The projects the changed files belong to, with their frameworks and the
+// frameworks each is known not to use (detect.ts knownAbsent), for the
 // scan record. A file in no project adds nothing.
-function projectsOf(paths: string[], facts: RepoFacts): { root: string; frameworks: string[] }[] {
-  const seen = new Map<string, string[]>();
+function projectsOf(paths: string[], facts: RepoFacts): { root: string; frameworks: string[]; absent: string[] }[] {
+  const seen = new Map<string, { project: Project; files: string[] }>();
   for (const p of paths) {
     const project = facts.project(p);
-    if (project && !seen.has(project.root)) seen.set(project.root, project.frameworks);
+    if (!project) continue;
+    const entry = seen.get(project.root) ?? { project, files: [] };
+    entry.files.push(p);
+    seen.set(project.root, entry);
   }
-  return [...seen].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, frameworks]) => ({ root, frameworks }));
+  return [...seen]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([root, { project, files }]) => ({ root, frameworks: project.frameworks, absent: facts.knownAbsent(project, files) }));
 }
 
 const SETTINGS_MAX_BYTES = 1024 * 1024;
@@ -611,9 +605,7 @@ function skippedOutcome(
 // to findings (one Go module of several failed, one .sql file unreadable)
 // keeps the findings and the note. A note (a folder held back) is the reason
 // of a scanner that ran. An adapter that chose not to run is disabled, with
-// its reason. The rule packs it consumed (semgrep) go on its summary, and so
-// do the rule families it left out by framework (semgrep), whose findings
-// count in its rawCount.
+// its reason. The rule packs it consumed (semgrep) go on its summary.
 function ranOutcome(
   scanner: ScannerSource,
   result: AdapterResult,
@@ -622,25 +614,22 @@ function ranOutcome(
   cost: Cost,
 ): Outcome {
   if (result.skipped) return skippedOutcome(scanner, "disabled", result.skipped, started, cost);
-  const otherFramework = result.excluded?.findings ?? [];
-  const failed = result.error !== null && result.findings.length === 0 && otherFramework.length === 0;
+  const failed = result.error !== null && result.findings.length === 0;
   return {
     summary: {
       scanner,
       status: failed ? "failed" : "ran",
       version,
-      rawCount: result.findings.length + otherFramework.length,
+      rawCount: result.findings.length,
       keptCount: 0,
       durationMs: Date.now() - started,
       ...cost,
       reason: result.error ?? result.note ?? null,
       ...(result.rules ? { rules: result.rules } : {}),
-      ...(result.excluded && !failed ? { excludedFamilies: result.excluded.families } : {}),
     },
     findings: result.findings,
     secrets: result.secrets ?? [],
     checked: failed ? [] : result.checked,
-    otherFramework,
   };
 }
 

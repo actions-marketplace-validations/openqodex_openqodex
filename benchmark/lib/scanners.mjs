@@ -82,12 +82,6 @@
 //    with recall zero: a language scanner's remit counts toward the gap only
 //    where it ran; where only a scanner that did not run holds an item, the
 //    item's language remit is unknown.
-// Added with semgrep's framework gate:
-// 10. A truth item's finding the gate dropped (a rule of another framework's
-//     family, the trail's other-framework stage) leaves no trace, so a scanner
-//     change that gates too much reads as a plain miss: it is a filter loss
-//     like one the changed-line or fixture filter made, and the scanner's
-//     removed counts name the gate.
 import { langOf } from "../../packages/graph/dist/index.js";
 import { DROP_CLASSES, classifyReportDrops, countDrops } from "./drops.mjs";
 import { semgrepPacksOf } from "./external.mjs";
@@ -95,10 +89,7 @@ import { OWN_RULES, findersOf } from "./scan-score.mjs";
 import { names, normPath, originOf, population } from "./score.mjs";
 
 // Bump on any change to a definition above or a rule below.
-export const SCANNERS_VERSION = 2;
-// The trail stages that drop a raw finding before dedup; one on a truth item
-// is a filter loss.
-export const FILTER_STAGES = Object.freeze(["changed-lines", "fixture", "other-framework"]);
+export const SCANNERS_VERSION = 1;
 // Scanners that take any file: their finds say nothing about a language.
 export const GENERIC = Object.freeze(["semgrep", "gitleaks"]);
 // A scanner with one of these statuses was handed files and did not look.
@@ -214,7 +205,7 @@ export function analyseSample({ job, spec, scan, report = null, submission = nul
       remit[name] = !inFile ? "out" : reachable === true ? "in" : reachable === false ? "unreachable" : "unknown";
     }
     const filterLosses = (scan.trail ?? [])
-      .filter((e) => FILTER_STAGES.includes(e.stage) && onItem({ file: normPath(e.file), start: e.lineStart, end: Math.max(e.lineEnd ?? e.lineStart, e.lineStart) }, item))
+      .filter((e) => (e.stage === "changed-lines" || e.stage === "fixture") && onItem({ file: normPath(e.file), start: e.lineStart, end: Math.max(e.lineEnd ?? e.lineStart, e.lineStart) }, item))
       .map((e) => ({ scanner: finderOfToken(e.token), token: e.token, stage: e.stage }));
     return {
       id: item.id,
@@ -379,7 +370,7 @@ const emptyScanner = () => ({
   samples: { ran: 0, noFiles: 0, notRun: {}, own: 0 },
   versions: [],
   raw: 0,
-  removed: { changedLines: 0, fixtures: 0, rules: 0, merged: 0, otherFramework: 0 },
+  removed: { changedLines: 0, fixtures: 0, rules: 0, merged: 0 },
   removedRecorded: true,
   kept: 0,
   mergedAway: 0,
