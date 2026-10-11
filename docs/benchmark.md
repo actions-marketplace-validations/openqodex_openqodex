@@ -282,6 +282,41 @@ For a miss, the first cause that holds wins:
 
 A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
 
+## The acceptance rule
+
+A change to the reviewer is kept only when the benchmark shows it is better at what it set out to do and loses no more than it said it might on everything else. Three scripts apply the rule. None of them calls a model.
+
+```
+node benchmark/loop/compare.mjs <parent run> <candidate run> [--config <c>] [--parent-repeats 1] [--candidate-repeats 2] [--specs <folder>]
+node benchmark/loop/decide.mjs --change <RC-id> --pair <parent run>=<candidate run> [--pair ...] [--stage 1|2|3] [--aa <run a>=<run b>]
+node benchmark/loop/validate.mjs --run <saved run> [--specs <folder>]
+```
+
+`compare.mjs` scores both runs from their saved files and prints, for each metric, the parent, the candidate, the change with its bounds, and a verdict: better, worse, mixed or no change. A metric with two bounds (recall and precision while some findings are unresolved) has two readings, so each is tested at half the error share: two readings never get two chances to call a change. Splitting is chosen over asking both bounds to agree, because a change in one bound alone, such as new findings nobody has ruled on, is a change worth reporting. When nothing is unresolved, the two bounds are the same and are tested once at the whole share. `decide.mjs` applies the rule to a change recorded by `benchmark/loop/propose.mjs` and appends one line to `benchmark/index/ledger/reviewer.jsonl`, by writing the whole ledger to a temp file and renaming it into place under the ledger's lock, so a reader never sees half a line. A side may name a configuration and repeats: `<run>#<config>@<repeats>`.
+
+The rule:
+
+- Before any run, the change's record names one primary metric and an acceptable loss for every metric. The losses never change after that.
+- The candidate is compared with the parent on the same cases, under the same scoring rules, review by review on first attempts. The unit is the case on planted suites and the repository group on real ones, with every repeat inside it. Three reviews of one case that agree count as one case, not three.
+- The test is a paired sign-flip test. If the change did nothing, either run's result for a case is as likely to be the other's, so swapping them case by case shows how large a change noise alone makes. A bootstrap is not used: it calls a change carried by a few cases significant however many cases there are.
+- Each decision is a look. The t-th look in the ledger, counting every stage of every change, may be wrong with a chance of 0.05 / (t (t + 1)), split equally across the nine metrics. All looks together spend at most 0.05, so a loop that decides often does not accept noise sooner or later.
+- Unresolved findings count against the change. The candidate's precision is read at its lower bound and the parent's at its upper bound, and a truth item an unresolved finding may have found counts as missed by the candidate and found by the parent.
+- A change is accepted only when the primary is better on the target path, every other metric (and the primary everywhere else) stays strictly inside its loss (a bound on the loss fails) on every path the change touches, every reviewer and each stratum (planted, real and both pooled), no hard rule breaks, every pair has three repeats, and the laptop path has both Claude Code and Codex.
+- The hard rules refuse a change whatever the bounds say: a critical issue found in two or more of three reviews is found in one or fewer; a clean change draws findings in two or more of three reviews; a review is newly cut short by the budget; a review is complete while a changed range was not delivered.
+- A change is reverted when a metric is past its loss even at its better bound, the primary is clearly worse, or a hard rule breaks. Otherwise a bound wider than its loss is inconclusive, and an inconclusive change is reverted too.
+- Stage 1 (one repeat) can only stop a change. At stage 2, a change whose only open question is the primary may add repeats 4 to 6 (stage 3). Stage 3 is final.
+- An A/A pair (two runs of the parent build) only sets how many cases and repeats a decision needs. Where its half-width is wider than a loss, the decision is inconclusive until cases or repeats are added. It never widens a loss.
+- A metric no review measures, such as findings on clean changes in a run with no clean case, is named in the reason and does not decide.
+
+`validate.mjs` must pass before the first live decision, and again after any change to the rule's files. `decide.mjs` refuses to write while the last `validation` line in the ledger fails or names an older version of the rule. The version is a hash of the rule's files, which `validate.mjs` takes before it loads them and again before it writes its line; a file edited in between refuses the line. It tests the rule two ways:
+
+- Simulated: 1,000 sequences of 10 looks, each look a change that does nothing, drawn from a world shaped like the saved runs (50 cases with three truth items each, 20 clean cases, three repeats). None may be accepted. The same world must accept a real gain at least once, and a constructed harmful change must be reverted.
+- Saved: each pair of disjoint repeats of each configuration of a saved run is a change that does nothing, and the same pair with every hit removed from half the cases is a harmful one. Neither may be accepted.
+
+The validation of the rule as it stands, `VAL-0002`, ran on `2026-10-08-752b77f` scored with `--specs cases-v2`, after review fixes to the first version (`VAL-0001`, the same results). No simulated change that does nothing was accepted in 1,000 sequences: the primary passed by chance at 1 of 10,000 looks, and a guard stopped it. The constructed harmful change was reverted, and the simulated gain was accepted in 4 of 40 tries. On the saved run, none of 18 decisions on changes that do nothing and none of 18 on harmful changes accepted anything, and all 18 harmful ones were reverted on evidence. On the same run, graph off against graph on is inconclusive on recall (1.8 points better at the bound worse for the change, one-sided p 0.25), and repeat 1 against 2, 1 against 3 and 2 against 3 show no change on any metric in either configuration.
+
+The simulation also says how many cases a decision needs. With about 50 cases and 20 clean ones, the size of the laptop acceptance set, the rule accepted a gain that finds three quarters of what the parent missed in 4 of 40 tries: precision and severity agreement vary too much there for their 2 and 3 point losses at one ninth of a look's error budget. With 200 cases it accepted about half. The A/A pairs say how many cases or repeats each decision needs before it runs.
+
 ## What it does not measure
 
 - How often real changes carry these bugs. The cases are small and synthetic; the share of bugs found here is not the share found in your repository.
