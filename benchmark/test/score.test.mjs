@@ -4,9 +4,19 @@
 // by one line, a wrong kind, two bugs on one line, a bug found at its second
 // location, an accepted side issue, a request for a test, a false finding, a
 // clean change (complete, incomplete and missing), and what a brief did and
-// did not say.
-import { describe, expect, it } from "vitest";
-import { classify, regressions, runDifferences, scoreBrief, scoreSample, specDifferences, summarize, value } from "../lib/score.mjs";
+// did not say. Score format 3 is checked on saved runs of the shape run.mjs
+// writes, built in temp folders: its population of planned first attempts,
+// its rules block, and the planted-only precision kept apart.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import { RULES, RULES_VERSION, classify, regressions, rulesDifferences, rulesHash, runDifferences, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
+import { planJobs, sampleRecord } from "../lib/runner.mjs";
+import { loadRun, renderV3, scoreRun } from "../score.mjs";
+import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+
+afterAll(removeTempDirs);
 
 const bug = (id, file, lines, anchorLine, kind, severity, mentions, extra = {}) => ({ id, file, lines, anchor: { line: anchorLine, text: "x" }, mentions, kind, severity, found_by: ["reasoning"], truth: "t", ...extra });
 
@@ -236,5 +246,160 @@ describe("summing and comparing runs", () => {
     expect(runDifferences(a, { ...a, caseHashes: { x: "2" } })).toEqual(["the case x changed between the runs (its files or its spec)"]);
     expect(specDifferences({ x: spec }, { x: { ...spec, extras: [] } })).toEqual(["the spec of x differs between the runs"]);
     expect(specDifferences({ x: spec }, { x: spec })).toEqual([]);
+  });
+});
+
+// --- score format 3 ---
+
+const write = (path, text) => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
+};
+
+const HASH = "ab".repeat(32);
+const CASE_ID = `planted/hand@${HASH.slice(0, 8)}`;
+const CONFIG = "claude-graph-on";
+
+// The jobs run.mjs plans for the hand case: one configuration, `repeat` repeats.
+const planned = (repeat) => planJobs({ cases: ["hand"], caseIds: { hand: CASE_ID }, reviewers: ["claude"], graph: ["on"], repeat }).jobs;
+
+// A saved run of the hand case, as run.mjs leaves it: the manifest with every
+// planned job, the run's own spec, and one folder per attempt (a retry is
+// <repeat>-attempt<n>), each with its sample.json and, when the review wrote
+// one, its report.
+function savedRun({ repeat, attempts }) {
+  const out = tempDir("oq-bench-v3-");
+  const jobs = planned(repeat);
+  const manifest = {
+    version: 3,
+    started_at: "2026-10-10T10:00:00.000Z",
+    build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersion: "0.14.0" },
+    reviewers: { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5" } },
+    cases: ["hand"],
+    caseHashes: { hand: HASH },
+    caseIds: [CASE_ID],
+    configs: [CONFIG],
+    repeat,
+    planned: jobs.length,
+    jobs: jobs.map(({ jobId, caseId, config, repeat: r }) => ({ jobId, caseId, config, repeat: r })),
+    ended: { how: "finished", why: null },
+  };
+  write(join(out, "manifest.json"), JSON.stringify(manifest));
+  write(join(out, "cases", "hand.json"), JSON.stringify(spec));
+  for (const a of attempts) {
+    const job = jobs.find((j) => j.repeat === a.repeat);
+    const dir = join(out, "samples", "hand", CONFIG, a.attempt === 1 ? String(a.repeat) : `${a.repeat}-attempt${a.attempt}`);
+    const rec = sampleRecord({ job, attempt: a.attempt, result: { code: a.report ? 0 : 2, signal: null, wallMs: 30_000 }, report: a.report, who: null, startedAt: "t", failure: a.report ? null : { cause: "no report.json" }, stopped: null });
+    write(join(dir, "sample.json"), JSON.stringify(rec));
+    if (a.report) write(join(dir, "report", "report.json"), JSON.stringify(a.report));
+  }
+  return out;
+}
+
+const SQLI = finding("app/search.py", 14, "security", "SQL injection");
+const ASK = finding("app/other.py", 5, "maintainability", "Changed formatting has no covering test");
+
+describe("a rule constant changes without a version bump, and old and new scores are compared as equal", () => {
+  // One hash per rules version, added when the version is bumped and never
+  // edited: a change to a constant, a list, the rule order or the matching
+  // code changes the hash, and this test fails until RULES_VERSION is bumped
+  // in lib/score.mjs and the new version's hash is added here.
+  const KNOWN_RULES = { 3: "aa8006fc32655ab30f394055c4ea617df24c05a660cfa971144f17c4fa650768" };
+
+  it("pins the hash of the rules block, constants and matching code included, to its version", () => {
+    expect(RULES.version).toBe(RULES_VERSION);
+    expect(RULES.hash).toBe(rulesHash(RULES));
+    expect(RULES.hash, "a scoring rule changed: bump RULES_VERSION in lib/score.mjs and add the new version's hash to KNOWN_RULES").toBe(KNOWN_RULES[RULES_VERSION]);
+    // score.mjs runs in plain Node, not in the test runner, and must write the hash pinned here.
+    const url = new URL("../lib/score.mjs", import.meta.url).href;
+    const inNode = execFileSync(process.execPath, ["--input-type=module", "-e", `import { RULES } from ${JSON.stringify(url)}; process.stdout.write(RULES.hash);`], { encoding: "utf8" });
+    expect(inNode).toBe(RULES.hash);
+  });
+
+  it("changes the hash when any rule changes: a constant, the test-only lists, the rule order, the precision table or the code", () => {
+    const changes = [{ nearLines: 4 }, { aacrLineK: 2 }, { testOnly: { ...RULES.testOnly, kinds: ["style"] } }, { order: [...RULES.order].reverse() }, { precision: { ...RULES.precision, wrong: ["false", "near"] } }, { code: "0".repeat(64) }];
+    for (const change of changes) expect(rulesHash({ ...RULES, ...change })).not.toBe(RULES.hash);
+  });
+
+  it("never calls two scores comparable when their rules differ, under one version or two", () => {
+    expect(rulesDifferences(RULES, RULES)).toEqual([]);
+    const edited = { ...RULES, nearLines: 4 };
+    edited.hash = rulesHash(edited);
+    expect(rulesDifferences(RULES, edited).join("\n")).toMatch(/without a version bump/);
+    expect(rulesDifferences(RULES, { ...edited, version: RULES_VERSION + 1 }).join("\n")).toMatch(new RegExp(`version ${RULES_VERSION} then ${RULES_VERSION + 1}`));
+    // A score written before the rules block (format 2) has no rules to compare.
+    expect(rulesDifferences(RULES, undefined)).not.toEqual([]);
+  });
+
+  it("writes the rules block into every score", () => {
+    const { score } = scoreRun(loadRun(savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+    expect(score.version).toBe(3);
+    expect(score.rules).toEqual(RULES);
+  });
+});
+
+describe("a job that never started leaves the denominator", () => {
+  it("lists every planned job, with its id, before any job starts, and every attempt names its job and whether it is the first", () => {
+    const { jobs } = planJobs({ cases: ["hand", "other"], caseIds: { hand: CASE_ID, other: "planted/other@12345678" }, reviewers: ["claude"], graph: ["off", "on"], repeat: 2 });
+    expect(jobs).toHaveLength(8);
+    expect(new Set(jobs.map((j) => j.jobId)).size).toBe(8);
+    expect(jobs[0]).toMatchObject({ jobId: `${CASE_ID}/claude-graph-off/1`, caseId: CASE_ID, case: "hand", config: "claude-graph-off", repeat: 1 });
+    const retry = sampleRecord({ job: jobs[0], attempt: 2, result: { code: 0, signal: null, wallMs: 1 }, report: null, who: null, startedAt: "t", failure: null, stopped: null });
+    expect(retry).toMatchObject({ jobId: jobs[0].jobId, caseId: CASE_ID, firstAttempt: false });
+  });
+
+  it("counts a planned job with no attempt as unstarted: it misses every bug of its case and adds no finding", () => {
+    const { score, outcomes } = scoreRun(loadRun(savedRun({ repeat: 2, attempts: [{ repeat: 1, attempt: 1, report: report([SQLI]) }] })));
+    const c = score.byConfig[CONFIG];
+    expect(c.population).toEqual({ planned: 2, complete: 1, incomplete: 0, failed: 0, unstarted: 1, retries: 0, retryCostUsd: 0 });
+    expect(score.population).toMatchObject({ planned: 2, unstarted: 1, jobsFrom: "manifest" });
+    expect(c.issueRecall.all).toEqual({ hit: 1, of: 10 });
+    expect(c.precision.lower).toEqual({ hit: 1, of: 1 });
+    expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([true, false]);
+    expect(score.perCase[CONFIG][CASE_ID].issueRecall).toEqual({ hit: 1, of: 10 });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ jobId: `${CASE_ID}/${CONFIG}/1`, caseId: CASE_ID, outcome: "hit", truthId: "sqli", evidenceKind: "frozen" });
+    expect(outcomes[0].findingId).toMatch(/^[0-9a-f]{64}$/);
+    // Counting only the saved attempts, as format 2 did, the job vanishes; the difference is stated.
+    expect(c.allAttempts.recall).toEqual({ hit: 1, of: 5 });
+    expect(renderV3(score)).toMatch(/every saved attempt/);
+  });
+});
+
+describe("a successful retry replaces a failed first attempt", () => {
+  it("scores the failed first attempt as a miss, and the retry only as a diagnostic with its cost", () => {
+    const { score, outcomes } = scoreRun(loadRun(savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: null }, { repeat: 1, attempt: 2, report: report([SQLI]) }] })));
+    const c = score.byConfig[CONFIG];
+    expect(c.population).toEqual({ planned: 1, complete: 0, incomplete: 0, failed: 1, unstarted: 0, retries: 1, retryCostUsd: 0.5 });
+    expect(c.issueRecall.all).toEqual({ hit: 0, of: 5 });
+    expect(c.precision.lower).toEqual({ hit: 0, of: 0 });
+    expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([false]);
+    expect(outcomes).toEqual([]);
+    // Format 2 scored both attempts; the difference is stated.
+    expect(c.allAttempts.recall).toEqual({ hit: 1, of: 10 });
+    expect(renderV3(score)).toMatch(/every saved attempt/);
+  });
+});
+
+describe("a planted-only precision with test requests set apart is pooled with real-suite precision", () => {
+  const job = (origin, repeat) => scoreJob({ job: { jobId: `${origin}/hand@abababab/c/${repeat}`, caseId: `${origin}/hand@abababab`, config: "c", repeat }, spec, report: report([SQLI, ASK]), brief: null, origin });
+
+  it("keeps today's planted rule in its own labelled block, and the precision every suite shares counts the test request", () => {
+    const planted = summarizeJobs([job("planted", 1)]);
+    expect(planted.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
+    expect(planted.plantedLegacy.label).toMatch(/planted/);
+    // The request for a test is a displayed finding nothing frozen rules on: wrong in the lower bound, right in the upper.
+    expect(planted.precision.lower).toEqual({ hit: 1, of: 2 });
+    expect(planted.precision.upper).toEqual({ hit: 2, of: 2 });
+  });
+
+  it("gives a real suite no planted block, and pools planted and real findings under one rule", () => {
+    const real = summarizeJobs([job("real", 1)]);
+    expect(real.plantedLegacy).toBeNull();
+    expect(real.precision.lower).toEqual({ hit: 1, of: 2 });
+    const pooled = summarizeJobs([job("planted", 1), job("real", 2)]);
+    expect(pooled.precision.lower).toEqual({ hit: 2, of: 4 });
+    expect(pooled.precision.upper).toEqual({ hit: 4, of: 4 });
+    expect(pooled.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
   });
 });

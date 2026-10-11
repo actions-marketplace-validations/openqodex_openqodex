@@ -66,6 +66,12 @@
 // 14. Two runs with different models, reviewers, machines or settings read
 //    as a product change: the comparison names every such difference above
 //    its table.
+// Score format 3 adds its own failure list, below the format 2 code.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { parseCaseId } from "./cases.mjs";
+
 export const NEAR_LINES = 3;
 export const SEVERITY_ORDER = ["critical", "major", "minor", "nitpick", "info"];
 
@@ -104,20 +110,23 @@ export const TEST_ONLY = /\b(no|missing|lacks?|lacking|without|needs?|add)\b[^.]
 export const TEST_ONLY_KINDS = ["maintainability", "style"];
 
 // The outcome of one finding against a spec. Duplicates are decided per
-// review (scoreSample), since they depend on the other findings.
-export function classify(finding, spec) {
+// review (scoreSample), since they depend on the other findings. The
+// test-only rule holds for planted cases, which ship no tests by design;
+// `testOnly: false` (a real pull request) skips it.
+export function classify(finding, spec, { testOnly = true } = {}) {
   const file = normPath(finding.file_path);
   const start = finding.line_number;
   const end = Math.max(finding.line_end ?? start, start);
   const text = findingText(finding);
   const bugs = spec.bugs ?? [];
 
-  if (TEST_ONLY_KINDS.includes(finding.category) && TEST_ONLY.test(String(finding.title ?? ""))) {
+  if (testOnly && TEST_ONLY_KINDS.includes(finding.category) && TEST_ONLY.test(String(finding.title ?? ""))) {
     return spec.clean ? { outcome: "false", testOnly: true } : { outcome: "test-gap" };
   }
 
-  const extra = (spec.extras ?? []).find((x) => normPath(x.file) === file && gap(start, end, x.lines) === 0 && names(x.mentions, text) && (!x.kind || x.kind.includes(finding.category)));
-  if (extra) return { outcome: "accepted", why: extra.why };
+  const extras = spec.extras ?? [];
+  const at = extras.findIndex((x) => normPath(x.file) === file && gap(start, end, x.lines) === 0 && names(x.mentions, text) && (!x.kind || x.kind.includes(finding.category)));
+  if (at !== -1) return { outcome: "accepted", why: extras[at].why, extra: at };
 
   const dist = (bug) => {
     const ds = locations(bug).filter((l) => l.file === file).map((l) => gap(start, end, l.lines));
@@ -197,7 +206,7 @@ export function shownFindings(report) {
 // One saved review of one case: `report` is report.json (null when the run
 // wrote none), `brief` is brief.md (null when absent), `row` is run.mjs's
 // record of the run (time, exit code).
-export function scoreSample({ spec, report, brief, row = {} }) {
+export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) {
   const findings = shownFindings(report).map((f) => ({
     file: normPath(f.file_path),
     line: f.line_number,
@@ -208,7 +217,7 @@ export function scoreSample({ spec, report, brief, row = {} }) {
     raised: f.candidate ?? null,
     source: f.source ?? null,
     title: f.title,
-    ...classify(f, spec),
+    ...classify(f, spec, { testOnly }),
   }));
   // A second hit on a bug already hit in this review is a duplicate.
   const hitBugs = new Set();
@@ -438,3 +447,310 @@ export function regressions(oldSamples, newSamples) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Score format 3: the population of planned first attempts, issue-level
+// precision as bounds, unique-issue precision and redundancy, the location
+// and planted-rule blocks kept apart and labelled, and the rules block. The
+// format 2 functions above stay as they are: format 3 is built on them, and
+// format 2 numbers (every saved attempt) are still computed beside it.
+//
+// Failure list, written before the code:
+// 15. A planned review that never started, or failed, leaves the
+//     denominator, so a crash looks like a better run: the population is
+//     every planned job's first attempt, from the manifest's `jobs` (or, for
+//     a run made before that list, from its cases, configurations and
+//     repeats); a job with no attempt is unstarted, and an unstarted or
+//     failed job misses every truth item of its case and adds no finding.
+// 16. A retry that succeeded replaces the failure before it, so a rerun
+//     picks the better result: a retry never enters the population; retries
+//     are counted apart with their cost.
+// 17. An unlisted finding counts as false, so a true issue nobody planted
+//     lowers precision for good, or as true, so noise raises it: nothing
+//     frozen rules on it, so it is unresolved, and precision is a pair of
+//     bounds (unresolved counted wrong, then right) until a person rules.
+//     A finding on a clean case is false, since the case is clean by spec.
+// 18. Two findings on one issue raise precision: precision counts every
+//     displayed finding, unique-issue precision counts each issue once, and
+//     redundancy is the share of displayed findings beyond one per issue.
+// 19. Today's planted precision, with test requests set apart, is pooled
+//     with real-suite numbers: it is kept in its own labelled block, over
+//     planted cases only, and the precision every suite shares counts every
+//     displayed finding under one rule.
+// 20. A line match is read as finding the issue: the location block (AACR's
+//     line rule) is labelled a diagnostic and never decides anything.
+// 21. A rule changes and old and new scores are compared as equal: every
+//     constant, list and the matching code are in a hashed rules block that
+//     each score carries, a test pins the hash to RULES_VERSION, and
+//     rulesDifferences() names any difference between two scores.
+export const RULES_VERSION = 3;
+export const AACR_LINE_K = 1;
+// The order classify() tries the rules in; the first that holds decides.
+export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
+// How each outcome counts in precision. Correct and wrong count the same in
+// both bounds; an unresolved one, which nothing frozen decides and no person
+// has ruled on, is wrong in the lower bound and right in the upper. A near
+// miss, a wrong kind and a request for a test are unresolved for precision
+// and never find a truth item.
+export const PRECISION = { correct: ["hit", "duplicate", "accepted"], wrong: ["false"], unresolved: ["unresolved", "near", "wrong-kind", "test-gap"] };
+const OUTCOMES = [...PRECISION.correct, ...PRECISION.unresolved, ...PRECISION.wrong];
+// The evidence behind an outcome that the frozen spec decides.
+const FROZEN = new Set(["hit", "duplicate", "accepted", "false"]);
+
+export const LOCATION_LABEL = "Location diagnostic: AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart). A board output; never an acceptance metric.";
+export const PLANTED_LEGACY_LABEL = "Only planted cases: the format 2 rule, with duplicates, accepted side issues and requests for a test set apart. Never pooled with real-suite precision.";
+export const ALL_ATTEMPTS_LABEL = "Every saved attempt, retries included and unstarted jobs left out, as score format 2 counted them. A diagnostic only.";
+
+// The kind of case a suite holds.
+const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected" };
+export const originOf = (suite) => ORIGINS[suite ?? "planted"] ?? null;
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+export const jobIdOf = (caseId, config, repeat) => `${caseId}/${config}/${repeat}`;
+export const caseSetHash = (ids) => sha256([...ids].sort().join("\n"));
+
+// The identity of a finding across runs: the case, the cited lines and the
+// whitespace-normalised text. The same text on the same lines of the same
+// case is the same finding; anything else is a different one.
+export const normText = (s) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "");
+export function findingId(caseId, f) {
+  const start = Number.isInteger(f.line_number) ? f.line_number : null;
+  const end = start === null ? null : Math.max(f.line_end ?? start, start);
+  return sha256(JSON.stringify([caseId, normPath(f.file_path), start, end, normText(f.title), normText(f.problem), normText(f.consequence), normText(f.fix)]));
+}
+
+// Format 3's outcome from classify()'s: an unlisted finding is unresolved,
+// except on a clean case, where the spec makes every finding false.
+export function outcomeOf(outcome, spec) {
+  return outcome === "false" && !spec.clean ? "unresolved" : outcome;
+}
+
+const treatment = (outcome) => (PRECISION.correct.includes(outcome) ? "correct" : PRECISION.wrong.includes(outcome) ? "wrong" : "unresolved");
+
+// The issue a finding raises: the truth item it finds, the side issue it
+// names, or itself (by findingId) until a person consolidates it with others.
+export function issueKey(f) {
+  if (f.outcome === "hit" || f.outcome === "duplicate") return `truth:${f.bug}`;
+  if (f.outcome === "accepted") return `extra:${f.extra}`;
+  return `finding:${f.findingId}`;
+}
+
+// AACR's line rule (L1), as a location diagnostic: a finding matches a truth
+// item on the same side of the same file when their lines overlap or lie at
+// most `k` lines apart. Greedy in truth order, then finding order; each takes
+// at most one of the other. knownNoise counts the findings that match only
+// rejected truth (valid: false).
+export function lineMatches(findings, truth, k = AACR_LINE_K) {
+  const near = (f, t) => (f.side ?? "right") === (t.side ?? "right") && locations(t).some((l) => l.file === f.file && gap(f.line, Math.max(f.end ?? f.line, f.line), l.lines) <= k);
+  const positive = truth.filter((t) => t.valid !== false);
+  const rejected = truth.filter((t) => t.valid === false);
+  const used = new Set();
+  let matches = 0;
+  for (const t of positive) {
+    const i = findings.findIndex((f, j) => !used.has(j) && near(f, t));
+    if (i === -1) continue;
+    used.add(i);
+    matches++;
+  }
+  const knownNoise = findings.filter((f) => rejected.some((t) => near(f, t)) && !positive.some((t) => near(f, t))).length;
+  return { matches, generated: findings.length, expected: positive.length, knownNoise };
+}
+
+// The jobs a run planned: the manifest's `jobs` when it has them, else (a
+// run made before the list existed) every repeat of every case and
+// configuration it names, with the saved attempts filling in what it does
+// not name. `attempts` are the saved attempts: { case, config, repeat }.
+export function plannedJobs(manifest, attempts) {
+  if (Array.isArray(manifest.jobs)) {
+    return { from: "manifest", jobs: manifest.jobs.map((j) => ({ jobId: j.jobId, caseId: j.caseId, case: parseCaseId(j.caseId)?.name ?? j.caseId, config: j.config, repeat: j.repeat })) };
+  }
+  const suite = manifest.suite ?? "planted";
+  const seen = (k) => [...new Set(attempts.map((a) => a[k]))].sort();
+  const cases = manifest.cases ?? seen("case");
+  const configs = manifest.configs ?? seen("config");
+  const repeat = manifest.repeat ?? Math.max(0, ...attempts.map((a) => a.repeat));
+  const idOf = (name) => (manifest.caseIds ?? []).find((id) => parseCaseId(id)?.name === name) ?? (manifest.caseHashes?.[name] ? `${suite}/${name}@${manifest.caseHashes[name].slice(0, 8)}` : `${suite}/${name}`);
+  const jobs = [];
+  for (let r = 1; r <= repeat; r++) for (const c of cases) for (const config of configs) jobs.push({ jobId: jobIdOf(idOf(c), config, r), caseId: idOf(c), case: c, config, repeat: r });
+  return { from: "derived", jobs };
+}
+
+// The population of a run: each planned job with its first attempt (null
+// when it never started). Retries, and first attempts of no planned job,
+// are kept apart; a saved attempt that names another job than its folder is
+// a problem.
+export function population(manifest, attempts) {
+  const { from, jobs } = plannedJobs(manifest, attempts);
+  const key = (x) => `${x.case}\0${x.config}\0${x.repeat}`;
+  const firsts = new Map(attempts.filter((a) => a.attempt === 1).map((a) => [key(a), a]));
+  const planned = new Set(jobs.map(key));
+  const problems = [];
+  const out = jobs.map((job) => {
+    const first = firsts.get(key(job)) ?? null;
+    if (typeof first?.row?.jobId === "string" && first.row.jobId !== job.jobId) problems.push(`${job.case}/${job.config}/${job.repeat}: its sample.json names the job ${first.row.jobId}, but the manifest plans ${job.jobId} there`);
+    return { ...job, first };
+  });
+  return { from, jobs: out, retries: attempts.filter((a) => a.attempt > 1), unplanned: attempts.filter((a) => a.attempt === 1 && !planned.has(key(a))), problems };
+}
+
+// One planned job, scored from its first attempt: `report` and `brief` are
+// that attempt's (null when it wrote none), and `started` is false for a job
+// with no attempt. `origin` is the kind of case (originOf).
+export function scoreJob({ job, spec, report = null, brief = null, row = {}, origin = "planted", started = true }) {
+  const planted = origin === "planted";
+  const base = scoreSample({ spec, report, brief, row: { ...row, config: job.config, repeat: job.repeat, attempt: 1 }, testOnly: planted });
+  const shown = shownFindings(report);
+  const findings = base.findings.map((f, index) => {
+    const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
+    return { ...g, issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
+  });
+  const counted = (list) => ({ correct: list.filter((x) => x === "correct").length, unresolved: list.filter((x) => x === "unresolved").length, of: list.length });
+  const issues = new Map(findings.map((f) => [f.issue, treatment(f.outcome)]));
+  return {
+    jobId: job.jobId,
+    caseId: job.caseId,
+    case: job.case ?? spec.id,
+    config: job.config,
+    repeat: job.repeat,
+    origin,
+    clean: spec.clean === true,
+    status: started ? base.status : "unstarted",
+    bugs: base.bugs,
+    findings,
+    controls: base.controls,
+    issueRecall: { all: base.recall, criticalMajor: add(base.bySeverity.critical, base.bySeverity.major) },
+    precision: counted(findings.map((f) => treatment(f.outcome))),
+    issues: counted([...issues.values()]),
+    location: lineMatches(base.findings, spec.bugs ?? []),
+    plantedLegacy: planted ? base.precision : null,
+    gaps: base.gaps,
+    callers: base.callers,
+    failures: started ? base.failures : [],
+    wallMs: base.wallMs,
+    reviewerMs: base.reviewerMs,
+    costUsd: base.costUsd,
+    turns: base.turns,
+    inputTokens: base.inputTokens,
+    outputTokens: base.outputTokens,
+  };
+}
+
+// Sums scored jobs (scoreJob) as ratios of sums; `retries` are the format 2
+// samples of the retries, counted with their cost and nothing else.
+export function summarizeJobs(jobs, retries = []) {
+  const count = (status) => jobs.filter((j) => j.status === status).length;
+  const total = (f) => jobs.reduce((a, j) => add(a, f(j)), ratio());
+  const sum = (list, f) => list.reduce((a, j) => a + f(j), 0);
+  const correct = sum(jobs, (j) => j.precision.correct);
+  const unresolved = sum(jobs, (j) => j.precision.unresolved);
+  const displayed = sum(jobs, (j) => j.precision.of);
+  const issuesCorrect = sum(jobs, (j) => j.issues.correct);
+  const issuesUnresolved = sum(jobs, (j) => j.issues.unresolved);
+  const distinct = sum(jobs, (j) => j.issues.of);
+  const recall = total((j) => j.issueRecall.all);
+  const lower = { hit: correct, of: displayed };
+  const p = value(lower);
+  const r = value(recall);
+  const matches = sum(jobs, (j) => j.location.matches);
+  const generated = sum(jobs, (j) => j.location.generated);
+  const expected = sum(jobs, (j) => j.location.expected);
+  const planted = jobs.filter((j) => j.origin === "planted");
+  const clean = jobs.filter((j) => j.clean);
+  const retryCosts = nums(retries.map((s) => s.costUsd));
+  const outcomes = {};
+  for (const o of OUTCOMES) {
+    const n = sum(jobs, (j) => j.findings.filter((f) => f.outcome === o).length);
+    if (n > 0) outcomes[o] = n;
+  }
+  return {
+    population: {
+      planned: jobs.length,
+      complete: count("complete"),
+      incomplete: count("incomplete"),
+      failed: count("failed"),
+      unstarted: count("unstarted"),
+      retries: retries.length,
+      retryCostUsd: retries.length > 0 && retryCosts.length === 0 ? null : retryCosts.reduce((a, b) => a + b, 0),
+    },
+    issueRecall: { all: recall, criticalMajor: total((j) => j.issueRecall.criticalMajor) },
+    precision: { lower, upper: { hit: correct + unresolved, of: displayed }, unresolved },
+    uniqueIssuePrecision: { lower: { hit: issuesCorrect, of: distinct }, upper: { hit: issuesCorrect + issuesUnresolved, of: distinct } },
+    redundancy: { hit: displayed - distinct, of: displayed },
+    f1: p + r === 0 ? 0 : (2 * p * r) / (p + r),
+    cleanFindingsPerCase: { findings: sum(clean, (j) => j.precision.of), cases: clean.length },
+    controls: total((j) => j.controls),
+    location: { label: LOCATION_LABEL, precision: { hit: matches, of: generated }, recall: { hit: matches, of: expected }, matches, generated, expected, knownNoise: sum(jobs, (j) => j.location.knownNoise) },
+    plantedLegacy: planted.length === 0 ? null : { label: PLANTED_LEGACY_LABEL, precision: planted.reduce((a, j) => add(a, j.plantedLegacy), ratio()) },
+    outcomes,
+    brief: { gaps: total((j) => j.gaps), callers: total((j) => j.callers) },
+    causes: null,
+    wallMs: stats(jobs.map((j) => j.wallMs)),
+    reviewerMs: stats(jobs.map((j) => j.reviewerMs)),
+    costUsd: stats(jobs.map((j) => j.costUsd)),
+    turns: stats(jobs.map((j) => j.turns)),
+    inputTokens: stats(jobs.map((j) => j.inputTokens)),
+    outputTokens: stats(jobs.map((j) => j.outputTokens)),
+  };
+}
+
+// Why two scores' numbers cannot be compared as they stand: their rules
+// differ, by version or, under one version, by hash. Empty when the rules
+// are the same.
+export function rulesDifferences(a, b) {
+  const va = a?.version ?? null;
+  const vb = b?.version ?? null;
+  const ha = a?.hash ?? null;
+  const hb = b?.hash ?? null;
+  const rescore = "rescore both runs with one scorer before comparing them";
+  if (va !== vb) return [`the scoring rules differ: version ${va} then ${vb}; ${rescore}`];
+  if (ha === null || hb === null) return [`the scoring rules of one score are not recorded; ${rescore}`];
+  if (ha !== hb) return [`the scoring rules differ under one version (${va}): a rule changed without a version bump; ${rescore}`];
+  return [];
+}
+
+// The rules block every format 3 score carries. Its hash covers each
+// constant and list, and the source of every function that decides an
+// outcome, a match or a counted number, so any change to a rule changes it.
+// The source is read from this file on disk, not from Function.toString(),
+// because a test runner rewrites imported names inside a loaded function,
+// and the tests and the command must hash the same text.
+const RULE_CODE = ["normPath", "findingText", "locations", "gap", "names", "classify", "shownFindings", "scoreSample", "normText", "findingId", "outcomeOf", "treatment", "issueKey", "lineMatches", "plannedJobs", "population", "scoreJob", "summarizeJobs"];
+
+// The text of one top-level declaration of this file: a one-line const, or
+// a function from its first line to the brace that closes it at column 0.
+function declaration(source, name) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((l) => l.startsWith(`function ${name}(`) || l.startsWith(`export function ${name}(`) || l.startsWith(`const ${name} = `) || l.startsWith(`export const ${name} = `));
+  if (start === -1) throw new Error(`lib/score.mjs: no top-level declaration of ${name}, whose source the rules hash covers`);
+  if (lines[start].startsWith("const ") || lines[start].startsWith("export const ")) return lines[start];
+  const end = lines.findIndex((l, i) => i > start && l === "}");
+  return lines.slice(start, end + 1).join("\n");
+}
+
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+
+export function rulesHash(block) {
+  const rest = { ...block };
+  delete rest.hash;
+  return sha256(canonical(rest));
+}
+
+const SOURCE = readFileSync(fileURLToPath(import.meta.url), "utf8");
+const RULES_BLOCK = {
+  version: RULES_VERSION,
+  nearLines: NEAR_LINES,
+  aacrLineK: AACR_LINE_K,
+  overlap: "A finding's lines are [line_number, max(line_end, line_number)]. A hit needs a gap of 0 between them and one of the truth item's locations (its file and lines, or an entry of also), paths normalised.",
+  words: { rule: "A mention matches case-insensitively, without stemming, at the start of the text or after a character that is not a letter or digit.", fields: ["title", "problem", "consequence", "fix", "description", "suggested_change"] },
+  testOnly: { pattern: TEST_ONLY.source, flags: TEST_ONLY.flags, kinds: TEST_ONLY_KINDS, applies: "planted cases only; on a clean case such a finding is false" },
+  order: OUTCOME_ORDER,
+  precision: PRECISION,
+  population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
+  issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue; any other finding is its own issue, by findingId, until a person consolidates it.",
+  code: sha256(RULE_CODE.map((name) => declaration(SOURCE, name).replace(/\s+/g, " ").trim()).join("\n")),
+};
+export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });

@@ -21,12 +21,32 @@
 //    every file git sees counted, staged or not, untracked included.
 // 7. The Codex model is guessed or taken from a variable Codex never reads:
 //    it is read from the header Codex prints, or recorded as unknown.
+// 8. A planned review that never starts leaves no trace, so the scorer
+//    cannot count it as a miss: every job gets an id before the run starts,
+//    the manifest lists them all, and every attempt names its job and
+//    whether it is the job's first attempt.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
+import { jobIdOf } from "./score.mjs";
+
+// The jobs of a run in run order: per repeat, every case, every
+// configuration, with the configuration order alternating by repeat so
+// drift lands on no one configuration. `caseIds` maps each case name to its
+// frozen id; a job's id is <caseId>/<config>/<repeat>.
+export function planJobs({ cases, caseIds, reviewers, graph, repeat }) {
+  const configs = [];
+  for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  const jobs = [];
+  for (let r = 1; r <= repeat; r++) {
+    const order = r % 2 === 1 ? configs : [...configs].reverse();
+    for (const c of cases) for (const cfg of order) jobs.push({ jobId: jobIdOf(caseIds[c], cfg.id, r), caseId: caseIds[c], case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
+  }
+  return { configs, jobs };
+}
 
 export function attemptDir(out, job, attempt) {
   const base = join(out, "samples", job.case, job.config);
@@ -52,6 +72,9 @@ export function failureOf(result, report) {
 // The saved record of one attempt, whatever happened to it.
 export function sampleRecord({ job, attempt, result, report, who, startedAt, failure, stopped }) {
   return {
+    jobId: job.jobId ?? null,
+    caseId: job.caseId ?? null,
+    firstAttempt: attempt === 1,
     case: job.case,
     config: job.config,
     reviewer: job.reviewer,

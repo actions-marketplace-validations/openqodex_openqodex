@@ -16,7 +16,8 @@
 // --out names another:
 //   manifest.json                     the build and where it came from, the machine, the
 //                                     reviewers with their versions and models, the
-//                                     settings, the plan, how the first invocation ended
+//                                     settings, every planned job with its id (`jobs`),
+//                                     how the first invocation ended
 //   resumes.jsonl                     one line when a resume starts and one when it ends
 //   cases/<case>.json                 the specs this run used (the scorer reads these)
 //   samples/<case>/<config>/<n>/      one attempt at one review: report/ (the CLI's
@@ -94,7 +95,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, failureOf, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, failureOf, planJobs, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
+import { RULES_VERSION } from "./lib/score.mjs";
 
 const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run] [--draft] [--allow-retired]";
 
@@ -203,19 +205,6 @@ function machine() {
   return { platform: platform(), release: release(), arch: arch(), cpu: cpus()[0]?.model ?? null, cpus: cpus().length, memoryGb: Math.round(totalmem() / 1024 ** 3), node: process.version };
 }
 
-// The jobs in run order: per repeat, every case, every configuration, with
-// the configuration order alternating by repeat (failure 7).
-function plan(o) {
-  const configs = [];
-  for (const reviewer of o.reviewers) for (const g of o.graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
-  const jobs = [];
-  for (let r = 1; r <= o.repeat; r++) {
-    const order = r % 2 === 1 ? configs : [...configs].reverse();
-    for (const c of o.cases) for (const cfg of order) jobs.push({ case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
-  }
-  return { configs, jobs };
-}
-
 function sanitize(text, replacements) {
   let out = text;
   for (const [from, to] of replacements) if (from) out = out.split(from).join(to);
@@ -287,7 +276,9 @@ async function main() {
   }
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
-  const { configs, jobs } = plan(o);
+  // The jobs in run order, each with its id (lib/runner.mjs planJobs; failure 7).
+  const idOf = Object.fromEntries(o.cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
+  const { configs, jobs } = planJobs({ cases: o.cases, caseIds: idOf, reviewers: o.reviewers, graph: o.graph, repeat: o.repeat });
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
   // A review counts as done once its first attempt is saved, failed or not.
   const saved = (job) => existsSync(join(attemptDir(out, job, 1), "sample.json"));
@@ -298,7 +289,7 @@ async function main() {
   const todo = jobs.filter((j) => !saved(j));
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
   console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
-  const caseIds = o.cases.map((c) => caseIdFromHash(c, hashes[c]));
+  const caseIds = o.cases.map((c) => idOf[c]);
   console.log(`Cases: ${caseIds.join(", ")}`);
   if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
   if (o.dryRun) {
@@ -364,7 +355,9 @@ async function main() {
     }
     appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: todo.length })}\n`);
   } else {
-    manifest = { version: 2, started_at: new Date().toISOString(), ...settings, planned: jobs.length, ended: null };
+    // Every planned job, written before the first one starts, so a job that
+    // never starts still counts against the run (score format 3).
+    manifest = { version: 3, started_at: new Date().toISOString(), ...settings, rulesVersion: RULES_VERSION, planned: jobs.length, jobs: jobs.map(({ jobId, caseId, config, repeat }) => ({ jobId, caseId, config, repeat })), ended: null };
     mkdirSync(out, { recursive: true });
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   }
