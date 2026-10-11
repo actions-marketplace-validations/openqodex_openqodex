@@ -124,6 +124,13 @@ node benchmark/run.mjs --reviewers model:scripted --suite aacr --subset dev-smok
 node benchmark/run.mjs --materialise-only --reviewers model:gpt-6.1-sol --suite aacr --split test
 ```
 
+- When the clone cache's commit history is too shallow for git to say whether the merge base is an ancestor of the head, the proof deepens that repository's commits cache from the head: 64 commits, then twice as deep each time, up to the merge base search's own bound of 1,048,576. This happens when a later case of the same repository fetched at a smaller depth, which cuts history, or when the commits cache was moved away. The proof records the depths fetched and the commits added (`ancestor.deepening`), and a case still unanswered at the bound is not proved.
+- `benchmark/proof.mjs` proves the outside suites before any model is spent on them. It runs `run.mjs --materialise-only` on every Martian case (all held out) and on both sides of AACR's split, in the shape a model review reads (`--shape laptop` for the other), into `benchmark/results/proof-<time>/`. It then writes one summary per suite, committed as `benchmark/index/proof/<suite>-<date>.json`: per case its licence class, upstream's base, head and merge base, the merge base's and the head's tree ids beside the built ones, whether the merge base is an ancestor of the head, any deepening, and the reason when the case did not build or prove. A case counts as proved only when its proof is ok, it has a licence class, its built trees are upstream's and its merge base is proved an ancestor of its head. A usable case with no proof is a failure. The summary names this machine's folders only by placeholders (`<cache>`, `<tmp>`, `<home>`, `<checkout>`, `<path>`), and it is not written while one remains. `--from <folder>` summarises an earlier proof folder again. It exits 0 when every case is proved and 1 when one is not.
+
+```
+node benchmark/proof.mjs [--suite martian|aacr] [--shape server|laptop] [--from <folder>]
+```
+
 - The manifest of a model run also names the board a real suite comes from, with the commit `benchmark/outside/boards.json` pins (`board`), and the models the provider named as answering, per configuration (`servedModels`).
 
 `build-cli.mjs` records the commit, the tree the build read (every file the repository sees, staged or not, untracked included) and a hash of the bundle and its assets. `run.mjs` refuses a bundle with another hash, so a run never names a commit its bundle was not built from. "Dirty" in a run means the tree the bundle was built from differs from the commit's tree. The model each reviewer used is read from its own output: Claude Code names it in its answer, and Codex prints it in its header.
