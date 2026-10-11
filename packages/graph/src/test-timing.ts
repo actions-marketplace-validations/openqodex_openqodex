@@ -120,12 +120,12 @@ export function expectLinear(what: string, small: number, large: number): void {
 // jumps between 256 KiB and 1 MiB) is still seen.
 // CPU time is not free of a busy runner either. On the Linux runner, one
 // input's CPU time per byte varied 2.1 times between readings while other
-// test files ran (issue #116), so a linear reader can read as eight times.
-// A look that reaches the bound is therefore followed by a second look:
-// both inputs are read again, one after the other, and compared with each
-// other. The check fails only when both looks reach the bound. A busy
-// stretch does not come back the same way; work that grows faster than its
-// input does.
+// test files ran (issue #116), so a linear reader can read as eight times,
+// and a quadratic reader whose smaller input is read in a busy stretch as
+// under eight. So when the first reading of each reaches the bound, both
+// inputs are read twice more, in turn (smaller, larger, smaller, larger),
+// and the check compares the median of each input's three readings: one
+// reading in a busy stretch moves neither median, whichever way it points.
 export async function expectLinearRepeated(what: string, smallAt: (repeats: number) => number | Promise<number>, largeAt: (repeats: number) => number | Promise<number>, opts: { maxRepeats?: number } = {}): Promise<void> {
   const maxRepeats = opts.maxRepeats ?? MAX_REPEATS;
   let repeats = 1;
@@ -134,20 +134,24 @@ export async function expectLinearRepeated(what: string, smallAt: (repeats: numb
     repeats *= 2;
     small = await smallAt(repeats);
   }
-  type Look = { small: number; large: number };
-  const growth = (look: Look) => look.large / Math.max(look.small, NOISE_MS);
-  const told = (look: Look) => `${look.small.toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${look.large.toFixed(1)} ms for as many on four times it`;
-  const first: Look = { small, large: await largeAt(repeats) };
-  let best = first;
-  let said = `${what}: ${told(first)}`;
-  if (growth(first) >= MAX_GROWTH) {
-    const second: Look = { small: await smallAt(repeats), large: await largeAt(repeats) };
-    said += `; read again, ${told(second)}`;
-    if (growth(second) < growth(first)) best = second;
+  const smalls = [small];
+  const larges = [await largeAt(repeats)];
+  const growth = () => median(larges) / Math.max(median(smalls), NOISE_MS);
+  if (growth() >= MAX_GROWTH) {
+    for (let i = 1; i < READINGS; i++) {
+      smalls.push(await smallAt(repeats));
+      larges.push(await largeAt(repeats));
+    }
   }
-  expect(growth(best), said).toBeLessThan(MAX_GROWTH);
-  expect(best.large / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
+  const all = (ms: number[]) => ms.map((m) => m.toFixed(1)).join(", ");
+  const said = `${what}: ${median(smalls).toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${median(larges).toFixed(1)} ms for as many on four times it${smalls.length > 1 ? ` (the medians of readings taken in turn: ${all(smalls)} ms and ${all(larges)} ms)` : ""}`;
+  expect(growth(), said).toBeLessThan(MAX_GROWTH);
+  expect(median(larges) / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
 }
+
+// The most readings of each input expectLinearRepeated takes, and the middle one.
+const READINGS = 3;
+const median = (ms: number[]): number => [...ms].sort((a, b) => a - b)[Math.floor(ms.length / 2)] ?? Number.NaN;
 
 // `run` repeated `repeats` times, as a CPU time for expectLinearRepeated.
 export const repeatedCpuMs = (run: () => unknown) => (repeats: number): Promise<number> =>

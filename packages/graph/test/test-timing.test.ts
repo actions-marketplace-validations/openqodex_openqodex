@@ -10,11 +10,11 @@
 // 3. Work that stays under the noise however often it runs is held to a
 //    ratio anyway, or to no bound at all.
 // 4. A run is repeated without end.
-// 5. A busy stretch of a shared runner slows the readings of one input and
-//    not the other's, so a linear reader reads as eight times and more
-//    (the Linux runner's CPU time per byte of one input varied 2.1 times
-//    between readings, issue #116); and a second look that keeps the
-//    first look's quiet reading still fails when the stretch outlasts it.
+// 5. A busy stretch of a shared runner slows some readings of one input and
+//    not the other's (the Linux runner's CPU time per byte of one input
+//    varied 2.1 times between readings, issue #116): a linear reader reads
+//    as eight times and more, and a quadratic reader or a step read once in
+//    the stretch reads as under eight (16 read as 7.6, 8.4 as 4.2).
 // The costs here are numbers chosen to have each shape; no reader runs.
 import { describe, expect, it } from "vitest";
 import { expectLinear, expectLinearRepeated, NOISE_MS } from "../src/test-timing.js";
@@ -56,23 +56,20 @@ describe("the growth check", () => {
     await expect(expectLinearRepeated("work that jumps past the floor", (r) => 0.01 * r, () => 500, { maxRepeats: 64 })).rejects.toThrow();
   });
 
-  it("reads both inputs again before it fails, and fails only a growth both looks show (5)", async () => {
-    // The larger input's first reading falls in a busy stretch: nine times the smaller.
-    const large: number[] = [];
-    await expectLinearRepeated(
-      "a linear reader whose larger input was read in a busy stretch",
-      (r) => 60 * r,
-      (r) => {
-        large.push(r);
-        return (large.length === 1 ? 540 : 240) * r;
-      },
-    );
-    expect(large).toEqual([1, 1]);
-    // The stretch starts after the smaller input's first reading and outlasts the
-    // second look, which reads both inputs inside it and compares them with each other.
-    let smallReads = 0;
-    await expectLinearRepeated("a linear reader in a stretch that outlasts the second look", (r) => (++smallReads === 1 ? 60 : 120) * r, (r) => 540 * r);
-    // A quadratic reader is sixteen times the smaller on both looks.
-    await expect(expectLinearRepeated("a quadratic reader", (r) => 60 * r, (r) => 960 * r)).rejects.toThrow();
+  it("reads both inputs in turn before it fails, and compares the medians of their readings (5)", async () => {
+    // Each input's readings per run, in the order the check takes them; the last repeats.
+    const readings = (...ms: number[]) => {
+      let next = 0;
+      return (r: number) => (ms[Math.min(next++, ms.length - 1)] ?? 0) * r;
+    };
+    // A linear reader whose larger input is read once in a busy stretch: nine times the smaller.
+    await expectLinearRepeated("a linear reader, its larger input read once in a busy stretch", readings(60), readings(540, 240, 240));
+    // A linear reader in a stretch that starts after the smaller input's first reading and outlasts the rest.
+    await expectLinearRepeated("a linear reader in a stretch that outlasts the readings", readings(60, 120), readings(540));
+    // A quadratic reader and a step in the cost per byte, their smaller input read once in a busy stretch.
+    await expect(expectLinearRepeated("a quadratic reader, its smaller input read once in a busy stretch", readings(60, 126, 60), readings(960))).rejects.toThrow();
+    await expect(expectLinearRepeated("a step, its smaller input read once in a busy stretch", readings(60, 120, 60), readings(504))).rejects.toThrow();
+    // A quadratic reader on a quiet runner.
+    await expect(expectLinearRepeated("a quadratic reader", readings(60), readings(960))).rejects.toThrow();
   });
 });
