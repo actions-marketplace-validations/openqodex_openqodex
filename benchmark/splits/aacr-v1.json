@@ -1,0 +1,804 @@
+{
+  "version": 1,
+  "name": "aacr-v1",
+  "suite": "aacr",
+  "rule": "The unit is the repository group: a repository with its renames and fork source as GitHub names them, every repository of the same name, and the repositories Martian names as the originals of its evaluation copies. Every group holding a Martian or ReviewBench pull request goes to held-out first. Within each language, the other groups, ordered by sha256(salt, NUL, group), are taken one at a time: a group goes to held-out while held-out stays within half a pull request of 20% of that language's usable pull requests (counting the reserved ones), and to development otherwise. dev-laptop takes 12 development pull requests from each third by change size, in seeded order, one language at a time. dev-smoke takes the smallest development pull requests, one language at a time.",
+  "salt": "openqodex-aacr-split-v1",
+  "share": {
+    "dev": 0.8,
+    "test": 0.2
+  },
+  "dataset": {
+    "repo": "alibaba/aacr-bench",
+    "revision": "68a569759289a83654a59d06db2a72910edf0a4a",
+    "positive": "7a4a0e7046ffd1b8f41f951480bbb618d23d38d9f67364f38aabcda121a50be3",
+    "negative": "3859efe063c0e59852113c64feb81c18b1a1fcd2ce9d92d08a48e9d8d9879ebd"
+  },
+  "reservedFrom": {
+    "martian": {
+      "repo": "withmartian/code-review-benchmark",
+      "commit": "e616e849755441da38f18bf3adba2c9583b03803",
+      "prUrls": 50,
+      "listSha256": "7b19ad2a48f3c81e3501d5124eb346b2583f0f32429453bfeecd4e98a9e8373c",
+      "originals": 13
+    },
+    "reviewbench": {
+      "repo": "review-bench/ReviewBench",
+      "commit": "e7d0683507b227ff20a9230120240d8ab2a97bbe",
+      "prUrls": 219,
+      "listSha256": "caab650da2f35d69a5ad50241817f7498efd7c3e09d03797da08a4b1ea2cdc32"
+    }
+  },
+  "groups": [
+    {
+      "group": "alibaba/spring-ai-alibaba",
+      "members": [
+        "alibaba/spring-ai-alibaba"
+      ],
+      "language": "Java",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "58e0d74862a96ad04038a6cd8c27b1497cbee1d2884ca494360fee05b539e9a9"
+    },
+    {
+      "group": "appwrite/appwrite",
+      "members": [
+        "appwrite/appwrite"
+      ],
+      "language": "PHP",
+      "prs": 1,
+      "split": "test",
+      "reserved": null,
+      "order": "0a1c75d303fa8f4ac44512778b08dc544814a579603279cd07285b905adb8586"
+    },
+    {
+      "group": "astral-sh/uv",
+      "members": [
+        "astral-sh/uv"
+      ],
+      "language": "Rust",
+      "prs": 2,
+      "split": "test",
+      "reserved": null,
+      "order": "c8725f1c096d0cad2156cd81007c0f36f696b947086ed722f32d83bc0ec1b63b"
+    },
+    {
+      "group": "bitcoin/bitcoin",
+      "members": [
+        "bitcoin/bitcoin"
+      ],
+      "language": "C++",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "6c3e3afb1f070e1b980408c2161db9918cfd91a527989330e3c5f319dd9f2965"
+    },
+    {
+      "group": "bluewave-labs/checkmate",
+      "members": [
+        "bluewave-labs/checkmate"
+      ],
+      "language": "JavaScript",
+      "prs": 2,
+      "split": "test",
+      "reserved": null,
+      "order": "2abf1d0041adafd25687fd907288fc34cc5c0ca7213b6bea21b1a897eac78849"
+    },
+    {
+      "group": "browser-use/browser-use",
+      "members": [
+        "browser-use/browser-use"
+      ],
+      "language": "Python",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "548f4edb7d9397ab1bec8cf5b079aef4d3e64671f60b5cebf6ec1fa7e966b4c3"
+    },
+    {
+      "group": "cherryhq/cherry-studio",
+      "members": [
+        "cherryhq/cherry-studio"
+      ],
+      "language": "TypeScript",
+      "prs": 2,
+      "split": "test",
+      "reserved": null,
+      "order": "1a931eee31da2869223f0b905c15ad455469b007ed453a95c77b39a71b5249d7"
+    },
+    {
+      "group": "clickhouse/clickhouse",
+      "members": [
+        "clickhouse/clickhouse"
+      ],
+      "language": "C++",
+      "prs": 12,
+      "split": "dev",
+      "reserved": null,
+      "order": "e33b11f8e250b49985b3de5e28b7464b85f262292ea915827f8c7b48f81245dd"
+    },
+    {
+      "group": "cline/cline",
+      "members": [
+        "cline/cline"
+      ],
+      "language": "TypeScript",
+      "prs": 7,
+      "split": "dev",
+      "reserved": null,
+      "order": "44296320a368367c29137a9f8cd6ba30b855353898a9b2a94d7e0e5b02dac0fc"
+    },
+    {
+      "group": "comfyanonymous/comfyui",
+      "members": [
+        "comfy-org/comfyui",
+        "comfyanonymous/comfyui"
+      ],
+      "language": "Python",
+      "prs": 5,
+      "split": "dev",
+      "reserved": null,
+      "order": "129b8aadc40d40e9385793fc0243a3b5ba42d55441c65bb18292fbcd0b577a64"
+    },
+    {
+      "group": "dbeaver/dbeaver",
+      "members": [
+        "dbeaver/dbeaver"
+      ],
+      "language": "Java",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "06ec1cd5cffdbc876266c724f22d5e0a1158232bbc2e8d5f0e7b2bb3a5f4a044"
+    },
+    {
+      "group": "dotnet/aspnetcore",
+      "members": [
+        "dotnet/aspnetcore"
+      ],
+      "language": "C#",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "9f7e5b51070a53e095c01ab2d030c411506291012b756f7ad515956892f84ec0"
+    },
+    {
+      "group": "electron/electron",
+      "members": [
+        "electron/electron"
+      ],
+      "language": "C++",
+      "prs": 4,
+      "split": "test",
+      "reserved": null,
+      "order": "2bfe3c25f4135c8af79cee949e98e0b4f194b5ab2da13d0f18daad52afd29ccd"
+    },
+    {
+      "group": "facebook/react",
+      "members": [
+        "facebook/react",
+        "react/react"
+      ],
+      "language": "JavaScript",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "6feb7cae11e927c083b9692164e04612ef53e4accc64c64c398540fba5dd97bb"
+    },
+    {
+      "group": "filamentphp/filament",
+      "members": [
+        "filamentphp/filament"
+      ],
+      "language": "PHP",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "e526072ad41b8048155a2deabc0e32b13a0e57fedfa289204872ae9fe3a85acb"
+    },
+    {
+      "group": "freecad/freecad",
+      "members": [
+        "freecad/freecad"
+      ],
+      "language": "C++",
+      "prs": 11,
+      "split": "dev",
+      "reserved": null,
+      "order": "69e476a731286ce73171c287a39f60163b660ae9dce6e071ee9b3432362d91f6"
+    },
+    {
+      "group": "gofr-dev/gofr",
+      "members": [
+        "gofr-dev/gofr"
+      ],
+      "language": "Go",
+      "prs": 6,
+      "split": "dev",
+      "reserved": null,
+      "order": "48f07c5a06fb7364b78515ecef309d1bbe2e47e043572b8c4880077580c1a361"
+    },
+    {
+      "group": "google-gemini/gemini-cli",
+      "members": [
+        "google-gemini/gemini-cli"
+      ],
+      "language": "TypeScript",
+      "prs": 7,
+      "split": "dev",
+      "reserved": null,
+      "order": "0e973a8179cb3679e752215a3471e76a0a7affcbb159440428a7fc4e793a18bc"
+    },
+    {
+      "group": "immich-app/immich",
+      "members": [
+        "immich-app/immich"
+      ],
+      "language": "TypeScript",
+      "prs": 7,
+      "split": "dev",
+      "reserved": null,
+      "order": "c316d1bb016c0ce11665b2f058fd89340dfef6a9d661bd0d3c1b7253e076ccda"
+    },
+    {
+      "group": "infiniflow/ragflow",
+      "members": [
+        "infiniflow/ragflow"
+      ],
+      "language": "Python",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "2a99c3bb82f7de233653b392f2cf28e731bc258d1ded1313781a08b434af6bf7"
+    },
+    {
+      "group": "juspay/hyperswitch",
+      "members": [
+        "juspay/hyperswitch"
+      ],
+      "language": "Rust",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "5390cb573b3ad4d95e38a19083a01a2cd997a171fe4ab33e9ae0c5c6ebc55832"
+    },
+    {
+      "group": "kestra-io/kestra",
+      "members": [
+        "kestra-io/kestra"
+      ],
+      "language": "Java",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "93eb501bef572a052a45668679903c50724e0dea672b6750ce10c568148ccf48"
+    },
+    {
+      "group": "keycloak/keycloak",
+      "members": [
+        "ai-code-review-evaluation/keycloak-greptile",
+        "keycloak/keycloak"
+      ],
+      "language": "Java",
+      "prs": 7,
+      "split": "test",
+      "reserved": [
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/ai-code-review-evaluation/keycloak-greptile/pull/1",
+          "original": "https://github.com/keycloak/keycloak/pull/41249"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/32918"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/33832"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/36880"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/36882"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/37038"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/37429"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/37634"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/38446"
+        },
+        {
+          "board": "martian",
+          "prUrl": "https://github.com/keycloak/keycloak/pull/40940"
+        }
+      ],
+      "order": null
+    },
+    {
+      "group": "langflow-ai/langflow",
+      "members": [
+        "langflow-ai/langflow"
+      ],
+      "language": "Python",
+      "prs": 4,
+      "split": "test",
+      "reserved": null,
+      "order": "25a842e221e70e883c849e86c32c17b8084ffc0a6045f8ae7cff718c8b664763"
+    },
+    {
+      "group": "laravel/framework",
+      "members": [
+        "laravel/framework"
+      ],
+      "language": "PHP",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "d7173b4a34613d7dd88a290e233faff39ecd90955afa4719fe0d4d6a2fd9a4a1"
+    },
+    {
+      "group": "libsdl-org/sdl",
+      "members": [
+        "libsdl-org/sdl"
+      ],
+      "language": "C",
+      "prs": 2,
+      "split": "test",
+      "reserved": null,
+      "order": "4f389f5000155c060bfc3bb8962475920f1946000bb843067b5eb524aebf01f0"
+    },
+    {
+      "group": "linera-io/linera-protocol",
+      "members": [
+        "linera-io/linera-protocol"
+      ],
+      "language": "Rust",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "69d15205737a6b6d4daedde30c2d0f6b0bfa46685c0c88de576fd57e796213ba"
+    },
+    {
+      "group": "lvgl/lvgl",
+      "members": [
+        "lvgl/lvgl"
+      ],
+      "language": "C",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "5c0b88a6ca4ae43ba5faf1bfef49b0d8ac35f6a67fcc47a66b2331492b6471c4"
+    },
+    {
+      "group": "microsoft/powertoys",
+      "members": [
+        "microsoft/powertoys"
+      ],
+      "language": "C#",
+      "prs": 1,
+      "split": "test",
+      "reserved": null,
+      "order": "56d6f4024467edd779d16fb1c9f1e48eb5db608c2d86752a52176ddf30b183ef"
+    },
+    {
+      "group": "microsoft/semantic-kernel",
+      "members": [
+        "microsoft/semantic-kernel"
+      ],
+      "language": "C#",
+      "prs": 1,
+      "split": "test",
+      "reserved": null,
+      "order": "0937a9de0757276d02759de87854b0edc068e95078c9d0e655abaa0c25a6f2cf"
+    },
+    {
+      "group": "microsoft/typescript-go",
+      "members": [
+        "microsoft/typescript-go"
+      ],
+      "language": "Go",
+      "prs": 6,
+      "split": "dev",
+      "reserved": null,
+      "order": "2f28a56dfd6f72a33e22c7e4d51dcf0acca609f30225eab32f2672808cc5e3b4"
+    },
+    {
+      "group": "mrdoob/three.js",
+      "members": [
+        "mrdoob/three.js"
+      ],
+      "language": "JavaScript",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "cadfe5055e56a8c2a8b0239a8e1ecffe6ced48f58858b698d5e0d4edcf2a9252"
+    },
+    {
+      "group": "mudler/localai",
+      "members": [
+        "mudler/localai"
+      ],
+      "language": "Go",
+      "prs": 1,
+      "split": "test",
+      "reserved": null,
+      "order": "1a3c598c1cf93bac7a9ea78d929aaa01c08e100215681282cbd9d089d649b817"
+    },
+    {
+      "group": "nextcloud/server",
+      "members": [
+        "nextcloud/server"
+      ],
+      "language": "PHP",
+      "prs": 1,
+      "split": "test",
+      "reserved": null,
+      "order": "d4d75bde7ae802e4b9035d44e36189050fa9ece93a1b9c8678868e316d22b363"
+    },
+    {
+      "group": "ollama/ollama",
+      "members": [
+        "ollama/ollama"
+      ],
+      "language": "Go",
+      "prs": 6,
+      "split": "dev",
+      "reserved": null,
+      "order": "f58a54e93a58ff75bc401dc69d9480e42f5ba8056ecc6bf283184dba54570a57"
+    },
+    {
+      "group": "openai/codex",
+      "members": [
+        "openai/codex"
+      ],
+      "language": "Rust",
+      "prs": 1,
+      "split": "dev",
+      "reserved": null,
+      "order": "d9df8892eba8186e2bb65367cac910c51da9e589bf183a0fea6ff534c174f674"
+    },
+    {
+      "group": "opencv/opencv",
+      "members": [
+        "opencv/opencv"
+      ],
+      "language": "C++",
+      "prs": 3,
+      "split": "test",
+      "reserved": null,
+      "order": "00e85ddcf0cdbb83637c975948abc6d00f763d84f0ad4b4d2b6f0e586add4bea"
+    },
+    {
+      "group": "powershell/powershell",
+      "members": [
+        "powershell/powershell"
+      ],
+      "language": "C#",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "bf1428cf1890e303c3bcaa128d7fd83f1e2e69248264f1a7e8867522283b5a14"
+    },
+    {
+      "group": "ppy/osu",
+      "members": [
+        "ppy/osu"
+      ],
+      "language": "C#",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "d623251583763965336b2aacb8dd4e2cb5e9f16470ee385e82cc5d6a94915cef"
+    },
+    {
+      "group": "sveltejs/svelte",
+      "members": [
+        "sveltejs/svelte"
+      ],
+      "language": "JavaScript",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "5a9f707e27759eb2bed5d878c564c3f55ba7b21806049d193691be2133156cc5"
+    },
+    {
+      "group": "symfony/symfony",
+      "members": [
+        "symfony/symfony"
+      ],
+      "language": "PHP",
+      "prs": 3,
+      "split": "dev",
+      "reserved": null,
+      "order": "1ebabee8372b648827f006e0fe284f3ef3d06d82acb964c679128f3371b7907d"
+    },
+    {
+      "group": "unionlabs/union",
+      "members": [
+        "unionlabs/union"
+      ],
+      "language": "Rust",
+      "prs": 1,
+      "split": "dev",
+      "reserved": null,
+      "order": "e83c95ff74382b7e98c764774daf3030460e6343971edee5d90399860926d83f"
+    },
+    {
+      "group": "valkey-io/valkey",
+      "members": [
+        "valkey-io/valkey"
+      ],
+      "language": "C",
+      "prs": 5,
+      "split": "dev",
+      "reserved": null,
+      "order": "05a49a31bcf63ba8bd5ff650399d3cf8db2ce6703bd6b13f167344d31e18e245"
+    },
+    {
+      "group": "vllm-project/vllm",
+      "members": [
+        "vllm-project/vllm"
+      ],
+      "language": "Python",
+      "prs": 5,
+      "split": "dev",
+      "reserved": null,
+      "order": "ca50d2f48f04b5fc64a871f852db6813b9f1ba5c4e5d2d19caa0863747c2b63e"
+    },
+    {
+      "group": "wavetermdev/waveterm",
+      "members": [
+        "wavetermdev/waveterm"
+      ],
+      "language": "Go",
+      "prs": 3,
+      "split": "test",
+      "reserved": null,
+      "order": "70cb9e449d095ad9526e9ed9440301d3d5143789e2b3c48f720e1fcb6d6bb5ff"
+    }
+  ],
+  "cases": {
+    "dev": [
+      "ClickHouse__ClickHouse-72920",
+      "ClickHouse__ClickHouse-73546",
+      "ClickHouse__ClickHouse-74070",
+      "ClickHouse__ClickHouse-74715",
+      "ClickHouse__ClickHouse-75218",
+      "ClickHouse__ClickHouse-75474",
+      "ClickHouse__ClickHouse-80345",
+      "ClickHouse__ClickHouse-80391",
+      "ClickHouse__ClickHouse-80597",
+      "ClickHouse__ClickHouse-82441",
+      "ClickHouse__ClickHouse-85266",
+      "ClickHouse__ClickHouse-85873",
+      "FreeCAD__FreeCAD-18688",
+      "FreeCAD__FreeCAD-19411",
+      "FreeCAD__FreeCAD-19426",
+      "FreeCAD__FreeCAD-19977",
+      "FreeCAD__FreeCAD-20156",
+      "FreeCAD__FreeCAD-20336",
+      "FreeCAD__FreeCAD-20612",
+      "FreeCAD__FreeCAD-20825",
+      "FreeCAD__FreeCAD-21257",
+      "FreeCAD__FreeCAD-22235",
+      "FreeCAD__FreeCAD-22744",
+      "PowerShell__PowerShell-24910",
+      "PowerShell__PowerShell-25780",
+      "alibaba__spring-ai-alibaba-869",
+      "alibaba__spring-ai-alibaba-903",
+      "bitcoin__bitcoin-31405",
+      "bitcoin__bitcoin-31886",
+      "bitcoin__bitcoin-32425",
+      "browser-use__browser-use-1482",
+      "browser-use__browser-use-3172",
+      "browser-use__browser-use-857",
+      "cline__cline-1808",
+      "cline__cline-2347",
+      "cline__cline-4676",
+      "cline__cline-4786",
+      "cline__cline-5177",
+      "cline__cline-5524",
+      "cline__cline-5955",
+      "comfyanonymous__ComfyUI-6033",
+      "comfyanonymous__ComfyUI-6542",
+      "comfyanonymous__ComfyUI-7952",
+      "comfyanonymous__ComfyUI-8446",
+      "comfyanonymous__ComfyUI-9560",
+      "dbeaver__dbeaver-36789",
+      "dbeaver__dbeaver-37564",
+      "dbeaver__dbeaver-38239",
+      "dbeaver__dbeaver-38915",
+      "dotnet__aspnetcore-59322",
+      "dotnet__aspnetcore-61006",
+      "dotnet__aspnetcore-62734",
+      "dotnet__aspnetcore-62936",
+      "facebook__react-32499",
+      "facebook__react-33059",
+      "filamentphp__filament-15181",
+      "filamentphp__filament-15217",
+      "filamentphp__filament-15267",
+      "filamentphp__filament-15756",
+      "gofr-dev__gofr-1325",
+      "gofr-dev__gofr-1355",
+      "gofr-dev__gofr-1395",
+      "gofr-dev__gofr-1617",
+      "gofr-dev__gofr-1681",
+      "gofr-dev__gofr-1696",
+      "google-gemini__gemini-cli-4163",
+      "google-gemini__gemini-cli-4828",
+      "google-gemini__gemini-cli-5793",
+      "google-gemini__gemini-cli-5819",
+      "google-gemini__gemini-cli-8154",
+      "google-gemini__gemini-cli-8797",
+      "google-gemini__gemini-cli-9177",
+      "immich-app__immich-14777",
+      "immich-app__immich-14874",
+      "immich-app__immich-16893",
+      "immich-app__immich-17124",
+      "immich-app__immich-17535",
+      "immich-app__immich-17879",
+      "immich-app__immich-18043",
+      "infiniflow__ragflow-5065",
+      "infiniflow__ragflow-6553",
+      "infiniflow__ragflow-6691",
+      "infiniflow__ragflow-7151",
+      "juspay__hyperswitch-7353",
+      "juspay__hyperswitch-8063",
+      "juspay__hyperswitch-9130",
+      "kestra-io__kestra-6844",
+      "kestra-io__kestra-7191",
+      "kestra-io__kestra-7381",
+      "laravel__framework-54226",
+      "laravel__framework-56591",
+      "linera-io__linera-protocol-3075",
+      "linera-io__linera-protocol-3151",
+      "linera-io__linera-protocol-4639",
+      "lvgl__lvgl-7602",
+      "lvgl__lvgl-8129",
+      "lvgl__lvgl-8164",
+      "lvgl__lvgl-8689",
+      "microsoft__typescript-go-1000",
+      "microsoft__typescript-go-1354",
+      "microsoft__typescript-go-1446",
+      "microsoft__typescript-go-691",
+      "microsoft__typescript-go-698",
+      "microsoft__typescript-go-831",
+      "mrdoob__three.js-30076",
+      "mrdoob__three.js-30750",
+      "mrdoob__three.js-31402",
+      "ollama__ollama-10135",
+      "ollama__ollama-12185",
+      "ollama__ollama-8938",
+      "ollama__ollama-9379",
+      "ollama__ollama-9654",
+      "ollama__ollama-9746",
+      "openai__codex-3212",
+      "ppy__osu-31232",
+      "ppy__osu-33423",
+      "sveltejs__svelte-15250",
+      "sveltejs__svelte-16232",
+      "symfony__symfony-60342",
+      "symfony__symfony-60956",
+      "symfony__symfony-61601",
+      "unionlabs__union-3414",
+      "valkey-io__valkey-1485",
+      "valkey-io__valkey-1651",
+      "valkey-io__valkey-1889",
+      "valkey-io__valkey-2059",
+      "valkey-io__valkey-2141",
+      "vllm-project__vllm-12608",
+      "vllm-project__vllm-15998",
+      "vllm-project__vllm-17425",
+      "vllm-project__vllm-19756",
+      "vllm-project__vllm-24425"
+    ],
+    "test": [
+      "CherryHQ__cherry-studio-5540",
+      "CherryHQ__cherry-studio-5637",
+      "appwrite__appwrite-9999",
+      "astral-sh__uv-11088",
+      "astral-sh__uv-12941",
+      "bluewave-labs__Checkmate-1897",
+      "bluewave-labs__Checkmate-2883",
+      "electron__electron-45671",
+      "electron__electron-46660",
+      "electron__electron-46982",
+      "electron__electron-47361",
+      "keycloak__keycloak-35645",
+      "keycloak__keycloak-36457",
+      "keycloak__keycloak-37465",
+      "keycloak__keycloak-37504",
+      "keycloak__keycloak-38723",
+      "keycloak__keycloak-40283",
+      "keycloak__keycloak-41672",
+      "langflow-ai__langflow-5388",
+      "langflow-ai__langflow-5896",
+      "langflow-ai__langflow-6044",
+      "langflow-ai__langflow-6652",
+      "libsdl-org__SDL-12718",
+      "libsdl-org__SDL-12964",
+      "microsoft__PowerToys-40814",
+      "microsoft__semantic-kernel-11361",
+      "mudler__LocalAI-4577",
+      "nextcloud__server-52846",
+      "opencv__opencv-26815",
+      "opencv__opencv-27284",
+      "opencv__opencv-27297",
+      "wavetermdev__waveterm-1755",
+      "wavetermdev__waveterm-1793",
+      "wavetermdev__waveterm-1998"
+    ]
+  },
+  "subsets": {
+    "dev-laptop": [
+      "ClickHouse__ClickHouse-74070",
+      "FreeCAD__FreeCAD-20156",
+      "FreeCAD__FreeCAD-20612",
+      "FreeCAD__FreeCAD-21257",
+      "browser-use__browser-use-1482",
+      "browser-use__browser-use-3172",
+      "cline__cline-1808",
+      "dbeaver__dbeaver-37564",
+      "dbeaver__dbeaver-38239",
+      "dbeaver__dbeaver-38915",
+      "dotnet__aspnetcore-59322",
+      "facebook__react-32499",
+      "facebook__react-33059",
+      "gofr-dev__gofr-1325",
+      "google-gemini__gemini-cli-8154",
+      "immich-app__immich-16893",
+      "immich-app__immich-17879",
+      "immich-app__immich-18043",
+      "juspay__hyperswitch-7353",
+      "kestra-io__kestra-7191",
+      "laravel__framework-54226",
+      "laravel__framework-56591",
+      "linera-io__linera-protocol-3151",
+      "lvgl__lvgl-7602",
+      "lvgl__lvgl-8689",
+      "microsoft__typescript-go-1000",
+      "microsoft__typescript-go-691",
+      "mrdoob__three.js-30076",
+      "ollama__ollama-8938",
+      "ollama__ollama-9654",
+      "ollama__ollama-9746",
+      "ppy__osu-33423",
+      "symfony__symfony-60342",
+      "valkey-io__valkey-1485",
+      "valkey-io__valkey-2141",
+      "vllm-project__vllm-19756"
+    ],
+    "dev-smoke": [
+      "cline__cline-1808",
+      "dotnet__aspnetcore-62936",
+      "infiniflow__ragflow-6691",
+      "laravel__framework-56591",
+      "linera-io__linera-protocol-3151"
+    ]
+  },
+  "counts": {
+    "usable": 166,
+    "dev": 132,
+    "test": 34,
+    "reserved": 7,
+    "groups": {
+      "dev": 31,
+      "test": 14,
+      "reserved": 1
+    }
+  }
+}

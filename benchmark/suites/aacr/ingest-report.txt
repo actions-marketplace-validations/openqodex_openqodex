@@ -1,0 +1,40 @@
+AACR-Bench ingest: alibaba/aacr-bench at 68a569759289a83654a59d06db2a72910edf0a4a (Apache-2.0)
+dataset/positive_samples.json sha256 7a4a0e7046ffd1b8f41f951480bbb618d23d38d9f67364f38aabcda121a50be3: 196 pull requests, 1506 accepted comments
+dataset/negative_samples.json sha256 3859efe063c0e59852113c64feb81c18b1a1fcd2ce9d92d08a48e9d8d9879ebd: 155 pull requests, 639 rejected comments
+
+Cases: 196 pull requests in 50 repositories, 1506 accepted comments. Usable: 166. Excluded: 30.
+Excluded, by reason:
+  licence unknown (GitHub names no single licence for the licence file): 30 pull requests in 5 repositories: elastic/elasticsearch 14 (NOASSERTION, LICENSE.txt), n8n-io/n8n 6 (NOASSERTION, LICENSE.md), mpv-player/mpv 4 (NOASSERTION, LICENSE.GPL), timescale/timescaledb 4 (NOASSERTION, LICENSE), nodejs/node 2 (NOASSERTION, LICENSE)
+  licence none (no licence file): 0 pull requests in 0 repositories
+  repository unknown to GitHub: 0 pull requests in 0 repositories
+Left out before the cases (not cases):
+  rejected comments of a pull request with no accepted comment: 4 pull requests, 8 rejected comments: opencv/opencv#27185 1, nodejs/node#56714 3, facebook/react#31844 3, vllm-project/vllm#19231 1
+  malformed or repeated rows: 0
+Truth notes: 1 comment with a reversed line range, kept as [low, high] with the raw range in meta; 8 accepted comments and 3 rejected comments on the left side, tagged deletion; 0 comments with a category outside AACR's four, given no category.
+
+Reserved: 1 repository group, 7 pull requests, to held-out before any group is hashed.
+  keycloak/keycloak: 7 pull requests; members ai-code-review-evaluation/keycloak-greptile, keycloak/keycloak; Martian 10 (ai-code-review-evaluation/keycloak-greptile#1 (original keycloak/keycloak/pull/41249), keycloak/keycloak#32918, keycloak/keycloak#33832, keycloak/keycloak#36880, keycloak/keycloak#36882, keycloak/keycloak#37038, keycloak/keycloak#37429, keycloak/keycloak#37634, keycloak/keycloak#38446, keycloak/keycloak#40940); ReviewBench 0
+  Same pull request in a reserved list: none
+  Martian: 50 pull requests in 7 repositories, 13 originals named for its evaluation copies; reached 1 group.
+  ReviewBench: 219 pull requests in 187 repositories; reached 0 groups.
+  Reserved-list repositories GitHub does not know (grouped by name only): 5: Nixbug/entebus-android-operator, RobertAgterhuis/myAgentic-IT-Project-team-V2, edercnj/ia-dev-environment, hughdidit/DAISy-Agency, whispr-messenger/mobile-app
+  Reserved-list links that are not pull request links: 0
+  Other groups of more than one repository: comfyanonymous/comfyui (comfy-org/comfyui, comfyanonymous/comfyui); facebook/react (facebook/react, react/react)
+
+Split aacr-v1 (by repository group, within each language, dev 0.8 and test 0.2, salt openqodex-aacr-split-v1):
+  development: 31 groups, 132 pull requests (79.5%)
+  held-out: 14 groups, 34 pull requests (20.5%): 7 reserved, 27 by hash
+  language      usable  dev  held-out  of which reserved
+  C                 11    9         2                  0
+  C#                10    8         2                  0
+  C++               33   26         7                  0
+  Go                22   18         4                  0
+  Java              16    9         7                  7
+  JavaScript         9    7         2                  0
+  PHP               11    9         2                  0
+  Python            21   17         4                  0
+  Rust              10    8         2                  0
+  TypeScript        23   21         2                  0
+dev-laptop: 36 pull requests, 12, 12, 12 from the three thirds by change size (the thirds end at 71 and 235 changed lines); C 4, C# 2, C++ 4, Go 6, Java 4, JavaScript 3, PHP 3, Python 3, Rust 2, TypeScript 5
+dev-smoke: 5 pull requests: cline__cline-1808 (11 lines, TypeScript), dotnet__aspnetcore-62936 (5 lines, C#), infiniflow__ragflow-6691 (11 lines, Python), laravel__framework-56591 (4 lines, PHP), linera-io__linera-protocol-3151 (8 lines, Rust)
+No held-out pull request was materialised, reviewed or scored by this ingest.

@@ -50,6 +50,15 @@ beforeAll(() => {
   git(bare, "update-ref", "refs/heads/main", base);
   git(work, "clone", "-q", "--shared", "--no-checkout", bare, clone);
   git(clone, "checkout", "-q", "--detach", base);
+  // A real suite's truth lives in the pinned raw files of the cache, which
+  // these tests never fetch, so the base drops the committed real suites;
+  // the test that needs one adds its own.
+  if (git(clone, "ls-tree", "--name-only", base, "benchmark/suites/").trim() !== "") {
+    git(clone, "rm", "-r", "-q", "benchmark/suites");
+    git(clone, "commit", "-q", "-m", "the base without the real suites");
+    base = git(clone, "rev-parse", "HEAD").trim();
+    git(clone, "push", "-q", "origin", `${base}:refs/heads/main`);
+  }
 });
 
 // Moves origin's main to a commit of the clone (the loop's trusted base).
