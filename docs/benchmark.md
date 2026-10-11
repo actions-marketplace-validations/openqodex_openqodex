@@ -36,7 +36,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (4), every constant and list above, and a hash over them and the code that applies them. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
+Every score carries its rules block: the rules version (5), every constant and list above, and a hash over them and the code that applies them. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 
@@ -75,29 +75,36 @@ From a clone, with Node 22, Claude Code installed and logged in:
 ```
 pnpm install
 node benchmark/build-cli.mjs           # pnpm build, and a record of the commit and tree it built from
-node benchmark/run.mjs --dry-run       # print the plan, run nothing
-node benchmark/run.mjs                 # 21 cases, graph off and on, 3 repeats: 126 reviews
+node benchmark/run.mjs --max-usd 25 --max-minutes 150 --dry-run   # print the plan and its estimate, run nothing
+node benchmark/run.mjs --max-usd 25 --max-minutes 150             # 21 cases, graph off and on, 3 repeats: 126 reviews
 node benchmark/score.mjs benchmark/results/<date>-<commit>
 ```
 
-The reviews run on your Claude Code account, at its usual cost. Useful flags of `run.mjs`: `--cases a,b`, `--graph off|on|off,on`, `--repeat N` (more than three needs `--allow-more`), `--reviewers claude,codex`, `--model <id>` (Claude Code only: it reaches the reviewer through `ANTHROPIC_MODEL`, and the run stops when Claude Code answers with another model; the Codex reviewer runs with `--ignore-user-config` and takes no model setting, so `--model` with Codex is refused), `--concurrency N` (default 1; parallel reviews slow each other), `--resume` (finish a stopped run).
+The reviews run on your Claude Code account, at its usual cost. Every run names what it may spend and how long it may take, `--max-usd` and `--max-minutes`, and prints its estimate before anything starts: the mean cost and time per review of the indexed run that covered the most of the planned cases, or a default table. A run whose estimate passes either limit is refused unless `--allow-over`. Before each review, no review starts when what is spent, plus the median review so far for each review running and the next, would pass `--max-usd`, or when the time gone plus the median review time would pass `--max-minutes`; `--max-tokens N` (for Codex, which reports tokens and no dollars) and `--max-reviews N` stop launches the same way. Claude Code and Codex report their cost only after a review, so these are forecast stops: the reviews already running finish, and a run can pass `--max-usd` by them. A run stopped by its budget ends as `budget` in its manifest, with the limit, whether it was a hard cap or a forecast, and what was spent; it is not a full run until `--resume`, with a larger limit, runs the rest.
+
+Hard caps that hold every model call before it is sent are in `benchmark/lib/budget.mjs`, for the model reviewers and the wording judge: a model review holds its whole `--review-max-usd` against the run's `--max-usd` before it starts, each call reserves its worst case inside that (its request at 3 UTF-8 bytes per character as input tokens, plus its whole output allowance, at the prices in `benchmark/outside/prices.json`) and gives back the unused part when it reports its cost, and a judge's call reserves its worst case against the run's cap. The reservations go into `budget.jsonl` in the run folder, under a lock every process of the run shares. Once a call costs more than its worst case, nothing more is reserved or sent. `judge.mjs` does not send its calls through the ledger yet, so a run's manifest says `judgeIncluded: false`.
+
+Before anything is spent, the run asks the CLI's own `doctor` which scanners each case calls for and whether each is installed. A missing one (brakeman and rubocop need Ruby, golangci-lint needs Go, and with `OPENQODEX_OFFLINE=1` the scanners that go online are switched off) refuses the run unless `--allow-missing-scanners`, and then the manifest records `scannersComplete: false` and the missing scanners, and the run is never accepted: an index entry marked accepted must have ended `finished` with `scannersComplete: true`.
+
+Other flags of `run.mjs`: `--cases a,b`, `--graph off|on|off,on`, `--repeat N` (1 to 6; more than three needs `--allow-more`), `--add-repeats N` with `--out <folder>` (adds repeats to a finished run, keeping every review it planned), `--reviewers claude,codex`, `--model <id>` (Claude Code only: it reaches the reviewer through `ANTHROPIC_MODEL`, and the run stops when Claude Code answers with another model; the Codex reviewer runs with `--ignore-user-config` and takes no model setting, so `--model` with Codex is refused), `--web off|on` (off by default: every case and its discussion is public), `--change <RC-id>` (the reviewer-loop change the run measures), `--concurrency N` (default 1; parallel reviews slow each other), `--resume` (finish a stopped run). Within each repeat the case order is rotated by the repeat number and the configuration order alternates, so drift lands on no one case or configuration.
 
 `build-cli.mjs` records the commit, the tree the build read (every file the repository sees, staged or not, untracked included) and a hash of the bundle and its assets. `run.mjs` refuses a bundle with another hash, so a run never names a commit its bundle was not built from. "Dirty" in a run means the tree the bundle was built from differs from the commit's tree. The model each reviewer used is read from its own output: Claude Code names it in its answer, and Codex prints it in its header.
 
-Each review runs as `openqodex review --report-dir <sample>/report --reviewer <name> --reviewer-web on --timeout 900`, with `--no-graph` for the graph-off configuration. `--report-dir` means built-in defaults and no custom instructions, so nothing on your machine shapes the review except the reviewer's login.
+Each review runs as `openqodex review --report-dir <sample>/report --reviewer <name> --reviewer-web off --timeout 900`, with `--no-graph` for the graph-off configuration. `--report-dir` means built-in defaults and no custom instructions, so nothing on your machine shapes the review except the reviewer's login.
 
 A run writes one folder, `benchmark/results/<date>-<commit>/`:
 
-- `manifest.json`: the build and where it came from, the machine, every reviewer with its version and model, web access, the timeout, the concurrency, every planned review with its id (`jobs`), written before the first one starts, and how the first invocation ended. A resume never writes it.
-- `resumes.jsonl`: one line when a resume starts and one when it ends.
+- `manifest.json`: the build and where it came from, the machine, every reviewer with its version and model, web access, the timeout, the concurrency, the budget (hard caps apart from forecast stops, with the estimate), whether every scanner was installed, every planned review with its id (`jobs`), written before the first one starts, and how the first invocation ended (`ended.how`: finished, stopped or budget). A resume never writes it, except that `--add-repeats` writes the longer plan and records the addition.
+- `resumes.jsonl`: one line when a resume starts, with the budget it runs under, and one when it ends.
+- `budget.jsonl`: every cost, reservation and review time the budget counted.
 - `cases/`: the specs the run used. The scorer reads these, so a later edit to a case never changes an old run's score.
 - `samples/<case>/<configuration>/<n>/`: one attempt at one review: its own files (`report.json`, `brief.md`, `submission.json`, `trace.json`, `scan.json`), `receipt.txt` (what the review printed), `stderr.txt` and `sample.json` (exit code, time, usage, scanner versions). A second attempt of the same review goes to `<n>-attempt2/`.
 - `rows.jsonl`: one line per attempt. Each attempt names its review's id and whether it is the first attempt.
-- `score.json` and `outcomes.jsonl`: written by `score.mjs`; `score-<folder>.json` and `outcomes-<folder>.jsonl` when it scored against other specs with `--specs <folder>`. `outcomes.jsonl` has one line per finding of every first attempt, with the finding's id (a hash of the case, its lines and its text) and its outcome; a hit also carries its severity agreement, who found its bug and the scanners that located it. A legacy run (below) keeps the score its own scorer wrote; `score.mjs` writes its format 3 score only into the folder `--out <folder>` names.
+- `score.json` and `outcomes.jsonl`: written by `score.mjs`; `score-<folder>.json` and `outcomes-<folder>.jsonl` when it scored against other specs with `--specs <folder>`. `outcomes.jsonl` has one line per finding of every first attempt, with the finding's id (a hash of the case, its lines and its text) and its outcome; a hit also carries its severity agreement, who found its bug and the scanners that located it. `unresolved.jsonl` lists each finding that still waits for a person's ruling (see the review queue below). A legacy run (below) keeps the score its own scorer wrote; `score.mjs` writes its format 3 score only into the folder `--out <folder>` names.
 
 `benchmark/results/` is not committed; each run folder stays on the machine that ran it until it is published.
 
-Every attempt is saved as a sample before anything stops. A review that failed, timed out, was stopped or never started is a failure in the table, never a missing row. A reviewer failure gets one more attempt, in its own folder; the score reports that retry apart and keeps the failed first attempt. The run stops at once when the reviewer hits a usage limit, a rate limit or a login wall, and when the same review fails twice with the same cause. It probes the reviewer before the first review and after any review whose reviewer failed. A folder that already holds a run (a manifest or samples) is refused without `--resume`, and one folder takes one runner at a time. `--resume` runs the reviews that have no saved attempt; a review whose first attempt started and never saved keeps that folder, which the score counts as its first attempt, and runs again in its next attempt folder. A resume is refused when the bundle, the machine, a reviewer's version or model, web access, the timeout, the concurrency, the cases, the configurations or the repeats differ from the run's.
+Every attempt is saved as a sample before anything stops. A review that failed, timed out, was stopped or never started is a failure in the table, never a missing row. A reviewer failure gets one more attempt, in its own folder; the score reports that retry apart and keeps the failed first attempt. The run stops at once when the reviewer hits a usage limit, a rate limit or a login wall, and when the same review fails twice with the same cause. It probes the reviewer before the first review and after any review whose reviewer failed. A folder that already holds a run (a manifest or samples) is refused without `--resume`, and one folder takes one runner at a time. `--resume` runs the reviews that have no saved attempt; a review whose first attempt started and never saved keeps that folder, which the score counts as its first attempt, and runs again in its next attempt folder. A resume is refused when the bundle, the machine, a reviewer's version or model, web access, the timeout, the concurrency, the cases, the configurations, the repeats, the scanners found missing or the change differ from the run's; its budget may differ, which is how a run stopped by its budget is finished.
 
 ## Where the runs are kept
 
@@ -177,6 +184,33 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
 A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+
+## The review queue
+
+A finding that no frozen spec decides (one the case does not list, a near miss, a wrong kind) stays unresolved, however often it recurs: precision counts it wrong in its lower bound and right in its upper. Only a person's ruling moves it.
+
+```
+node benchmark/score.mjs <run>                       # also writes unresolved.jsonl
+node benchmark/queue.mjs add <run>                   # merges it into benchmark/review-queue/<suite>.jsonl
+node benchmark/queue.mjs sheet <suite> [--seed S]    # the blind sheet, as markdown or with --json
+node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <text>] [--sheet <id>]
+```
+
+- A finding is the same finding across runs only when its case, its lines and its words (title, problem, consequence, fix) are the same; its id is their sha256. A finding from before those fields existed adds its description and suggested change. Two findings become one issue only when a person consolidates them. A shared line, category, rule or recurrence never groups findings and never carries a ruling from one to another.
+- An unresolved finding within one line of a truth item's lines is a location match: `outcomes.jsonl` names the item with `evidenceKind: "location-only"`, and it finds the item only when a person rules it the same issue.
+- The queue keeps one item per finding: its words, the code at its lines and the change around them as the reviewer's brief showed them (only the code's sha256 when the case's licence is not permissive), the truth item it sits on, and every run, configuration and review it appeared in. `add` refuses a held-out run and drops every question a ruling has answered.
+- The sheet shows the case, the finding, the code and the truth item, in an order drawn from the seed it prints. It shows no run, build, configuration or count, and its text goes through the drop audit's redactor.
+- `decide` appends one line to `benchmark/review-queue/decisions.jsonl`, the adjudication file: the target, the status, the person's name, the time, the note and the code the person read. It refuses a name that `benchmark/review-queue/people.json` does not list, and any name with a word that names a model, an agent or a tool: a model never rules. The scorer ignores such a line too and lists it. A person adds a name to `people.json` by hand, in a reviewed pull request.
+
+| Status | Target | Effect on the score |
+|---|---|---|
+| `same-issue`, `different-issue` | a finding and the truth item it sits on | same-issue: the finding finds that item, in recall and precision; different-issue: it never does |
+| `true`, `false` (or `spec-candidate-accepted`, `spec-candidate-rejected`) | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
+| `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
+| `confirmed`, `disputed` | a truth item of a case | labelled in the score's per-bug results; recall is unchanged, since a wrong truth item is fixed by a new case version |
+| `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
+
+A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
 ## What it does not measure
 
