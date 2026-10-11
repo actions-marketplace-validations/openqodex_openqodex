@@ -8,12 +8,14 @@
 // developer's machine and never bundled. Semgrep keeps its settings and logs
 // under ~/.semgrep, outside the repo, and writes nothing into the working tree.
 // Its temp files go to a folder of its own, removed after the scan. The scan's
-// summary names each pack it consumed by the sha256 and size of the bytes
-// semgrep read, taken from that folder before it is removed.
+// summary names each pack it consumed by the sha256 of its rules (rulePackHash)
+// and the size of the bytes semgrep read, taken from that folder before it is
+// removed.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { AdapterResult, ResolvedTool, RulePack, StaticFinding } from "@openqodex/core";
 import { describeFailure, execTool, runInChunks, isOffline, stderrTail } from "../exec.js";
 import { safeFileArgs } from "../safe-args.js";
@@ -129,8 +131,8 @@ export async function runSemgrep(args: SemgrepRunArgs): Promise<AdapterResult> {
 // to a new semgrep-<random>.rules file before it fetches the next
 // (config_resolver.py: Config.from_config_list, parse_config_string). So
 // those files, oldest first, are RULE_PACKS in order. Null when they cannot
-// be told apart: not one file per pack, two written at the same instant, or
-// one that cannot be read.
+// be told apart (not one file per pack, two written at the same instant),
+// or one cannot be read or is not a rule pack.
 async function consumedPacks(tmp: string, seen: Set<string>): Promise<RulePack[] | null> {
   try {
     const names = (await fs.readdir(tmp)).filter((n) => n.startsWith("semgrep-") && n.endsWith(".rules") && !seen.has(n));
@@ -140,15 +142,75 @@ async function consumedPacks(tmp: string, seen: Set<string>): Promise<RulePack[]
       names.map(async (name) => {
         const file = path.join(tmp, name);
         const [stat, bytes] = await Promise.all([fs.stat(file, { bigint: true }), fs.readFile(file)]);
-        return { written: stat.mtimeNs, sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+        return { written: stat.mtimeNs, sha256: rulePackHash(bytes), bytes: bytes.length };
       }),
     );
     files.sort((a, b) => (a.written < b.written ? -1 : a.written > b.written ? 1 : 0));
     if (files.some((f, i) => i > 0 && f.written === files[i - 1]!.written)) return null;
-    return files.map((f, i) => ({ pack: RULE_PACKS[i]!, sha256: f.sha256, bytes: f.bytes }));
+    if (files.some((f) => f.sha256 === null)) return null;
+    return files.map((f, i) => ({ pack: RULE_PACKS[i]!, sha256: f.sha256!, bytes: f.bytes }));
   } catch {
     return null;
   }
+}
+
+// The sha256 of a registry pack's rules, the same for every byte form the
+// registry serves one rule set in. semgrep saves the response body as it
+// came. The registry lists the same rules in another order from one origin
+// response to the next (two CloudFront edges served p/default on 2026-10-11
+// at one size with other bytes and another weak ETag, and only the order of
+// the rules differed), and an edge can serve the YAML form, because the
+// cache key ignores the Accept header semgrep sends.
+//
+// The normal form: the text is read as JSON, or as YAML when it is not
+// JSON; only its `rules` array is kept (the JSON form's `missed`, a count of
+// the rules this caller is not given, is dropped, as is any other top-level
+// key); the rules are sorted by `id` in plain character order (by UTF-16
+// code unit, as JavaScript compares strings; two with one id by their own
+// normal form); every object's keys are sorted the same way,
+// at every depth; arrays inside a rule keep their order; and it is written
+// as JSON with no whitespace: {"rules":[...]}. The sha256 is of that text in
+// UTF-8. Null when the text is not a mapping with a `rules` array.
+export function rulePackHash(content: Buffer | string): string | null {
+  const text = typeof content === "string" ? content : content.toString("utf8");
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    try {
+      // "error": a parse error still throws, and a warning prints nothing.
+      doc = parseYaml(text, { logLevel: "error" });
+    } catch {
+      return null;
+    }
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return null;
+  const rules = (doc as { rules?: unknown }).rules;
+  if (!Array.isArray(rules)) return null;
+  const sorted = rules
+    .map((rule) => ({ id: ruleId(rule), text: normalJson(rule) }))
+    .sort((a, b) => byText(a.id, b.id) || byText(a.text, b.text));
+  const normal = `{"rules":[${sorted.map((r) => r.text).join(",")}]}`;
+  return createHash("sha256").update(normal, "utf8").digest("hex");
+}
+
+function ruleId(rule: unknown): string {
+  const id = rule && typeof rule === "object" ? (rule as { id?: unknown }).id : undefined;
+  return typeof id === "string" ? id : "";
+}
+
+function byText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// JSON with every object's keys sorted, at every depth, and no whitespace.
+function normalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(normalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort(byText);
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${normalJson((value as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 async function execSemgrep(tool: ResolvedTool, cliArgs: string[], cwd: string, timeoutMs: number, tmp: string): Promise<string> {
