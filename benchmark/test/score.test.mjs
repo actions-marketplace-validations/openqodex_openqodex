@@ -309,7 +309,7 @@ describe("a rule constant changes without a version bump, and old and new scores
   const KNOWN_RULES = {
     3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
     // Severity agreement and the finder of each found truth item.
-    4: "5cf2eb8ecc256909dc4ef3c286c914d0a28feb217d634e25cfe65f69d52ee4c9",
+    4: "01790c27b9e182e7c6b4c142c8e04a0c020eb5f739bd0efab7c601b6877963db",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {
@@ -566,6 +566,15 @@ describe("a bug the spec expects from semgrep, found only by the reviewer, count
     expect((await reviewed(expecting(["semgrep"]), report([raising("c1", "bandit:B608")]), older)).score.byConfig[CONFIG].finder.byExpected.semgrep).toEqual({ hit: 1, of: 1 });
   });
 
+  it("credits the reviewer when the semgrep finding on the bug's lines was merged into a candidate that never reached the review", async () => {
+    // c1 was dropped before the review: it is not among the kept candidates, so nothing semgrep found reached the reviewer.
+    const scan = { candidates: [], trail: [entry("semgrep:python.sqli.raw", "app/search.py", 14, "merged", { into: "c1" })] };
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]), scan);
+    expect(outcomes[0]).toMatchObject({ finder: "reviewer", locatedBy: [] });
+    const f = score.byConfig[CONFIG].finder;
+    expect([f.match, f.byExpected.semgrep, f.scannerExpectedReviewerFound]).toEqual([{ hit: 0, of: 1 }, { hit: 0, of: 1 }, 1]);
+  });
+
   it("credits a scanner, but not the expected one, when only another scanner located the bug and named it", async () => {
     const scan = { candidates: [candidate("c1", "bandit", "B608", "app/search.py", 14, B608)] };
     const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]), scan);
@@ -583,9 +592,14 @@ describe("a bug the spec expects from semgrep, found only by the reviewer, count
     // The scanner the spec expects counts by its place alone, whatever its words.
     const fromHadolint = { ...spec, bugs: spec.bugs.map((b) => (b.id === "root" ? { ...b, found_by: ["hadolint"] } : b)) };
     expect((await reviewed(fromHadolint, report([finding("Dockerfile", 10, "security", "The container runs as root")]), scan)).outcomes[0]).toMatchObject({ finder: "scanner", locatedBy: ["hadolint"] });
-    // Dropped by the reviewer, the same candidate counts for the apt bug it names, not for the root bug around it.
-    const dropped = await reviewed(spec, report([], { dropped: [{ candidate: scan.candidates[0], reason: "a size nitpick" }] }), scan);
-    expect(dropped.score.byConfig[CONFIG].finder.droppedCandidates).toBe(1);
+  });
+
+  it("does not count a dropped candidate about another issue, inside a wide bug's lines, as the reviewer dropping that bug's scanner find", async () => {
+    // hadolint's apt finding on line 3 lies inside the root bug's lines 3 to 11; the reviewer dropped it.
+    const apt = candidate("c1", "hadolint", "DL3008", "Dockerfile", 3, { message: "Pin versions in apt get install." });
+    const { score } = await reviewed(spec, report([], { dropped: [{ candidate: apt, reason: "a size nitpick" }] }), { candidates: [apt] });
+    // It names the apt bug it sits on, and only that one.
+    expect(score.byConfig[CONFIG].finder.droppedCandidates).toBe(1);
   });
 
   it("counts OpenQodex's own suppression candidate as the suppression finder, never as the scanner whose comment it reads", async () => {

@@ -504,7 +504,10 @@ export function regressions(oldSamples, newSamples) {
 //     scanner-only mode); the expected scanner's finding needs only its place.
 // 26. Dedup hides a scanner's work: a finding merged into another candidate
 //     (a merged trail entry, or a token in a candidate's alsoReportedBy)
-//     counts for its own scanner.
+//     counts for its own scanner. And the reverse: a finding merged into a
+//     candidate that never reached the reviewer counts as a find; a merged
+//     entry counts only when the candidate it went into is kept and on the
+//     item's lines, or raised by a shown finding.
 // 27. OpenQodex's own candidate about an added suppression comment or a
 //     changed settings file counts as a find of the scanner it names: it
 //     counts as "suppression" or "settings".
@@ -620,17 +623,18 @@ function tokenParts(token) {
 const finderName = (source, ruleId) => OWN_RULES[ruleId] ?? source;
 
 // Where each scanner put a finding that reached the reviewer or was merged
-// into one, with its words: every kept candidate (its rule id and message),
-// every token a candidate names as merged into it (on the candidate's
-// lines, since dedup merges only the same lines), and every merged trail
-// entry on its own lines (the rule id alone: the trail keeps no message).
-// Null when the attempt saved no scan.
+// into one, with its words: every kept candidate (its id, rule id and
+// message), every token a candidate names as merged into it (on the
+// candidate's lines, since dedup merges only the same lines), and every
+// merged trail entry on its own lines with the candidate it went `into`
+// (the rule id alone: the trail keeps no message). Null when the attempt
+// saved no scan.
 export function scannerPlaces(scan) {
   if (!scan || typeof scan !== "object") return null;
-  const place = (name, file, start, end, text) => ({ name, file: normPath(file), start, end: Math.max(end ?? start, start), text: String(text ?? "").toLowerCase() });
+  const place = (name, file, start, end, text, link = {}) => ({ name, file: normPath(file), start, end: Math.max(end ?? start, start), text: String(text ?? "").toLowerCase(), ...link });
   const out = [];
   for (const c of scan.candidates ?? []) {
-    out.push(place(finderName(c.source, c.ruleId), c.filePath, c.lineStart, c.lineEnd, `${c.ruleId} ${c.message ?? ""}`));
+    out.push(place(finderName(c.source, c.ruleId), c.filePath, c.lineStart, c.lineEnd, `${c.ruleId} ${c.message ?? ""}`, { id: c.id }));
     for (const token of c.alsoReportedBy ?? []) {
       const t = tokenParts(token);
       out.push(place(finderName(t.source, t.ruleId), c.filePath, c.lineStart, c.lineEnd, t.ruleId));
@@ -639,7 +643,7 @@ export function scannerPlaces(scan) {
   for (const e of scan.trail ?? []) {
     if (e.stage !== "merged") continue;
     const t = tokenParts(e.token);
-    out.push(place(finderName(t.source, t.ruleId), e.file, e.lineStart, e.lineEnd, t.ruleId));
+    out.push(place(finderName(t.source, t.ruleId), e.file, e.lineStart, e.lineEnd, t.ruleId, { into: e.into ?? null }));
   }
   return out;
 }
@@ -649,12 +653,17 @@ export function scannerPlaces(scan) {
 // its scanner is one the item expects or its words name the item's
 // mentions: the scanner-only rule S1, so a scanner the spec does not expect
 // is not credited with a bug whose wide range holds its finding about
-// something else. Null when the scan was not saved.
-export function locatedBy(places, bug, expected = []) {
+// something else. A merged trail entry reached the reviewer only through
+// the candidate it went into, so it counts only when that candidate is a
+// kept one on the item's lines or one a shown finding raised (`raised`, a
+// set of candidate ids). Null when the scan was not saved.
+export function locatedBy(places, bug, expected = [], raised = new Set()) {
   if (places === null) return null;
   const at = locations(bug);
   const on = (p) => at.some((l) => l.file === p.file && gap(p.start, p.end, l.lines) === 0);
-  return [...new Set(places.filter((p) => on(p) && (expected.includes(p.name) || names(bug.mentions, p.text))).map((p) => p.name))].sort();
+  const reached = new Set(places.filter((p) => p.id !== undefined && (on(p) || raised.has(p.id))).map((p) => p.id));
+  const through = (p) => p.into === undefined || reached.has(p.into);
+  return [...new Set(places.filter((p) => through(p) && on(p) && (expected.includes(p.name) || names(bug.mentions, p.text))).map((p) => p.name))].sort();
 }
 
 // Who found a found truth item, from the data: "scanner" when a scanner
@@ -673,11 +682,11 @@ const expectedOf = (bug) => bug.found_by ?? bug.expectedFinder ?? [];
 
 // One hit judged: the severity it gave against its truth item's, and who
 // found the item. Every other outcome is judged by neither.
-function judgeHit(f, bug, places) {
+function judgeHit(f, bug, places, raised) {
   if (f.outcome !== "hit" || !bug) return { severityExpected: null, severityAgreement: null, severityDirection: null, finder: null, locatedBy: null, expectedFinder: null, met: null };
   const s = severityAgreement(f.severity, bug.severity);
   const expectedFinder = expectedOf(bug);
-  const located = locatedBy(places, bug, expectedFinder);
+  const located = locatedBy(places, bug, expectedFinder, raised);
   return { severityExpected: bug.severity ?? null, severityAgreement: s.agreement, severityDirection: s.direction, locatedBy: located, expectedFinder, ...finderOf(located, expectedFinder) };
 }
 
@@ -783,10 +792,11 @@ export function scoreJob({ job, spec, report = null, brief = null, scan = null, 
   const base = scoreSample({ spec, report, brief, row: { ...row, config: job.config, repeat: job.repeat, attempt: 1 }, testOnly: planted });
   const shown = shownFindings(report);
   const places = scannerPlaces(scan);
+  const raised = new Set(base.findings.map((f) => f.raised).filter((id) => typeof id === "string"));
   const truth = new Map((spec.bugs ?? []).map((b) => [b.id, b]));
   const findings = base.findings.map((f, index) => {
     const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
-    return { ...g, ...judgeHit(g, truth.get(g.bug), places), issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
+    return { ...g, ...judgeHit(g, truth.get(g.bug), places, raised), issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
   });
   // The truth items, found or not, that a scanner candidate the reviewer dropped had located (by the same rule as a find).
   const droppedPlaces = scannerPlaces({ candidates: (report?.dropped ?? []).map((d) => d?.candidate).filter((c) => c && typeof c === "object") });
@@ -1061,7 +1071,7 @@ const RULES_BLOCK = {
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue; any other finding is its own issue, by findingId, until a person consolidates it.",
   severity: { order: SEVERITY_ORDER, rule: "Each hit, the first finding in report order to find its truth item, compares its severity with the truth item's on the order above: exact, one-off, or off at two steps or more; over when it is more severe, under when less. A duplicate is not judged; a side without a severity on the scale is unknown." },
-  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0, and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. OpenQodex's own rules count as the finder named in own. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
+  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0 (a merged entry only when the candidate it went into is a kept one on those lines or one a shown finding raised), and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. OpenQodex's own rules count as the finder named in own. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });
