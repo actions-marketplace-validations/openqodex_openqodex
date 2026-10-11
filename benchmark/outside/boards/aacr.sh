@@ -21,10 +21,13 @@
 # The judge's base URL and key never pass through this script: aacr-judge.mjs
 # reads them with lib/model-env.mjs and puts them only into the environment
 # of their evaluator's process. This script holds no secret, so it prints
-# none, even under bash -x. Their mock judge is never allowed.
+# none, even under bash -x. Core files are off for this script and all it
+# starts, so a crash writes neither anywhere. Their mock judge is never
+# allowed. The bench cache must lie outside this repository.
 # Run with Node 22 first on PATH. Stops at the first failure.
 set -euo pipefail
 umask 077
+ulimit -c 0
 
 here=$(cd "$(dirname "$0")" && pwd)
 convert="$(dirname "$here")/convert/aacr.mjs"
@@ -59,7 +62,7 @@ done
 
 pin=$(node "$convert" pin)
 read -r repo commit <<<"$pin"
-cache=${OPENQODEX_BENCH_CACHE:-$HOME/.cache/openqodex-bench}
+cache=$(node "$convert" cache 2>&1) || die "${cache#refused: }"
 checkout="$cache/upstream/aacr-bench@$commit"
 evaluation="$checkout/evaluation"
 python="$evaluation/.venv/bin/python"
@@ -72,7 +75,7 @@ prepare() {
     git -C "$checkout" -c advice.detachedHead=false checkout -q FETCH_HEAD
   fi
   [ "$(git -C "$checkout" rev-parse HEAD)" = "$commit" ] || die "$checkout is not at $commit; move it to the Trash and run --prepare again"
-  [ -z "$(git -C "$checkout" status --porcelain --untracked-files=no)" ] || die "$checkout has local edits; their code is never patched. Move it to the Trash and run --prepare again"
+  [ -z "$(git -C "$checkout" status --porcelain --untracked-files=all)" ] || die "$checkout has local edits or untracked files; their code is never patched. Move it to the Trash and run --prepare again"
   [ ! -e "$evaluation/.env" ] || die "$evaluation/.env exists; their evaluator would read it. Move it to the Trash"
   if [ ! -x "$python" ]; then
     command -v uv >/dev/null || die "uv builds their evaluator's venv and is not on PATH (https://docs.astral.sh/uv/)"

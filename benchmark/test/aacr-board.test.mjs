@@ -20,19 +20,27 @@
 //    development cases, our location numbers equal the line counts AACR's
 //    evaluator gave (recorded in fixtures/aacr-board/, and run again live
 //    when their pinned checkout is in the cache).
+// From the review of PR 155:
+// 9. A crash of the evaluator, whose environment holds the key and base
+//    URL, writes a core file outside the folder checked for leaks.
+// 10. Result files leave the run through a symbolic link.
+// 11. A held-out (test split) case in a saved run is converted and exported.
+// 12. A modified evaluator runs while eval.json records the pinned commit.
+// 13. The bench cache under the repository puts their venv in the repository.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { benchRoot } from "../lib/cases.mjs";
+import { benchRoot, git, repoRoot } from "../lib/cases.mjs";
 import { cacheRoot } from "../lib/licence.mjs";
 import { endpointSecrets } from "../lib/model-env.mjs";
 import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { RULES } from "../lib/score.mjs";
 import { aacrTruth, readCase, readSuite, specCopy } from "../lib/suites.mjs";
+import * as judgeRunner from "../outside/boards/aacr-judge.mjs";
 import { convertRun, filterDataset, instanceIdOf, readAacrOutside } from "../outside/convert/aacr.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -361,6 +369,7 @@ describe("the wrapper echoes the judge's key or base URL", () => {
   it("keeps a static guard: set -u, no trace, no environment dump", () => {
     const text = readFileSync(WRAPPER, "utf8");
     expect(text).toMatch(/^set -euo pipefail$/m);
+    expect(text).toMatch(/^ulimit -c 0$/m);
     expect(text).not.toMatch(/set -[a-z]*x|set -o xtrace|\bprintenv\b|\bexport -p\b|\bdeclare -p\b|^\s*env\s*$|\$JUDGE_API_KEY|\$\{JUDGE_API_KEY/m);
   });
 
@@ -371,12 +380,29 @@ describe("the wrapper echoes the judge's key or base URL", () => {
     expect(r.stdout).toMatch(/JUDGE_MODEL=gpt-5\.2/);
     expect(r.stdout).toMatch(/JUDGE_BASE_URL and JUDGE_API_KEY.*hidden/);
     expect(r.stdout).toMatch(/left-side references/);
+    // A crash of the evaluator, whose environment holds both, leaves no core file.
+    expect(r.stdout).toMatch(/core file limit for the evaluator: 0\b/);
     const secrets = endpointSecrets(BASE, KEY);
     const leaks = [];
     for (const [where, text] of [["stdout", r.stdout], ["stderr", r.stderr], ...[...filesUnder(out), ...filesUnder(r.tmp)].map((p) => [p, readFileSync(p, "utf8")])]) {
       for (const s of secrets) if (text.includes(s)) leaks.push(`${where} holds ${s === KEY ? "the key" : "the base URL or its host"}`);
     }
     expect(leaks).toEqual([]);
+  });
+
+  it("gives the evaluator a core file limit of zero though its parent allows core files", async () => {
+    const out = await savedRun();
+    convertRun(out);
+    const home = tempDir("oq-aacr-core-");
+    writeFileSync(join(home, "azure.env"), `AZURE_OPENAI_BASE_URL=${BASE}\nAZURE_OPENAI_KEY=${KEY}\n`);
+    const env = { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env") };
+    delete env.JUDGE_USE_MOCK;
+    // Node cannot set a resource limit, so a shell raises the parent's soft limit before it becomes the launcher.
+    const raise = 'ulimit -S -c unlimited 2>/dev/null; echo "parent core file limit: $(ulimit -c)"; exec "$0" "$@"';
+    const r = spawnSync("/bin/sh", ["-c", raise, process.execPath, join(benchRoot, "outside", "boards", "aacr-judge.mjs"), out, "--dry-run", "--evaluation", join(home, "none"), "--python", join(home, "none", "python")], { encoding: "utf8", env, timeout: 60_000 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/parent core file limit: unlimited/);
+    expect(r.stdout).toMatch(/core file limit for the evaluator: 0\b/);
   });
 
   it("refuses to run when the mock judge is asked for", async () => {
@@ -531,7 +557,7 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     await judge.close();
     expect(r.status, r.stderr).toBe(0);
     const record = readJson(join(out, "outside", "aacr", "eval.json"));
-    expect(record).toMatchObject({ commit: COMMIT, rounds: 1, judge: { deployment: "gpt-5.2" } });
+    expect(record).toMatchObject({ commit: COMMIT, checkout: { commit: COMMIT, tree: expect.stringMatching(/^[0-9a-f]{40}$/) }, rounds: 1, judge: { deployment: "gpt-5.2" } });
     expect(record.folders.map((f) => [f.config, f.repeat, f.mode, f.judgeErrors, f.metrics.length])).toEqual([[CLAUDE, 1, "llm", 0, 1], [CLAUDE, 2, "llm", 0, 1], [MODEL, 1, "llm", 0, 1], [MODEL, 2, "llm", 0, 1]]);
     // Their client sends the key as a bearer token, to the chat completions path, naming the judge deployment.
     expect(judge.seen.length).toBeGreaterThan(0);
@@ -550,6 +576,87 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
       [MODEL, 2, true, 1, 3, 3, true],
     ]);
     expect(block.byConfig[CLAUDE].mean.semantic).not.toBeNull();
+  });
+});
+
+describe("result files leave the run through a symbolic link", () => {
+  it("refuses to convert when <run>/outside leads out of the run, and writes nothing there", async () => {
+    const out = await savedRun();
+    const elsewhere = tempDir("oq-aacr-elsewhere-");
+    symlinkSync(elsewhere, join(out, "outside"));
+    expect(() => convertRun(out)).toThrow(/outside the run/);
+    expect(readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it("refuses to write the dataset when outside/aacr was replaced by a link out of the run", async () => {
+    const out = await savedRun();
+    convertRun(out);
+    const elsewhere = tempDir("oq-aacr-elsewhere-");
+    renameSync(join(out, "outside", "aacr"), join(elsewhere, "aacr"));
+    symlinkSync(join(elsewhere, "aacr"), join(out, "outside", "aacr"));
+    write(join(elsewhere, "theirs.jsonl"), "");
+    expect(() => filterDataset(out, join(elsewhere, "theirs.jsonl"))).toThrow(/outside the run/);
+    expect(existsSync(join(elsewhere, "aacr", "dataset.jsonl"))).toBe(false);
+  });
+});
+
+describe("a held-out case in a saved run is converted and exported", () => {
+  it("refuses a run holding a held-out (test split) case, naming it, and writes nothing", async () => {
+    const suite = readSuite("aacr");
+    const name = suite.split.cases.test.find((n) => suite.byName.get(n)?.status === "usable");
+    const c = caseOf(name);
+    expect(c.split).toBe("test");
+    const comments = Array.from({ length: c.truthCount.accepted }, (_, i) => comment("src/x.java", 10 * (i + 1), 10 * (i + 1), "right", i + 1));
+    const out = await savedRun({ names: [name, SMOKE[0]], plan: {}, specs: { [name]: specCopy(c, aacrTruth({ comments }, null)) }, configs: [MODEL], repeat: 1 });
+    const refusal = (() => {
+      try {
+        convertRun(out);
+      } catch (error) {
+        return error.message;
+      }
+      return null;
+    })();
+    expect(refusal).toContain(name);
+    expect(refusal).toMatch(/held out/);
+    expect(refusal).not.toContain(SMOKE[0]);
+    expect(existsSync(join(out, "outside"))).toBe(false);
+  });
+});
+
+describe("a modified evaluator runs while eval.json records the pinned commit", () => {
+  it("names an edited file, a staged one and an untracked one in the checkout, and gives the commit and tree of a clean one", () => {
+    const dir = tempDir("oq-aacr-checkout-");
+    git(dir, "init", "-q");
+    write(join(dir, "evaluation", "evaluate.py"), "print('pinned')\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "pinned");
+    const clean = { commit: git(dir, "rev-parse", "HEAD").trim(), tree: git(dir, "rev-parse", "HEAD^{tree}").trim(), problems: [] };
+    expect(judgeRunner.checkoutState(dir)).toEqual(clean);
+    write(join(dir, "evaluation", "evaluate.py"), "print('patched')\n");
+    expect(judgeRunner.checkoutState(dir).problems.join(" ")).toMatch(/evaluation\/evaluate\.py/);
+    git(dir, "add", "-A");
+    expect(judgeRunner.checkoutState(dir).problems.join(" ")).toMatch(/evaluation\/evaluate\.py/);
+    git(dir, "reset", "-q", "--hard");
+    expect(judgeRunner.checkoutState(dir)).toEqual(clean);
+    write(join(dir, "evaluation", "json.py"), "raise SystemExit\n");
+    expect(judgeRunner.checkoutState(dir).problems.join(" ")).toMatch(/evaluation\/json\.py/);
+  });
+});
+
+describe("the bench cache under the repository puts their venv in the repository", () => {
+  it("refuses, in one line and creating nothing, a cache whose real path is inside the repository", () => {
+    const inside = join(repoRoot, `.oq-aacr-cache-test-${randomBytes(4).toString("hex")}`);
+    const link = join(tempDir("oq-aacr-cache-link-"), "cache");
+    symlinkSync(join(repoRoot, "benchmark", "suites"), link);
+    const before = readdirSync(join(repoRoot, "benchmark", "suites"));
+    for (const cache of [inside, link]) {
+      const r = spawnSync("bash", [WRAPPER, "--prepare"], { encoding: "utf8", env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, OPENQODEX_BENCH_CACHE: cache }, timeout: 60_000 });
+      expect(r.status).toBe(2);
+      expect(r.stderr.trim().split("\n")).toHaveLength(1);
+      expect(r.stderr).toMatch(/inside the repository/);
+    }
+    expect(existsSync(inside)).toBe(false);
+    expect(readdirSync(join(repoRoot, "benchmark", "suites"))).toEqual(before);
   });
 });
 

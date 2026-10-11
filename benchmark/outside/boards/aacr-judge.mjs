@@ -29,12 +29,24 @@
 //    the commit boards.json pins.
 // 4. An evaluation mixes with an earlier one: a run with eval.json is
 //    refused, and eval.json names the metrics files each folder's run wrote.
+// From the review of PR 155:
+// 5. A crash of the evaluator writes a core file holding the key and base
+//    URL outside the folder checked for leaks: the evaluator runs with a
+//    core file limit of zero (Node cannot set a resource limit, so a shell
+//    sets it and then becomes the evaluator); a dry run reports the limit
+//    the evaluator would get.
+// 6. A modified evaluator runs while eval.json records the pinned commit:
+//    the checkout must be the pinned commit with nothing git sees as
+//    changed (an edit, a staged change, an untracked file), and eval.json
+//    records its commit and tree.
+// 7. Files leave the run through a symbolic link: everything is written in
+//    lib/aacr-board.mjs boardFolder(run).
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AACR_BOARD, AACR_K, AACR_READER } from "../../lib/aacr-board.mjs";
+import { AACR_BOARD, AACR_K, AACR_READER, boardFolder } from "../../lib/aacr-board.mjs";
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
@@ -51,6 +63,24 @@ export function aacrJudge(boards = BOARDS) {
   const d = key ? boards.deployments?.[key] : undefined;
   if (!d) throw new Error(`refused: boards.json names no deployment for AACR's judge (boards.aacr.judge.deployment ${JSON.stringify(key ?? null)})`);
   return { key, ...probedDeployment(d.id, { boards }) };
+}
+
+/** A command run with core files off: a shell sets the limit to zero, then becomes the command. */
+export const withoutCore = (command, args) => ["/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', command, ...args]];
+
+/**
+ * A checkout as it stands: its commit, its tree, and what git sees as
+ * changed (an edit, a staged change, an untracked file), one problem each.
+ */
+export function checkoutState(dir) {
+  const git = (...args) => spawnSync("git", ["-C", dir, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8" });
+  const problems = [];
+  const status = git("status", "--porcelain=v1", "--untracked-files=all");
+  if (status.status !== 0) problems.push(`git status failed: ${status.stderr.trim()}`);
+  const changed = status.stdout.split("\n").filter((l) => l !== "").map((l) => l.slice(3));
+  if (changed.length > 0) problems.push(`git sees ${changed.length} changed or untracked file${changed.length === 1 ? "" : "s"}: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", ..." : ""}`);
+  if (git("diff", "--quiet", "HEAD").status !== 0) problems.push("its files differ from its commit (git diff HEAD)");
+  return { commit: git("rev-parse", "HEAD").stdout.trim(), tree: git("rev-parse", "HEAD^{tree}").stdout.trim(), problems };
 }
 
 // A line filter that replaces every secret before the text goes anywhere.
@@ -74,14 +104,14 @@ function redactor(secrets, sink) {
 
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map((p) => join(dir, String(p))).filter((p) => statSync(p).isFile());
 
-function run(python, args, { cwd, env, log, secrets }) {
+function run(command, args, { cwd, env, log, secrets }) {
   return new Promise((done) => {
     const file = createWriteStream(log);
     const out = redactor(secrets, (t) => {
       process.stdout.write(t);
       file.write(t);
     });
-    const child = spawn(python, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (c) => out.write(c));
     child.stderr.on("data", (c) => out.write(c));
     child.on("close", (code, signal) => {
@@ -108,7 +138,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (folder === null || evaluation === null || python === null) throw new Error("usage: aacr-judge.mjs <run> --evaluation <dir> --python <path> [--rounds N] [--dry-run]");
   if (!Number.isInteger(rounds) || rounds < 1) throw new Error("--rounds takes a whole number of at least 1");
   if (process.env.JUDGE_USE_MOCK !== undefined) throw new Error("refused: JUDGE_USE_MOCK is set; the wrapper never runs AACR's mock judge, which scores a run as if a model judged it. Unset it.");
-  const out = join(folder, "outside", "aacr");
+  const out = boardFolder(folder);
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; aacr.sh converts the run first`);
   const convert = JSON.parse(readFileSync(join(out, "convert.json"), "utf8"));
   if (convert.commit !== AACR_BOARD.commit) throw new Error(`${out}/convert.json was written for AACR-Bench at ${convert.commit}, and boards.json now pins ${AACR_BOARD.commit}; convert the run again`);
@@ -123,7 +153,10 @@ export async function main(argv = process.argv.slice(2)) {
   if (dry) {
     console.log(`Dry run: their evaluator at ${AACR_BOARD.commit.slice(0, 12)} would run ${convert.folders.length} times, from ${shown(evaluation)}${existsSync(join(evaluation, "evaluate.py")) ? "" : " (not fetched yet; aacr.sh fetches it)"}:`);
     for (const f of convert.folders) console.log(`  ${shown(python)} ${argsOf(f).map((a) => (a.startsWith("/") ? shown(a) : a)).join(" ")}`);
-    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and JUDGE_BASE_URL and JUDGE_API_KEY from ${shown(modelEnvPath())} (values hidden). Nothing was started.`);
+    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and JUDGE_BASE_URL and JUDGE_API_KEY from ${shown(modelEnvPath())} (values hidden).`);
+    // The limit the evaluator would get, read by a shell started the same way.
+    const [sh, probe] = withoutCore("/bin/sh", ["-c", "ulimit -c"]);
+    console.log(`core file limit for the evaluator: ${spawnSync(sh, probe, { encoding: "utf8" }).stdout.trim()}. Nothing was started.`);
     return 0;
   }
 
@@ -131,8 +164,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!existsSync(dataset)) throw new Error(`${dataset} is missing; aacr.sh writes it from their dataset converter`);
   if (!existsSync(join(evaluation, "evaluate.py")) || !existsSync(python)) throw new Error(`their evaluator or its python is not in ${shown(evaluation)}; run benchmark/outside/boards/aacr.sh --prepare`);
   if (existsSync(join(evaluation, ".env"))) throw new Error(`${shown(join(evaluation, ".env"))} exists; their evaluator would read it and could answer with its mock judge. Move it to the Trash.`);
-  const head = spawnSync("git", ["-C", dirname(evaluation), "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
-  if (head !== AACR_BOARD.commit) throw new Error(`their checkout is at ${head || "no commit"}, not the commit boards.json pins (${AACR_BOARD.commit})`);
+  const checkout = checkoutState(dirname(evaluation));
+  if (checkout.commit !== AACR_BOARD.commit) throw new Error(`their checkout is at ${checkout.commit || "no commit"}, not the commit boards.json pins (${AACR_BOARD.commit})`);
+  if (checkout.problems.length > 0) throw new Error(`their checkout ${shown(dirname(evaluation))} is not the pinned commit as it stands: ${checkout.problems.join("; ")}. Their code is never patched: move the checkout to the Trash and run aacr.sh --prepare`);
 
   // The child's environment: ours without any judge or OpenAI setting, plus the three their judge reads.
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(JUDGE_|OPENAI_)/.test(k)));
@@ -145,7 +179,7 @@ export async function main(argv = process.argv.slice(2)) {
     const before = new Set(readdirSync(dir));
     const log = join(dir, "eval.log");
     console.log(`\n== ${f.tool}: their evaluator, ${rounds} round${rounds === 1 ? "" : "s"} ==`);
-    const { code, signal } = await run(python, argsOf(f), { cwd: evaluation, env, log, secrets });
+    const { code, signal } = await run(...withoutCore(python, argsOf(f)), { cwd: evaluation, env, log, secrets });
     const text = readFileSync(log, "utf8");
     const mode = text.includes(MODE_LLM) ? "llm" : text.includes(MODE_MOCK) ? "mock" : "unknown";
     const metrics = readdirSync(dir).filter((n) => !before.has(n) && /^metrics_ocr_.*\.json$/.test(n) && n !== "metrics_ocr_average.json").sort();
@@ -153,7 +187,7 @@ export async function main(argv = process.argv.slice(2)) {
     folders.push({ config: f.config, repeat: f.repeat, tool: f.tool, exit: code, signal, mode, judgeErrors: text.split(JUDGE_FAILED).length - 1, requests: requests ? Number(requests[1]) : null, metrics, log: "eval.log" });
   }
   const leaks = filesUnder(out).filter((p) => settings.appearsIn(readFileSync(p, "latin1")));
-  const record = { version: 1, board: "aacr", repo: AACR_BOARD.repo, commit: AACR_BOARD.commit, reader: AACR_READER, lineK: AACR_K, rounds, judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null }, python: `${version.stdout}${version.stderr}`.trim(), startedAt, endedAt: new Date().toISOString(), folders };
+  const record = { version: 1, board: "aacr", repo: AACR_BOARD.repo, commit: AACR_BOARD.commit, checkout: { commit: checkout.commit, tree: checkout.tree }, reader: AACR_READER, lineK: AACR_K, rounds, judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null }, python: `${version.stdout}${version.stderr}`.trim(), startedAt, endedAt: new Date().toISOString(), folders };
   writeFileSync(join(out, "eval.json"), `${JSON.stringify(record, null, 2)}\n`);
   const problems = [
     ...folders.filter((f) => f.exit !== 0).map((f) => `${f.tool}: their evaluator exited ${f.exit ?? f.signal}`),

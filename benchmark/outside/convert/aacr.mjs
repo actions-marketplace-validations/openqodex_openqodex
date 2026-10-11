@@ -14,6 +14,7 @@
 //   node benchmark/outside/convert/aacr.mjs dataset <run> <their converter's jsonl>
 //   node benchmark/outside/convert/aacr.mjs raw      (the checked dataset file in the cache)
 //   node benchmark/outside/convert/aacr.mjs pin      (the board's repository and commit)
+//   node benchmark/outside/convert/aacr.mjs cache    (the bench cache, refused inside the repository)
 //
 // Failure list, written before the code:
 // 1. A finding without a line is dropped, so AACR's precision rises: it is
@@ -42,11 +43,19 @@
 //    accepted comments our truth copy holds.
 // 6. A second conversion mixes with the first, or with metrics their
 //    evaluator wrote: a run already converted is refused.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+// From the review of PR 155:
+// 7. Result files leave the run through a symbolic link: the converter and
+//    the dataset step write only in lib/aacr-board.mjs boardFolder(run).
+// 8. A held-out (test split) case in a saved run is converted and exported:
+//    a case its truth copy or the committed split places in the test split
+//    refuses the whole run, named.
+// 9. The bench cache lies in the repository, so their checkout and its venv
+//    land there: `cache` refuses a cache whose real path is inside it.
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AACR_BOARD, AACR_K, AACR_READER, instanceIdOf, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
-import { parseCaseId } from "../../lib/cases.mjs";
+import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
+import { parseCaseId, repoRoot } from "../../lib/cases.mjs";
 import * as licence from "../../lib/licence.mjs";
 import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
@@ -78,15 +87,16 @@ const statusOf = (first) => (first === null ? "unstarted" : first.report === nul
  */
 export function convertRun(folder) {
   folder = resolve(folder);
-  const out = join(folder, "outside", "aacr");
   const manifest = existsSync(join(folder, "manifest.json")) ? readJson(join(folder, "manifest.json")) : null;
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
   const suite = manifest.suite ?? "planted";
   if (suite !== "aacr") throw new Error(`${folder}: the run is of suite ${suite}, not aacr; only an AACR-Bench run is converted for its board`);
   if (manifest.mode === "scan") throw new Error(`${folder}: a scanner-only run shows the developer no finding, so it has nothing to convert for the board`);
+  const out = boardFolder(folder);
   if (existsSync(out)) throw new Error(`${out} exists already: the run was converted before (and maybe evaluated). Move that folder to the Trash to convert it again.`);
   const run = loadRun(folder);
   const problems = [];
+  const heldOut = new Set(readSuite("aacr").split?.cases?.test ?? []);
   for (const [name, spec] of Object.entries(run.specs)) {
     const id = parseCaseId(spec?.id);
     if (id?.suite !== "aacr") {
@@ -96,6 +106,7 @@ export function convertRun(folder) {
     const record = spec.source?.licence ?? null;
     const why = record === null ? "its truth copy holds no licence record" : (licence.licenceExclusion(record) ?? licence.publishRefusal?.([{ name, licence: record.class }]) ?? null);
     if (why !== null) problems.push(`${name}: ${why}; a case whose licence is not verified is for private runs only, never converted for a board`);
+    if (spec.split === "test" || heldOut.has(name)) problems.push(`${name}: held out (the test split); a held-out case is never converted or exported before a release`);
   }
   for (const a of run.attempts) if (parseCaseId(run.specs[a.case]?.id)?.suite !== "aacr") problems.push(`samples/${a.case}/${a.config}: a sample of ${a.case}, which is not an AACR-Bench case`);
   if (problems.length > 0) throw new Error(`${folder} is not converted for AACR-Bench:\n${[...new Set(problems)].join("\n")}`);
@@ -177,7 +188,7 @@ export function convertRun(folder) {
  */
 export function filterDataset(folder, theirs) {
   folder = resolve(folder);
-  const out = join(folder, "outside", "aacr");
+  const out = boardFolder(folder);
   const record = readJson(join(out, "convert.json"));
   const want = new Map(record.instances.map((i) => [i.instanceId, i]));
   const lines = new Map();
@@ -215,11 +226,44 @@ export function rawDataset({ cache = licence.cacheRoot() } = {}) {
   return path;
 }
 
+/**
+ * The bench cache (lib/licence.mjs cacheRoot), or a thrown refusal when its
+ * real path, or the real path of the deepest folder of it that is there,
+ * lies in this repository: their checkout and its venv would land there.
+ */
+export function benchCache() {
+  const cache = resolve(licence.cacheRoot());
+  let head = cache;
+  const rest = [];
+  for (;;) {
+    let there = true;
+    try {
+      lstatSync(head);
+    } catch {
+      there = false;
+    }
+    if (there) break;
+    rest.unshift(basename(head));
+    head = dirname(head);
+  }
+  let real;
+  try {
+    real = join(realpathSync(head), ...rest);
+  } catch {
+    throw new Error(`refused: the bench cache ${cache} passes through a link that leads nowhere`);
+  }
+  const repo = realpathSync(repoRoot);
+  if (real === repo || real.startsWith(`${repo}${sep}`)) throw new Error(`refused: the bench cache ${cache} is inside the repository (${real}); set OPENQODEX_BENCH_CACHE to a folder outside it`);
+  return cache;
+}
+
 function main() {
   const [command, ...args] = process.argv.slice(2);
   try {
     if (command === "pin" && args.length === 0) {
       console.log(`${AACR_BOARD.repo} ${AACR_BOARD.commit}`);
+    } else if (command === "cache" && args.length === 0) {
+      console.log(benchCache());
     } else if (command === "raw" && args.length === 0) {
       console.log(rawDataset());
     } else if (command === "convert" && args.length === 1) {
@@ -232,7 +276,7 @@ function main() {
       const { path, instances } = filterDataset(args[0], args[1]);
       console.log(`Their dataset narrowed to this run's ${instances} pull requests, each checked against our truth copy: ${path}`);
     } else {
-      console.error("usage: node benchmark/outside/convert/aacr.mjs convert <run> | dataset <run> <their jsonl> | raw | pin");
+      console.error("usage: node benchmark/outside/convert/aacr.mjs convert <run> | dataset <run> <their jsonl> | raw | pin | cache");
       process.exit(2);
     }
   } catch (error) {
