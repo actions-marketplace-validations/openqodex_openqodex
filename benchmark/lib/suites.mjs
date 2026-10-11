@@ -20,6 +20,18 @@
 // 5. A truth item is read with a severity, a class or matching words nobody
 //    froze: real truth has severity, class and mentions null; matchSignatures
 //    come only from the committed entry.
+// Selecting a run's cases and the truth copy each run saves (run.mjs):
+// 6. A held-out (test split) case is run before a release: selectCases
+//    refuses the test split and any case on it, before anything is fetched.
+// 7. A case outside the subset a run names, or one the suite excludes, is
+//    run under that subset's name: every case --cases names is checked
+//    against the split and the subset, and each refusal names its reason.
+// 8. A run's truth copy lacks a comment the suite lists, or holds a
+//    rejected one, so recall is counted over the wrong set: specCopy copies
+//    the accepted comments only and refuses a truth whose accepted comments
+//    are not exactly the ones the suite entry counts; realSpecProblems checks
+//    a saved copy the same way, and against the committed suite while it
+//    still holds the case.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -272,6 +284,115 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
     item.onChangedLines = null;
   }
   return truth;
+}
+
+// ---------- a run's cases and its truth copies ----------
+
+const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
+
+// The cases of a real suite one run uses (failures 6 and 7): every usable
+// case on the split's development side, or the subset the split file names,
+// or the cases `refs` names (<suite>/<name> or a full case id), each of
+// which must be on that side and in that subset. The test split is held
+// out: only a release run reads it, and there is none yet. Throws one error
+// whose lines name every refusal; nothing is fetched or built here.
+export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot }) {
+  if (!SUITES[suite]) throw new Error(`no real suite named ${suite}; the real suites are ${Object.keys(SUITES).join(", ")}`);
+  if (split === "test") throw new Error(`the ${suite} test split is held out: no held-out case runs before a release, and run.mjs has no release run yet`);
+  if (split !== "dev") throw new Error(`--split takes dev (test is held out), not ${JSON.stringify(split)}`);
+  const s = readSuite(suite, { root });
+  if (!s.split) throw new Error(`${s.def.split} is missing; run node benchmark/ingest/${suite}.mjs`);
+  const subsets = Object.keys(s.split.subsets ?? {}).sort();
+  if (subset !== null && subset !== "all" && !subsets.includes(subset)) throw new Error(`${s.def.split} lists no subset ${subset}; its subsets are ${subsets.join(", ")}, or all`);
+  const ids = listCases({ suite, split, subset, root });
+  if (refs === null) {
+    if (ids.length === 0) throw new Error(`the ${split} split of ${suite}${subset ? `, subset ${subset},` : ""} holds no usable case`);
+    return ids.map((id) => readCase(id, { root }));
+  }
+  const problems = [];
+  const chosen = [];
+  for (const ref of refs) {
+    const full = FULL_ID.test(ref);
+    const [refSuite, rest] = [ref.slice(0, ref.indexOf("/")), ref.slice(ref.indexOf("/") + 1)];
+    const name = full ? rest.slice(0, rest.lastIndexOf("@")) : rest;
+    const entry = s.byName.get(name);
+    const why =
+      refSuite !== suite ? `names a case of ${refSuite}, and this run selects ${suite}`
+      : !entry ? `suite ${suite} holds no case named ${name}`
+      : full && !entry.hash.startsWith(ref.slice(-8)) ? `suite ${suite} now holds ${name} at ${entry.hash.slice(0, 8)}, and a changed case is a new case`
+      : entry.status !== "usable" ? `is excluded: ${entry.excludedWhy ?? "no reason recorded"}`
+      : sideIn(s.split, name) === "test" ? "is held out: only a release run runs it"
+      : sideIn(s.split, name) === null ? "is on no side of its split"
+      : chosen.some((c) => c.name === name) ? "is named twice"
+      : !ids.includes(realCaseId(suite, name, entry.hash)) ? `is not in the subset ${subset}`
+      : null;
+    if (why !== null) problems.push(`${ref}: ${why}`);
+    else chosen.push(readCase(realCaseId(suite, name, entry.hash), { root }));
+  }
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  return chosen;
+}
+
+// The truth copy of a real case that a run saves as cases/<name>.json and
+// scores against: the case record with its accepted comments as `bugs`
+// (failure 8). The rejected comments are left out, so recall counts over the
+// accepted set. The location diagnostic's knownNoise (candidates on a
+// rejected comment's lines and on no accepted one) therefore reads 0 for
+// now: lib/score.mjs lineMatches finds rejected comments only among `bugs`,
+// and putting them there would put them in the recall denominator of the
+// scanner-only score too, a scan rules change (a new SCAN_RULES_VERSION and
+// a new accepted scan entry).
+export function specCopy(c, truth) {
+  const accepted = truth.items.filter((t) => t.valid !== false);
+  const want = c.truthCount?.accepted;
+  const ids = accepted.map((t) => t.id);
+  const expected = Number.isInteger(want) ? Array.from({ length: want }, (_, i) => `c${i + 1}`) : null;
+  if (expected === null || ids.join("\n") !== expected.join("\n")) {
+    throw new Error(`${c.id}: its suite lists ${want ?? "no count of"} accepted comments, and the truth read holds ${ids.length === 0 ? "none" : ids.join(", ")}; the copy would score against another set`);
+  }
+  return { ...c, bugs: accepted };
+}
+
+// What is wrong with a real case's saved truth copy, as cases/<name>.json
+// holds it (failure 8): a list of problems, empty when it can be scored.
+// Checked on its own, then against the committed suite while the suite
+// still holds the case at the copy's hash.
+export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
+  const p = [];
+  const need = (cond, what) => {
+    if (!cond) p.push(`${name}: ${what}`);
+  };
+  need(spec && typeof spec === "object", "the truth copy is not an object");
+  if (!spec || typeof spec !== "object") return p;
+  const id = parseCaseId(spec.id);
+  need(SUITES[suite] !== undefined, `the suite ${suite} has no truth copy rules`);
+  need(id !== null && id.suite === suite && id.name === name, `id must be the case id of ${suite}/${name}, not ${JSON.stringify(spec.id)}`);
+  need(spec.origin === "real" && spec.clean === false, "a pull request case is real and never clean");
+  need(typeof spec.repoGroup === "string" && spec.repoGroup !== "", "repoGroup is missing");
+  const count = spec.truthCount?.accepted;
+  need(Number.isInteger(count), "truthCount.accepted, the number of accepted comments its suite lists, is missing");
+  need(Array.isArray(spec.bugs), "bugs must be the list of its accepted comments");
+  if (!Array.isArray(spec.bugs) || !Number.isInteger(count)) return p;
+  const ids = spec.bugs.map((b) => b?.id);
+  const want = Array.from({ length: count }, (_, i) => `c${i + 1}`);
+  const missing = want.filter((x) => !ids.includes(x));
+  const extra = ids.filter((x) => !want.includes(x));
+  need(missing.length === 0, `the truth copy lacks ${missing.join(", ")} of the ${count} accepted comments its suite lists`);
+  need(extra.length === 0, `the truth copy holds ${extra.join(", ")}, which ${extra.length === 1 ? "is not an accepted comment" : "are not accepted comments"}; a rejected comment would enter the recall denominator`);
+  need(new Set(ids).size === ids.length, "a comment is copied twice");
+  for (const b of spec.bugs) {
+    need(b?.valid === true, `${b?.id}: only accepted comments are copied`);
+    need(typeof b?.file === "string" && b.file !== "" && Array.isArray(b.lines) && b.lines.length === 2 && b.lines.every(Number.isInteger) && b.lines[0] <= b.lines[1], `${b?.id}: file and lines [first, last] are missing`);
+    need(b?.side === "left" || b?.side === "right", `${b?.id}: side must be left or right`);
+  }
+  if (id !== null && SUITES[suite]) {
+    const entry = readSuite(suite, { root }).byName.get(id.name);
+    if (entry?.hash.startsWith(id.hash8)) {
+      need(entry.truth?.accepted === count, `the suite lists ${entry.truth?.accepted} accepted comments, and the copy says ${count}`);
+      need(entry.truthHash === spec.truthHash, "its truthHash is not the suite's");
+    }
+  }
+  return p;
 }
 
 // The repository a review of the case reads, built into `into` (a new or
