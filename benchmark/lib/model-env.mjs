@@ -53,16 +53,22 @@ export function baseUrlProblem(value) {
   return "is not an https URL";
 }
 
-/** Every text that would give the endpoint away: the key, the base URL, its origin and host. Longest first. */
+/**
+ * Every text that would give the endpoint away: the key as the file holds it
+ * and as a header sends it (fetch strips leading and trailing spaces, tabs
+ * and line breaks from a header value, so a provider echoes that form), the
+ * base URL, its origin and host. Every non-empty value, however short.
+ * Longest first.
+ */
 export function endpointSecrets(baseUrl, apiKey) {
-  const out = new Set([apiKey, baseUrl, baseUrl.replace(/\/+$/, "")]);
+  const out = new Set([apiKey, apiKey.replace(/^[\t\n\r ]+|[\t\n\r ]+$/g, ""), baseUrl, baseUrl.replace(/\/+$/, "")]);
   try {
     const url = new URL(baseUrl);
     for (const part of [url.origin, url.host, url.hostname]) out.add(part);
   } catch {
     // not a URL: the whole value is already in the set
   }
-  return [...out].filter((s) => typeof s === "string" && s.length >= 4).sort((a, b) => b.length - a.length);
+  return [...out].filter((s) => typeof s === "string" && s !== "").sort((a, b) => b.length - a.length);
 }
 
 // One NAME=value line, as a shell reads it: an optional `export`, the value

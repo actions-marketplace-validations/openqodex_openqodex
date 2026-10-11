@@ -8,13 +8,16 @@
 // 1. A 429 (or any failed call) is retried inside complete: the provider
 //    bills two attempts while the brain records one. Exactly one HTTP
 //    request per complete, and complete throws.
+//    A redirect is not followed: following it sends the call, and the key
+//    in its header, a second time and possibly to another origin.
 // 2. Tool call ids are lost in mapping: a recorded two-round conversation
 //    does not carry the provider's call ids back on the second round, or a
 //    refused tool result loses its text.
 // 3. The key or the base URL lands in a saved file, a log line or argv: in
 //    a thrown message the brain records, in the reviewer object, on stdout
 //    or stderr, in the request URL, or on the probe's command line or
-//    output.
+//    output; a key under four characters, or a quoted key padded with
+//    spaces (sent trimmed, so echoed trimmed), is not hidden.
 // 4. An api-key resource gets a bearer header (or the reverse) and every
 //    call fails as unauthorised.
 // 5. The usage is not what the contract asks: the served model is lost, or
@@ -30,6 +33,7 @@ import { join } from "node:path";
 import { inspect, promisify } from "node:util";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { callModel, MODEL_SYSTEM, TOOL_DEFINITIONS } from "../../packages/review/dist/index.js";
+import { loadModelEnv } from "../lib/model-env.mjs";
 import { createOpenAIReviewer } from "../lib/openai-reviewer.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -142,6 +146,15 @@ describe("one transport attempt per call", () => {
     expect(caller.attempts[0]).toMatchObject({ attempt: 1, outcome: "failed", inputTokens: null });
     expect(fake.requests).toHaveLength(1);
   });
+
+  it("throws on a redirect instead of sending the call, and its key, again to another origin", async () => {
+    const elsewhere = await provider([reply({ text: "answered at the other origin" })]);
+    const fake = await provider([{ status: 307, headers: { location: `${elsewhere.baseUrl}/responses` }, body: "" }]);
+    const error = await rejection(reviewer(fake.baseUrl).complete(request(firstRound())));
+    expect(error.message).toMatch(/^the request to the model endpoint failed/);
+    expect(fake.requests).toHaveLength(1);
+    expect(elsewhere.requests).toHaveLength(0);
+  });
 });
 
 describe("a recorded two-round conversation", () => {
@@ -207,6 +220,27 @@ describe("the key and the base URL stay out of everything saved, logged or put o
       expect(shown).not.toContain(fake.baseUrl);
       expect(shown).not.toContain(fake.host);
     }
+  });
+
+  it("hides a key of under four characters when the provider's error echoes it", async () => {
+    const short = "k9z";
+    const fake = await provider([(r) => ({ status: 401, body: { error: { code: "401", message: `Access denied: key ${r.headers["api-key"]} is not valid` } } })]);
+    const error = await rejection(reviewer(fake.baseUrl, { apiKey: short }).complete(request(firstRound())));
+    expect(fake.requests[0].headers["api-key"]).toBe(short);
+    expect(error.message).toMatch(/HTTP 401/);
+    expect(error.message).not.toContain(short);
+  });
+
+  it("hides a quoted key padded with spaces in the settings file, in the trimmed form the header sends and the provider echoes", async () => {
+    const fake = await provider([(r) => ({ status: 401, body: { error: { code: "401", message: `Access denied: key ${r.headers["api-key"]} is not valid` } } })]);
+    const file = join(tempDir("oq-model-env-"), "azure.env");
+    writeFileSync(file, `AZURE_OPENAI_KEY="  ${KEY}\t "\nAZURE_OPENAI_BASE_URL=${fake.baseUrl}\n`);
+    const settings = loadModelEnv({ env: { OPENQODEX_BENCH_MODEL_ENV: file } });
+    const model = createOpenAIReviewer({ model: "gpt-6.1-sol", baseUrl: settings.baseUrl, apiKey: settings.apiKey, authHeader: settings.authHeader, allowUnprobed: true });
+    const error = await rejection(model.complete(request(firstRound())));
+    expect(fake.requests[0].headers["api-key"]).toBe(KEY);
+    expect(error.message).toMatch(/HTTP 401/);
+    expect(error.message).not.toContain(KEY);
   });
 
   it("leaves both out of a thrown message when the endpoint cannot be reached", async () => {

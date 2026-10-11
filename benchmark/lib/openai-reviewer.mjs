@@ -13,7 +13,7 @@
 // Failure list, written before the code:
 // 1. A retry hidden inside complete: the provider bills two attempts and the
 //    brain records one. complete makes exactly one fetch, follows no
-//    Retry-After, and throws on any failure (HTTP status, a dropped
+//    Retry-After and no redirect, and throws on any failure (HTTP status, a dropped
 //    connection, an answer that is not the Responses shape).
 // 2. Tool call ids lost in mapping: each function_call carries the
 //    library's tool call id as call_id, both ways, and each tool result is
@@ -89,8 +89,10 @@ export function createOpenAIReviewer({ model, baseUrl, apiKey, authHeader, maxOu
       const body = JSON.stringify(requestBody(model, request, effort));
       let response;
       try {
-        // One attempt: fetch itself never retries a request.
-        response = await fetch(url, { method: "POST", headers, body });
+        // One attempt: fetch itself never retries a request, and a redirect
+        // is an error, never followed: following one sends the call, and
+        // the key in its header, a second time and maybe to another origin.
+        response = await fetch(url, { method: "POST", headers, body, redirect: "error" });
       } catch (error) {
         const cause = error?.cause?.code ?? error?.cause?.message ?? error?.message ?? String(error);
         // A refused connection, a dropped one, or Node's own wait for the
