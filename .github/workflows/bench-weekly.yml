@@ -40,6 +40,12 @@ jobs:
   weekly:
     name: Scanner-only benchmark on pull requests
     runs-on: ubuntu-latest
+    # The hour, step by step. Every step before the trend has its own limit:
+    # folders 1, checkout 3, setup 12, cache restore 4, data files 2,
+    # dev-smoke 12, full development pass 14, cache save 4, which is 52, so
+    # at least 8 minutes stay for the trend, the index entry, the full
+    # pass's score and the upload, whatever the steps before them take.
+    # packages/cli/test/bench-weekly-workflow.test.ts checks the sum.
     timeout-minutes: 60
     steps:
       # The scanners' install root, the clone cache, and the folder the
@@ -47,6 +53,7 @@ jobs:
       # results is ignored by git), because a score names its run folder
       # relative to the repository only when the folder is in it.
       - name: Name the folders
+        timeout-minutes: 1
         run: |
           {
             echo "OPENQODEX_HOME=$RUNNER_TEMP/openqodex-bench-home"
@@ -54,11 +61,14 @@ jobs:
             echo "BENCH=$GITHUB_WORKSPACE/benchmark/results/bench-weekly"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
         with:
           persist-credentials: false
       # Node, Ruby, Go, the build and every scanner, cached: the one recipe
-      # this workflow and the bench-scan job in ci.yml share.
+      # this workflow and the bench-scan job in ci.yml share. A cold install
+      # of every scanner takes several minutes; a warm one, one or two.
       - uses: ./.github/actions/bench-setup
+        timeout-minutes: 12
       # The clone cache: AACR-Bench's data files, the bare clones and the
       # built case repositories, keyed on the suite, its split and the board
       # pins. Each run saves its own copy, so a cache grows from week to
@@ -66,6 +76,7 @@ jobs:
       # dev-smoke cache.
       - name: Restore the clone cache
         id: clones
+        timeout-minutes: 4
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/openqodex-bench-cache
@@ -76,36 +87,41 @@ jobs:
       # The truth each case is scored against; downloaded only when the
       # cache lacks it, and checked against its pin either way.
       - name: Fetch AACR-Bench's pinned data files
+        timeout-minutes: 2
         run: node benchmark/ingest/aacr.mjs --data-only
       # The run's own limit: a scanner-only run takes no budget flags, so the
       # step's timeout is its budget, inside the job's hour. A timeout stops
-      # the run, which saves what it scanned.
+      # the run, which saves what it scanned. Five pull requests twice took
+      # under three minutes with a cold clone cache on a laptop.
       - name: Scan the dev-smoke pull requests twice
-        timeout-minutes: 20
+        timeout-minutes: 12
         run: |
           run_id="$(date -u +%Y-%m-%d)-$(git rev-parse --short=7 HEAD)-aacr-dev-smoke-scan-ci"
           echo "RUN_ID=$run_id" >> "$GITHUB_ENV"
           node benchmark/run.mjs --mode scan --suite aacr --subset dev-smoke --check-identical --out "$BENCH/results/$run_id"
       - name: Scan every development pull request
         if: ${{ success() && inputs.full-dev }}
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           full_id="$(date -u +%Y-%m-%d)-$(git rev-parse --short=7 HEAD)-aacr-dev-scan-ci"
           echo "FULL_ID=$full_id" >> "$GITHUB_ENV"
           node benchmark/run.mjs --mode scan --suite aacr --split dev --out "$BENCH/results/$full_id"
       - name: Save the clone cache
         if: ${{ !cancelled() }}
+        timeout-minutes: 4
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/openqodex-bench-cache
           key: ${{ steps.clones.outputs.cache-primary-key }}
+      # The steps below keep the diagnostics, so they run after a cancel or a
+      # timeout too, each only when the files it reads are there.
       - name: Trend against the accepted run
-        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        if: ${{ always() && hashFiles(format('benchmark/results/bench-weekly/results/{0}/score.json', env.RUN_ID)) != '' }}
         run: node benchmark/trend.mjs --mode scan --against-run "$BENCH/results/$RUN_ID" --summary "$GITHUB_STEP_SUMMARY"
       # The entry a person commits to accept this run (benchmark/trend.mjs
       # --accept), written from the run folder the artifact holds.
       - name: Write the run's index entry
-        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        if: ${{ always() && hashFiles(format('benchmark/results/bench-weekly/results/{0}/score.json', env.RUN_ID)) != '' }}
         run: |
           node benchmark/publish-run.mjs "$BENCH/results/$RUN_ID" --dry-run --write-index --out "$BENCH/asset"
           mkdir -p "$BENCH/index/runs"
@@ -115,7 +131,7 @@ jobs:
             echo "The run folders and this index entry are in the artifact bench-weekly-$RUN_ID, kept 14 days. \`gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --name bench-weekly-$RUN_ID --dir <dir>\` puts the run folder at \`<dir>/results/$RUN_ID\`, so \`<results>\` above is \`<dir>/results\`."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Score of every development pull request
-        if: ${{ !cancelled() && env.FULL_ID != '' }}
+        if: ${{ always() && hashFiles(format('benchmark/results/bench-weekly/results/{0}/manifest.json', env.FULL_ID)) != '' }}
         run: |
           {
             echo ""
@@ -124,9 +140,9 @@ jobs:
             node benchmark/score.mjs "$BENCH/results/$FULL_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ !cancelled() && env.RUN_ID != '' }}
+        if: ${{ always() && hashFiles('benchmark/results/bench-weekly/**') != '' }}
         with:
-          name: bench-weekly-${{ env.RUN_ID }}
+          name: bench-weekly-${{ env.RUN_ID || github.run_id }}
           path: benchmark/results/bench-weekly
           retention-days: 14
           if-no-files-found: error
