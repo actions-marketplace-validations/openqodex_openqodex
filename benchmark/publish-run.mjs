@@ -61,6 +61,10 @@
 //    and one whose bytes alone differ is rewritten and said so.
 // 8. An asset is uploaded twice under one name: an existing asset of that
 //    name refuses the upload.
+// 9. A run that holds a case whose licence nobody verified leaves the
+//    machine: such a case is for private runs only (lib/licence.mjs
+//    publishRefusal), and the run is refused before anything is packaged,
+//    with every such case named.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -69,6 +73,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
+import { publishRefusal } from "./lib/licence.mjs";
 import { RELEASE, REPOSITORY, assetUrl, buildEntry, byBytes, entryProblems, fileList, listHash, readEntry, runsRoot, sha256, writeEntry } from "./lib/index.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
 import { extractAsset } from "./fetch-run.mjs";
@@ -454,6 +459,8 @@ export function packageRun(folder, { out, env = process.env, recipes = readRecip
     if (problems.length > 0) throw new Error(`refused: ${runId} is not the folder its recipe names:\n${problems.slice(0, 20).join("\n")}`);
   }
   const cases = caseRecords(folder, local);
+  const unverified = publishRefusal([...cases.values()]);
+  if (unverified !== null) throw new Error(unverified);
   const left = [];
   const files = [];
   for (const path of local) {
