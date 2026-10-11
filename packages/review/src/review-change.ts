@@ -157,6 +157,9 @@ export type ReviewInputs = {
   // The deadline itself, on the run's clock, when the host fixed it before
   // any work (reviewChange, at its entry); it then replaces timeoutMs.
   deadlineAt?: number;
+  // The line a review the deadline stopped prints and reports, in place of
+  // TIMED_OUT: the CLI names the cap it hit and the flag that raises it.
+  timedOut?: string;
   // The version the run's manifest names.
   runtimeVersion: string;
   // The lowest confidence a finding may have, in the brief and in the
@@ -634,7 +637,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           session = s;
           say(`Second reviewer: model ${reviewer.model} started`);
         },
-        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver, onRound: onRound("second") }),
+        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver, onRound: onRound("second"), timedOut: inputs.timedOut }),
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
@@ -649,6 +652,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       check,
       deliver,
       onRound: onRound("primary"),
+      timedOut: inputs.timedOut,
     }).finally(async () => {
       await session?.close();
     });
@@ -778,8 +782,9 @@ function refuseSecond(second: Reviewer | undefined): void {
 
 // A review that stopped before a reviewer could be given the change: no
 // finding, no usage, and outputs that say why. `scope`: the decision, when
-// the proofs got that far.
-function stoppedResult(status: "complete" | "incomplete", reason: string, scope: ReviewScope | null = null, notes: string[] = []): ReviewResult {
+// the proofs got that far. `scan`: the scan record, when the scanners ran
+// before it stopped.
+function stoppedResult(status: "complete" | "incomplete", reason: string, scope: ReviewScope | null = null, notes: string[] = [], scan: ReviewResult["scan"] = null): Untimed {
   const lead = status === "complete" ? "Review complete" : "Review incomplete";
   return {
     status,
@@ -798,6 +803,7 @@ function stoppedResult(status: "complete" | "incomplete", reason: string, scope:
     notes,
     disagreements: [],
     context: [],
+    scan,
     render: {
       markdown: () => `# ${lead}\n\n${display(reason)}\n`,
       sarif: () => `${JSON.stringify({ $schema: "https://json.schemastore.org/sarif-2.1.0.json", version: "2.1.0", runs: [{ tool: { driver: { name: "openqodex", rules: [] } }, results: [], properties: { status, reason } }] }, null, 2)}\n`,
@@ -892,9 +898,11 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   return timed(done, clock);
 }
 
-// A result, and the report its renderers draw from (null for a review that
-// stopped before a reviewer was given the change).
-type Reviewed = { result: ReviewResult; report: Report | null };
+// A result before the clock is read, and the report its renderers draw
+// from (null for a review that stopped before a reviewer was given the
+// change).
+type Untimed = Omit<ReviewResult, "timings">;
+type Reviewed = { result: Untimed; report: Report | null };
 
 // The result with the clock read now, once the result is built and the
 // scratch folder removed, just before reviewChange returns; the report its
@@ -927,6 +935,9 @@ async function reviewInScope(
     decision,
     tempRoot: join(scratch, "tmp"),
   });
+  // The scan record as soon as the scanners have run, so a review that
+  // stops after them still carries it.
+  let scan: ReviewResult["scan"] = null;
   let r: ReviewCoreResult;
   try {
     r = await runReviewCore(
@@ -956,6 +967,7 @@ async function reviewInScope(
         instructions: (secrets) => (input.instructions ? { text: redactSecrets(input.instructions, secrets), hash: createHash("sha256").update(input.instructions).digest("hex"), from: "host" as const } : { text: "", hash: null }),
         onEvent: (e) => {
           if (e.type === "progress" || e.type === "warning") say(e.line);
+          else if (e.type === "prepared") scan = scanRecord(e.scan, e.secrets);
         },
         now: Date.now,
         clock,
@@ -965,15 +977,15 @@ async function reviewInScope(
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes()), report: null };
-    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes()), report: null };
+    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes(), scan), report: null };
+    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes(), scan), report: null };
     throw error;
   }
   if (r.ended === "nothing") {
     const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
     return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes()), report: null };
   }
-  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes()), report: null };
+  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes(), scan), report: null };
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;
@@ -1017,7 +1029,7 @@ async function reviewInScope(
     completion,
   );
   const complete = completion.status === "complete";
-  const result: ReviewResult = {
+  const result: Untimed = {
     status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
     ...(complete ? {} : { reason: completion.missing.join("; ") }),
     scope: decision.scope,
@@ -1034,7 +1046,17 @@ async function reviewInScope(
     notes: report.notes ?? [],
     disagreements: completion.disagreements ?? [],
     context: r.context ?? [],
+    scan,
     render: reviewRender(report),
   };
   return { result, report };
+}
+
+// The scan record a host reads (ReviewResult.scan): the scan as the command
+// writes it to scan.json, redacted again with every secret the run matched
+// (a delta review's secrets of the whole change included), less the
+// secrets' fingerprints.
+function scanRecord(scan: ScanResult, secrets: string[]): ReviewResult["scan"] {
+  const { secretFingerprints: _, ...record } = redactStored(scan, secrets);
+  return record;
 }

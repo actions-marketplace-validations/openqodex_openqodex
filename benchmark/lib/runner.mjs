@@ -148,9 +148,11 @@ export function takeOverStale(path, stalePid) {
 // Takes a run folder for this process, or throws when another live process
 // holds it. A lock file with no process number is being written, and counts
 // as held. Returns the function that gives the folder back (failure 11).
-export function lockRun(out) {
+// `file`, `who` and `advice` let another command on the run folder (the
+// wording judge) take a lock of its own the same way.
+export function lockRun(out, { file = LOCK_FILE, who = "another run", advice = "wait for it to end, or use another --out" } = {}) {
   mkdirSync(out, { recursive: true });
-  const path = join(out, LOCK_FILE);
+  const path = join(out, file);
   for (let tries = 0; tries < 2; tries++) {
     try {
       writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
@@ -168,7 +170,7 @@ export function lockRun(out) {
   }
   const holder = existsSync(path) ? readFileSync(path, "utf8").trim() : "unknown";
   const empty = holder === "" ? `; its lock names no process yet, and if it stays empty, a runner died while writing it: move ${path} away by hand` : "";
-  throw new Error(`${out} is in use by another run (process ${holder || "unknown"}); wait for it to end, or use another --out${empty}`);
+  throw new Error(`${out} is in use by ${who} (process ${holder || "unknown"}); ${advice}${empty}`);
 }
 
 const readJsonFile = (path) => {

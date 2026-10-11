@@ -20,6 +20,10 @@
 // 4. A sample, or a file of a sample, one pass has and the other lacks is
 //    missed: every file under both passes' samples/ is listed, and a file
 //    only one holds is a difference.
+// 5. The registry serves one Semgrep rule set as JSON to one pass and as
+//    YAML to the other, and the passes differ by the raw size of a pack:
+//    each pack in a semgrep scanner entry's `rules` is compared by `pack`
+//    and `sha256` (the hash of its rules), and its `bytes` is left out.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { inputDifferences } from "./external.mjs";
@@ -43,6 +47,18 @@ export function withoutTextTimes(file, text) {
 export function withoutTimes(v) {
   if (Array.isArray(v)) return v.map(withoutTimes);
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([k]) => !TIME_KEY.test(k)).map(([k, x]) => [k, withoutTimes(x)]));
+  return v;
+}
+
+// A semgrep scanner entry (in scan.json and report.json) with each rule
+// pack's raw size left out (failure 5).
+function withoutPackSizes(v) {
+  if (Array.isArray(v)) return v.map(withoutPackSizes);
+  if (v && typeof v === "object") {
+    const out = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withoutPackSizes(x)]));
+    if (out.scanner === "semgrep" && Array.isArray(out.rules)) out.rules = out.rules.map((r) => (r && typeof r === "object" ? Object.fromEntries(Object.entries(r).filter(([k]) => k !== "bytes")) : r));
+    return out;
+  }
   return v;
 }
 
@@ -82,8 +98,8 @@ const STRUCTURED = /\.(json|sarif)$/;
 // does not: its fields for JSON and SARIF, its first differing line for text.
 function fileDifference(file, a, b) {
   if (STRUCTURED.test(file)) {
-    const x = withoutTimes(readJson(join(a, file)));
-    const y = withoutTimes(readJson(join(b, file)));
+    const x = withoutPackSizes(withoutTimes(readJson(join(a, file))));
+    const y = withoutPackSizes(withoutTimes(readJson(join(b, file))));
     return canonical(x) === canonical(y) ? null : differingFields(x, y).join(", ");
   }
   const x = withoutTextTimes(file, readFileSync(join(a, file), "utf8")).split("\n");
