@@ -150,6 +150,7 @@ The comments are found by a small reader per comment family, not a full parser. 
 - Version: 1.9.4.
 - Runs when: a `.py` or `.pyi` file changed.
 - Needs: the same Python as semgrep.
+- Skips its assert check, `B101`, in test files: a file under a `test`, `tests`, `spec`, `specs`, `e2e`, `__tests__` or `__mocks__` folder, or one whose name starts with `test_` or holds `_test.`, `_spec.`, `.test.` or `.spec.`. A test checks its results with assert, so there the check raises only noise. Test files run as a second bandit run with `-s B101`, so every other bandit check still reads them, and `B101` still checks every other Python file, where `python -O` removes the assert.
 - Sends: nothing.
 
 ## ruff
