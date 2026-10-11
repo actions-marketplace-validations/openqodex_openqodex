@@ -44,8 +44,9 @@
 //    ($OPENQODEX_BENCH_CACHE/cases/<case hash>.git). The search is for each
 //    line anywhere in the decoded text, whitespace normalised, so a line
 //    behind a file name and line number, after a diff marker or inside a
-//    sentence is found, and no line is too short to count. A hit, or a
-//    missing repository, refuses the publish.
+//    sentence is found, and no line is too short to count (a line of one
+//    bare token counts as a whole line only). A hit, or a missing
+//    repository, refuses the publish.
 // 5. A legacy run is published from a folder that is not the committed one:
 //    every file must match the blob the recipe's commit holds.
 // 6. A legacy run is published without the scorer that wrote its numbers:
@@ -263,15 +264,23 @@ const normalise = (s) => s.replace(/\s+/g, " ").trim();
 
 // The only source lines left out of the search, because they hold no code
 // of their own: blank lines, lines of punctuation alone (a lone brace or
-// bracket such as `}` or `});`, a comment marker such as `*/`), and a single
-// keyword (`else:`, `end`, `return;`). Every other line counts, however
-// short: a two-line function is still the repository's code.
+// bracket such as `}` or `});`, a comment marker such as `*/`), a number
+// alone (`1,` in a list; every run's own JSON prints such lines), and a
+// single keyword (`else:`, `end`, `return;`). Every other line counts,
+// however short: a two-line function is still the repository's code.
 const KEYWORDS = new Set(["abstract", "and", "async", "await", "begin", "break", "case", "catch", "class", "const", "continue", "debugger", "def", "default", "defer", "do", "done", "echo", "elif", "else", "end", "endfor", "endif", "endwhile", "ensure", "enum", "esac", "except", "export", "extends", "false", "fi", "final", "finally", "fn", "for", "foreach", "from", "func", "function", "go", "goto", "if", "impl", "implements", "import", "in", "interface", "is", "let", "loop", "match", "mod", "module", "mut", "namespace", "new", "nil", "none", "not", "null", "or", "override", "package", "pass", "print", "private", "protected", "pub", "public", "raise", "require", "rescue", "return", "select", "self", "static", "struct", "super", "switch", "template", "then", "this", "throw", "true", "try", "type", "undefined", "union", "unless", "until", "use", "using", "var", "virtual", "when", "where", "while", "with", "yield"]);
 export function carriesNoCode(line) {
   if (line === "" || !/[A-Za-z0-9]/.test(line)) return true;
+  if (/^[-+]?\d[\dA-Fa-fxXoObB._]*[,;:]*$/.test(line)) return true;
   const word = /^([A-Za-z_]+)[:;,]?$/.exec(line);
   return word !== null && KEYWORDS.has(word[1].toLowerCase());
 }
+
+// A line that is one bare name with trailing commas or semicolons (`name,`,
+// `x`) still counts, but only as a whole line of the packaged text: found
+// anywhere inside other text, it would match nearly every file and refuse
+// every publish.
+export const oneToken = (line) => /^[A-Za-z0-9_$.]+[,;:]*$/.test(line);
 
 const WORD = /[A-Za-z0-9_$]/;
 
@@ -368,7 +377,12 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
   for (const value of modelValues(env, basename(folder), manifest)) needles.push({ value, label: "a value from the model settings file" });
   const patterns = scrubPatterns();
   patterns.push({ regex: HOME_PATH, label: "a home folder path" });
-  const code = [...cases.values()].filter((c) => c.licence !== "permissive").map((c) => ({ c, find: substringMatcher([...codeLines(c, env)]) }));
+  const code = [...cases.values()]
+    .filter((c) => c.licence !== "permissive")
+    .map((c) => {
+      const lines = [...codeLines(c, env)];
+      return { c, find: substringMatcher(lines.filter((l) => !oneToken(l))), whole: new Set(lines.filter(oneToken)) };
+    });
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
     secrets: needles.filter((n) => n.label.startsWith("the generated secret")).length,
@@ -387,8 +401,8 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
       for (const p of patterns) if (texts.some((t) => p.regex.test(t))) hits.push(`${at}: ${p.label}`);
       // Anywhere in the decoded text: behind a file name and line number as
       // a search prints it, after a diff marker, inside a sentence.
-      for (const { c, find } of code) {
-        if (texts.some((t) => find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
+      for (const { c, find, whole } of code) {
+        if (texts.some((t) => whole.has(normalise(t)) || find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
       }
     });
   }

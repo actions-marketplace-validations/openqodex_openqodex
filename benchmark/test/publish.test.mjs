@@ -168,7 +168,7 @@ describe("nothing private or third-party leaves in an asset", () => {
   // A real case whose licence is not permissive: its code may be read in a
   // review, never published. The case repository is in the cache, where the
   // materialiser leaves it.
-  function realCaseRun(cache) {
+  function realCaseRun(cache, extraFiles = {}) {
     const run = plantedRun();
     const name = "acme__ledger-42";
     const hash = "b".repeat(64);
@@ -178,6 +178,7 @@ describe("nothing private or third-party leaves in an asset", () => {
     writeFileSync(join(work, "ledger", "invoice.py"), "def invoice_total(order, rates):\n    subtotal = sum(line.amount * rates[line.currency] for line in order.lines)\n    return round(subtotal, 2)\n");
     // A short function: each of its lines is shorter than any length cutoff would allow.
     writeFileSync(join(work, "ledger", "fees.py"), "def fee(x):\n    return x * 3\n");
+    for (const [file, text] of Object.entries(extraFiles)) write(join(work, file), text);
     git(work, "init", "-q");
     git(work, "add", "-A");
     git(work, "commit", "-q", "-m", "Base");
@@ -222,6 +223,15 @@ describe("nothing private or third-party leaves in an asset", () => {
     const { run, name } = realCaseRun(cache);
     addSample(run, name, "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"tool","content":"    return x * 3\\n"}\n` });
     expect(refused(run, { OPENQODEX_BENCH_CACHE: cache })).toMatch(new RegExp(`transcript\\.jsonl:1: a line of ${name}'s code`));
+  });
+
+  it("publishes a copyleft run whose repository has one-token lines, such as `1,` in a list, that the run's own JSON also holds", () => {
+    const cache = tempDir("oq-bench-cache-");
+    const { run, name } = realCaseRun(cache, { "ledger/rates.py": "RATES = [\n    1,\n    2,\n]\n" });
+    addSample(run, name, "model-gpt-6.1-sol");
+    // The manifest holds "repeat":1,"planned":2, as every run's does.
+    const asset = packageRun(run, { out: tempDir("oq-publish-out-"), env: { OPENQODEX_BENCH_CACHE: cache } });
+    expect(asset.files).toBeGreaterThan(10);
   });
 
   it("refuses a run with a model reviewer when the model settings file cannot be read here, since its key and base URL cannot be looked for", () => {
