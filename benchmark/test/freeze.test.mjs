@@ -8,11 +8,12 @@
 //    aside) resolves to a lock entry with that hash.
 // 2. A planted bug without a class, or with a class outside the list, is
 //    accepted, so the scanner tables group truth by a label nobody chose.
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { NEW_CASE, caseHash, caseId, casesRoot, indexProblems, listCases, lockProblems, lockRefusals, readCase, readLock, specProblems } from "../lib/cases.mjs";
+import { NEW_CASE, buildCase, caseHash, caseId, caseIdFromHash, casesRoot, indexProblems, listCases, loadRunLock, lockProblems, lockRefusals, readCase, readLock, snapshotCases, specProblems } from "../lib/cases.mjs";
 import { CLASSES, CLASSES_VERSION } from "../lib/classes.mjs";
+import { readRunManifests, updateLock } from "../lib/lock.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -28,6 +29,12 @@ function frozenCopy(name) {
   cpSync(join(casesRoot, name), join(root, name), { recursive: true });
   const copyLock = { version: 1, cases: { [name]: { hash: caseHash(name, root), frozenAt: "2026-10-10", history: null, retired: false } } };
   return { root, copyLock };
+}
+
+// One byte of the spec changed, the way a hand edit would.
+function editSpec(root, name) {
+  const spec = join(root, name, "case.json");
+  writeFileSync(spec, readFileSync(spec, "utf8").replace('"guards": "a', '"guards": "A'));
 }
 
 function indexFolder(entries) {
@@ -56,6 +63,85 @@ describe("the case lock (a case edited after a run keeps its id, so old and new 
 
   it("gives every case the id planted/<name>@<first 8 hex of its hash>", () => {
     for (const name of ids) expect(caseId(name)).toBe(`planted/${name}@${lock.cases[name].hash.slice(0, 8)}`);
+  });
+
+  it("gives an edited case a new id, which the lock it was frozen in refuses", () => {
+    const name = "clean-python-feature";
+    const { root, copyLock } = frozenCopy(name);
+    const before = caseId(name, root);
+    expect(before).toBe(caseIdFromHash(name, copyLock.cases[name].hash));
+    editSpec(root, name);
+    const after = caseId(name, root);
+    expect(after).toMatch(/^planted\/clean-python-feature@[0-9a-f]{8}$/);
+    expect(after).not.toBe(before);
+    expect(lockRefusals([name], copyLock, {}, root).join("\n")).toContain(NEW_CASE);
+  });
+
+  it("refuses a symbolic link in a case, which the build would copy but the hash would skip", () => {
+    const name = "clean-python-feature";
+    const { root } = frozenCopy(name);
+    symlinkSync("../../base/ledger/money.py", join(root, name, "change", "ledger", "linked.py"));
+    expect(() => caseHash(name, root)).toThrow(/symbolic link/);
+  });
+
+  it("hashes each file's executable mode, which the build and the diff keep", () => {
+    const name = "clean-python-feature";
+    const { root, copyLock } = frozenCopy(name);
+    const file = join(root, name, "change", "ledger", "money.py");
+    chmodSync(file, statSync(file).mode | 0o111);
+    expect(caseHash(name, root)).not.toBe(copyLock.cases[name].hash);
+  });
+
+  it("builds every attempt from a snapshot taken at run start, so an edit of the live folders while a run goes reaches no attempt", () => {
+    const name = "clean-python-feature";
+    const { root, copyLock } = frozenCopy(name);
+    const snap = snapshotCases([name], join(tempDir("oq-bench-snap-"), "copy"), { root, anchor: dirname(root) });
+    editSpec(root, name);
+    writeFileSync(join(root, name, "change", "ledger", "money.py"), "edited while the run goes\n");
+    expect(caseHash(name, snap)).toBe(copyLock.cases[name].hash);
+    const { dir, spec } = buildCase(name, join(tempDir("oq-bench-snap-build-"), "repo"), snap);
+    expect(spec.guards.startsWith("a ")).toBe(true);
+    expect(readFileSync(join(dir, "ledger", "money.py"), "utf8")).not.toBe("edited while the run goes\n");
+  });
+
+  it("snapshots the demo's base and change, which lie outside its case folder", () => {
+    const into = join(tempDir("oq-bench-snap-demo-"), "copy");
+    const snap = snapshotCases(["demo-polyglot"], into);
+    expect(existsSync(join(into, "examples", "demo-repo", "planted", "scripts", "deploy.sh"))).toBe(true);
+    expect(caseHash("demo-polyglot", snap)).toBe(lock.cases["demo-polyglot"].hash);
+  });
+
+  it("refuses a lock that is there but unsound, even for a draft run, so a draft cannot skip a retirement", () => {
+    const dir = tempDir("oq-bench-runlock-");
+    const bad = join(dir, "cases.lock.json");
+    writeFileSync(bad, JSON.stringify({ version: 1, cases: { x: { hash: "zz", retired: true } } }));
+    expect(() => loadRunLock(bad, { draft: true })).toThrow(/not sound/);
+    expect(() => loadRunLock(bad, { draft: false })).toThrow(/not sound/);
+    const missing = join(dir, "missing.json");
+    expect(loadRunLock(missing, { draft: true })).toEqual({ version: 1, cases: {} });
+    expect(() => loadRunLock(missing, { draft: false })).toThrow(/draft/);
+  });
+
+  it("refuses to rewrite the lock entry of a case a local run used, unless forced with a reason that goes into its history", () => {
+    const name = "clean-python-feature";
+    const { root, copyLock } = frozenCopy(name);
+    const frozen = copyLock.cases[name].hash;
+    const results = join(tempDir("oq-bench-results-"), "results");
+    mkdirSync(join(results, "2026-10-12-abc1234"), { recursive: true });
+    writeFileSync(join(results, "2026-10-12-abc1234", "manifest.json"), JSON.stringify({ started_at: "2026-10-12T00:00:00.000Z", cases: [name], caseHashes: { [name]: frozen } }));
+    const store = join(tempDir("oq-bench-store-"), "runs");
+    mkdirSync(store);
+    const runs = readRunManifests([results, store]);
+    expect(runs.map((r) => r.run)).toEqual(["2026-10-12-abc1234"]);
+    editSpec(root, name);
+    const noIndex = join(tempDir("oq-bench-noindex-"), "runs");
+    const refused = updateLock(structuredClone(copyLock), { root, runs, indexDir: noIndex, today: "2026-10-12" });
+    expect(refused.refusals.join("\n")).toContain(name);
+    expect(refused.refusals.join("\n")).toContain(NEW_CASE);
+    const forced = updateLock(structuredClone(copyLock), { root, runs, indexDir: noIndex, today: "2026-10-12", force: "the reason given" });
+    expect(forced.refusals).toEqual([]);
+    expect(forced.lock.cases[name].hash).toBe(caseHash(name, root));
+    expect(forced.lock.cases[name].history).toContain("the reason given");
   });
 
   it("F2: every case id a run index entry names resolves to a lock entry with that hash", () => {

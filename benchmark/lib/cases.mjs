@@ -49,7 +49,7 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { CLASSES } from "./classes.mjs";
@@ -135,6 +135,14 @@ export function specProblems(spec, id, { labels = true } = {}) {
     need(Array.isArray(b.tags) && b.tags.every((t) => TAGS.includes(t)) && new Set(b.tags).size === b.tags.length, `${at}: tags must be a list of ${TAGS.join(", ")}, each at most once (empty when none applies)`);
     need(Array.isArray(b.evidence) && b.evidence.every((e) => e && typeof e.file === "string" && e.file !== "" && isRange(e.lines)), `${at}: evidence must be a list of { file, lines } (empty when the changed lines hold the proof)`);
     if (Array.isArray(b.tags) && b.tags.includes("needs-callers")) need(Array.isArray(b.evidence) && b.evidence.length > 0, `${at}: needs-callers needs the callers in evidence`);
+    if (Array.isArray(b.evidence) && isRange(b.lines)) {
+      const own = [{ file: b.file, lines: b.lines }, ...(Array.isArray(b.also) ? b.also : [])];
+      for (const e of b.evidence) {
+        if (!e || !isRange(e.lines)) continue;
+        const hit = own.find((o) => o.file === e.file && isRange(o.lines) && e.lines[0] <= o.lines[1] && o.lines[0] <= e.lines[1]);
+        need(!hit, `${at}: evidence ${e.file} lines ${e.lines.join("-")} overlaps the bug's own lines; evidence is proof outside them`);
+      }
+    }
   }
   for (const [i, x] of (spec.extras ?? []).entries()) {
     need(typeof x.file === "string" && isRange(x.lines) && typeof x.why === "string", `extras[${i}]: must be { file, lines, mentions, why }`);
@@ -187,11 +195,15 @@ export function git(dir, ...args) {
   );
 }
 
+// Every plain file under dir. A symbolic link is refused: the build would
+// copy it and the hash would not read through it, so a link added or
+// retargeted would change the code a case builds without changing its id.
 function filesUnder(dir) {
   const out = [];
   const walk = (rel) => {
     for (const e of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const path = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isSymbolicLink()) throw new Error(`${join(dir, path)} is a symbolic link; a case holds plain files only, so its hash covers everything it builds from`);
       if (e.isDirectory()) walk(path);
       else if (e.isFile()) out.push(path);
     }
@@ -243,7 +255,8 @@ export function buildCase(id, into, root = casesRoot) {
 }
 
 // One hash over everything a case builds from: its spec, the base and change
-// folders it names (wherever they lie) and delete.txt. Two runs whose hashes
+// folders it names (wherever they lie), each file's executable mode (the
+// build copies it and git records it) and delete.txt. Two runs whose hashes
 // differ for a case reviewed different code or scored it differently.
 export function caseHash(id, root = casesRoot) {
   const spec = readCase(id, root);
@@ -251,8 +264,15 @@ export function caseHash(id, root = casesRoot) {
   const h = createHash("sha256");
   h.update(readFileSync(join(caseDir, "case.json")));
   for (const [label, folder] of [["base", resolve(caseDir, spec.base ?? "base")], ["change", resolve(caseDir, spec.change ?? "change")]]) {
-    for (const path of filesUnder(folder)) {
-      h.update(`\0${label}/${path}\0`);
+    let paths;
+    try {
+      paths = filesUnder(folder);
+    } catch (error) {
+      throw new Error(`${id}: ${error.message}`);
+    }
+    for (const path of paths) {
+      const executable = (statSync(join(folder, path)).mode & 0o100) !== 0;
+      h.update(`\0${label}/${path}\0${executable ? "755" : "644"}\0`);
       h.update(readFileSync(join(folder, path)));
     }
   }
@@ -269,6 +289,35 @@ export function caseIdFromHash(name, hash) {
 
 export function caseId(name, root = casesRoot) {
   return caseIdFromHash(name, caseHash(name, root));
+}
+
+// Copies every folder the named cases build from into `into`, each at its
+// place relative to `anchor` (the repository root), so a spec keeps its bytes
+// and its relative base and change paths (the demo's lie outside its case
+// folder). A run hashes, checks and builds every attempt from this copy, so
+// an edit of the live folders while the run goes reaches none of it.
+// Returns the cases root inside the copy.
+export function snapshotCases(names, into, { root = casesRoot, anchor = repoRoot } = {}) {
+  const under = (path) => {
+    const rel = relative(anchor, path);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${path} lies outside ${anchor}, so a snapshot cannot keep its place`);
+    return rel;
+  };
+  const copied = [];
+  const copy = (path) => {
+    const rel = under(path);
+    if (copied.some((c) => rel === c || rel.startsWith(`${c}/`))) return;
+    copied.push(rel);
+    cpSync(path, join(into, rel), { recursive: true, verbatimSymlinks: true });
+  };
+  for (const name of names) {
+    const spec = readCase(name, root);
+    const caseDir = join(root, name);
+    copy(caseDir);
+    copy(resolve(caseDir, spec.base ?? "base"));
+    copy(resolve(caseDir, spec.change ?? "change"));
+  }
+  return join(into, under(root));
 }
 
 // `<suite>/<name>@<8 hex>` into its parts; null when it is not a case id.
@@ -297,6 +346,15 @@ export function readLock(path = lockPath) {
   }
   if (p.length > 0) throw new Error(`the case lock ${relative(repoRoot, path) || path} is not sound:\n${p.join("\n")}`);
   return lock;
+}
+
+// The lock a run checks against. Only a missing lock may stand in as an
+// empty one, and only for a draft run; a lock that is there but unsound is
+// refused for every run, so a draft cannot skip a retirement it holds.
+export function loadRunLock(path = lockPath, { draft = false } = {}) {
+  if (existsSync(path)) return readLock(path);
+  if (!draft) throw new Error(`the case lock ${relative(repoRoot, path) || path} is missing, so no case id is frozen; write it with node benchmark/lock.mjs, or run as a draft with --draft (never accepted)`);
+  return { version: 1, cases: {} };
 }
 
 const editedMessage = (name, now, frozen) =>
@@ -392,6 +450,13 @@ export function lockRefusals(names, lock, { draft = false, allowRetired = false 
 // are added with intent-to-add on a copy of the index, so the repository's
 // own index is not touched).
 export function changedLines(dir) {
+  return diffOf(dir).changed;
+}
+
+// The change's shape, per file: `changed`, the lines a finding may start on
+// (above), and `deletedAfter`, the new-side line after which the change
+// removed lines and wrote nothing in their place (0 for the top of a file).
+export function diffOf(dir) {
   const temp = mkdtempSync(join(tmpdir(), "oq-bench-index-"));
   const env = { ...gitEnv(), GIT_INDEX_FILE: join(temp, "index") };
   const run = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -404,6 +469,7 @@ export function changedLines(dir) {
     rmSync(temp, { recursive: true, force: true });
   }
   const out = new Map();
+  const deletedAfter = new Map();
   let file = null;
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ ")) {
@@ -420,9 +486,32 @@ export function changedLines(dir) {
       // A pure deletion after line `start`: the lines on either side.
       if (start >= 1) set.add(start);
       set.add(start + 1);
+      deletedAfter.set(file, [...(deletedAfter.get(file) ?? []), start]);
     } else {
       for (let n = start; n < start + count; n++) set.add(n);
     }
   }
-  return out;
+  return { changed: out, deletedAfter };
+}
+
+// Where a bug's labels disagree with the diff (from diffOf): evidence must
+// hold no changed line; needs-callers needs evidence in a file the change
+// does not touch (the caller or the registration); deletion needs a place in
+// the bug's lines where the change removed code and wrote nothing instead.
+export function labelProblems(bug, { changed, deletedAfter }) {
+  const p = [];
+  const touched = (file) => (changed.get(file)?.size ?? 0) > 0;
+  for (const e of bug.evidence) {
+    const held = [...(changed.get(e.file) ?? [])].filter((n) => n >= e.lines[0] && n <= e.lines[1]);
+    if (held.length > 0) p.push(`${bug.id}: evidence ${e.file} lines ${e.lines.join("-")} hold changed lines (${held.join(", ")}); evidence is proof outside them`);
+  }
+  if (bug.tags.includes("needs-callers") && !bug.evidence.some((e) => !touched(e.file))) {
+    p.push(`${bug.id}: needs-callers needs evidence in a caller or registration outside the diff, in a file the change does not touch`);
+  }
+  if (bug.tags.includes("deletion")) {
+    const own = [{ file: bug.file, lines: bug.lines }, ...(bug.also ?? [])];
+    const removed = own.some((o) => (deletedAfter.get(o.file) ?? []).some((after) => (after >= o.lines[0] && after <= o.lines[1]) || (after + 1 >= o.lines[0] && after + 1 <= o.lines[1])));
+    if (!removed) p.push(`${bug.id}: deletion needs a place in the bug's lines where the change removed code and wrote nothing in its place`);
+  }
+  return p;
 }

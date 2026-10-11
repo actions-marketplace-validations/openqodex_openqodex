@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildCase, changedLines, git, listCases, readCase, readLock, specProblems } from "../lib/cases.mjs";
+import { buildCase, changedLines, diffOf, git, labelProblems, listCases, readCase, readLock, specProblems } from "../lib/cases.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -27,7 +27,9 @@ describe("the benchmark corpus", () => {
   for (const id of ids) {
     it(`${id}: builds, and every planted bug is on the line its spec names`, () => {
       const { dir, spec } = build(id);
-      const changed = changedLines(dir);
+      const diff = diffOf(dir);
+      const changed = diff.changed;
+      expect(changedLines(dir)).toEqual(changed);
       expect(changed.size, "the change touches no file").toBeGreaterThan(0);
       for (const bug of spec.bugs) {
         const lines = readFileSync(join(dir, bug.file), "utf8").split("\n");
@@ -37,13 +39,12 @@ describe("the benchmark corpus", () => {
           const citable = [...set].some((n) => n >= loc.lines[0] && n <= loc.lines[1]);
           expect(citable, `${bug.id}: ${loc.file} lines ${loc.lines.join("-")} hold no changed line, so no finding can cite them`).toBe(true);
         }
-        // Evidence is the proof that lives outside the changed lines: each place exists and changes nothing.
+        // Evidence is the proof that lives outside the changed lines: each place exists; the labels agree with the diff.
         for (const ev of bug.evidence) {
           expect(existsSync(join(dir, ev.file)), `${bug.id}: evidence ${ev.file} is not in the repository`).toBe(true);
           expect(readFileSync(join(dir, ev.file), "utf8").split("\n").length, `${bug.id}: ${ev.file} is shorter than its evidence`).toBeGreaterThanOrEqual(ev.lines[1]);
-          const set = changed.get(ev.file) ?? new Set();
-          expect([...set].filter((n) => n >= ev.lines[0] && n <= ev.lines[1]), `${bug.id}: evidence ${ev.file} lines ${ev.lines.join("-")} hold changed lines`).toEqual([]);
         }
+        expect(labelProblems(bug, diff), bug.id).toEqual([]);
       }
       for (const x of spec.extras ?? []) {
         expect(readFileSync(join(dir, x.file), "utf8").split("\n").length, `${x.file} is shorter than its extra's range`).toBeGreaterThanOrEqual(x.lines[1]);
@@ -95,5 +96,32 @@ describe("the benchmark corpus", () => {
 
   it("gives every plant in the corpus its words", () => {
     for (const id of ids) for (const b of readCase(id).bugs) expect(b.mentions?.length, `${id}/${b.id}`).toBeGreaterThan(0);
+  });
+
+  // The labels must say what the diff shows, or the reviewer loop reads a cause the case does not have.
+  const labelled = { id: "b", file: "a.py", lines: [2, 3], anchor: { line: 2, text: "x" }, mentions: ["x"], kind: ["bug"], class: "contract-break", tags: [], evidence: [], severity: "major", found_by: ["reasoning"], truth: "t" };
+  const shape = (changed, deletedAfter = {}) => ({
+    changed: new Map(Object.entries(changed).map(([f, lines]) => [f, new Set(lines)])),
+    deletedAfter: new Map(Object.entries(deletedAfter)),
+  });
+
+  it("refuses evidence inside the bug's own lines, which is the bug's location and not proof outside it", () => {
+    const base = { id: "x", guards: "g", language: "python", framework: "none", clean: false };
+    expect(specProblems({ ...base, bugs: [{ ...labelled, evidence: [{ file: "a.py", lines: [3, 5] }] }] }, "x").join("\n")).toMatch(/overlaps/);
+    expect(specProblems({ ...base, bugs: [{ ...labelled, also: [{ file: "b.py", lines: [7, 8] }], evidence: [{ file: "b.py", lines: [8, 8] }] }] }, "x").join("\n")).toMatch(/overlaps/);
+    expect(specProblems({ ...base, bugs: [{ ...labelled, evidence: [{ file: "a.py", lines: [9, 9] }] }] }, "x")).toEqual([]);
+  });
+
+  it("refuses needs-callers when no evidence lies in a caller or registration outside the diff", () => {
+    const diff = shape({ "a.py": [2, 3, 9] });
+    expect(labelProblems({ ...labelled, tags: ["needs-callers"], evidence: [{ file: "a.py", lines: [7, 7] }] }, diff).join("\n")).toMatch(/needs-callers/);
+    expect(labelProblems({ ...labelled, tags: ["needs-callers"], evidence: [{ file: "caller.py", lines: [4, 4] }] }, diff)).toEqual([]);
+    expect(labelProblems({ ...labelled, evidence: [{ file: "a.py", lines: [9, 9] }] }, diff).join("\n")).toMatch(/changed lines/);
+  });
+
+  it("refuses the deletion tag on a bug whose lines replace code, and takes it where code was removed with nothing in its place", () => {
+    expect(labelProblems({ ...labelled, tags: ["deletion"] }, shape({ "a.py": [2, 3] })).join("\n")).toMatch(/deletion/);
+    expect(labelProblems({ ...labelled, tags: ["deletion"] }, shape({ "a.py": [2, 3] }, { "b.py": [2] })).join("\n")).toMatch(/deletion/);
+    expect(labelProblems({ ...labelled, tags: ["deletion"] }, shape({ "a.py": [3, 4] }, { "a.py": [3] }))).toEqual([]);
   });
 });
