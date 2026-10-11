@@ -187,9 +187,9 @@ A scanner-only run runs `openqodex scan --report-dir <sample>/report --no-instal
 
 Each candidate a scan hands the reviewer is scored against the case's spec by its lines. On a planted bug's lines, it finds the bug when the bug's expected finders name its scanner (or a scanner whose finding was merged into it), or when its rule id or message names one of the bug's words. A later candidate on a bug already found counts as redundancy, never against precision. A candidate on a bug's lines that meets neither test finds nothing and stays unresolved. Every candidate on a clean change is false. The run writes `score.json` under the scan rules (`rules.kind` is `scan`) and `outcomes.jsonl` with one line per candidate.
 
-The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by sha256 and size), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different bytes of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
+The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by name and the sha256 of their rules, as `scanners` documents), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different rules of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
 
-`--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
+`--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. Each Semgrep pack's raw size is left out too: the registry serves one rule set as JSON or as YAML, and the sha256 of the rules is compared instead. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
 
 `--scanner-config <file>` passes `--config <file>` to every scan. The run first runs `openqodex trust --yes` with that file in its own home, for the one repository path each case is built at in turn, and does not start when the trust step fails. The manifest records the file's sha256 and every custom scanner the step approved.
 
@@ -249,6 +249,33 @@ node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <t
 | `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
+
+## Why a truth item was missed
+
+```
+node benchmark/causes.mjs <run> [--specs <folder>] [<run> [--specs <folder>]]... [--decisions <file>] [--json]
+```
+
+A script gives every truth item a review missed, and every finding counted in precision that finds none, one cause, from the saved files and the rulings only. `score.mjs` writes the same causes into `score.json` (`perBug.<config>.<case>.<bug>.cause`, one per repeat, and the counts per configuration in `byConfig.<config>.causes`) and into `outcomes.jsonl`. `causes.mjs` prints them per run and configuration, then one table across the runs with the reviews each cause holds. `--specs` applies to the run named before it. A scanner-only run has no reviewer, so it gets no causes.
+
+For a miss, the first cause that holds wins:
+
+| Cause | When |
+|---|---|
+| incomplete | the review did not complete, failed or never started |
+| spec-disputed | a person ruled the truth item wrong |
+| not-in-brief | no line of the item was in the brief's diff, a correction round or a read |
+| not-read | the item's proof outside the change (its `evidence`) was in none of them |
+| finalize-floor | the reviewer submitted a finding that finds it, under the confidence floor |
+| finalize-threshold | the same, below the severity threshold, so counted and not listed |
+| finalize-rejected | a correction round's answer held such a finding, and the final answer left it out |
+| line-off | a shown finding finds it but for its lines |
+| wrong-kind | a shown finding finds it but for its kind |
+| unresolved | a finding nobody has ruled on may be it: one on its lines, or one in its file that names it, of its kind, by a word no other truth item lists |
+| candidate-dropped | a dropped scanner candidate located it; each drop is kept with its reason and its class above |
+| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it. Each part must be on record (a complete trace or the brief for the lines, `submission.json`, and `rounds.json` when the review took correction rounds); a file the review did not save makes the miss unresolved, never judged wrong |
+
+A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
 
 ## What it does not measure
 

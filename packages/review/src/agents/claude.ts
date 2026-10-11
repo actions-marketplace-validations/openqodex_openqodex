@@ -10,7 +10,7 @@ import type { ReviewerUsage } from "@openqodex/core";
 import { REVIEWER_TOOLS, REVIEWER_WEB_TOOLS } from "@openqodex/core";
 import { checkoutsDir } from "../checkouts.js";
 import { claudeHome } from "./homes.js";
-import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
+import { DEPTH_ENV, TIMED_OUT, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
 
@@ -156,7 +156,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
     killGroup(child);
     finish("", failure);
   };
-  const timer = setTimeout(() => fail(`the reviewer timed out at the deadline and was stopped`), Math.max(0, opts.deadline - Date.now()));
+  const timer = setTimeout(() => fail(TIMED_OUT), Math.max(0, opts.deadline - Date.now()));
   timer.unref();
 
   const onEvent = (e: Event): void => {

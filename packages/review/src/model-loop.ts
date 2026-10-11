@@ -17,6 +17,7 @@
 // it read is used: the log is the brain's.
 import { budgetRefusedLine } from "@openqodex/core";
 import type { ModelToolEntry, ReviewerUsage } from "@openqodex/core";
+import { TIMED_OUT } from "./agents/driver.js";
 import type { Turn } from "./agents/driver.js";
 import type { Budget, Message, ModelResponse, ModelReviewer, ModelUsage, ToolCallRequest, ToolDefinition } from "./reviewer.js";
 import { TOOL_DEFINITIONS, TOOL_NAMES, runTool } from "./tools/index.js";
@@ -58,7 +59,7 @@ export type ModelCaller = {
 
 // The line a call that would start after the review's deadline ends with:
 // the conversation's own timeout line.
-export const DEADLINE_PASSED = "the reviewer timed out and was stopped";
+export const DEADLINE_PASSED = TIMED_OUT;
 
 const firstLine = (error: unknown) => ((error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "").slice(0, 500);
 const count = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
