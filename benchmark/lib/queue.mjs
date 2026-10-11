@@ -6,7 +6,8 @@
 // adjudication file (lib/rulings.mjs).
 //
 // An item:
-//   { v: 1, findingId, caseId, suite, split, specsFrom, file, lines,
+//   { v: 1, findingId, issueId (a person's consolidation, or null), caseId,
+//     suite, split, specsFrom, file, lines,
 //     category, severity, text: { title, problem, consequence, fix },
 //     evidence: { lines, text, context, sha256, from, missing },
 //     truth: { id, file, lines, text } | null, asks: ["real", "match"],
@@ -33,7 +34,7 @@
 // The blind sheet is queue.mjs's (failure 6 there).
 import { createHash } from "node:crypto";
 import { generatedValue } from "./cases.mjs";
-import { matchRuling, realRuling } from "./rulings.mjs";
+import { issueOf, matchRuling, realRuling } from "./rulings.mjs";
 import { asksOf, normPath, shownFindings } from "./score.mjs";
 
 export const QUEUE_VERSION = 1;
@@ -156,6 +157,7 @@ export function unresolvedItems({ runId, build = null, suite, split = "dev", spe
         item = {
           v: QUEUE_VERSION,
           findingId: f.findingId,
+          issueId: f.issueId ?? null,
           caseId: j.caseId,
           suite,
           split,
@@ -195,7 +197,8 @@ const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 // The queue after adding a run's items: one item per findingId with every
 // occurrence once, the latest scoring's questions and truth item, only the
-// questions the rulings leave open, sorted so the file diffs well.
+// questions the rulings leave open, the issue a person put it in (or
+// null), sorted so the file diffs well.
 export function mergeQueue(queue, incoming, R) {
   const all = new Map(queue.map((i) => [i.findingId, { ...i, occurrences: [...i.occurrences] }]));
   for (const item of incoming) {
@@ -214,7 +217,7 @@ export function mergeQueue(queue, incoming, R) {
     const asks = openAsks(item, R);
     if (asks.length === 0) continue;
     item.occurrences.sort((a, b) => byText(occurrenceKey(a), occurrenceKey(b)));
-    out.push({ ...item, asks, truth: asks.includes("match") ? item.truth : null });
+    out.push({ ...item, issueId: issueOf(item.findingId, R), asks, truth: asks.includes("match") ? item.truth : null });
   }
   return out.sort((a, b) => byText(a.caseId, b.caseId) || byText(a.file, b.file) || a.lines[0] - b.lines[0] || byText(a.findingId, b.findingId));
 }

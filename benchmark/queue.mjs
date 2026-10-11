@@ -55,7 +55,7 @@ import { fileURLToPath } from "node:url";
 import { benchRoot } from "./lib/cases.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { mergeQueue, openAsks } from "./lib/queue.mjs";
-import { STATUSES, isPersonName, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
+import { STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
 
 export const queueRoot = join(benchRoot, "review-queue");
 const DECISIONS = "decisions.jsonl";
@@ -124,6 +124,7 @@ export function blindSheet(items, { suite, seed }) {
     items: drawAudit(items, items.length, seed).map((i, n) => ({
       item: n + 1,
       ref: i.findingId.slice(0, 12),
+      issueId: i.issueId ?? null,
       caseId: i.caseId,
       file: r(i.file),
       lines: i.lines,
@@ -170,6 +171,7 @@ export function sheetMarkdown(s) {
     } else if (x.evidence.sha256 !== null) out.push(`The code is not shown here: the case's licence does not allow it. Its sha256 is ${x.evidence.sha256}; open the case to read it.`, "");
     else out.push("The diff the reviewer was given does not show those lines; open the case to read them.", "");
     if (x.truth) out.push(`The truth item it sits on: ${x.truth.id}, ${x.truth.file} ${span(x.truth.lines)}. ${x.truth.text}`, "");
+    if (x.issueId) out.push(`A person consolidated it into ${x.issueId}: rule the whole issue with decide true|false ${x.issueId}.`, "");
     for (const q of x.asks) out.push(`- ${q}`);
     out.push("- Ruling: ", "");
   }
@@ -181,7 +183,7 @@ export function sheet(suite, { seed, queue = queueRoot } = {}) {
   const open = [];
   for (const item of readJsonl(join(queue, `${suite}.jsonl`))) {
     const asks = openAsks(item, R);
-    if (asks.length > 0) open.push({ ...item, asks, truth: asks.includes("match") ? item.truth : null });
+    if (asks.length > 0) open.push({ ...item, issueId: issueOf(item.findingId, R), asks, truth: asks.includes("match") ? item.truth : null });
   }
   return blindSheet(open, { suite, seed });
 }

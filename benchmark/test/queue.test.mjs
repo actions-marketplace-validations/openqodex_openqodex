@@ -248,6 +248,9 @@ describe("two findings are merged into one issue without a person's consolidate 
     expect(merged.outcomes.map((o) => o.issueId)).toEqual([`${CASE_ID}#I1`, `${CASE_ID}#I1`]);
     expect(merged.score.byConfig[CONFIG].uniqueIssuePrecision.lower).toEqual({ hit: 0, of: 1 });
     expect(merged.score.byConfig[CONFIG].redundancy).toEqual({ hit: 1, of: 2 });
+    // The queue keys both items by the issue too, and still asks about it.
+    expect(queue("add", run, "--queue", q).status).toBe(0);
+    expect(readJsonl(join(q, "planted.jsonl")).map((i) => [i.issueId, i.asks])).toEqual([[`${CASE_ID}#I1`, ["real"]], [`${CASE_ID}#I1`, ["real"]]]);
     // One ruling on the issue rules both members.
     expect(queue("decide", "true", `${CASE_ID}#I1`, "--by", "Sid", "--queue", q).status).toBe(0);
     const ruled = scored(run, decisions);
@@ -299,7 +302,7 @@ describe("a blind sheet names the run, the build, the configuration or how often
     const sheet = JSON.parse(json.stdout);
     expect(sheet).toMatchObject({ sheet: "planted@7", suite: "planted", seed: 7 });
     expect(sheet.items).toHaveLength(3);
-    const allowed = ["item", "ref", "caseId", "file", "lines", "category", "severity", "text", "evidence", "truth", "asks"];
+    const allowed = ["item", "ref", "issueId", "caseId", "file", "lines", "category", "severity", "text", "evidence", "truth", "asks"];
     for (const item of sheet.items) for (const key of Object.keys(item)) expect(allowed).toContain(key);
     const md = queue("sheet", "planted", "--seed", "7", "--queue", q);
     expect(md.status).toBe(0);
