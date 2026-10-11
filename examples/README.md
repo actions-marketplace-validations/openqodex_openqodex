@@ -1,3 +1,5 @@
+Every bug in demo-repo/ is planted on purpose. The cases are test data for the review benchmark, not code anyone runs. Do not report them as vulnerabilities.
+
 # Examples
 
 ## demo-repo

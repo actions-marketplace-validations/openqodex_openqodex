@@ -24,4 +24,6 @@ In scope: the `openqodex` package, the skill, the Claude Code plugin, the GitHub
 
 Out of scope: a vulnerability in a scanner itself. Report it to that scanner's project. `NOTICE` links to each one.
 
+Out of scope: the bugs in benchmark/cases/, examples/demo-repo/ and packages/scanners/test/fixtures/. They are planted on purpose to test the scanners and the review.
+
 `docs/security.md` explains what OpenQodex runs, what it sends where, and the trust step for custom scanners.
