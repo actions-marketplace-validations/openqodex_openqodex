@@ -267,7 +267,10 @@ function scanRow(e, config, status) {
   const s = e.scores[config];
   const c = scanCounts(s);
   const time = typeof s.wallMsMean === "number" ? `${(s.wallMsMean / 1000).toFixed(1)} s` : "n/a";
-  return [startOf(e), e.runId, `${e.build.short} (${e.build.cliVersion ?? "unknown"})`, pct(s.issueRecall.all), pct(s.issueRecall.criticalMajor), `${pct(s.precision.lower)} to ${pct(s.precision.upper)}`, String(c.unresolved), String(c.false), pct(s.controls), String(s.redundancy.of), time, status];
+  // The line rule's recall, a diagnostic: on a pull request case no
+  // candidate finds a comment, so it is the one number such a scan moves.
+  const location = s.location?.recall ? pct(s.location.recall) : "n/a";
+  return [startOf(e), e.runId, `${e.build.short} (${e.build.cliVersion ?? "unknown"})`, pct(s.issueRecall.all), pct(s.issueRecall.criticalMajor), `${pct(s.precision.lower)} to ${pct(s.precision.upper)}`, String(c.unresolved), String(c.false), pct(s.controls), String(s.redundancy.of), location, time, status];
 }
 
 const readJsonOrNull = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
@@ -295,7 +298,7 @@ export function scanGate({ index = indexRoot, folder }) {
     }
     const group = entries.filter((e) => groupKeys(e).some((k) => k.key === g.key)).sort(byStart);
     out.push(`${groupLabel(run, g)}. Build ${run.build.short} (openqodex ${run.build.cliVersion ?? "unknown"})${acceptedId ? `, against the accepted run ${acceptedId} (build ${accepted.build.short})` : ""}.`, "");
-    const head = ["Started", "Run", "Build", "Issue recall", "Critical and major recall", "Precision, lower to upper", "Unresolved", "False", "Clean controls", "Candidates", "Time per scan", "Status"];
+    const head = ["Started", "Run", "Build", "Issue recall", "Critical and major recall", "Precision, lower to upper", "Unresolved", "False", "Clean controls", "Candidates", "Location recall (diagnostic)", "Time per scan", "Status"];
     out.push(table(head, [...group.map((e) => scanRow(e, g.config, e.runId === acceptedId ? "accepted" : e.accepted ? "accepted before" : "")), scanRow(run, g.config, "this run")]), "");
     const identical = readJsonOrNull(join(folder, "identical.json"));
     if (identical !== null && identical.identical !== true) {

@@ -1,6 +1,7 @@
 // AACR-Bench's pull requests into the aacr suite and its split.
 //
 //   node benchmark/ingest/aacr.mjs [--offline]
+//   node benchmark/ingest/aacr.mjs --data-only
 //
 // Reads the pinned data files named in benchmark/outside/boards.json (the
 // cache keeps them under $OPENQODEX_BENCH_CACHE/raw/<board>/<path>), asks
@@ -13,6 +14,10 @@
 //                                            with its count (also printed)
 //   benchmark/splits/aacr-v1.json            the split (PLAN-benchmark 4.10)
 // --offline reads only the cache and stops at the first thing missing.
+// --data-only puts the two pinned AACR-Bench data files in the cache, which
+// is what a run needs to read its cases' truth (lib/suites.mjs truthOf), and
+// does nothing else: no GitHub answer is asked for and no file of this
+// repository is written.
 //
 // Failure list, written before the code:
 // 1. An upstream edit to the dataset changes the truth under a frozen id:
@@ -45,6 +50,10 @@
 //    licence exclusion is. Status is not hashed, so no id changes, and the
 //    split is made from the licensed pull requests, so the split file stays
 //    as it was; listCases skips the excluded names it still lists.
+// 9. A run's truth files are fetched by an ingest that also rewrites the
+//    committed suite and asks GitHub about every repository: --data-only
+//    (fetchData) fetches the two pinned files, checked against their pins,
+//    and nothing else.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,16 +172,35 @@ function spread(ordered, languageOf, count) {
 
 // ---------- the ingest ----------
 
+// The pins of AACR-Bench's two data files: the accepted comments and the
+// rejected ones.
+function dataPins(boards) {
+  const pinOf = (path) => {
+    const pin = boards.boards.aacr.data.find((d) => d.path.endsWith(path));
+    if (!pin) throw new Error(`benchmark/outside/boards.json pins no ${path} for aacr`);
+    return pin;
+  };
+  return { positive: pinOf("positive_samples.json"), negative: pinOf("negative_samples.json") };
+}
+
+// The two pinned data files into the cache, each checked against its pin,
+// and nothing else (failure 9). Returns each file's path and whether it was
+// downloaded now.
+export async function fetchData({ boards, cache = cacheRoot(), offline = false }) {
+  const out = [];
+  for (const pin of Object.values(dataPins(boards))) {
+    const had = existsSync(rawPath(cache, "aacr", pin));
+    await fetchPinned(cache, "aacr", pin, { offline });
+    out.push({ path: pin.path, downloaded: !had });
+  }
+  return out;
+}
+
 export async function ingestAacr({ boards, cache = cacheRoot(), offline = false, previous = null, log = () => {} }) {
   const aacr = boards.boards.aacr;
   const martian = boards.boards.martian;
   const reviewbench = boards.boards.reviewbench;
-  const pinOf = (path) => {
-    const pin = aacr.data.find((d) => d.path.endsWith(path));
-    if (!pin) throw new Error(`benchmark/outside/boards.json pins no ${path} for aacr`);
-    return pin;
-  };
-  const pins = { positive: pinOf("positive_samples.json"), negative: pinOf("negative_samples.json") };
+  const pins = dataPins(boards);
 
   const positive = JSON.parse((await fetchPinned(cache, "aacr", pins.positive, { offline })).toString("utf8"));
   const negative = JSON.parse((await fetchPinned(cache, "aacr", pins.negative, { offline })).toString("utf8"));
@@ -551,12 +579,17 @@ export function writeIngest(result, { root = benchRoot } = {}) {
 }
 
 async function main(args) {
+  const dataOnly = args.length === 1 && args[0] === "--data-only";
   const unknown = args.filter((a) => a !== "--offline");
-  if (unknown.length > 0) {
-    console.error("usage: node benchmark/ingest/aacr.mjs [--offline]");
+  if (!dataOnly && unknown.length > 0) {
+    console.error("usage: node benchmark/ingest/aacr.mjs [--offline]\n       node benchmark/ingest/aacr.mjs --data-only");
     return 2;
   }
   const boards = JSON.parse(readFileSync(BOARDS_PATH, "utf8"));
+  if (dataOnly) {
+    for (const f of await fetchData({ boards })) console.log(`${f.path}: ${f.downloaded ? "downloaded and checked against its pin" : "in the cache, checked against its pin"}`);
+    return 0;
+  }
   const casesPath = join(benchRoot, SUITES.aacr.cases);
   const previous = existsSync(casesPath) ? JSON.parse(readFileSync(casesPath, "utf8")) : null;
   const result = await ingestAacr({ boards, offline: args.includes("--offline"), previous, log: (s) => console.error(s) });

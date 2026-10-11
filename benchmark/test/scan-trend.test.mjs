@@ -264,3 +264,21 @@ describe("the plain trend compares scanner-only entries with the review runs' no
     expect(r.out).toMatch(/shell-rm-unquoted/);
   });
 });
+
+describe("the weekly summary hides location recall, the one number a pull request scan moves", () => {
+  it("prints each run's location recall in the trend table as a diagnostic, also when no run is accepted yet", () => {
+    const root = tempDir("oq-bench-scan-trend-");
+    const index = join(root, "index");
+    mkdirSync(join(index, "runs"), { recursive: true });
+    const run = scanRun(join(root, "ci"), NEXT);
+    const recall = JSON.parse(readFileSync(join(run, "score.json"), "utf8")).byConfig.scan.location.recall;
+    expect(recall.of).toBeGreaterThan(0);
+    const summary = join(root, "summary.md");
+    const r = trend(["--mode", "scan", "--against-run", run, "--index", index, "--summary", summary]);
+    expect(r.status, r.out).toBe(1);
+    const text = readFileSync(summary, "utf8");
+    expect(text).toMatch(/\| Location recall \(diagnostic\) \|/);
+    expect(text).toContain(`| ${recall.hit}/${recall.of} (`);
+    expect(text).toMatch(/no scanner-only run is accepted/);
+  });
+});

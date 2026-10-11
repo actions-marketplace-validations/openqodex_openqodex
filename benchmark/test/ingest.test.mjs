@@ -13,12 +13,15 @@
 // 5. The laptop sample is the smallest changes.
 // 6. A pull request whose head the host no longer serves (pushed over after
 //    the dataset was made) is offered to a run, which then cannot fetch it.
+// 7. A run's truth files are fetched by an ingest that also rewrites the
+//    committed suite and asks GitHub about every repository (the weekly CI
+//    job needs the two pinned data files and nothing else).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { ingestAacr, writeIngest } from "../ingest/aacr.mjs";
+import { fetchData, ingestAacr, writeIngest } from "../ingest/aacr.mjs";
 import { classify, saveCommitAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { listCases, readCase, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -358,5 +361,52 @@ describe("the laptop sample is the smallest changes", () => {
     const smoke = split.subsets["dev-smoke"];
     expect(smoke).toHaveLength(5);
     for (const name of smoke) expect(split.cases.dev).toContain(name);
+  });
+});
+
+describe("a run's truth files are fetched by an ingest that also rewrites the committed suite and asks GitHub", () => {
+  // Serves the two pinned files, counting the requests.
+  async function serve(files) {
+    const hits = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url);
+      const body = files[req.url.slice(1)];
+      res.statusCode = body ? 200 : 404;
+      res.end(body ?? "not found");
+    });
+    await new Promise((done) => server.listen(0, "127.0.0.1", done));
+    return { hits, port: server.address().port, close: () => new Promise((done) => server.close(done)) };
+  }
+  const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name).slice(dir.length + 1)).sort() : []);
+  const boardsFor = (pins) => ({ version: 1, boards: { aacr: { repo: "alibaba/aacr-bench", commit: COMMIT, licence: "Apache-2.0", data: pins, reservedPrUrls: [] } } });
+
+  it("puts exactly the two pinned AACR files in the cache, asks nothing else, and downloads nothing on a second call", async () => {
+    const { positive, negative } = dataset();
+    const bytes = { [POSITIVE]: encode(positive), [NEGATIVE]: encode(negative) };
+    const http = await serve(bytes);
+    try {
+      const cache = tempDir("oq-ingest-data-");
+      const boards = boardsFor(Object.entries(bytes).map(([path, b]) => ({ path, url: `http://127.0.0.1:${http.port}/${path}`, sha256: sha256(b) })));
+      expect(await fetchData({ boards, cache })).toEqual([{ path: POSITIVE, downloaded: true }, { path: NEGATIVE, downloaded: true }]);
+      expect(filesUnder(cache)).toEqual([join("raw", "aacr", NEGATIVE), join("raw", "aacr", POSITIVE)]);
+      expect([...http.hits].sort()).toEqual([`/${NEGATIVE}`, `/${POSITIVE}`]);
+      expect(await fetchData({ boards, cache })).toEqual([{ path: POSITIVE, downloaded: false }, { path: NEGATIVE, downloaded: false }]);
+      expect(http.hits).toHaveLength(2);
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("refuses a served file that differs from its pin and keeps nothing of it", async () => {
+    const { positive, negative } = dataset();
+    const http = await serve({ [POSITIVE]: encode([...positive].reverse()), [NEGATIVE]: encode(negative) });
+    try {
+      const cache = tempDir("oq-ingest-data-");
+      const boards = boardsFor([POSITIVE, NEGATIVE].map((path) => ({ path, url: `http://127.0.0.1:${http.port}/${path}`, sha256: sha256(encode(path === POSITIVE ? positive : negative)) })));
+      await expect(fetchData({ boards, cache })).rejects.toThrow(/positive_samples\.json.*sha256.*pinned/s);
+      expect(filesUnder(cache)).toEqual([]);
+    } finally {
+      await http.close();
+    }
   });
 });
