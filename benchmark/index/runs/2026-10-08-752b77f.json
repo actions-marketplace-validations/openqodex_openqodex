@@ -1,0 +1,442 @@
+{
+  "version": 1,
+  "runId": "2026-10-08-752b77f",
+  "date": "2026-10-08",
+  "suite": "planted",
+  "split": "dev",
+  "splitHash": null,
+  "mode": "review",
+  "path": "laptop",
+  "build": {
+    "commit": "752b77fd3d62bdd3b06d44c45bd22ae1edac41fc",
+    "short": "752b77f",
+    "cliVersion": "0.9.0",
+    "dirty": false,
+    "bundleHash": "c08fe4949714e1e96e5054cda6fd9c49a83a6b0a693bdbd33760b76e812db334"
+  },
+  "reviewers": {
+    "claude": {
+      "version": "2.1.294",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "configs": [
+    "claude-graph-off",
+    "claude-graph-on"
+  ],
+  "repeat": 3,
+  "web": "on",
+  "caseSetHash": null,
+  "caseIds": null,
+  "rulesVersion": null,
+  "scannersComplete": null,
+  "external": null,
+  "ended": {
+    "how": "finished",
+    "why": null
+  },
+  "release": null,
+  "scores": {
+    "claude-graph-off": {
+      "samples": 42,
+      "complete": 42,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 96,
+        "of": 111,
+        "ci": null
+      },
+      "precision": {
+        "hit": 96,
+        "of": 101,
+        "ci": null
+      },
+      "controls": {
+        "hit": 6,
+        "of": 6
+      },
+      "falseFindings": 4,
+      "wallMsMean": 25954.14285714286,
+      "costUsdMean": 0.1016434619047619,
+      "costUsdTotal": 4.269025399999999
+    },
+    "claude-graph-on": {
+      "samples": 42,
+      "complete": 42,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 99,
+        "of": 111,
+        "ci": null
+      },
+      "precision": {
+        "hit": 99,
+        "of": 103,
+        "ci": null
+      },
+      "controls": {
+        "hit": 6,
+        "of": 6
+      },
+      "falseFindings": 4,
+      "wallMsMean": 25229.309523809523,
+      "costUsdMean": 0.1084408,
+      "costUsdTotal": 4.5545136
+    }
+  },
+  "perCase": {
+    "claude-graph-off": {
+      "clean-python-feature": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "clean-ts-refactor": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "demo-polyglot": {
+        "recall": [
+          27,
+          36
+        ],
+        "precision": [
+          27,
+          27
+        ]
+      },
+      "django-model-view": {
+        "recall": [
+          12,
+          12
+        ],
+        "precision": [
+          12,
+          12
+        ]
+      },
+      "express-admin-routes": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          6
+        ]
+      },
+      "flask-path-traversal": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          6
+        ]
+      },
+      "go-http-handler": {
+        "recall": [
+          9,
+          9
+        ],
+        "precision": [
+          9,
+          9
+        ]
+      },
+      "js-dynamic-dispatch-gap": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "nextjs-react-hooks": {
+        "recall": [
+          10,
+          12
+        ],
+        "precision": [
+          10,
+          13
+        ]
+      },
+      "python-caller-break": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "rails-controller-model": {
+        "recall": [
+          8,
+          12
+        ],
+        "precision": [
+          8,
+          9
+        ]
+      },
+      "suppression-comments": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          7
+        ]
+      },
+      "ts-removed-export": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "ts-workspace-caller-break": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      }
+    },
+    "claude-graph-on": {
+      "clean-python-feature": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "clean-ts-refactor": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "demo-polyglot": {
+        "recall": [
+          28,
+          36
+        ],
+        "precision": [
+          28,
+          28
+        ]
+      },
+      "django-model-view": {
+        "recall": [
+          12,
+          12
+        ],
+        "precision": [
+          12,
+          12
+        ]
+      },
+      "express-admin-routes": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          6
+        ]
+      },
+      "flask-path-traversal": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          6
+        ]
+      },
+      "go-http-handler": {
+        "recall": [
+          9,
+          9
+        ],
+        "precision": [
+          9,
+          9
+        ]
+      },
+      "js-dynamic-dispatch-gap": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "nextjs-react-hooks": {
+        "recall": [
+          12,
+          12
+        ],
+        "precision": [
+          12,
+          15
+        ]
+      },
+      "python-caller-break": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "rails-controller-model": {
+        "recall": [
+          8,
+          12
+        ],
+        "precision": [
+          8,
+          9
+        ]
+      },
+      "suppression-comments": {
+        "recall": [
+          6,
+          6
+        ],
+        "precision": [
+          6,
+          6
+        ]
+      },
+      "ts-removed-export": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "ts-workspace-caller-break": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      }
+    }
+  },
+  "asset": {
+    "url": "https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-08-752b77f.tar.gz",
+    "sha256": "215d8016ba28f1271827f13a373b41209feb184737792d1860d46989372d197e",
+    "bytes": 830542,
+    "files": 895,
+    "listHash": "d39c64e8575284cabf9bc9d8f7dcf08ab7b2fb33d07527adaee2cc7dccfee914"
+  },
+  "accepted": false,
+  "acceptedAt": null,
+  "acceptedBy": null,
+  "legacy": true,
+  "privateListHash": "a4cf86af97347977e9530c5cc8fa698cb2ad1b83cbf6198006a9ffc2765a15ce",
+  "scoreFile": "score-cases-v2.json",
+  "specsFrom": "cases-v2",
+  "scorer": {
+    "commit": "4ef668431a901d9dfab289a8643846f06b2fe7fd",
+    "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+  },
+  "scoreFiles": [
+    {
+      "file": "score.json",
+      "scores": "2026-10-08-752b77f",
+      "specsFrom": "cases",
+      "scorer": {
+        "commit": "5e44e3164c99b2e9416380944c751070d682c4d2",
+        "sha256": "6e1d040346ce6fcaebbf8782f0346a6bafdfae003f06595c8bddefb833deb6d5"
+      }
+    },
+    {
+      "file": "score-cases-v2.json",
+      "scores": "2026-10-08-752b77f",
+      "specsFrom": "cases-v2",
+      "scorer": {
+        "commit": "4ef668431a901d9dfab289a8643846f06b2fe7fd",
+        "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+      }
+    },
+    {
+      "file": "score-cases.json",
+      "scores": "2026-10-08-752b77f",
+      "specsFrom": "2026-10-09-95efb19/cases",
+      "scorer": {
+        "commit": "8e6690d4cd2f897b78d49c8cf53d27e2a7a90f2c",
+        "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+      }
+    },
+    {
+      "file": "score-cases-602a140.json",
+      "scores": "2026-10-08-752b77f",
+      "specsFrom": "2026-10-09-602a140/cases",
+      "scorer": {
+        "commit": "dbd1ee24bc7ab7865877ba2849341febfab2778b",
+        "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+      }
+    }
+  ],
+  "originals": {
+    "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884",
+    "path": "benchmark/results/2026-10-08-752b77f"
+  },
+  "notes": [
+    "The manifest is version 1 and has no caseHashes, so which case files the run reviewed is known only from its own cases/ copies and git history; the index entry's caseIds is null.",
+    "The build record did not exist yet: no tree hash, and dirty: false means only that nothing under packages/ was uncommitted when the run started.",
+    "score.json is the first scoring, under the rules from before each plant named its words; the docs quote score-cases-v2.json, against cases-v2/, which is the run's own specs with the words added and nothing else changed.",
+    "score-cases.json, score-cases-602a140.json and the baseline files in 2026-10-09-5227579 and 2026-10-09-881318b score this run's reviews against later runs' specs. Eight cases' specs differ from this run's own (specsDiffer in each file); where a case's code changed too, as the Rails case's did, its reviews read other code than those specs describe.",
+    "judge.json holds a model's wording verdicts (claude-sonnet-5, saved at commit 316ca42cec567ac91a30d1629821705bb921b1d0). It is not a score and cannot be run again; the totals the docs quote are counted again from its saved verdicts."
+  ]
+}
