@@ -54,9 +54,11 @@
 //    only a record of the refusal is written, with nothing from the answer,
 //    and run.mjs stops the run. run.mjs checks every saved file again.
 // 6. A resume reaches another endpoint than the run's: the manifest records
-//    the endpoint as the sha256 of its base URL (never the URL), and a resume
-//    whose endpoint differs is refused (lib/runner.mjs resumeProblems).
-import { createHash } from "node:crypto";
+//    the endpoint as an HMAC-SHA256 of its base URL keyed with its key (never
+//    the URL, and nothing a guess at the URL can be checked against without
+//    the key), and a resume whose endpoint differs is refused
+//    (lib/runner.mjs resumeProblems).
+import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,8 +110,8 @@ const shownFile = (path) => {
  * The ModelReviewer for a resolved model, with what the manifest records
  * about it and what the budget prices its calls at. `scriptPath` is the
  * scripted model's script; the endpoint's settings come from
- * lib/model-env.mjs and never enter `record`, except as `endpoint`, the
- * sha256 of the base URL (failure 6). `appearsIn(text)` is true when a text
+ * lib/model-env.mjs and never enter `record`, except as `endpoint`, an
+ * HMAC-SHA256 of the base URL keyed with the key (failure 6). `appearsIn(text)` is true when a text
  * holds the endpoint's key or base URL (null for the scripted model). The
  * record's `model` is null until a review answers (recordServed).
  */
@@ -128,14 +130,21 @@ export function createModelReviewer(resolved, { effort, maxOutputTokens = 32000,
   const endpoint = loadModelEnv({ env });
   return {
     reviewer: createOpenAIReviewer({ model: resolved.deployment, baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey, authHeader: endpoint.authHeader, maxOutputTokens, effort }),
-    record: { ...base, requestedModel: resolved.deployment, deployment: resolved.deployment, alias: resolved.alias, provider: resolved.provider, api: "responses", authHeader: endpoint.authHeader, endpoint: endpointIdentity(endpoint.baseUrl), probed: resolved.probed, servedAtProbe: resolved.servedAtProbe },
+    record: { ...base, requestedModel: resolved.deployment, deployment: resolved.deployment, alias: resolved.alias, provider: resolved.provider, api: "responses", authHeader: endpoint.authHeader, endpoint: endpointIdentity(endpoint.baseUrl, endpoint.apiKey), probed: resolved.probed, servedAtProbe: resolved.servedAtProbe },
     prices: {},
     appearsIn: endpoint.appearsIn,
   };
 }
 
-/** The endpoint a run's calls go to, as the sha256 of its base URL without a trailing slash; never the URL. */
-export const endpointIdentity = (baseUrl) => createHash("sha256").update(baseUrl.replace(/\/+$/, "")).digest("hex");
+/**
+ * The endpoint a run's calls go to, as an HMAC-SHA256 of its base URL
+ * (without a trailing slash) keyed with its key, hex encoded: the same for a
+ * stopped run and its resume on the same URL and key, and never the URL. A
+ * plain hash of the URL would let anyone who reads a published manifest match
+ * it against a guessed resource name; this one cannot be checked without the
+ * key.
+ */
+export const endpointIdentity = (baseUrl, apiKey) => createHmac("sha256", apiKey).update(baseUrl.replace(/\/+$/, "")).digest("hex");
 
 /**
  * Holds a run to one served model per model reviewer (failure 3). The run's
