@@ -71,6 +71,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseCaseId } from "./cases.mjs";
+import { bugRuling, issueOf, matchRuling, realRuling, resolveRulings, sameIssueAs } from "./rulings.mjs";
 
 export const NEAR_LINES = 3;
 export const SEVERITY_ORDER = ["critical", "major", "minor", "nitpick", "info"];
@@ -486,19 +487,39 @@ export function regressions(oldSamples, newSamples) {
 //     constant, list and the matching code are in a hashed rules block that
 //     each score carries, a test pins the hash to RULES_VERSION, and
 //     rulesDifferences() names any difference between two scores.
-export const RULES_VERSION = 3;
+// Rules version 5 reads a person's rulings (lib/rulings.mjs) and names the
+// truth item an unlisted finding sits on. Version 4 is the severity and
+// finder rules of pull request 122. Failure list, written before the code:
+// 29. A repeated unresolved finding raises precision: recurrence decides
+//     nothing; a finding stays unresolved, in every review that shows it,
+//     until a person rules on it.
+// 30. A ruling on one finding transfers to a different issue on the same
+//     lines: a ruling reaches only the findingId it names; a finding on a
+//     truth item's lines is only a location match (its truthId with
+//     evidenceKind location-only), and finds the item only through a
+//     person's same-issue ruling.
+// 31. Two findings are merged into one issue without a person's
+//     consolidate line: unique-issue precision counts each finding as its
+//     own issue until a person's consolidate line groups them.
+// 32. A ruling overrides the frozen spec, so a person tunes a planted
+//     case's truth without a new case version: rulings act only on a
+//     finding nothing frozen decides (unresolved, near or wrong kind); a
+//     disputed truth item is labelled and keeps its recall.
+export const RULES_VERSION = 5;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
 // How each outcome counts in precision. Correct and wrong count the same in
 // both bounds; an unresolved one, which nothing frozen decides and no person
-// has ruled on, is wrong in the lower bound and right in the upper. A near
-// miss and a wrong kind are unresolved and never find a truth item. A
+// has ruled on, is wrong in the lower bound and right in the upper. A
+// person's ruling makes it ruled-true or ruled-false, or, ruled the same
+// issue as a truth item, a hit. A near miss and a wrong kind are unresolved
+// and find a truth item only through such a ruling. A
 // request for a test on a planted case (test-gap) is set apart: it stays out
 // of both bounds and is counted in the labelled planted-rule block. On a
 // real pull request the test-only rule does not apply, so such a request is
 // an unlisted finding like any other.
-export const PRECISION = { correct: ["hit", "duplicate", "accepted"], wrong: ["false"], unresolved: ["unresolved", "near", "wrong-kind"], apart: ["test-gap"] };
+export const PRECISION = { correct: ["hit", "duplicate", "accepted", "ruled-true"], wrong: ["false", "ruled-false"], unresolved: ["unresolved", "near", "wrong-kind"], apart: ["test-gap"] };
 const OUTCOMES = [...PRECISION.correct, ...PRECISION.unresolved, ...PRECISION.wrong, ...PRECISION.apart];
 // The evidence behind an outcome that the frozen spec decides.
 const FROZEN = new Set(["hit", "duplicate", "accepted", "false"]);
@@ -536,11 +557,57 @@ export function outcomeOf(outcome, spec) {
 const treatment = (outcome) => (PRECISION.correct.includes(outcome) ? "correct" : PRECISION.wrong.includes(outcome) ? "wrong" : PRECISION.apart.includes(outcome) ? "apart" : "unresolved");
 
 // The issue a finding raises: the truth item it finds, the side issue it
-// names, or itself (by findingId) until a person consolidates it with others.
+// names, the issue a person consolidated it into, or else itself (by
+// findingId).
 export function issueKey(f) {
   if (f.outcome === "hit" || f.outcome === "duplicate") return `truth:${f.bug}`;
   if (f.outcome === "accepted") return `extra:${f.extra}`;
+  if (f.issueId) return `issue:${f.issueId}`;
   return `finding:${f.findingId}`;
+}
+
+// The truth item an unlisted finding sits on by AACR's line rule (the same
+// file and side, lines overlapping or at most `k` apart), nearest first,
+// then in truth order: a location match, never evidence that the finding is
+// that issue. Null when it sits on none.
+export function locationMatch(f, spec, k = AACR_LINE_K) {
+  const end = Math.max(f.end ?? f.line, f.line);
+  const near = (spec.bugs ?? [])
+    .map((t, order) => ({ t, order, d: Math.min(Infinity, ...locations(t).filter((l) => l.file === f.file && (f.side ?? "right") === (t.side ?? "right")).map((l) => gap(f.line, end, l.lines))) }))
+    .filter(({ t, d }) => t.valid !== false && d <= k)
+    .sort((a, b) => a.d - b.d || a.order - b.order);
+  return near.length === 0 ? null : near[0].t.id;
+}
+
+// Outcomes nothing frozen decides, on which a person's ruling may act.
+const UNSETTLED = new Set(["unresolved", "near", "wrong-kind"]);
+
+// A finding's outcome after the rulings in force (lib/rulings.mjs): its
+// issue, and for one nothing frozen decides, a hit on the truth item a
+// person ruled it to be, else ruled-true or ruled-false, else unresolved
+// still. `bug` is then the truth item it is a hit on, or the one it is
+// still a candidate for (a near miss, a wrong kind or a location match no
+// person has ruled out); evidenceKind says what decided the outcome.
+function ruled(g, spec, R) {
+  const issueId = issueOf(g.findingId, R);
+  if (!UNSETTLED.has(g.outcome)) return { issueId, evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
+  const candidate = g.outcome === "unresolved" ? locationMatch(g, spec) : g.bug;
+  const same = sameIssueAs(g.findingId, (spec.bugs ?? []).map((b) => b.id), R);
+  const real = realRuling(g.findingId, R);
+  if (same !== null && !(real?.status === "false" && real.n > same.n)) return { outcome: "hit", bug: same.truthId, evidenceKind: "ruling", issueId };
+  const open = candidate !== null && real?.status !== "false" && matchRuling(g.findingId, candidate, R)?.status !== "different-issue" ? candidate : null;
+  if (real !== null) return { outcome: real.status === "true" ? "ruled-true" : "ruled-false", bug: open, evidenceKind: "ruling", issueId };
+  return { bug: open, evidenceKind: open !== null && g.outcome === "unresolved" ? "location-only" : null, issueId };
+}
+
+// The questions a finding still puts to a person: whether it is a real
+// issue (real), while nothing decides its precision, and whether it is the
+// truth item it is a candidate for (match).
+export function asksOf(f) {
+  const out = [];
+  if (UNSETTLED.has(f.outcome)) out.push("real");
+  if (f.bug && f.outcome !== "hit" && f.outcome !== "duplicate") out.push("match");
+  return out;
 }
 
 // AACR's line rule (L1), as a location diagnostic: a finding matches a truth
@@ -611,18 +678,39 @@ export function population(manifest, attempts) {
 // One planned job, scored from its first attempt: `report` and `brief` are
 // that attempt's (null when it wrote none), and `started` is false for a job
 // with no attempt. `origin` is the kind of case (originOf).
-export function scoreJob({ job, spec, report = null, brief = null, row = {}, origin = "planted", started = true }) {
+export function scoreJob({ job, spec, report = null, brief = null, row = {}, origin = "planted", started = true, rulings = resolveRulings([]) }) {
   const planted = origin === "planted";
   const base = scoreSample({ spec, report, brief, row: { ...row, config: job.config, repeat: job.repeat, attempt: 1 }, testOnly: planted });
   const shown = shownFindings(report);
   const findings = base.findings.map((f, index) => {
     const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
-    return { ...g, issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
+    const r = { ...g, ...ruled(g, spec, rulings) };
+    return { ...r, issue: issueKey(r) };
   });
+  // A hit by ruling on a truth item this review already found is a
+  // duplicate; one on an item it missed finds that item.
+  const found = new Set(base.bugs.filter((b) => b.found).map((b) => b.id));
+  const byRuling = new Map();
+  for (const f of findings.filter((x) => x.outcome === "hit" && x.evidenceKind === "ruling")) {
+    if (found.has(f.bug)) {
+      f.outcome = "duplicate";
+      f.issue = issueKey(f);
+    } else {
+      found.add(f.bug);
+      byRuling.set(f.bug, f);
+    }
+  }
+  const bugs = base.bugs.map((b) => (byRuling.has(b.id) ? { ...b, found: true, given: byRuling.get(b.id).severity, via: byRuling.get(b.id).raised !== null ? "scanner" : "reviewer" } : b));
+  const recallOf = (list) => ({ hit: list.filter((b) => b.found).length, of: list.length });
   // Precision, issues and redundancy count every shown finding but the ones set apart.
   const inPrecision = findings.filter((f) => treatment(f.outcome) !== "apart");
   const counted = (list) => ({ correct: list.filter((x) => x === "correct").length, unresolved: list.filter((x) => x === "unresolved").length, of: list.length });
-  const issues = new Map(inPrecision.map((f) => [f.issue, treatment(f.outcome)]));
+  // An issue's findings count as one: correct or wrong when they all are, else unresolved.
+  const issues = new Map();
+  for (const f of inPrecision) {
+    const t = treatment(f.outcome);
+    issues.set(f.issue, issues.has(f.issue) && issues.get(f.issue) !== t ? "unresolved" : t);
+  }
   return {
     jobId: job.jobId,
     caseId: job.caseId,
@@ -632,11 +720,11 @@ export function scoreJob({ job, spec, report = null, brief = null, row = {}, ori
     origin,
     clean: spec.clean === true,
     status: started ? base.status : "unstarted",
-    bugs: base.bugs,
+    bugs,
     findings,
     // A clean change passes only a review that completed with no shown finding at all.
     controls: spec.clean ? { hit: base.status === "complete" && findings.length === 0 ? 1 : 0, of: 1 } : ratio(),
-    issueRecall: { all: base.recall, criticalMajor: add(base.bySeverity.critical, base.bySeverity.major) },
+    issueRecall: { all: recallOf(bugs), criticalMajor: recallOf(bugs.filter((b) => b.severity === "critical" || b.severity === "major")) },
     precision: counted(inPrecision.map((f) => treatment(f.outcome))),
     issues: counted([...issues.values()]),
     location: lineMatches(base.findings, spec.bugs ?? []),
@@ -716,15 +804,17 @@ export function summarizeJobs(jobs, retries = []) {
 // manifest, each planned job by its first attempt, the sums per
 // configuration, case and bug, and one outcome line per finding of every
 // first attempt. `attempts` are { case, config, repeat, attempt, row,
-// report, brief, sample } (sample: the attempt scored by format 2), and
-// `specs` the specs by case name.
-export function scoreAttempts({ manifest, attempts, specs }) {
+// report, brief, sample } (sample: the attempt scored by format 2),
+// `specs` the specs by case name, and `decisions` the lines of the
+// adjudication file (lib/rulings.mjs readDecisions).
+export function scoreAttempts({ manifest, attempts, specs, decisions = [] }) {
   const suite = manifest.suite ?? "planted";
   const origin = originOf(suite);
   if (origin === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
   const pop = population(manifest, attempts);
   if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
-  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null }));
+  const rulings = resolveRulings(decisions);
+  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null, rulings }));
   const configs = [...new Set(jobs.map((j) => j.config))].sort();
   const byConfig = {};
   for (const config of configs) {
@@ -746,7 +836,7 @@ export function scoreAttempts({ manifest, attempts, specs }) {
     perBug[j.config] ??= {};
     const bugs = (perBug[j.config][j.caseId] ??= {});
     for (const b of j.bugs) {
-      const x = (bugs[b.id] ??= { found: [], severity: b.severity, cause: null });
+      const x = (bugs[b.id] ??= { found: [], severity: b.severity, cause: null, ruling: bugRuling(j.caseId, b.id, rulings) });
       x.found[j.repeat - 1] = b.found;
     }
   }
@@ -757,7 +847,7 @@ export function scoreAttempts({ manifest, attempts, specs }) {
     briefFailures[config] = [...seen].map(([what, n]) => ({ what, reviews: n }));
   }
   const outcomes = jobs.flatMap((j) =>
-    j.findings.map((f) => ({ jobId: j.jobId, caseId: j.caseId, config: j.config, repeat: j.repeat, index: f.index, findingId: f.findingId, issueId: null, outcome: f.outcome, truthId: f.bug ?? null, evidenceKind: f.evidenceKind, cause: null, confidence: f.confidence, severity: f.severity ?? null, severityAgreement: null, finder: null, wording: null })),
+    j.findings.map((f) => ({ jobId: j.jobId, caseId: j.caseId, config: j.config, repeat: j.repeat, index: f.index, findingId: f.findingId, issueId: f.issueId, outcome: f.outcome, truthId: f.bug ?? null, evidenceKind: f.evidenceKind, cause: null, confidence: f.confidence, severity: f.severity ?? null, severityAgreement: null, finder: null, wording: null })),
   );
   return {
     suite,
@@ -769,6 +859,7 @@ export function scoreAttempts({ manifest, attempts, specs }) {
     perBug,
     briefFailures,
     outcomes,
+    rulings: { read: rulings.read, ignored: rulings.ignored },
   };
 }
 
@@ -879,7 +970,9 @@ const RULES_BLOCK = {
   order: OUTCOME_ORDER,
   precision: PRECISION,
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
-  issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue; any other finding is its own issue, by findingId, until a person consolidates it.",
+  issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue and findings a person's consolidate line groups; any other finding is its own issue, by findingId. Overlap, category, rule id and recurrence never group findings. An issue counts correct or wrong when all its findings do, else unresolved.",
+  locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
+  rulings: "A ruling counts only from a line of the adjudication file whose by names a person (lib/rulings.mjs); the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged.",
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });

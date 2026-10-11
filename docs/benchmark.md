@@ -34,7 +34,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (3), every constant and list above, and a hash over them and the code that applies them. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
+Every score carries its rules block: the rules version (5), every constant and list above, and a hash over them and the code that applies them. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 
@@ -91,7 +91,7 @@ A run writes one folder, `benchmark/results/<date>-<commit>/`:
 - `cases/`: the specs the run used. The scorer reads these, so a later edit to a case never changes an old run's score.
 - `samples/<case>/<configuration>/<n>/`: one attempt at one review: its own files (`report.json`, `brief.md`, `submission.json`, `trace.json`, `scan.json`), `receipt.txt` (what the review printed), `stderr.txt` and `sample.json` (exit code, time, usage, scanner versions). A second attempt of the same review goes to `<n>-attempt2/`.
 - `rows.jsonl`: one line per attempt. Each attempt names its review's id and whether it is the first attempt.
-- `score.json` and `outcomes.jsonl`: written by `score.mjs`; `score-<folder>.json` and `outcomes-<folder>.jsonl` when it scored against other specs with `--specs <folder>`. `outcomes.jsonl` has one line per finding of every first attempt, with the finding's id (a hash of the case, its lines and its text) and its outcome. A legacy run (below) keeps the score its own scorer wrote; `score.mjs` writes its format 3 score only into the folder `--out <folder>` names.
+- `score.json` and `outcomes.jsonl`: written by `score.mjs`; `score-<folder>.json` and `outcomes-<folder>.jsonl` when it scored against other specs with `--specs <folder>`. `outcomes.jsonl` has one line per finding of every first attempt, with the finding's id (a hash of the case, its lines and its text) and its outcome. `unresolved.jsonl` lists each finding that still waits for a person's ruling (see the review queue below). A legacy run (below) keeps the score its own scorer wrote; `score.mjs` writes its format 3 score only into the folder `--out <folder>` names.
 
 `benchmark/results/` is not committed; each run folder stays on the machine that ran it until it is published.
 
@@ -175,6 +175,33 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
 A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+
+## The review queue
+
+A finding that no frozen spec decides (one the case does not list, a near miss, a wrong kind) stays unresolved, however often it recurs: precision counts it wrong in its lower bound and right in its upper. Only a person's ruling moves it.
+
+```
+node benchmark/score.mjs <run>                       # also writes unresolved.jsonl
+node benchmark/queue.mjs add <run>                   # merges it into benchmark/review-queue/<suite>.jsonl
+node benchmark/queue.mjs sheet <suite> [--seed S]    # the blind sheet, as markdown or with --json
+node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <text>] [--sheet <id>]
+```
+
+- A finding is the same finding across runs only when its case, its lines and its words (title, problem, consequence, fix) are the same; its id is their sha256. Two findings become one issue only when a person consolidates them. A shared line, category, rule or recurrence never groups findings and never carries a ruling from one to another.
+- An unresolved finding within one line of a truth item's lines is a location match: `outcomes.jsonl` names the item with `evidenceKind: "location-only"`, and it finds the item only when a person rules it the same issue.
+- The queue keeps one item per finding: its words, the code at its lines and the change around them as the reviewer's brief showed them (only the code's sha256 when the case's licence is not permissive), the truth item it sits on, and every run, configuration and review it appeared in. `add` refuses a held-out run and drops every question a ruling has answered.
+- The sheet shows the case, the finding, the code and the truth item, in an order drawn from the seed it prints. It shows no run, build, configuration or count, and its text goes through the drop audit's redactor.
+- `decide` appends one line to `benchmark/review-queue/decisions.jsonl`, the adjudication file: the target, the status, the person's name, the time, the note and the code the person read. It refuses a line without a person's name, or with a model's or an agent's name: a model never rules. The scorer ignores such a line too and lists it.
+
+| Status | Target | Effect on the score |
+|---|---|---|
+| `same-issue`, `different-issue` | a finding and the truth item it sits on | same-issue: the finding finds that item, in recall and precision; different-issue: it never does |
+| `true`, `false` | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
+| `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
+| `confirmed`, `disputed` | a truth item of a case | labelled in the score's per-bug results; recall is unchanged, since a wrong truth item is fixed by a new case version |
+| `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
+
+A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
 ## What it does not measure
 

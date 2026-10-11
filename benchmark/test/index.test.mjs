@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { assetUrl, buildEntry, entryProblems, listEntries } from "../lib/index.mjs";
 import { planJobs, sampleRecord } from "../lib/runner.mjs";
+import { RULES_VERSION } from "../lib/score.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -66,7 +67,7 @@ describe("a test-split entry without a release is accepted", () => {
   it("takes a development entry built from a format 3 score, with its rules, population and per-case ratios", () => {
     const entry = scoredRun();
     expect(entryProblems(entry)).toEqual([]);
-    expect(entry).toMatchObject({ rulesVersion: 3, legacy: false, caseIds: [CASE_ID] });
+    expect(entry).toMatchObject({ rulesVersion: RULES_VERSION, legacy: false, caseIds: [CASE_ID] });
     expect(entry.rulesHash).toMatch(/^[0-9a-f]{64}$/);
     expect(entry.scores["claude-graph-on"].population).toMatchObject({ planned: 1, complete: 1 });
     expect(entry.perCase["claude-graph-on"][CASE_ID].issueRecall).toEqual({ hit: 1, of: 1 });
