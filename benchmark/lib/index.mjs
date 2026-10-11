@@ -39,6 +39,11 @@
 // 9. A run stopped by its budget, or one that lacked a scanner its cases
 //    need, is marked accepted and becomes a baseline: an accepted entry must
 //    have ended finished with scannersComplete true.
+// 10. Two runs of one suite and configuration that differ only in their
+//    subset (dev-smoke, dev-laptop) share one trend group and one accepted
+//    pointer, so each overwrites the other's baseline: an entry carries the
+//    subset its run named, and the group key ends with it. A run with no
+//    subset (or --subset all) has no subset field and keeps the key it had.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -203,6 +208,8 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     suite: manifest.suite ?? "planted",
     split,
     splitHash: manifest.splitHash ?? null,
+    // Only when the run named one, so an entry without a subset is the one it was (failure 10).
+    ...(manifest.subset && manifest.subset !== "all" ? { subset: manifest.subset } : {}),
     mode: manifest.mode ?? "review",
     path: manifest.path ?? "laptop",
     build: { commit: b.commit ?? null, short: b.short ?? null, cliVersion: b.cliVersion ?? null, dirty: b.dirty ?? null, bundleHash: b.bundleHash ?? b.bundleSha256 ?? null },
@@ -299,6 +306,7 @@ export function entryProblems(e) {
   need(typeof e.suite === "string" && e.suite !== "", "suite is missing");
   need(e.split === "dev" || e.split === "test", "split must be dev or test");
   need(e.splitHash === null || HEX64.test(e.splitHash ?? ""), "splitHash must be a sha256 or null");
+  need(e.subset === undefined || (typeof e.subset === "string" && e.subset !== "" && e.subset !== "all"), "subset must name the split file's subset the run used, or be absent");
   need(e.mode === "review" || e.mode === "scan", "mode must be review or scan");
   need(e.path === "laptop" || e.path === "server", "path must be laptop or server");
   need(e.build && HEX40.test(e.build.commit ?? "") && typeof e.build.short === "string" && e.build.commit.startsWith(e.build.short) && typeof e.build.dirty === "boolean", "build must name the full commit, its short form and whether the tree was dirty");
@@ -394,7 +402,8 @@ export function groupKeys(e) {
     const scan = e.mode === "scan";
     const reviewer = scan ? "none" : reviewerOf(config);
     const model = scan ? "none" : (e.reviewers?.[reviewer]?.model ?? "unknown");
-    const key = [e.suite, e.split, e.splitHash ?? "none", e.mode, e.path, reviewer, model, config, e.rulesVersion ?? "legacy"].join("|");
+    // A subset ends the key only when the run named one (failure 10).
+    const key = [e.suite, e.split, e.splitHash ?? "none", e.mode, e.path, reviewer, model, config, e.rulesVersion ?? "legacy", ...(e.subset ? [e.subset] : [])].join("|");
     return { key, config, reviewer, model };
   });
 }

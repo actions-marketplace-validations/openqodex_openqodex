@@ -331,6 +331,8 @@ function parseArgs(argv) {
   if (!o.real && o.split !== null && o.split !== "dev") throw new Error(`--split ${o.split}: the planted suite has one split, dev`);
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   o.split ??= "dev";
+  // --subset all is the whole split, which a run with no subset names.
+  if (o.subset === "all") o.subset = null;
   // A scan is deterministic (--check-identical proves it), so one repeat; a scan has no reviewer to wait on.
   o.repeat ??= scan ? 1 : 3;
   o.timeout ??= scan ? 120 : o.real ? 1800 : 900;
