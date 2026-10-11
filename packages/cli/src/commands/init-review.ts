@@ -12,7 +12,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { getChange, loadConfig } from "@openqodex/core";
 import { parseFlags } from "../flags.js";
-import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
+import { ALL_TIMEOUT_SECONDS, CHANGE_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { ReviewEnd, ReviewOptions } from "../review-run.js";
 import type { ReviewerDriver } from "@openqodex/review";
 
@@ -85,7 +85,7 @@ async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ 
     const installBudgetMs = o.installWaitMs ?? FIRST_REVIEW_INSTALL_WAIT_MS;
     const review = async (extra: Partial<ReviewOptions>): Promise<{ ended: FirstReview; why?: string }> => {
       const end: ReviewEnd = { ended: "nothing", installing: [] };
-      await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: DEFAULT_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, installBudgetMs, ...extra });
+      await runReview({ flags: global, scope: {}, noGraph: false, timeoutMs: CHANGE_TIMEOUT_SECONDS * 1000, drivers: o.drivers, end, installBudgetMs, ...extra });
       if (end.installing.length > 0) out(`Still downloading: ${end.installing.join(", ")}. The next review includes them once they finish.`);
       return end.ended === "nothing" ? { ended: "skipped", why: "nothing to review" } : { ended: end.ended, why: end.why };
     };
@@ -109,7 +109,7 @@ async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ 
     }
     const choice = await (o.ask ?? askWhat)();
     if (choice === null) return { ended: "skipped", why: "not now" };
-    return await review(choice.kind === "all" ? { all: true } : { target: choice.target });
+    return await review(choice.kind === "all" ? { all: true, timeoutMs: ALL_TIMEOUT_SECONDS * 1000 } : { target: choice.target });
   } catch (error) {
     process.stderr.write(`openqodex: the review after init did not run: ${error instanceof Error ? error.message : String(error)}\n`);
     return { ended: "incomplete", why: "the review stopped with an error, shown above" };
