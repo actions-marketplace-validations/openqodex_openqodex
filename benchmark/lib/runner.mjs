@@ -72,8 +72,10 @@ import { RULES_VERSION, jobIdOf } from "./score.mjs";
 // configuration, "scan", with no reviewer.
 export function planJobs({ cases, caseIds, reviewers = [], graph = [], repeat, mode = "review" }) {
   const configs = [];
+  // A model reviewer's name (model:<deployment>) holds a colon, which a
+  // configuration id, a folder name, writes as a dash.
   if (mode === "scan") configs.push({ id: SCAN_CONFIG, reviewer: null, graph: false });
-  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer.replace(/:/g, "-")}-graph-${g}`, reviewer, graph: g === "on" });
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
@@ -374,7 +376,7 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
 // its raw and kept counts, its time and the time to find its tool, the
 // files it was handed, what each filter stage dropped, and, for semgrep,
 // the rule packs it consumed.
-function scannerRows(list) {
+export function scannerRows(list) {
   return list.map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, raw: s.rawCount ?? null, kept: s.keptCount, ms: s.durationMs, resolveMs: s.resolveMs ?? null, files: s.files ?? null, stages: s.stages ?? null, ...(Array.isArray(s.rules) ? { rules: s.rules } : {}), reason: s.reason ?? null }));
 }
 
@@ -418,10 +420,26 @@ export function resumeProblems(earlier, now) {
   const names = [...new Set([...Object.keys(earlier.reviewers ?? {}), ...Object.keys(now.reviewers ?? {})])].sort();
   for (const n of names) {
     same(`${n} reviewer version`, earlier.reviewers?.[n]?.version, now.reviewers?.[n]?.version);
-    same(`${n} model`, earlier.reviewers?.[n]?.model, now.reviewers?.[n]?.model);
+    const e = earlier.reviewers?.[n];
+    const w = now.reviewers?.[n];
+    // A model reviewer's `model` is the id that served the run's first
+    // answered review, which a new invocation does not know yet; the model it
+    // asks for is what must match. The served id is held by
+    // lib/server-review.mjs recordServed.
+    if (e?.kind === "model" || w?.kind === "model") same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
+    else same(`${n} model`, e?.model, w?.model);
+    // A model reviewer's settings (effort, maxOutputTokens), the alias that
+    // named it and the scripted model's script.
+    same(`${n} settings`, e?.settings, w?.settings);
+    same(`${n} alias`, e?.alias, w?.alias);
+    same(`${n} script`, e?.script?.sha256, w?.script?.sha256);
+    // The endpoint, as the sha256 of its base URL; the line names neither.
+    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL than when the run started`);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);
+  // The tools folder a model review reads its scanners from.
+  same("install root", earlier.review?.installRoot, now.review?.installRoot);
   same("concurrency", earlier.concurrency, now.concurrency);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);

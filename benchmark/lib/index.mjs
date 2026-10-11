@@ -39,6 +39,11 @@
 // 9. A run stopped by its budget, or one that lacked a scanner its cases
 //    need, is marked accepted and becomes a baseline: an accepted entry must
 //    have ended finished with scannersComplete true.
+// 10. A replay changes a saved run, uses checks unlike the product's or
+//     counts one bug twice across repeats: replays use checkSubmission and
+//     mergeFindings from the built product, refuse output into run folders
+//     and count each planted bug once in the union. A union without both
+//     repeats reports insufficient repeats.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
