@@ -486,7 +486,31 @@ export function regressions(oldSamples, newSamples) {
 //     constant, list and the matching code are in a hashed rules block that
 //     each score carries, a test pins the hash to RULES_VERSION, and
 //     rulesDifferences() names any difference between two scores.
-export const RULES_VERSION = 3;
+// Rules version 4 adds severity agreement and the finder of each found
+// truth item. Failure list, written before the code:
+// 22. A found bug rated two steps low counts as the right severity: each hit
+//     compares the severity it gave with its truth item's on the ordinal
+//     scale SEVERITY_ORDER, as exact, one-off or off (two steps or more),
+//     over-rated or under-rated, and the score keeps the full matrix.
+// 23. A second finding on a found bug changes its severity: the first hit in
+//     report order decides, and a duplicate is never judged.
+// 24. A bug the spec expects from a scanner, found only by the reviewer,
+//     counts as a scanner find: the finder is judged from the attempt's own
+//     scan.json, by location, and never from the spec's found_by alone,
+//     which is the expectation the finder is compared with.
+// 25. A scanner the spec does not expect is credited with a bug whose wide
+//     range holds its finding about another issue: such a finding locates
+//     the bug only when its words name the bug's mentions (rule S1 of the
+//     scanner-only mode); the expected scanner's finding needs only its place.
+// 26. Dedup hides a scanner's work: a finding merged into another candidate
+//     (a merged trail entry, or a token in a candidate's alsoReportedBy)
+//     counts for its own scanner.
+// 27. OpenQodex's own candidate about an added suppression comment or a
+//     changed settings file counts as a find of the scanner it names: it
+//     counts as "suppression" or "settings".
+// 28. A review whose scan was not saved reads as found by the reviewer: its
+//     finder is unjudged, counted apart and left out of every finder ratio.
+export const RULES_VERSION = 4;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -506,6 +530,8 @@ const FROZEN = new Set(["hit", "duplicate", "accepted", "false"]);
 export const LOCATION_LABEL = "Location diagnostic: AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart). A board output; never an acceptance metric.";
 export const PLANTED_LEGACY_LABEL = "Only planted cases: the format 2 rule, with duplicates, accepted side issues and requests for a test set apart; testGaps counts the requests for a test, which stay out of both precision bounds. Never pooled with real-suite precision.";
 export const ALL_ATTEMPTS_LABEL = "Every saved attempt, retries included and unstarted jobs left out, as score format 2 counted them. A diagnostic only.";
+export const SEVERITY_LABEL = "Each found truth item once, by the first finding that hit it: the severity it gave against the truth item's, on the scale critical, major, minor, nitpick, info. Off is two steps or more; the matrix is truth severity, then given severity.";
+export const FINDER_LABEL = "Each found truth item once, judged from the review's own scan.json: a scanner found it when one of its candidates, or a finding merged into one, sits on the item's lines and is either from a scanner found_by names or names the item's words; else the reviewer found it alone. found_by is the expectation: a scanner it names is met when that scanner located the item, reasoning and graph when no scanner did.";
 
 // The kind of case a suite holds.
 const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected" };
@@ -564,6 +590,147 @@ export function lineMatches(findings, truth, k = AACR_LINE_K) {
   return { matches, generated: findings.length, expected: positive.length, knownNoise };
 }
 
+// The severity a hit gave against its truth item's, on SEVERITY_ORDER: exact,
+// one-off or off (two steps or more), and over (rated more severe) or under.
+// Unknown, with nulls, when either side is not on the scale (AACR truth has
+// no severity).
+export function severityAgreement(given, expected) {
+  const g = SEVERITY_ORDER.indexOf(given);
+  const e = SEVERITY_ORDER.indexOf(expected);
+  if (g === -1 || e === -1) return { agreement: null, direction: null };
+  const steps = g - e;
+  return { agreement: steps === 0 ? "exact" : Math.abs(steps) === 1 ? "one-off" : "off", direction: steps === 0 ? null : steps > 0 ? "under" : "over" };
+}
+
+// Expected finders that are the reviewer, not a scanner: its reading of the
+// diff, and its reading helped by the code graph's caller list. The data
+// cannot tell the two apart, so both are met by a find no scanner located.
+export const REVIEWER_FINDERS = ["reasoning", "graph"];
+// OpenQodex's own candidates, by rule id, and the finder each counts as.
+export const OWN_RULES = { "openqodex.suppression-added": "suppression", "settings-file": "settings" };
+
+// The scanner and rule of a token "<source>:<ruleId>"; a custom scanner's
+// source is "custom:<name>".
+function tokenParts(token) {
+  const t = String(token ?? "");
+  const cut = t.indexOf(":", t.startsWith("custom:") ? 7 : 0);
+  return cut === -1 ? { source: t, ruleId: "" } : { source: t.slice(0, cut), ruleId: t.slice(cut + 1) };
+}
+
+const finderName = (source, ruleId) => OWN_RULES[ruleId] ?? source;
+
+// Where each scanner put a finding that reached the reviewer or was merged
+// into one, with its words: every kept candidate (its rule id and message),
+// every token a candidate names as merged into it (on the candidate's
+// lines, since dedup merges only the same lines), and every merged trail
+// entry on its own lines (the rule id alone: the trail keeps no message).
+// Null when the attempt saved no scan.
+export function scannerPlaces(scan) {
+  if (!scan || typeof scan !== "object") return null;
+  const place = (name, file, start, end, text) => ({ name, file: normPath(file), start, end: Math.max(end ?? start, start), text: String(text ?? "").toLowerCase() });
+  const out = [];
+  for (const c of scan.candidates ?? []) {
+    out.push(place(finderName(c.source, c.ruleId), c.filePath, c.lineStart, c.lineEnd, `${c.ruleId} ${c.message ?? ""}`));
+    for (const token of c.alsoReportedBy ?? []) {
+      const t = tokenParts(token);
+      out.push(place(finderName(t.source, t.ruleId), c.filePath, c.lineStart, c.lineEnd, t.ruleId));
+    }
+  }
+  for (const e of scan.trail ?? []) {
+    if (e.stage !== "merged") continue;
+    const t = tokenParts(e.token);
+    out.push(place(finderName(t.source, t.ruleId), e.file, e.lineStart, e.lineEnd, t.ruleId));
+  }
+  return out;
+}
+
+// The scanners that located a truth item, sorted. A place locates it when
+// it lies on one of the item's locations with overlapping lines, and either
+// its scanner is one the item expects or its words name the item's
+// mentions: the scanner-only rule S1, so a scanner the spec does not expect
+// is not credited with a bug whose wide range holds its finding about
+// something else. Null when the scan was not saved.
+export function locatedBy(places, bug, expected = []) {
+  if (places === null) return null;
+  const at = locations(bug);
+  const on = (p) => at.some((l) => l.file === p.file && gap(p.start, p.end, l.lines) === 0);
+  return [...new Set(places.filter((p) => on(p) && (expected.includes(p.name) || names(bug.mentions, p.text))).map((p) => p.name))].sort();
+}
+
+// Who found a found truth item, from the data: "scanner" when a scanner
+// located it (locatedBy), "reviewer" when none did, null when the scan was
+// not saved. `met` lists the expected finders the find meets: a scanner
+// that located it, or reasoning and graph when no scanner did.
+export function finderOf(located, expected) {
+  if (located === null) return { finder: null, met: [] };
+  const finder = located.length > 0 ? "scanner" : "reviewer";
+  return { finder, met: (expected ?? []).filter((name) => (REVIEWER_FINDERS.includes(name) ? finder === "reviewer" : located.includes(name))) };
+}
+
+// Whom a truth item's spec expects to find it: a planted bug's found_by, or
+// a suite truth item's expectedFinder.
+const expectedOf = (bug) => bug.found_by ?? bug.expectedFinder ?? [];
+
+// One hit judged: the severity it gave against its truth item's, and who
+// found the item. Every other outcome is judged by neither.
+function judgeHit(f, bug, places) {
+  if (f.outcome !== "hit" || !bug) return { severityExpected: null, severityAgreement: null, severityDirection: null, finder: null, locatedBy: null, expectedFinder: null, met: null };
+  const s = severityAgreement(f.severity, bug.severity);
+  const expectedFinder = expectedOf(bug);
+  const located = locatedBy(places, bug, expectedFinder);
+  return { severityExpected: bug.severity ?? null, severityAgreement: s.agreement, severityDirection: s.direction, locatedBy: located, expectedFinder, ...finderOf(located, expectedFinder) };
+}
+
+// The severity of every hit against its truth item's: exact, one-off, off and
+// within one as ratios over the judged hits, the over- and under-rated
+// counts, and the matrix (truth severity, then given severity).
+function severitySummary(hits) {
+  const judged = hits.filter((h) => h.severityAgreement !== null);
+  const n = (a) => judged.filter((h) => h.severityAgreement === a).length;
+  const matrix = Object.fromEntries(SEVERITY_ORDER.map((e) => [e, Object.fromEntries(SEVERITY_ORDER.map((g) => [g, 0]))]));
+  for (const h of judged) matrix[h.severityExpected][h.severity]++;
+  const of = judged.length;
+  return {
+    label: SEVERITY_LABEL,
+    exact: { hit: n("exact"), of },
+    oneOff: { hit: n("one-off"), of },
+    off: { hit: n("off"), of },
+    withinOne: { hit: n("exact") + n("one-off"), of },
+    over: judged.filter((h) => h.severityDirection === "over").length,
+    under: judged.filter((h) => h.severityDirection === "under").length,
+    unknown: hits.length - of,
+    matrix,
+  };
+}
+
+// Who found every hit's truth item, against whom its spec expects: the
+// match, each expected finder as a ratio, the finds a scanner located and
+// the reviewer's alone, the finds the spec expected from a scanner that no
+// scanner located, the hits with no saved scan, and `dropped`, the truth
+// items, found or not, that a scanner candidate the reviewer dropped had
+// located.
+function finderSummary(hits, dropped) {
+  const judged = hits.filter((h) => h.finder !== null);
+  const expecting = judged.filter((h) => h.expectedFinder.length > 0);
+  const byExpected = {};
+  for (const h of expecting) {
+    for (const name of h.expectedFinder) {
+      byExpected[name] ??= ratio();
+      byExpected[name].of++;
+      if (h.met.includes(name)) byExpected[name].hit++;
+    }
+  }
+  return {
+    label: FINDER_LABEL,
+    match: { hit: expecting.filter((h) => h.met.length > 0).length, of: expecting.length },
+    byExpected: Object.fromEntries(Object.keys(byExpected).sort().map((k) => [k, byExpected[k]])),
+    byFinder: { scanner: judged.filter((h) => h.finder === "scanner").length, reviewer: judged.filter((h) => h.finder === "reviewer").length },
+    scannerExpectedReviewerFound: expecting.filter((h) => h.finder === "reviewer" && h.expectedFinder.some((name) => !REVIEWER_FINDERS.includes(name))).length,
+    unjudged: hits.length - judged.length,
+    droppedCandidates: dropped,
+  };
+}
+
 // The jobs a run planned: the manifest's `jobs` when it has them, else (a
 // run made before the list existed) every repeat of every case and
 // configuration it names, with the saved attempts filling in what it does
@@ -608,17 +775,22 @@ export function population(manifest, attempts) {
   return { from, jobs: out, retries: attempts.filter((a) => a.attempt > 1), unplanned: attempts.filter((a) => a.attempt === 1 && !planned.has(key(a))), problems };
 }
 
-// One planned job, scored from its first attempt: `report` and `brief` are
-// that attempt's (null when it wrote none), and `started` is false for a job
-// with no attempt. `origin` is the kind of case (originOf).
-export function scoreJob({ job, spec, report = null, brief = null, row = {}, origin = "planted", started = true }) {
+// One planned job, scored from its first attempt: `report`, `brief` and
+// `scan` are that attempt's (null when it wrote none), and `started` is
+// false for a job with no attempt. `origin` is the kind of case (originOf).
+export function scoreJob({ job, spec, report = null, brief = null, scan = null, row = {}, origin = "planted", started = true }) {
   const planted = origin === "planted";
   const base = scoreSample({ spec, report, brief, row: { ...row, config: job.config, repeat: job.repeat, attempt: 1 }, testOnly: planted });
   const shown = shownFindings(report);
+  const places = scannerPlaces(scan);
+  const truth = new Map((spec.bugs ?? []).map((b) => [b.id, b]));
   const findings = base.findings.map((f, index) => {
     const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
-    return { ...g, issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
+    return { ...g, ...judgeHit(g, truth.get(g.bug), places), issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
   });
+  // The truth items, found or not, that a scanner candidate the reviewer dropped had located (by the same rule as a find).
+  const droppedPlaces = scannerPlaces({ candidates: (report?.dropped ?? []).map((d) => d?.candidate).filter((c) => c && typeof c === "object") });
+  const droppedOn = (spec.bugs ?? []).filter((b) => locatedBy(droppedPlaces, b, expectedOf(b)).length > 0).length;
   // Precision, issues and redundancy count every shown finding but the ones set apart.
   const inPrecision = findings.filter((f) => treatment(f.outcome) !== "apart");
   const counted = (list) => ({ correct: list.filter((x) => x === "correct").length, unresolved: list.filter((x) => x === "unresolved").length, of: list.length });
@@ -642,6 +814,7 @@ export function scoreJob({ job, spec, report = null, brief = null, row = {}, ori
     location: lineMatches(base.findings, spec.bugs ?? []),
     plantedLegacy: planted ? base.precision : null,
     testGaps: findings.length - inPrecision.length,
+    droppedOn,
     gaps: base.gaps,
     callers: base.callers,
     failures: started ? base.failures : [],
@@ -676,6 +849,7 @@ export function summarizeJobs(jobs, retries = []) {
   const planted = jobs.filter((j) => j.origin === "planted");
   const clean = jobs.filter((j) => j.clean);
   const retryCosts = nums(retries.map((s) => s.costUsd));
+  const hits = jobs.flatMap((j) => j.findings.filter((f) => f.outcome === "hit"));
   const outcomes = {};
   for (const o of OUTCOMES) {
     const n = sum(jobs, (j) => j.findings.filter((f) => f.outcome === o).length);
@@ -700,6 +874,8 @@ export function summarizeJobs(jobs, retries = []) {
     controls: total((j) => j.controls),
     location: { label: LOCATION_LABEL, precision: { hit: matches, of: generated }, recall: { hit: matches, of: expected }, matches, generated, expected, knownNoise: sum(jobs, (j) => j.location.knownNoise) },
     plantedLegacy: planted.length === 0 ? null : { label: PLANTED_LEGACY_LABEL, precision: planted.reduce((a, j) => add(a, j.plantedLegacy), ratio()), testGaps: sum(planted, (j) => j.testGaps) },
+    severity: severitySummary(hits),
+    finder: finderSummary(hits, sum(jobs, (j) => j.droppedOn)),
     outcomes,
     brief: { gaps: total((j) => j.gaps), callers: total((j) => j.callers) },
     causes: null,
@@ -724,7 +900,7 @@ export function scoreAttempts({ manifest, attempts, specs }) {
   if (origin === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
   const pop = population(manifest, attempts);
   if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
-  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null }));
+  const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, scan: j.first?.scan ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null }));
   const configs = [...new Set(jobs.map((j) => j.config))].sort();
   const byConfig = {};
   for (const config of configs) {
@@ -746,8 +922,12 @@ export function scoreAttempts({ manifest, attempts, specs }) {
     perBug[j.config] ??= {};
     const bugs = (perBug[j.config][j.caseId] ??= {});
     for (const b of j.bugs) {
-      const x = (bugs[b.id] ??= { found: [], severity: b.severity, cause: null });
+      // Per repeat: whether it was found, the severity its first hit gave, and who found it.
+      const x = (bugs[b.id] ??= { found: [], severity: b.severity, given: [], finder: [], cause: null });
+      const hit = j.findings.find((f) => f.outcome === "hit" && f.bug === b.id);
       x.found[j.repeat - 1] = b.found;
+      x.given[j.repeat - 1] = hit?.severity ?? null;
+      x.finder[j.repeat - 1] = hit?.finder ?? null;
     }
   }
   const briefFailures = {};
@@ -757,7 +937,7 @@ export function scoreAttempts({ manifest, attempts, specs }) {
     briefFailures[config] = [...seen].map(([what, n]) => ({ what, reviews: n }));
   }
   const outcomes = jobs.flatMap((j) =>
-    j.findings.map((f) => ({ jobId: j.jobId, caseId: j.caseId, config: j.config, repeat: j.repeat, index: f.index, findingId: f.findingId, issueId: null, outcome: f.outcome, truthId: f.bug ?? null, evidenceKind: f.evidenceKind, cause: null, confidence: f.confidence, severity: f.severity ?? null, severityAgreement: null, finder: null, wording: null })),
+    j.findings.map((f) => ({ jobId: j.jobId, caseId: j.caseId, config: j.config, repeat: j.repeat, index: f.index, findingId: f.findingId, issueId: null, outcome: f.outcome, truthId: f.bug ?? null, evidenceKind: f.evidenceKind, cause: null, confidence: f.confidence, severity: f.severity ?? null, severityExpected: f.severityExpected, severityAgreement: f.severityAgreement, severityDirection: f.severityDirection, finder: f.finder, locatedBy: f.locatedBy, wording: null })),
   );
   return {
     suite,
@@ -880,6 +1060,8 @@ const RULES_BLOCK = {
   precision: PRECISION,
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue; any other finding is its own issue, by findingId, until a person consolidates it.",
+  severity: { order: SEVERITY_ORDER, rule: "Each hit, the first finding in report order to find its truth item, compares its severity with the truth item's on the order above: exact, one-off, or off at two steps or more; over when it is more severe, under when less. A duplicate is not judged; a side without a severity on the scale is unknown." },
+  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0, and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. OpenQodex's own rules count as the finder named in own. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });
