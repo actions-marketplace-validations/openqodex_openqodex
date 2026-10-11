@@ -5,9 +5,9 @@
 # scanner-only run of its group in benchmark/index (benchmark/trend.mjs
 # --against-run). A manual run may add every development pull request, in
 # one pass, after dev-smoke: off by default until the efficiency baseline
-# (P2-07) shows it fits the hour. That pass is scored in the summary and
-# never compared or indexed: the index groups runs by suite and split, not
-# by subset.
+# (P2-07) shows it fits the hour. That pass is scored in the summary only:
+# it has its own trend group (no subset), and comparing and indexing it
+# waits until it runs every week, in two passes like dev-smoke.
 #
 # No key and no model. The network it uses: the scanner downloads, the
 # Semgrep registry, osv.dev, the case repositories' clone URLs, and, when
