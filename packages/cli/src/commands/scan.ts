@@ -1,11 +1,11 @@
 // `openqodex scan`: the scanners only, on the current change. Used by the
 // Action and pre-commit; not a review.
 import { relative, resolve } from "node:path";
-import { OpenQodexError, SEVERITIES, openReportDir, scanReport, writeLatestScan, writeReportFiles, writeScan } from "@openqodex/core";
+import { OpenQodexError, SEVERITIES, openReportDir, phaseClock, scanReport, writeLatestScan, writeReportFiles, writeScan } from "@openqodex/core";
 import type { PipelineResult } from "@openqodex/review";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { keepRunStateOutOfRepo } from "../feedback.js";
-import type { ChangeScope, Report, Severity } from "@openqodex/core";
+import type { ChangeScope, PhaseClock, Report, Severity } from "@openqodex/core";
 import { parseFlags, scannerList } from "../flags.js";
 import type { GlobalFlags } from "../flags.js";
 import { checkReportFolder, emitReport, exitFor, nothingToReview, reportFiles, runPipeline, writeReportCopies } from "../pipeline.js";
@@ -37,6 +37,8 @@ export async function runScan(args: {
   // cannot stop the scan (the GitHub Action).
   reportDir?: string;
 }): Promise<ScanOutcome> {
+  // The report's timings run from here.
+  const clock = phaseClock(Date.now);
   const { flags } = args;
   if (args.blockOn !== undefined && !(SEVERITIES as readonly string[]).includes(args.blockOn)) {
     throw new OpenQodexError(`--block-on-severity must be one of ${SEVERITIES.join(", ")}, not ${args.blockOn}`);
@@ -52,18 +54,20 @@ export async function runScan(args: {
     only: scannerList("--only", args.only),
     skip: scannerList("--skip", args.skip),
     checkoutSettings: args.reportDir === undefined,
+    clock,
   });
   if (args.blockOn !== undefined) p.config = { ...p.config, blockOnSeverity: args.blockOn as Severity };
   if (args.reportDir === undefined) announceRepoFiles(p.repoRoot);
-  return reportScan(p, flags, args.reportDir);
+  return reportScan(p, flags, clock, args.reportDir);
 }
 
-// The scan report of a pipeline run, written to a run folder of the
-// developer's repository, or with `reportDir` to that folder alone, and printed.
-export function reportScan(p: PipelineResult, flags: GlobalFlags, reportDir?: string): ScanOutcome {
+// The scan report of a pipeline run, with the timings `clock` reads once
+// it is made, written to a run folder of the developer's repository, or
+// with `reportDir` to that folder alone, and printed.
+export function reportScan(p: PipelineResult, flags: GlobalFlags, clock: PhaseClock, reportDir?: string): ScanOutcome {
   if (p.scan === null) return { exitCode: nothingToReview(p.change), report: null, dir: null };
 
-  const report = scanReport({ change: p.change, scan: p.scan, config: p.config });
+  const report: Report = { ...scanReport({ change: p.change, scan: p.scan, config: p.config }), timings: clock.timings() };
   const files = reportFiles(report);
   if (reportDir !== undefined) {
     const dir = resolve(reportDir);

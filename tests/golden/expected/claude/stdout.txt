@@ -788,5 +788,14 @@
     },
     "outside_reads": [],
     "trace_complete": true
+  },
+  "timings": {
+    "change_ms": "<DURATION_MS>",
+    "scan_ms": "<DURATION_MS>",
+    "graph_ms": "<DURATION_MS>",
+    "brief_ms": "<DURATION_MS>",
+    "reviewer_ms": "<DURATION_MS>",
+    "finalize_ms": "<DURATION_MS>",
+    "total_ms": "<DURATION_MS>"
   }
 }
