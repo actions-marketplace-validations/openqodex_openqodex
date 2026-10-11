@@ -86,6 +86,10 @@ function branch(name, edits, from = base) {
 const appendLine = (line) => (old) => `${old}${old.endsWith("\n") ? "" : "\n"}${line}\n`;
 const lensLine = (line) => ({ [LENS]: appendLine(line) });
 const GENERIC = "A value read from a query string, a form field or a header is untrusted input as well.";
+// Group keys of benchmark/index/accepted.json (lib/index.mjs groupKeys):
+// suite|split|splitHash|mode|path|reviewer|model|config|rulesVersion.
+const REVIEW_GROUP = "planted|dev|none|review|laptop|claude|claude-opus-5-5|claude-graph-on|5";
+const SCAN_GROUP = "planted|dev|none|scan|laptop|none|none|scan|1";
 
 const cliEnv = (env) => ({ ...process.env, OPENQODEX_BENCH_CACHE: cache, ...env });
 
@@ -230,7 +234,8 @@ describe("a change editing a spec or naming a case identifier in a lens enters t
   });
 
   it("takes the last accepted commit as the base once benchmark/index/accepted.json names one", () => {
-    const later = branch("main-with-accepted", { "benchmark/index/accepted.json": `${JSON.stringify({ version: 1, commit: base, groups: {} })}\n` });
+    const accepted = { runId: "2026-10-11-review", commit: base, scoreHash: "a".repeat(64), acceptedAt: "2026-10-11T10:00:00.000Z", acceptedBy: "Sid" };
+    const later = branch("main-with-accepted", { "benchmark/index/accepted.json": `${JSON.stringify({ version: 1, ...accepted, groups: { [REVIEW_GROUP]: accepted } })}\n` });
     branch("lens-from-later", lensLine(GENERIC), later);
     branch("lens-from-accepted", lensLine(GENERIC));
     try {
@@ -241,6 +246,31 @@ describe("a change editing a spec or naming a case identifier in a lens enters t
       expect(fromLater.out).toMatch(/accepted\.json/);
       const fromAccepted = propose(fullRecord("lenses", "lens-from-accepted"));
       expect(fromAccepted.code, fromAccepted.out).toBe(0);
+    } finally {
+      originMain(base);
+    }
+  });
+
+  // A scanner-only run is accepted in its own group (the bench-scan CI job's
+  // baseline). The reviewer loop compares reviews with the accepted review
+  // run, built at that run's commit, so a scan accept must not move the base.
+  it("keeps the reviewer loop's base when a scanner-only run is accepted last", () => {
+    const scanAt = branch("main-scan-base", lensLine("A scan baseline commit."));
+    const review = { runId: "2026-10-11-review", commit: base, scoreHash: "a".repeat(64), acceptedAt: "2026-10-11T10:00:00.000Z", acceptedBy: "Sid" };
+    const scan = { runId: "2026-10-11-scan", commit: scanAt, scoreHash: "b".repeat(64), acceptedAt: "2026-10-11T11:00:00.000Z", acceptedBy: "Sid" };
+    // The scan run is the one accepted last, so the top level names it.
+    const both = branch("main-with-scan-accepted", { "benchmark/index/accepted.json": `${JSON.stringify({ version: 1, ...scan, groups: { [REVIEW_GROUP]: review, [SCAN_GROUP]: scan } })}\n` }, scanAt);
+    const scanOnly = branch("main-with-scan-only", { "benchmark/index/accepted.json": `${JSON.stringify({ version: 1, ...scan, groups: { [SCAN_GROUP]: scan } })}\n` }, scanAt);
+    branch("lens-from-review-base", lensLine(GENERIC));
+    branch("lens-from-scan-only-main", lensLine(GENERIC), scanOnly);
+    try {
+      originMain(both);
+      const fromReview = propose(fullRecord("lenses", "lens-from-review-base"));
+      expect(fromReview.code, fromReview.out).toBe(0);
+      // With no review run accepted, the base is the merge-base with main, as before any accept.
+      originMain(scanOnly);
+      const fromMain = propose(fullRecord("lenses", "lens-from-scan-only-main", { parent: scanOnly }));
+      expect(fromMain.code, fromMain.out).toBe(0);
     } finally {
       originMain(base);
     }

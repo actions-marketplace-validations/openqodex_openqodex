@@ -67,10 +67,19 @@
 //    a judge file (the run's own or --judge's) that cannot be read, or does
 //    not hold what judge.mjs writes, leaves the wording null with one line
 //    on stderr naming it, never a failed scoring.
+// 10. A run whose manifest names no suite (or another suite than its jobs)
+//    is scored as planted: the suite the manifest names, planted when it
+//    names none, must be the suite of every job's case id, or the run is
+//    refused.
+// 11. A pull request case's spec is refused by the planted spec rules, or a
+//    truth copy that lacks an accepted comment its suite lists is scored:
+//    a real suite's spec copy is checked with lib/suites.mjs
+//    realSpecProblems, against its own count and the committed suite.
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
+import { realSpecProblems } from "./lib/suites.mjs";
 import { CAUSES_VERSION, MISS_CAUSES, NON_HIT_CAUSES, countCauses, runCauses } from "./lib/causes.mjs";
 import { inputDifferences } from "./lib/external.mjs";
 import { runIntervals } from "./lib/interval.mjs";
@@ -114,6 +123,11 @@ const shownPath = (p) => {
 export function loadRun(folder, { specsDir = null, judgeFile = null } = {}) {
   const manifest = readJson(join(folder, "manifest.json"));
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
+  // The suite decides the rules every spec is read by (failure 10).
+  const suite = manifest.suite ?? "planted";
+  const others = [...new Set((manifest.jobs ?? []).map((j) => parseCaseId(j.caseId)?.suite).filter((s) => s && s !== suite))];
+  if (others.length > 0) throw new Error(`${folder}: the manifest ${manifest.suite === undefined ? "names no suite, which reads as planted" : `names the suite ${suite}`}, but its jobs are cases of ${others.join(", ")}; a run is scored by its own suite's rules, so it is not scored`);
+  const planted = originOf(suite) === "planted";
   const from = specsDir ?? join(folder, "cases");
   const specs = {};
   const ownSpecs = {};
@@ -126,7 +140,8 @@ export function loadRun(folder, { specsDir = null, judgeFile = null } = {}) {
     const spec = readJson(join(from, `${c}.json`));
     if (!spec) throw new Error(`${join(from, `${c}.json`)} is missing; a spec is needed to score ${c}`);
     // The matching rules only: the scorer reads no label, and runs made before the freeze saved specs without them.
-    problems.push(...specProblems(spec, c, { labels: false }));
+    // A pull request case's spec is its truth copy, checked by its suite's rules (failure 11).
+    problems.push(...(planted ? specProblems(spec, c, { labels: false }) : realSpecProblems(spec, c, { suite })));
     specs[c] = spec;
     ownSpecs[c] = readJson(join(folder, "cases", `${c}.json`));
     return spec;
