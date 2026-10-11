@@ -7,10 +7,11 @@
 // Failure list, written before the code:
 // 1. Two samples of one run are scanned with different Semgrep rule packs
 //    and the run is scored as one rule set: the complete set of packs each
-//    sample's scan recorded (the adapter's `rules`, the sha256 and size of
-//    the bytes semgrep read) is compared, never a union of them, and a run
-//    whose samples' sets differ in any pack or byte is "mixed", which accept
-//    refuses.
+//    sample's scan recorded (the adapter's `rules`, by pack and the sha256
+//    of its rules) is compared, never a union of them, and a run whose
+//    samples' sets differ in any pack or sha256 is "mixed", which accept
+//    refuses. The raw size is not compared: one rule set comes as JSON or
+//    as YAML, of other sizes.
 // 2. A sample whose packs were not recorded, or recorded as an empty list,
 //    is taken as matching the others: the run's packs are then "unknown",
 //    and accept refuses a scan run with unknown packs too.
@@ -50,12 +51,14 @@ export function toolchainOf(doctor, { home = homedir() } = {}) {
   };
 }
 
-// The Semgrep rule packs a run's scans consumed: the packs, sorted, when
-// every sample in which semgrep ran consumed the same set of packs with the
-// same bytes; "mixed" when two samples' sets differ in any pack or byte, or
-// one sample read two versions of one pack; "unknown" when a sample in which
-// semgrep ran recorded no pack (no record, or an empty one). [] when
-// semgrep ran nowhere.
+// The Semgrep rule packs a run's scans consumed: the packs, sorted, each as
+// { pack, sha256 }, when every sample in which semgrep ran consumed the same
+// set of packs with the same rules; "mixed" when two samples' sets differ in
+// any pack or sha256, or one sample read two versions of one pack; "unknown"
+// when a sample in which semgrep ran recorded no pack (no record, or an
+// empty one). [] when semgrep ran nowhere. The sha256 is of the pack's rules
+// in a normal form; the raw size (`bytes`) is not compared or kept, because
+// the registry serves one rule set as JSON or as YAML, of other sizes.
 export function semgrepPacksOf(scans) {
   const sets = new Set();
   let first = null;
@@ -67,12 +70,12 @@ export function semgrepPacksOf(scans) {
       unknown = true;
       continue;
     }
-    // One pack read twice with other bytes, in one sample, is two rule sets already.
+    // One pack read twice with other rules, in one sample, is two rule sets already.
     const byPack = new Map();
     for (const r of s.rules) {
       const had = byPack.get(r.pack);
-      if (had && (had.sha256 !== r.sha256 || had.bytes !== r.bytes)) return "mixed";
-      byPack.set(r.pack, { pack: r.pack, sha256: r.sha256, bytes: r.bytes });
+      if (had && had.sha256 !== r.sha256) return "mixed";
+      byPack.set(r.pack, { pack: r.pack, sha256: r.sha256 });
     }
     const set = [...byPack.values()].sort((a, b) => byText(a.pack, b.pack));
     sets.add(JSON.stringify(set));
