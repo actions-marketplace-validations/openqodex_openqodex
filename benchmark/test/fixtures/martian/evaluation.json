@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "board": {
+    "repo": "withmartian/code-review-benchmark",
+    "commit": "e616e849755441da38f18bf3adba2c9583b03803"
+  },
+  "toolName": "openqodex-library-r1",
+  "judge": {
+    "model": "gpt-5.2",
+    "served": "gpt-5.2"
+  },
+  "candidates": [
+    {
+      "candidateId": "https://github.com/alpha/app/pull/1#0",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "sourceFindingIds": ["c49ed7a6de79297315ab9968dc0e1c74d516fef1f6e5cda613f05b47aa94edff"],
+      "extractedText": "The cache entry is read after the lock is released, so two writers can both miss and both insert",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 0
+    },
+    {
+      "candidateId": "https://github.com/alpha/app/pull/1#1",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "sourceFindingIds": ["c49ed7a6de79297315ab9968dc0e1c74d516fef1f6e5cda613f05b47aa94edff"],
+      "extractedText": "Read and insert should happen under the same lock",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 1
+    },
+    {
+      "candidateId": "https://github.com/alpha/app/pull/1#2",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "sourceFindingIds": ["bbfacf3ea0b833feb953e61f55d08246cff87d9da940ca43a6cd14ad359d3ab7"],
+      "extractedText": "The widget id from the request is joined into the SQL text",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 2
+    },
+    {
+      "candidateId": "https://github.com/alpha/app/pull/1#3",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "sourceFindingIds": ["112ab4afbe57945e1a960097a03228a228a4b33499b3f6e5bce7b98ebd5d10cd"],
+      "extractedText": "Eviction stops one entry early and never evicts the newest entry",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 3
+    },
+    {
+      "candidateId": "https://github.com/alpha/app/pull/1#4",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "sourceFindingIds": ["9cfda66b64c744e970ebd80538b69ba79d26db9edbd108ca96873035441a0b0e"],
+      "extractedText": "The constant VALUE should be named CACHE_TTL_SECONDS",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 4
+    },
+    {
+      "candidateId": "https://github.com/eval-org/alpha-copy/pull/1#0",
+      "prUrl": "https://github.com/eval-org/alpha-copy/pull/1",
+      "sourceFindingIds": ["71d4c81dded07198144e9dc7f4d8cc93702149df67c24db908c4fc773b3ea0b7"],
+      "extractedText": "The retry counter is incremented by workers with no lock, and a missing delivery answers 200 with an empty body",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 0
+    },
+    {
+      "candidateId": "https://github.com/eval-org/alpha-copy/pull/1#1",
+      "prUrl": "https://github.com/eval-org/alpha-copy/pull/1",
+      "sourceFindingIds": ["ff5fe000450a2da5c8133eec7b6179b2a022ddcf1103ae4c771a9a45cc258010"],
+      "extractedText": "The retry counter has no lock, so concurrent workers race on it",
+      "extraction": { "model": "gpt-5.2", "step": "step2_extract_comments", "file": "results/gpt-5.2/candidates.json" },
+      "dedupGroup": 0
+    }
+  ],
+  "matches": [
+    { "candidateId": "https://github.com/alpha/app/pull/1#0", "goldenId": "martian/alpha__app-1@0a1b2c3d#g1", "verdict": "match", "confidence": 0.9 },
+    { "candidateId": "https://github.com/alpha/app/pull/1#1", "goldenId": "martian/alpha__app-1@0a1b2c3d#g2", "verdict": "match", "confidence": 0.8 },
+    { "candidateId": "https://github.com/alpha/app/pull/1#2", "goldenId": "martian/alpha__app-1@0a1b2c3d#g3", "verdict": "match", "confidence": 0.95 },
+    { "candidateId": "https://github.com/eval-org/alpha-copy/pull/1#0", "goldenId": "martian/eval-org__alpha-copy-1@4e5f6a7b#g1", "verdict": "match", "confidence": 0.85 },
+    { "candidateId": "https://github.com/eval-org/alpha-copy/pull/1#0", "goldenId": "martian/eval-org__alpha-copy-1@4e5f6a7b#g2", "verdict": "match", "confidence": 0.8 }
+  ],
+  "totals": {
+    "beta": 2.0,
+    "strict": { "precision": 0.6666666666666666, "recall": 1.0, "f1": 0.8, "fbeta": 0.9090909090909091, "tp": 4, "fp": 2, "fn": 0, "prs": 2 },
+    "core": { "precision": 0.6666666666666666, "recall": 1.0, "f1": 0.8, "fbeta": 0.9090909090909091, "tp": 4, "fp": 2, "fn": 0, "prs": 2 },
+    "all": { "precision": 0.7142857142857143, "recall": 1.0, "f1": 0.8333333333333333, "fbeta": 0.9259259259259259, "tp": 5, "fp": 2, "fn": 0, "prs": 2 }
+  }
+}

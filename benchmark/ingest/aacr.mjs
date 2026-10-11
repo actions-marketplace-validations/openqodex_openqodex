@@ -73,7 +73,7 @@ const pct = (n, of) => (of === 0 ? "0.0" : ((100 * n) / of).toFixed(1));
 
 // ---------- pinned files ----------
 
-async function fetchPinned(cache, board, pin, { offline }) {
+export async function fetchPinned(cache, board, pin, { offline }) {
   const path = rawPath(cache, board, pin);
   if (existsSync(path)) return checkPinned(readFileSync(path), pin, path);
   if (offline) throw new Error(`${pin.path} of board ${board} is not in the cache (${path}), and the ingest is offline`);
@@ -114,7 +114,7 @@ const rowKey = (r) => `${r.githubPrUrl}\0${r.target_commit}`;
 
 // ---------- groups ----------
 
-class UnionFind {
+export class UnionFind {
   constructor() {
     this.up = new Map();
   }

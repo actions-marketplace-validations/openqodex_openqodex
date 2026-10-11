@@ -25,6 +25,10 @@
 // 6. Code from a repository whose licence is not permissive is published:
 //    excerpts is "full" only for permissive, "omit" otherwise
 //    (publish-run.mjs reads the class).
+// 7. A pull request named only by its link is read at a different commit on
+//    each ingest (a push after the first reading): GitHub's answer for the
+//    pull request is cached with the day it was read, and the cache is the
+//    only source after that, as for failure 2.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -136,6 +140,44 @@ export function commitAnswer(repo, sha, { cache = cacheRoot(), offline = false, 
     served = false;
   }
   return saveCommitAnswer(cache, { repo, sha, readOn: today, served });
+}
+
+// A pull request as GitHub serves it: its base and head commits, when it was
+// opened, its size and its repository's language. A dataset that names a
+// pull request by its link alone (Martian's) freezes these at ingest. Cached
+// like the repository answers, as { v: 1, repo, number, readOn, found,
+// baseSha, headSha, createdAt, additions, deletions, language }, under
+// github/pulls/<owner>__<name>/<number>.json. A 404 means not served; any
+// other failure stops with GitHub's words, and nothing is cached.
+const pullPath = (cache, repo, number) => join(cache, "github", "pulls", repo.toLowerCase().replace("/", "__"), `${number}.json`);
+
+export function savePullAnswer(cache, answer) {
+  const path = pullPath(cache, answer.repo, answer.number);
+  mkdirSync(join(path, ".."), { recursive: true });
+  const keys = ["repo", "number", "readOn", "found", "baseSha", "headSha", "createdAt", "additions", "deletions", "language"];
+  writeFileSync(`${path}.tmp`, `${JSON.stringify({ v: 1, ...Object.fromEntries(keys.map((k) => [k, answer[k] ?? null])) }, null, 2)}\n`);
+  renameSync(`${path}.tmp`, path);
+  return answer;
+}
+
+export function pullAnswer(repo, number, { cache = cacheRoot(), offline = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+  const path = pullPath(cache, repo, number);
+  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8"));
+  if (offline) throw new Error(`no cached GitHub answer for ${repo} pull request ${number} in ${join(cache, "github", "pulls")}, and the ingest is offline`);
+  const body = ghApi(`repos/${repo}/pulls/${number}`);
+  const found = body !== null && typeof body.base?.sha === "string" && typeof body.head?.sha === "string";
+  return savePullAnswer(cache, {
+    repo,
+    number,
+    readOn: today,
+    found,
+    baseSha: found ? body.base.sha : null,
+    headSha: found ? body.head.sha : null,
+    createdAt: found ? (body.created_at ?? null) : null,
+    additions: found ? (body.additions ?? null) : null,
+    deletions: found ? (body.deletions ?? null) : null,
+    language: found ? (body.base.repo?.language ?? null) : null,
+  });
 }
 
 // The licence record of a case (PLAN-benchmark 4.2), from a cached answer.

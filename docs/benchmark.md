@@ -230,6 +230,20 @@ node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <t
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
+## Martian's offline set
+
+Martian's Code Review Bench (https://github.com/withmartian/code-review-benchmark, MIT) publishes 50 pull requests from cal.com, Discourse, Grafana, Keycloak and Sentry, some of them copies with bugs injected, and 173 golden comments: prose with a severity and a category, and no file or line. In this benchmark they are the `martian` suite, origin `injected`.
+
+```
+node benchmark/ingest/martian.mjs [--offline]
+```
+
+- The ingest reads the five golden files only from their pinned URLs at commit `e616e84` (`benchmark/outside/boards.json`) and stops when a file's sha256 is not its pin. It asks GitHub for each pull request's base and head commits and freezes them, and checks each repository's licence the way the AACR ingest does. It writes `benchmark/suites/martian/cases.json` (links, commits, licences and hashes; no golden comment's text), `benchmark/suites/martian/ingest-report.txt` (every exclusion with its reason) and `benchmark/splits/martian-v1.json`.
+- Every Martian pull request is held out. Its golden comments are public, so tuning on them is contamination. A request for its development cases is refused, and so is a split file that places one there.
+- At this pin, 40 pull requests are usable. Sentry's 10 are excluded: GitHub names no licence for Sentry's licence file (NOASSERTION), and no script guesses a licence from its text.
+- Martian's own pipeline judges a run: it extracts issues from the findings, groups duplicates, judges each against the golden comments, and sums the totals. `readMartianEvaluation` in `benchmark/lib/score.mjs` reads that result back. It keeps Martian's candidate ids, extraction provenance, matches and official totals unchanged. Beside them it adds its own counts: golden comments found, findings matched, and the severity of the first finding behind each found golden comment against the golden severity (Critical critical, High major, Medium minor, Low nitpick). It refuses a finding saved for the judge without a title, problem, consequence or fix. It also refuses matches that name fewer golden comments than the official totals count.
+- No Martian run is scored yet. The converter and the wrapper that run Martian's pipeline come next.
+
 ## What it does not measure
 
 - How often real changes carry these bugs. The cases are small and synthetic; the share of bugs found here is not the share found in your repository.

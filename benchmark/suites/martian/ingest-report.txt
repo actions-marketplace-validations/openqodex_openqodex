@@ -1,0 +1,28 @@
+Martian offline ingest: withmartian/code-review-benchmark at e616e849755441da38f18bf3adba2c9583b03803 (MIT)
+offline/golden_comments/cal_dot_com.json sha256 f8d88e88392b4349c418ea844fce5d19b29b48c5ebc34a1501d849f126478750: 10 pull requests, 41 golden comments
+offline/golden_comments/discourse.json sha256 d5d8d02f32823d7196333f463d6a154b3ac55da93ef3bb067464dff88918c854: 10 pull requests, 41 golden comments
+offline/golden_comments/grafana.json sha256 beeb065e0127232b663a68d174be5223ef0cf6068541306cd30e4bac72bab04b: 10 pull requests, 25 golden comments
+offline/golden_comments/keycloak.json sha256 aa89db36f36fe61bf86d367e8b07dfc9aec291a08cdbf3ef4c4d5bf5305b413d: 10 pull requests, 30 golden comments
+offline/golden_comments/sentry.json sha256 02342962b0d11a9ba190401e066a2c4e5d58c5ca561ca10d812194069b4a7d01: 10 pull requests, 36 golden comments
+
+Golden comments: 173 in 50 pull requests.
+  by severity: Medium 61, High 54, Low 46, Critical 12
+  by category: bug 94, concurrency 14, api 13, security 11, style 10, doc_defect 9, data 7, perf 6, speculative 5, test_gap 4
+  categories with no product counterpart (category null, raw kept): concurrency 14, api 13, doc_defect 9, data 7, speculative 5, test_gap 4
+  severities off Martian's four (severity null, raw kept): 0
+
+Cases: 50 pull requests in 7 repositories. Usable: 40. Excluded: 10.
+Excluded, by reason:
+  licence unknown (GitHub names no single licence for the licence file): 10 pull requests: getsentry/sentry 6 (NOASSERTION, LICENSE.md), ai-code-review-evaluation/sentry-greptile 4 (NOASSERTION, LICENSE.md)
+  licence none (no licence file): 0 pull requests
+  repository unknown to GitHub: 0 pull requests
+  pull request not served by GitHub: 0 pull requests
+  head no longer served by the host: 0 pull requests
+Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: 5: ai-code-review-evaluation/keycloak-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#1 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#2 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#3 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#5 "there is no such PR, it is a mix of many PRs" (excluded)
+Left out before the cases (not cases): 0
+
+Repository groups (the cluster for intervals): calcom/cal.com 10 (calcom/cal.com, calcom/cal.diy); discourse/discourse 10 (ai-code-review-evaluation/discourse-graphite, discourse/discourse); getsentry/sentry 10 (ai-code-review-evaluation/sentry-greptile, getsentry/sentry); grafana/grafana 10; keycloak/keycloak 10 (ai-code-review-evaluation/keycloak-greptile, keycloak/keycloak)
+Languages (GitHub's, of the base repository): TypeScript 20, Java 10, Python 10, Ruby 10
+
+Split martian-v1: Held out: 50 of 50 pull requests (40 usable); development: none.
+No Martian pull request was materialised, reviewed or scored by this ingest.

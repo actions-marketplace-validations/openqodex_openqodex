@@ -20,6 +20,12 @@
 // 5. A truth item is read with a severity, a class or matching words nobody
 //    froze: real truth has severity, class and mentions null; matchSignatures
 //    come only from the committed entry.
+// 6. A Martian case runs on the dev split: its golden comments are public,
+//    so tuning on them is contamination. A suite marked heldOutOnly lists no
+//    development cases (a request for them is refused), and a split file
+//    that places one of its cases in development is refused on every read.
+//    Martian's prose truth keeps the dataset's severity, mapped to the
+//    product's scale, beside the raw value.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,11 +42,36 @@ export function canonicalJson(v) {
   return JSON.stringify(v === undefined ? null : v);
 }
 
-// The real suites: where each keeps its entries and its split, and the
-// board in benchmark/outside/boards.json that pins its raw files.
+// The real suites: where each keeps its entries and its split, the board in
+// benchmark/outside/boards.json that pins its raw files, the kind of case it
+// holds (PLAN-benchmark 4.2), and whether every case is held out.
 export const SUITES = {
-  aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json" },
+  aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json", origin: "real", heldOutOnly: false },
+  martian: { board: "martian", cases: "suites/martian/cases.json", split: "splits/martian-v1.json", origin: "injected", heldOutOnly: true },
 };
+
+// ---------- Martian truth ----------
+
+// Martian's golden severities and categories to the product's (PLAN-benchmark
+// 4.2). A category with no counterpart is null, with the raw value kept.
+export const MARTIAN_SEVERITY = { Critical: "critical", High: "major", Medium: "minor", Low: "nitpick" };
+export const MARTIAN_CATEGORY = { bug: "bug", security: "security", perf: "performance", style: "style" };
+
+// The truth of one pull request of Martian's golden files: its golden
+// comments (g1, g2, ...), in the file's order.
+export function martianTruth(row) {
+  return {
+    kind: "prose",
+    items: row.comments.map((g, i) => ({
+      id: `g${i + 1}`,
+      text: g.comment,
+      severity: MARTIAN_SEVERITY[g.severity] ?? null,
+      rawSeverity: g.severity ?? null,
+      category: MARTIAN_CATEGORY[g.category] ?? null,
+      rawCategory: g.category ?? null,
+    })),
+  };
+}
 
 // ---------- AACR truth ----------
 
@@ -119,11 +150,22 @@ export function readSuite(suite, { root = benchRoot } = {}) {
   const file = JSON.parse(readFileSync(path, "utf8"));
   const split = existsSync(join(root, def.split)) ? JSON.parse(readFileSync(join(root, def.split), "utf8")) : null;
   const splitBytes = split ? readFileSync(join(root, def.split)) : null;
+  const dev = split?.cases?.dev ?? [];
+  if (def.heldOutOnly && dev.length > 0) throw new Error(`${def.split} places ${dev.length} ${suite} case${dev.length === 1 ? "" : "s"} in development (${dev.join(", ")}), but every ${suite} case is held out: its truth is public, so tuning on it is contamination. Write the split with node benchmark/ingest/${suite}.mjs`);
   return { def, file, split, splitHash: splitBytes ? sha256(splitBytes) : null, byName: new Map(file.cases.map((e) => [e.name, e])) };
 }
 
 const sideIn = (split, name) => (split?.cases?.dev?.includes(name) ? "dev" : split?.cases?.test?.includes(name) ? "test" : null);
 const subsetsOf = (split, name) => Object.entries(split?.subsets ?? {}).filter(([, names]) => names.includes(name)).map(([s]) => s).sort();
+
+// The dataset a case's truth is read from. A Martian entry names its golden
+// file, so its dataset carries that file and its pin (PLAN-benchmark 4.2);
+// an AACR entry reads the two files its suite's dataset names.
+function datasetOf(s, entry) {
+  if (!entry.goldenFile) return s.file.dataset;
+  const pin = (s.file.dataset.files ?? []).find((f) => f.path === entry.goldenFile);
+  return { ...s.file.dataset, file: entry.goldenFile, sha256: pin?.sha256 ?? null };
+}
 
 function realCase(suite, s, entry) {
   return {
@@ -134,7 +176,7 @@ function realCase(suite, s, entry) {
     split: entry.status === "usable" ? sideIn(s.split, entry.name) : null,
     splitHash: s.splitHash,
     subsets: subsetsOf(s.split, entry.name),
-    origin: "real",
+    origin: s.def.origin,
     repoGroup: entry.repoGroup,
     language: entry.language,
     framework: null,
@@ -142,9 +184,9 @@ function realCase(suite, s, entry) {
     changeLines: entry.changeLines,
     status: entry.status,
     excludedWhy: entry.excludedWhy,
-    source: { dataset: s.file.dataset, repo: entry.repo, prUrl: entry.prUrl, cloneUrl: entry.cloneUrl, licence: entry.licence },
+    source: { dataset: datasetOf(s, entry), repo: entry.repo, prUrl: entry.prUrl, cloneUrl: entry.cloneUrl, licence: entry.licence },
     materialise: { kind: "pr", cloneUrl: entry.cloneUrl, prRef: entry.prRef, baseSha: entry.baseSha, headSha: entry.headSha, mergeBaseSha: entry.mergeBaseSha },
-    prCreatedAt: null,
+    prCreatedAt: entry.prCreatedAt ?? null,
     headCommittedAt: null,
     truthHash: entry.truthHash,
     matchSignatures: entry.matchSignatures,
@@ -220,6 +262,7 @@ export function listCases({ suite, split = null, subset = null, root = benchRoot
       .map(([name, e]) => caseIdFromHash(name, e.hash))
       .sort();
   }
+  if (SUITES[suite]?.heldOutOnly && split === "dev") throw new Error(`every ${suite} case is held out, so the ${suite} suite has no development cases: its truth is public, and a run on it is a release run on the test split`);
   const s = readSuite(suite, { root });
   const out = [];
   for (const entry of s.file.cases) {
@@ -258,6 +301,15 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
   if (c.suite === "planted") return plantedTruth(c.spec ?? readPlantedSpec(c.name));
   const def = SUITES[c.suite];
   if (!def) throw new Error(`no real suite named ${c.suite}`);
+  if (c.suite === "martian") {
+    const { file, sha256: pinned } = c.source.dataset;
+    const row = readPinned(cache, def.board, { path: file, sha256: pinned }).find((r) => r.url === c.source.prUrl);
+    if (!row) throw new Error(`${c.id}: ${file} holds no pull request ${c.source.prUrl}`);
+    const truth = martianTruth(row);
+    const hash = truthHashOf(truth.items);
+    if (hash !== c.truthHash) throw new Error(`${c.id}: its truth now hashes to ${hash.slice(0, 8)}, not the frozen ${c.truthHash.slice(0, 8)}; an upstream edit never changes the truth behind a frozen id`);
+    return truth;
+  }
   const files = c.source.dataset.files;
   const positive = readPinned(cache, def.board, files.positive);
   const negative = readPinned(cache, def.board, files.negative);

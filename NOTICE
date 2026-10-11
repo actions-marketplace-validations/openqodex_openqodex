@@ -54,15 +54,20 @@ from the npm packages below. Each keeps its own licence:
 Benchmark data
 
 The review benchmark in this repository (benchmark/, not part of the npm
-package) reads the dataset of AACR-Bench at run time, from a pinned commit,
+package) reads the datasets below at run time, each from a pinned commit,
 onto the machine that runs it. The repository commits only references to
 that data: pull request links, commit ids, languages, change sizes, counts
-and hashes, never the text of its review comments.
+and hashes, and Martian's short notes on five of its pull requests, never
+the text of a review or golden comment.
 
 - AACR-Bench, Apache-2.0, by the AACR-Bench authors:
   https://github.com/alibaba/aacr-bench (dataset/positive_samples.json and
   dataset/negative_samples.json at commit
   68a569759289a83654a59d06db2a72910edf0a4a)
+- Code Review Bench (offline), MIT, by Martian:
+  https://github.com/withmartian/code-review-benchmark
+  (offline/golden_comments/*.json at commit
+  e616e849755441da38f18bf3adba2c9583b03803)
 
 Bundled libraries
 
