@@ -1047,7 +1047,7 @@ export function ruleSources(read = readOwn) {
 
 export const ruleCodeHash = (read = readOwn) => sha256(ruleSources(read).map(({ id, text }) => `${id}\n${text.replace(/\s+/g, " ").trim()}`).join("\n"));
 
-function canonical(v) {
+export function canonical(v) {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
   if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
   return JSON.stringify(v);

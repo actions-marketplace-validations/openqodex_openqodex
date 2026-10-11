@@ -1,0 +1,9 @@
+{
+  "name": "openqodex-outside-image",
+  "private": true,
+  "type": "module",
+  "description": "The outside benchmark's image: openqodex at one exact version, installed as users install it.",
+  "dependencies": {
+    "openqodex": "0.12.0"
+  }
+}

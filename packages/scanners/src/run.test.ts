@@ -83,6 +83,10 @@
 //  38. Of two hits a scanner repeats with one rule on one span, the one kept
 //      is the lower severity one because its message sorts first, so the
 //      candidate's severity drops (and with it a block).
+// Added after the code review of the scan trail:
+//  39. A custom adapter written for wants() alone, with no paths(), makes
+//      runScanners throw or skips the scanner, now that the scan record
+//      asks each custom scanner for its file list.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -618,5 +622,24 @@ describe("candidate order", () => {
     const low = { severity: "low" as const, message: "A: the mild wording" };
     expect(await twice([high, low])).toEqual([["high", "Z: the serious wording"]]);
     expect(await twice([low, high])).toEqual([["high", "Z: the serious wording"]]);
+  });
+
+  it("runs a custom adapter that has wants() and no paths(), and records it with no file list (39)", async () => {
+    const dir = repo({ "a.sh": "x\n" });
+    const legacy = (wants: boolean): CustomAdapter => ({
+      source: "custom:legacy",
+      skipped: null,
+      wants: () => wants,
+      run: async () => ({ findings: [finding({ source: "custom:legacy", filePath: "a.sh" })], error: null, version: "1.0.0" }),
+    });
+    const scanWith = (adapter: CustomAdapter) =>
+      runScanners({ repoDir: dir, changedPaths: ["a.sh"], coverage: new Map([["a.sh", lines(1)]]), config: config(), resolveTool: notInstalled(), only: ["custom:legacy"], custom: [adapter] });
+    const wanted = (await scanWith(legacy(true))).scan;
+    expect(wanted.selection?.find((c) => c.scanner === "custom:legacy")).toEqual({ scanner: "custom:legacy", wanted: true, paths: [], projects: [], skip: null });
+    expect(wanted.scanners).toEqual([expect.objectContaining({ scanner: "custom:legacy", status: "ran", rawCount: 1, keptCount: 1 })]);
+    expect(wanted.trail).toEqual([{ token: "custom:legacy:rule", file: "a.sh", lineStart: 1, lineEnd: 1, severity: "medium", stage: "kept", id: "c1" }]);
+    const unwanted = (await scanWith(legacy(false))).scan;
+    expect(unwanted.selection?.find((c) => c.scanner === "custom:legacy")).toEqual({ scanner: "custom:legacy", wanted: false, paths: [], projects: [], skip: "nothing to check" });
+    expect(unwanted.scanners).toEqual([expect.objectContaining({ scanner: "custom:legacy", status: "no_matching_files" })]);
   });
 });

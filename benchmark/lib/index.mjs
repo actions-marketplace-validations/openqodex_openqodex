@@ -26,11 +26,22 @@
 // 6. Entries scored under different rules are read as comparable: every
 //    entry of a format 3 score carries the rules version and the rules hash
 //    it was scored with (lib/score.mjs rulesDifferences compares them).
+// 7. The trend pairs two runs on numbers the index does not hold, so it
+//    needs the asset to raise its alarm: a format 3 entry carries each
+//    issue-level ratio's interval, the per-case sums the paired bootstrap
+//    draws (critical and major recall and the clean control included), each
+//    bug's result per repeat for the hard rules, and the interval block
+//    naming each case's cluster. A held-out entry holds none of the per-case
+//    or per-bug detail.
+// 8. The accepted pointer names numbers that are later edited, and the
+//    trend compares against something nobody accepted: the pointer records
+//    each accepted entry's score hash, over every number the trend reads.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { benchRoot } from "./cases.mjs";
-import { caseSetHash } from "./score.mjs";
+import { ISSUE_METRICS } from "./interval.mjs";
+import { canonical, caseSetHash } from "./score.mjs";
 
 export const INDEX_VERSION = 1;
 export const indexRoot = join(benchRoot, "index");
@@ -77,28 +88,30 @@ export function hashFolder(folder, paths = fileList(folder)) {
   return { files: entries.length, listHash: listHash(entries), entries };
 }
 
-export const entryPath = (runId) => join(runsRoot, `${runId}.json`);
+// Each function below reads or writes benchmark/index/runs unless the
+// caller (a test, or trend.mjs --index) names another runs folder.
+export const entryPath = (runId, runs = runsRoot) => join(runs, `${runId}.json`);
 
-export function readEntry(runId) {
-  const path = entryPath(runId);
+export function readEntry(runId, runs = runsRoot) {
+  const path = entryPath(runId, runs);
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-export function listEntries() {
-  if (!existsSync(runsRoot)) return [];
-  return readdirSync(runsRoot)
+export function listEntries(runs = runsRoot) {
+  if (!existsSync(runs)) return [];
+  return readdirSync(runs)
     .filter((f) => f.endsWith(".json"))
     .sort(byBytes)
-    .map((f) => ({ file: f, entry: JSON.parse(readFileSync(join(runsRoot, f), "utf8")) }));
+    .map((f) => ({ file: f, entry: JSON.parse(readFileSync(join(runs, f), "utf8")) }));
 }
 
-export function writeEntry(entry) {
+export function writeEntry(entry, runs = runsRoot) {
   const problems = entryProblems(entry);
   if (problems.length > 0) throw new Error(`the index entry for ${entry.runId} is not sound:\n${problems.join("\n")}`);
-  mkdirSync(runsRoot, { recursive: true });
-  writeFileSync(entryPath(entry.runId), `${JSON.stringify(entry, null, 2)}\n`);
-  return entryPath(entry.runId);
+  mkdirSync(runs, { recursive: true });
+  writeFileSync(entryPath(entry.runId, runs), `${JSON.stringify(entry, null, 2)}\n`);
+  return entryPath(entry.runId, runs);
 }
 
 // The headline numbers of one configuration, from a format 2 score.json
@@ -121,11 +134,11 @@ export function headline(c) {
 }
 
 // The headline numbers of one configuration, from a format 3 score: the
-// population, the issue-level metrics with their bounds, and cost and time.
-// The location and planted-rule blocks come along as labelled diagnostics.
-// `ci` is null until the score carries intervals.
+// population, the issue-level metrics with their bounds and intervals, and
+// cost and time. The location and planted-rule blocks come along as
+// labelled diagnostics.
 export function headlineV3(c) {
-  const r = (x) => ({ hit: x.hit, of: x.of, ci: null });
+  const r = (x) => ({ hit: x.hit, of: x.of, ci: x.ci ?? null });
   return {
     population: c.population,
     issueRecall: { all: r(c.issueRecall.all), criticalMajor: r(c.issueRecall.criticalMajor) },
@@ -182,6 +195,8 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     version: INDEX_VERSION,
     runId,
     date: String(manifest.started_at ?? "").slice(0, 10),
+    // When the run started, so the trend can order two runs of one day, and whether it was a draft.
+    ...(v3 ? { startedAt: manifest.started_at ?? null, draft: manifest.draft === true } : {}),
     suite: manifest.suite ?? "planted",
     split,
     splitHash: manifest.splitHash ?? null,
@@ -203,6 +218,8 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     release: manifest.release ?? null,
     scores,
     perCase,
+    // Each bug's result per repeat, and how the intervals were drawn: what the trend reads.
+    ...(v3 ? { perBug: split === "test" ? null : score.perBug, intervals: score.intervals ?? null } : {}),
     asset,
     accepted: false,
     acceptedAt: null,
@@ -230,6 +247,15 @@ const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const isInt = (n, min = 0) => Number.isInteger(n) && n >= min;
 const isRatio = (r) => r && isInt(r.hit) && isInt(r.of) && r.hit <= r.of;
+const isCi = (ci) => ci === null || (Array.isArray(ci) && ci.length === 2 && ci.every((n) => typeof n === "number" && n >= 0 && n <= 1) && ci[0] <= ci[1]);
+// A field an accessor reaches, or undefined when the path is not there.
+const reach = (f, x) => {
+  try {
+    return f(x);
+  } catch {
+    return undefined;
+  }
+};
 
 // A format 3 headline (headlineV3): the population adds up, every ratio is
 // hits over checks, and each pair of bounds is over the same findings. From
@@ -307,9 +333,19 @@ export function entryProblems(e) {
     need(Array.isArray(e.caseIds) && e.caseSetHash === caseSetHash(e.caseIds), "caseSetHash must be the hash of caseIds");
     for (const [config, cases] of Object.entries(e.perCase ?? {})) {
       for (const [id, c] of Object.entries(cases ?? {})) {
-        need(e.caseIds?.includes(id) && isRatio(c?.issueRecall) && isRatio(c?.precision?.lower) && isRatio(c?.precision?.upper), `perCase.${config}.${id}: must be one of caseIds, with issueRecall and precision bounds as hits over checks`);
+        need(e.caseIds?.includes(id) && isRatio(c?.issueRecall) && isRatio(c?.criticalMajor) && isRatio(c?.precision?.lower) && isRatio(c?.precision?.upper) && isRatio(c?.controls), `perCase.${config}.${id}: must be one of caseIds, with issueRecall, criticalMajor, the precision bounds and controls as hits over checks`);
       }
     }
+    // What the trend reads: when the run started, the intervals, and each bug's results.
+    need(typeof e.startedAt === "string" && e.startedAt.startsWith(e.date ?? "?"), "startedAt must be the time the run started, on its date");
+    need(typeof e.draft === "boolean", "draft must be true or false");
+    for (const [config, s] of Object.entries(e.scores ?? {})) {
+      for (const m of ISSUE_METRICS) need(isCi(reach(m.headline, s)?.ci), `scores.${config}: ${m.name}.ci must be [lower, upper] within 0 and 1, or null`);
+    }
+    const iv = e.intervals;
+    need(iv && (iv.cluster === "case" ? iv.groups === null : iv.cluster === "repoGroup" && (e.caseIds ?? []).every((id) => typeof iv.groups?.[id] === "string")) && isInt(iv.resamples, 1) && typeof iv.level === "number" && isInt(iv.minClusters, 1), "intervals must name the cluster (case, or repoGroup with every case's group), the resamples, the level and the fewest clusters for an interval");
+    if (e.split === "test") need(e.perBug === null, "a held-out (test split) entry holds aggregates only: perBug must be null");
+    else need(e.perBug && typeof e.perBug === "object" && Object.values(e.perBug).every((cases) => Object.entries(cases ?? {}).every(([id, bugs]) => e.caseIds?.includes(id) && Object.values(bugs ?? {}).every((b) => Array.isArray(b?.found) && b.found.every((f) => typeof f === "boolean")))), "perBug must give, per configuration and case, each bug's result in every repeat");
   }
   if (e.legacy) {
     need(e.accepted === false, "a legacy run is never accepted");
@@ -320,5 +356,76 @@ export function entryProblems(e) {
     need(e.originals && HEX40.test(e.originals.commit ?? "") && e.originals.path === `benchmark/results/${e.runId}`, "a legacy run names the commit that held its original folder");
     need(Array.isArray(e.notes), "notes must list what the run did not record");
   }
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Groups and the accepted pointer.
+//
+// benchmark/index/accepted.json:
+//   { version: 1, commit, runId, scoreHash, acceptedAt, acceptedBy,
+//     groups: { <group key>: { runId, commit, scoreHash, acceptedAt, acceptedBy } } }
+// Each group key names the run the trend compares that group's newer runs
+// against. The top level names the run accepted last; its build commit is
+// the reviewer loop's base, which loop/propose.mjs reads from `commit`.
+export const ACCEPTED_VERSION = 1;
+export const acceptedPath = (index = indexRoot) => join(index, "accepted.json");
+
+// The reviewer a configuration ran: its id without the graph setting.
+const reviewerOf = (config) => config.replace(/-graph-(on|off)$/, "");
+
+// The group of each configuration of an entry: runs of one group are
+// compared, runs of two groups never are. The key is
+// suite|split|splitHash|mode|path|reviewer|model|config|rulesVersion, with
+// "none" for a missing split hash and for the reviewer and model of a scan
+// entry, and "legacy" for the rules of a run its own scorer scored.
+export function groupKeys(e) {
+  return e.configs.map((config) => {
+    const scan = e.mode === "scan";
+    const reviewer = scan ? "none" : reviewerOf(config);
+    const model = scan ? "none" : (e.reviewers?.[reviewer]?.model ?? "unknown");
+    const key = [e.suite, e.split, e.splitHash ?? "none", e.mode, e.path, reviewer, model, config, e.rulesVersion ?? "legacy"].join("|");
+    return { key, config, reviewer, model };
+  });
+}
+
+// The hash the accepted pointer records for an entry: sha256 over the
+// canonical JSON of the run, its build commit, its rules and rulings, its
+// cases and every number the trend reads. Marking the entry accepted does
+// not change it.
+export function scoreHash(e) {
+  const pick = (k) => e[k] ?? null;
+  return sha256(canonical({ runId: pick("runId"), commit: e.build?.commit ?? null, rulesVersion: pick("rulesVersion"), rulesHash: pick("rulesHash"), decisionsHash: pick("decisionsHash"), caseSetHash: pick("caseSetHash"), caseIds: pick("caseIds"), scores: pick("scores"), perCase: pick("perCase"), perBug: pick("perBug"), intervals: pick("intervals") }));
+}
+
+// Every problem with the accepted pointer against the index entries
+// (`entries`: run id to entry), one line each; empty when it is sound.
+export function acceptedProblems(pointer, entries) {
+  if (!pointer || typeof pointer !== "object") return ["accepted.json: it is not an object"];
+  const p = [];
+  const need = (cond, what) => {
+    if (!cond) p.push(`accepted.json: ${what}`);
+  };
+  need(pointer.version === ACCEPTED_VERSION, `version must be ${ACCEPTED_VERSION}`);
+  const named = (a, at) => {
+    need(typeof a?.runId === "string" && HEX40.test(a?.commit ?? "") && HEX64.test(a?.scoreHash ?? "") && typeof a?.acceptedAt === "string" && typeof a?.acceptedBy === "string" && a.acceptedBy !== "", `${at} must give the run id, its full commit, the score hash, when it was accepted and by whom`);
+    const e = entries.get(a?.runId);
+    if (!e) {
+      need(false, `${at} names ${a?.runId}, which the index does not hold`);
+      return null;
+    }
+    need(e.accepted === true, `${at} names ${e.runId}, whose entry is not marked accepted`);
+    need(e.build?.commit === a.commit, `${at} names the commit ${a.commit}, not ${e.runId}'s build commit`);
+    need(scoreHash(e) === a.scoreHash, `${at}: the entry ${e.runId} changed since it was accepted (its score hash is now ${scoreHash(e)}, the pointer holds ${a.scoreHash}); restore the entry from git, since a published entry's numbers never change`);
+    return e;
+  };
+  named(pointer, "the last accepted run");
+  const groups = pointer.groups && typeof pointer.groups === "object" ? pointer.groups : null;
+  need(groups !== null, "groups must map each group key to its accepted run");
+  for (const [key, a] of Object.entries(groups ?? {})) {
+    const e = named(a, `group ${key}`);
+    if (e) need(groupKeys(e).some((g) => g.key === key), `group ${key} names ${e.runId}, which holds no configuration of that group`);
+  }
+  need(Object.values(groups ?? {}).some((a) => a.runId === pointer.runId), "the last accepted run is the accepted run of no group");
   return p;
 }

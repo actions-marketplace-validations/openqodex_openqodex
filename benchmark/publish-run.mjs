@@ -69,7 +69,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
-import { RELEASE, REPOSITORY, assetUrl, buildEntry, byBytes, entryProblems, fileList, listHash, readEntry, sha256, writeEntry } from "./lib/index.mjs";
+import { RELEASE, REPOSITORY, assetUrl, buildEntry, byBytes, entryProblems, fileList, listHash, readEntry, runsRoot, sha256, writeEntry } from "./lib/index.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
 import { extractAsset } from "./fetch-run.mjs";
 
@@ -512,7 +512,7 @@ function upload(tarPath, runId) {
   if (sent.status !== 0) throw new Error(`gh release upload failed: ${sent.stderr.trim()}`);
 }
 
-export function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env } = {}) {
+export function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot } = {}) {
   folder = resolve(folder);
   const recipes = readRecipes();
   const runId = basename(folder);
@@ -546,13 +546,16 @@ export function publishRun(folder, { dryRun = false, writeIndex = false, out = n
   // The committed entry, when there is one, must name the same files. The
   // same files packaged by another zlib build may differ in their bytes; the
   // entry then gets the new sha256, and that change must be committed.
-  const committed = readEntry(runId);
+  const committed = readEntry(runId, runs);
   if (committed && (committed.asset.listHash !== entry.asset.listHash || committed.privateListHash !== entry.privateListHash)) {
     throw new Error(`refused: the committed entry for ${runId} names other files (list hash ${committed.asset.listHash}, private ${committed.privateListHash}) than this folder packages (list hash ${entry.asset.listHash}, private ${entry.privateListHash})`);
   }
   const rebytes = committed !== null && committed.asset.sha256 !== entry.asset.sha256;
+  // An accepted run stays accepted: benchmark/index/accepted.json names it,
+  // and only trend.mjs --accept sets the mark.
+  if (committed?.accepted === true) Object.assign(entry, { accepted: true, acceptedAt: committed.acceptedAt, acceptedBy: committed.acceptedBy });
   if (!dryRun) upload(asset.tarPath, runId);
-  const written = !dryRun || writeIndex ? writeEntry(entry) : null;
+  const written = !dryRun || writeIndex ? writeEntry(entry, runs) : null;
   return { asset, entry, written, rebytes };
 }
 

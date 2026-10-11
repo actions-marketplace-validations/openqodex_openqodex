@@ -104,6 +104,8 @@ describe("custom scanner trust flow", () => {
     expect(adapter?.skipped).toBeNull();
     expect(adapter?.wants(["README.md"])).toBe(false);
     expect(adapter?.wants(changed)).toBe(true);
+    expect(adapter?.paths?.(["README.md"])).toEqual([]);
+    expect(adapter?.paths?.(changed)).toEqual(changed);
     const result = await adapter!.run({ repoDir: repo, changedPaths: [...changed, "README.md"] });
     expect(result.error).toBeNull();
     expect(result.version).toBe("1.7.12");

@@ -383,8 +383,9 @@ describe("a job that never started leaves the denominator", () => {
     const c = score.byConfig[CONFIG];
     expect(c.population).toEqual({ planned: 2, complete: 1, incomplete: 0, failed: 0, unstarted: 1, retries: 0, retryCostUsd: 0 });
     expect(score.population).toMatchObject({ planned: 2, unstarted: 1, jobsFrom: "manifest" });
-    expect(c.issueRecall.all).toEqual({ hit: 1, of: 10 });
-    expect(c.precision.lower).toEqual({ hit: 1, of: 1 });
+    // One case is too few clusters for an interval.
+    expect(c.issueRecall.all).toEqual({ hit: 1, of: 10, ci: null });
+    expect(c.precision.lower).toEqual({ hit: 1, of: 1, ci: null });
     expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([true, false]);
     expect(score.perCase[CONFIG][CASE_ID].issueRecall).toEqual({ hit: 1, of: 10 });
     expect(outcomes).toHaveLength(1);
@@ -401,8 +402,8 @@ describe("a successful retry replaces a failed first attempt", () => {
     const { score, outcomes } = scoreRun(loadRun(await savedRun({ repeat: 1, attempts: [{ repeat: 1, attempt: 1, report: null }, { repeat: 1, attempt: 2, report: report([SQLI]) }] })));
     const c = score.byConfig[CONFIG];
     expect(c.population).toEqual({ planned: 1, complete: 0, incomplete: 0, failed: 1, unstarted: 0, retries: 1, retryCostUsd: 0.5 });
-    expect(c.issueRecall.all).toEqual({ hit: 0, of: 5 });
-    expect(c.precision.lower).toEqual({ hit: 0, of: 0 });
+    expect(c.issueRecall.all).toEqual({ hit: 0, of: 5, ci: null });
+    expect(c.precision.lower).toEqual({ hit: 0, of: 0, ci: null });
     expect(score.perBug[CONFIG][CASE_ID].sqli.found).toEqual([false]);
     expect(outcomes).toEqual([]);
     // Format 2 scored both attempts; the difference is stated.
