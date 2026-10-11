@@ -244,6 +244,11 @@ describe("a held-out case runs before a release", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/--smoke.*at most 5/);
     expect(existsSync(out)).toBe(false);
+    // Repeats added to a smoke run would grow it past its size.
+    const more = run(["--smoke", "--add-repeats", "5", "--cases", "flask-path-traversal", "--max-usd", "1", "--review-max-usd", "0.5", "--out", out]);
+    expect(more.status).toBe(2);
+    expect(more.stderr).toMatch(/--add-repeats.*smoke/);
+    expect(existsSync(out)).toBe(false);
   });
 
   it("refuses --split test without --materialise-only", () => {

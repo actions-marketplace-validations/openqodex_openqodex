@@ -392,6 +392,7 @@ function parseArgs(argv) {
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   if (o.materialiseOnly) return materialiseArgs(o, given, real);
   if (o.smoke && o.split === "test") throw new Error("--smoke runs development cases only: the test split is held out, and no held-out case runs before a release");
+  if (o.smoke && o.addRepeats !== null) throw new Error("--add-repeats grows a run into a measurement, and a smoke run is never one: it stays at most 5 reviews per configuration");
   o.split ??= "dev";
   // A scan is deterministic (--check-identical proves it), so one repeat; a
   // scan has no reviewer to wait on; a smoke run checks the runner once.
