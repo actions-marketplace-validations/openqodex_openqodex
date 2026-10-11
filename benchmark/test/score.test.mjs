@@ -7,7 +7,9 @@
 // did not say. Score format 3 is checked on runs made in temp folders by the
 // runner's own code (executeRun, with the review step that would call a
 // model replaced): its population of planned first attempts, its rules
-// block, and the planted-only precision kept apart.
+// block, the planted-only precision kept apart, the severity each found bug
+// was given against its own, and who found it, judged from the review's
+// saved scan.json rather than from the spec's expected finder.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -278,10 +280,10 @@ const handManifest = (jobs, repeat) =>
 // attempts given: one folder per attempt (a retry is <repeat>-attempt<n>),
 // each with its sample.json and, when the review wrote one, its report. A
 // repeat with no attempt given never starts.
-async function savedRun({ repeat, attempts }) {
+async function savedRun({ repeat, attempts, caseSpec = spec }) {
   const root = tempDir("oq-bench-v3-");
   const out = join(root, "run");
-  write(join(root, "hand.json"), JSON.stringify(spec));
+  write(join(root, "hand.json"), JSON.stringify(caseSpec));
   const jobs = planned(repeat);
   await executeRun({ out, manifest: handManifest(jobs, repeat), jobs, copies: [[join(root, "hand.json"), "cases/hand.json"]], runJob: async (job) => {
     for (const a of attempts.filter((x) => x.repeat === job.repeat)) {
@@ -289,6 +291,7 @@ async function savedRun({ repeat, attempts }) {
       const rec = sampleRecord({ job, attempt: a.attempt, result: { code: a.report ? 0 : 2, signal: null, wallMs: 30_000 }, report: a.report, who: null, startedAt: "t", failure: a.report ? null : { cause: "no report.json" }, stopped: null });
       write(join(dir, "sample.json"), JSON.stringify(rec));
       if (a.report) write(join(dir, "report", "report.json"), JSON.stringify(a.report));
+      if (a.scan) write(join(dir, "report", "scan.json"), JSON.stringify(a.scan));
     }
   } });
   return out;
@@ -303,7 +306,11 @@ describe("a rule constant changes without a version bump, and old and new scores
   // code changes the hash, and this test fails until RULES_VERSION is bumped
   // in lib/score.mjs and the new version's hash is added here.
   // A change of layout alone moves the hash too, and needs a bump all the same.
-  const KNOWN_RULES = { 3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d" };
+  const KNOWN_RULES = {
+    3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
+    // Severity agreement and the finder of each found truth item.
+    4: "01790c27b9e182e7c6b4c142c8e04a0c020eb5f739bd0efab7c601b6877963db",
+  };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {
     expect(RULES.version).toBe(RULES_VERSION);
@@ -482,5 +489,133 @@ describe("a legacy run's published folder is written over through --out", () => 
     const elsewhere = join(root, "v3-scores");
     expect(score(run, "--out", elsewhere).status).toBe(0);
     expect(JSON.parse(readFileSync(join(elsewhere, "score.json"), "utf8")).version).toBe(3);
+  });
+});
+
+// --- severity agreement and the finder of each found bug (rules version 4) ---
+
+// One review of one case, saved with its report and, when given, its scan.json.
+const reviewed = async (caseSpec, rep, scan = null) => scoreRun(loadRun(await savedRun({ repeat: 1, caseSpec, attempts: [{ repeat: 1, attempt: 1, report: rep, scan }] })));
+
+describe("a found bug rated two steps low counts as the right severity", () => {
+  // The hand spec rates sqli critical, off-by-one major and apt minor.
+  const rated = (severity, f) => ({ ...f, severity });
+  const findings = [
+    rated("minor", SQLI),
+    rated("critical", finding("app/search.py", 14, "security", "SQL injection again")),
+    rated("critical", finding("app/server.py", 23, "bug", "page offset skips the first page")),
+    rated("minor", finding("Dockerfile", 3, "maintainability", "apt-get install has no -y")),
+  ];
+
+  it("calls a critical bug given minor two or more steps off and under-rated, per hit and in the score's matrix", async () => {
+    const { score, outcomes } = await reviewed(spec, report(findings));
+    const at = Object.fromEntries(outcomes.map((o) => [o.index, o]));
+    expect(at[0]).toMatchObject({ outcome: "hit", truthId: "sqli", severity: "minor", severityExpected: "critical", severityAgreement: "off", severityDirection: "under" });
+    // The first hit decides; a second finding on the same bug is never judged.
+    expect(at[1]).toMatchObject({ outcome: "duplicate", severityAgreement: null, severityDirection: null });
+    expect(at[2]).toMatchObject({ truthId: "off-by-one", severityAgreement: "one-off", severityDirection: "over" });
+    expect(at[3]).toMatchObject({ truthId: "apt", severityAgreement: "exact", severityDirection: null });
+    const s = score.byConfig[CONFIG].severity;
+    expect(s.exact).toEqual({ hit: 1, of: 3 });
+    expect(s.oneOff).toEqual({ hit: 1, of: 3 });
+    expect(s.off).toEqual({ hit: 1, of: 3 });
+    expect(s.withinOne).toEqual({ hit: 2, of: 3 });
+    expect([s.over, s.under, s.unknown]).toEqual([1, 1, 0]);
+    expect([s.matrix.critical.minor, s.matrix.major.critical, s.matrix.minor.minor, s.matrix.critical.critical]).toEqual([1, 1, 1, 0]);
+    expect(score.perBug[CONFIG][CASE_ID].sqli.given).toEqual(["minor"]);
+    expect(renderV3(score)).toMatch(/Severity as the spec rates it/);
+  });
+});
+
+describe("a bug the spec expects from semgrep, found only by the reviewer, counts as a scanner find", () => {
+  // The hand spec, with the SQL injection expected from one scanner.
+  const expecting = (found_by) => ({ ...spec, bugs: spec.bugs.map((b) => (b.id === "sqli" ? { ...b, found_by } : b)) });
+  const candidate = (id, source, ruleId, filePath, line, extra = {}) => ({ source, ruleId, filePath, lineStart: line, lineEnd: line, severity: "high", message: "m", reference: null, id, token: `${source}:${ruleId}`, reviewSeverity: "major", ...extra });
+  const entry = (token, file, line, stage, extra = {}) => ({ token, file, lineStart: line, lineEnd: line, severity: "high", stage, ...extra });
+  const raising = (id, token) => ({ ...SQLI, candidate: id, source: token });
+  // bandit's own words for B608, which name the planted SQL injection.
+  const B608 = { message: "Possible SQL injection vector through string-based query construction." };
+
+  it("credits the reviewer when no semgrep finding that reached the review or merged into one sits on the bug's lines", async () => {
+    // semgrep raised a candidate elsewhere, and a rule on the bug's lines that review.disabled_rules turned off.
+    const scan = {
+      candidates: [candidate("c1", "semgrep", "python.flask.debug", "app/other.py", 5)],
+      trail: [entry("semgrep:python.flask.debug", "app/other.py", 5, "kept", { id: "c1" }), entry("semgrep:python.sqli.raw", "app/search.py", 14, "disabled-rule")],
+    };
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]), scan);
+    expect(outcomes[0]).toMatchObject({ outcome: "hit", truthId: "sqli", finder: "reviewer", locatedBy: [] });
+    const f = score.byConfig[CONFIG].finder;
+    expect(f.match).toEqual({ hit: 0, of: 1 });
+    expect(f.byExpected).toEqual({ semgrep: { hit: 0, of: 1 } });
+    expect(f.byFinder).toEqual({ scanner: 0, reviewer: 1 });
+    expect([f.scannerExpectedReviewerFound, f.unjudged]).toEqual([1, 0]);
+    expect(score.perBug[CONFIG][CASE_ID].sqli.finder).toEqual(["reviewer"]);
+    expect(renderV3(score)).toMatch(/Found by whom the spec expects/);
+  });
+
+  it("credits semgrep when its finding was merged into another scanner's candidate on the bug's lines, so dedup never hides it", async () => {
+    const scan = {
+      candidates: [candidate("c1", "bandit", "B608", "app/search.py", 14, B608)],
+      trail: [entry("bandit:B608", "app/search.py", 14, "kept", { id: "c1" }), entry("semgrep:python.sqli.raw", "app/search.py", 14, "merged", { into: "c1" })],
+    };
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([raising("c1", "bandit:B608")]), scan);
+    expect(outcomes[0]).toMatchObject({ finder: "scanner", locatedBy: ["bandit", "semgrep"] });
+    const f = score.byConfig[CONFIG].finder;
+    expect([f.match, f.byExpected.semgrep, f.scannerExpectedReviewerFound]).toEqual([{ hit: 1, of: 1 }, { hit: 1, of: 1 }, 0]);
+    // A scan saved before the trail names the merged scanners on the candidate itself.
+    const older = { candidates: [candidate("c1", "bandit", "B608", "app/search.py", 14, { alsoReportedBy: ["semgrep:python.sqli.raw"] })] };
+    expect((await reviewed(expecting(["semgrep"]), report([raising("c1", "bandit:B608")]), older)).score.byConfig[CONFIG].finder.byExpected.semgrep).toEqual({ hit: 1, of: 1 });
+  });
+
+  it("credits the reviewer when the semgrep finding on the bug's lines was merged into a candidate that never reached the review", async () => {
+    // c1 was dropped before the review: it is not among the kept candidates, so nothing semgrep found reached the reviewer.
+    const scan = { candidates: [], trail: [entry("semgrep:python.sqli.raw", "app/search.py", 14, "merged", { into: "c1" })] };
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]), scan);
+    expect(outcomes[0]).toMatchObject({ finder: "reviewer", locatedBy: [] });
+    const f = score.byConfig[CONFIG].finder;
+    expect([f.match, f.byExpected.semgrep, f.scannerExpectedReviewerFound]).toEqual([{ hit: 0, of: 1 }, { hit: 0, of: 1 }, 1]);
+  });
+
+  it("credits a scanner, but not the expected one, when only another scanner located the bug and named it", async () => {
+    const scan = { candidates: [candidate("c1", "bandit", "B608", "app/search.py", 14, B608)] };
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]), scan);
+    expect(outcomes[0]).toMatchObject({ finder: "scanner", locatedBy: ["bandit"] });
+    const f = score.byConfig[CONFIG].finder;
+    expect([f.match, f.byExpected.semgrep, f.scannerExpectedReviewerFound]).toEqual([{ hit: 0, of: 1 }, { hit: 0, of: 1 }, 0]);
+  });
+
+  it("does not credit a scanner the spec does not expect whose finding inside the bug's lines is about something else", async () => {
+    // The Dockerfile's root bug spans lines 3 to 11, where hadolint flags the apt install planted on line 3.
+    const scan = { candidates: [candidate("c1", "hadolint", "DL3008", "Dockerfile", 3, { message: "Pin versions in apt get install." })] };
+    const { score, outcomes } = await reviewed(spec, report([finding("Dockerfile", 10, "security", "The container runs as root")]), scan);
+    expect(outcomes[0]).toMatchObject({ truthId: "root", finder: "reviewer", locatedBy: [] });
+    expect(score.byConfig[CONFIG].finder.match).toEqual({ hit: 1, of: 1 });
+    // The scanner the spec expects counts by its place alone, whatever its words.
+    const fromHadolint = { ...spec, bugs: spec.bugs.map((b) => (b.id === "root" ? { ...b, found_by: ["hadolint"] } : b)) };
+    expect((await reviewed(fromHadolint, report([finding("Dockerfile", 10, "security", "The container runs as root")]), scan)).outcomes[0]).toMatchObject({ finder: "scanner", locatedBy: ["hadolint"] });
+  });
+
+  it("does not count a dropped candidate about another issue, inside a wide bug's lines, as the reviewer dropping that bug's scanner find", async () => {
+    // hadolint's apt finding on line 3 lies inside the root bug's lines 3 to 11; the reviewer dropped it.
+    const apt = candidate("c1", "hadolint", "DL3008", "Dockerfile", 3, { message: "Pin versions in apt get install." });
+    const { score } = await reviewed(spec, report([], { dropped: [{ candidate: apt, reason: "a size nitpick" }] }), { candidates: [apt] });
+    // It names the apt bug it sits on, and only that one.
+    expect(score.byConfig[CONFIG].finder.droppedCandidates).toBe(1);
+  });
+
+  it("counts OpenQodex's own suppression candidate as the suppression finder, never as the scanner whose comment it reads", async () => {
+    const scan = { candidates: [candidate("c1", "bandit", "openqodex.suppression-added", "app/search.py", 14)] };
+    const asBandit = (await reviewed(expecting(["bandit"]), report([SQLI]), scan)).score.byConfig[CONFIG].finder;
+    expect(asBandit.byExpected).toEqual({ bandit: { hit: 0, of: 1 } });
+    const asSuppression = await reviewed(expecting(["suppression"]), report([SQLI]), scan);
+    expect(asSuppression.outcomes[0].locatedBy).toEqual(["suppression"]);
+    expect(asSuppression.score.byConfig[CONFIG].finder.byExpected).toEqual({ suppression: { hit: 1, of: 1 } });
+  });
+
+  it("leaves the finder unjudged, out of every ratio, when the review saved no scan", async () => {
+    const { score, outcomes } = await reviewed(expecting(["semgrep"]), report([SQLI]));
+    expect(outcomes[0]).toMatchObject({ finder: null, locatedBy: null });
+    const f = score.byConfig[CONFIG].finder;
+    expect([f.match, f.byExpected, f.scannerExpectedReviewerFound, f.unjudged]).toEqual([{ hit: 0, of: 0 }, {}, 0, 1]);
   });
 });
