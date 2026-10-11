@@ -4,13 +4,20 @@
 // what runs; the scores come later, from the saved files (score.mjs).
 //
 //   node benchmark/build-cli.mjs      build the CLI and record where it came from
-//   node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on]
+//   node benchmark/run.mjs --max-usd <n> --max-minutes <n>
+//                          [--max-tokens <n>] [--max-reviews <n>] [--allow-over]
+//                          [--repeat 3] [--cases a,b] [--graph off,on]
 //                          [--reviewers claude[,codex]] [--concurrency 1]
 //                          [--timeout 900] [--out <folder>] [--resume]
-//                          [--model <id>] [--web on|off] [--dry-run]
-//                          [--draft] [--allow-retired]
+//                          [--add-repeats <n>] [--change <RC-id>]
+//                          [--model <id>] [--web off|on] [--dry-run]
+//                          [--draft] [--allow-retired] [--allow-missing-scanners]
 //
 // Without --cases, every case the lock does not mark retired runs.
+//
+// Exit codes: 0 finished; 1 stopped (a limit or login wall, the budget, the
+// same failure twice, Ctrl-C); 2 refused (flags, build, lock, budget
+// estimate, scanners) or the benchmark itself failed.
 //
 // One results folder per run, benchmark/results/<date>-<commit>/ unless
 // --out names another:
@@ -62,11 +69,26 @@
 //    attempt started and never saved runs in its next attempt folder, and
 //    the crashed one stays), and is refused when the bundle, the machine, a
 //    reviewer's version or model, web access, the timeout, the concurrency,
-//    the cases, the configurations or the repeats differ.
+//    the cases, the configurations, the repeats, the scanners found missing
+//    or the change differ. A resume names its own budget (a run stopped by
+//    its budget is finished by resuming it with more), and --add-repeats
+//    adds repeats to a finished run under lib/runner.mjs's rules.
 // 10. Wall time includes building the case: the clock runs from the start
 //    of the CLI to its exit only.
 // 11. The run spends more than asked: more than three repeats needs
-//    --allow-more, and the plan is printed before anything starts.
+//    --allow-more, more than six is refused, and the plan is printed before
+//    anything starts, with its estimate (lib/budget.mjs). Every run names
+//    --max-usd and --max-minutes; one whose estimate passes either is
+//    refused unless --allow-over. Before each review the launch rule asks
+//    whether what is spent, plus the median review so far for each review
+//    running and the next, would pass --max-usd, and whether the time gone
+//    plus the median review time would pass --max-minutes; --max-tokens and
+//    --max-reviews stop launches the same way. Claude Code and Codex report
+//    their cost only after a review, so these are forecast stops: a run may
+//    pass --max-usd by the reviews already running, and its manifest says
+//    so (ended.how "budget", limitKind "forecast", spentUsd). Hard caps that
+//    hold every model call before it is sent are lib/budget.mjs's, for the
+//    model reviewers and the judge.
 // 12. A review outlives the script after Ctrl-C: running reviews are
 //    stopped, saved as stopped attempts, and the run says why it stopped.
 // 13. Parallel reviews slow each other, which reads as a slower build: the
@@ -91,19 +113,44 @@
 //    start the run copies every folder its cases build from (the demo's
 //    examples/demo-repo included) into its temp folder, and every hash,
 //    lock check, spec copy and attempt comes from that copy.
+// 18. A run on a machine that lacks a scanner its cases need (no Ruby for
+//    brakeman and rubocop, no Go for golangci-lint) is taken for a run with
+//    every scanner: before anything is spent, the CLI's own doctor is asked,
+//    in each case's built repository, which scanners the case calls for and
+//    whether each is installed; a missing one refuses the run unless
+//    --allow-missing-scanners, and then the manifest records
+//    scannersComplete false and each missing scanner, and the run is never
+//    accepted.
+// 19. The reviewer reads the cases' truth on the web (every case and its
+//    discussion is public): web access is off unless --web on is given.
+// 20. A run's reviews are compared under different loop changes: --change
+//    records the reviewer-loop change id the run measures, and a resume
+//    with another is refused.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
+import { estimateRun, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight } from "./lib/runner.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run] [--draft] [--allow-retired]";
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]";
+
+// What this runner reviews today: the planted suite, through the laptop
+// reviewers (Claude Code and Codex).
+const SUITE = "planted";
+const PATH_KIND = "laptop";
+
+const positive = (flag, value, whole = false) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || (whole && !Number.isInteger(n))) throw new Error(`${flag} takes ${whole ? "a whole number" : "a number"} above 0`);
+  return n;
+};
 
 function parseArgs(argv) {
-  const o = { repeat: 3, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, model: null, web: "on", dryRun: false, allowMore: false, draft: false, allowRetired: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { repeat: 3, repeatGiven: false, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, cli: join(repoRoot, "packages/cli/dist/bin.js") };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -111,7 +158,18 @@ function parseArgs(argv) {
       if (v === undefined) throw new Error(`${a} needs a value`);
       return v;
     };
-    if (a === "--repeat") o.repeat = Number(next());
+    if (a === "--repeat") {
+      o.repeat = Number(next());
+      o.repeatGiven = true;
+    } else if (a === "--max-usd") o.maxUsd = positive(a, next());
+    else if (a === "--max-minutes") o.maxMinutes = positive(a, next());
+    else if (a === "--max-tokens") o.maxTokens = positive(a, next(), true);
+    else if (a === "--max-reviews") o.maxReviews = positive(a, next(), true);
+    else if (a === "--review-max-usd") o.reviewMaxUsd = positive(a, next());
+    else if (a === "--add-repeats") o.addRepeats = positive(a, next(), true);
+    else if (a === "--change") o.change = next();
+    else if (a === "--allow-over") o.allowOver = true;
+    else if (a === "--allow-missing-scanners") o.allowMissingScanners = true;
     else if (a === "--cases") o.cases = next().split(",").filter(Boolean);
     else if (a === "--graph") o.graph = next().split(",").filter(Boolean);
     else if (a === "--reviewers") o.reviewers = next().split(",").filter(Boolean);
@@ -128,8 +186,14 @@ function parseArgs(argv) {
     else if (a === "--allow-retired") o.allowRetired = true;
     else throw new Error(`unknown flag ${a}`);
   }
-  if (!Number.isInteger(o.repeat) || o.repeat < 1) throw new Error("--repeat takes a whole number from 1");
+  if (o.maxUsd === null || o.maxMinutes === null) throw new Error("--max-usd and --max-minutes are required: every run names what it may spend and how long it may take");
+  if (!Number.isInteger(o.repeat) || o.repeat < 1 || o.repeat > 6) throw new Error("--repeat takes a whole number from 1 to 6");
   if (o.repeat > 3 && !o.allowMore) throw new Error("--repeat over 3 spends more than the benchmark needs; add --allow-more to mean it");
+  if (o.addRepeats !== null) {
+    if (o.out === null) throw new Error("--add-repeats needs --out <folder>: the finished run to add repeats to");
+    if (o.repeatGiven || o.resume) throw new Error("--add-repeats takes the run's own repeats and adds to them, and resumes it; leave out --repeat and --resume");
+  }
+  if (o.change !== null && !/^RC-\d{4}$/.test(o.change)) throw new Error("--change takes a reviewer-loop change id, RC-<4 digits>");
   if (!Number.isInteger(o.concurrency) || o.concurrency < 1) throw new Error("--concurrency takes a whole number from 1");
   if (!Number.isInteger(o.timeout) || o.timeout < 60) throw new Error("--timeout takes whole seconds, at least 60");
   if (o.graph.some((g) => g !== "off" && g !== "on")) throw new Error("--graph takes off, on or off,on");
@@ -278,6 +342,21 @@ async function main() {
   }
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
+  // --add-repeats: the run's own repeats plus the added ones, as a resume of
+  // that run whose plan grows (lib/runner.mjs executeRun, failure 15 there).
+  if (o.addRepeats !== null) {
+    const earlier = readJson(join(out, "manifest.json"));
+    if (!earlier) {
+      console.error(`${out} holds no run to add repeats to`);
+      leave(2);
+    }
+    o.repeat = earlier.repeat + o.addRepeats;
+    o.resume = true;
+    if (o.repeat > 6 || (o.repeat > 3 && !o.allowMore)) {
+      console.error(`adding ${o.addRepeats} to the run's ${earlier.repeat} repeats gives ${o.repeat}; ${o.repeat > 6 ? "6 is the most" : "over 3 needs --allow-more"}`);
+      leave(2);
+    }
+  }
   // The jobs in run order, each with its id (lib/runner.mjs planJobs; failure 7).
   const idOf = Object.fromEntries(o.cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
   let configs;
@@ -301,6 +380,45 @@ async function main() {
   const caseIds = o.cases.map((c) => idOf[c]);
   console.log(`Cases: ${caseIds.join(", ")}`);
   if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
+  if (o.web === "on") console.log("Web access is on: the reviewer may read each case and its discussion online.");
+
+  // The environment every review, probe and doctor run gets.
+  const env = { ...process.env, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1" };
+  for (const k of Object.keys(env)) if (k.startsWith("GIT_") || k === "FORCE_COLOR") delete env[k];
+  if (o.model) env.ANTHROPIC_MODEL = o.model;
+
+  // The budget, before anything is spent (failure 11): the estimate of what
+  // is left to run, on top of what the run's ledger says is spent already.
+  const caps = { maxUsd: o.maxUsd, reviewMaxUsd: o.reviewMaxUsd };
+  const forecast = { maxMinutes: o.maxMinutes, maxTokens: o.maxTokens, maxReviews: o.maxReviews };
+  const estimate = estimateRun({ jobs: todo, suite: SUITE, path: PATH_KIND, concurrency: o.concurrency });
+  const spentBefore = readLedger(out).spentUsd;
+  const usd = (n) => `$${n.toFixed(2)}`;
+  console.log(`Estimate: ${usd(estimate.usd)} for ${estimate.reviews - estimate.unpriced} reviews${estimate.unpriced > 0 ? ` (${estimate.unpriced} more report tokens, not dollars)` : ""}, about ${Math.ceil(estimate.minutes)} minutes; from ${[...new Set(Object.values(estimate.perConfig).map((p) => p.from))].join(" and ")}.`);
+  console.log(`Budget: --max-usd ${usd(o.maxUsd)}${spentBefore > 0 ? ` (${usd(spentBefore)} spent already)` : ""}, --max-minutes ${o.maxMinutes}${o.maxTokens ? `, --max-tokens ${o.maxTokens}` : ""}${o.maxReviews ? `, --max-reviews ${o.maxReviews}` : ""}. Claude Code and Codex report their cost after each review, so these are forecast stops: no review starts once the next would pass a limit.`);
+  const refusals = startRefusals({ estimate, caps, forecast, spentUsd: spentBefore, allowOver: o.allowOver, path: PATH_KIND });
+
+  // The scanners each case needs, from the CLI's own doctor in each case's
+  // repository (failure 18).
+  let preflight;
+  try {
+    const repos = o.cases.map((c) => ({ case: c, dir: buildCase(c, join(tempRoot, "preflight", c, "repo"), snap).dir }));
+    preflight = scannerPreflight({ cli: o.cli, repos, env });
+  } catch (error) {
+    console.error(`The scanner preflight failed: ${error.message}`);
+    leave(2);
+  }
+  if (preflight.complete) console.log("Scanners: every scanner the cases call for is installed.");
+  else {
+    console.log(`Scanners missing: ${preflight.missing.map((m) => `${m.scanner} for ${m.case} (${m.state})`).join(", ")}.`);
+    if (o.allowMissingScanners) console.log("--allow-missing-scanners: the run records scannersComplete false and is never accepted.");
+  }
+  refusals.push(...preflightRefusals(preflight, { allowMissing: o.allowMissingScanners }));
+  if (refusals.length > 0) {
+    console.error("The run cannot start:");
+    for (const r of refusals) console.error(`- ${r}`);
+    leave(2);
+  }
   if (o.dryRun) {
     for (const j of todo) console.log(`  ${j.case} ${j.config} #${j.repeat}`);
     leave(0);
@@ -308,9 +426,6 @@ async function main() {
 
   // The reviewers, before anything is spent (failure 3), with the model each
   // one really answers with (failure 14).
-  const env = { ...process.env, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1" };
-  for (const k of Object.keys(env)) if (k.startsWith("GIT_") || k === "FORCE_COLOR") delete env[k];
-  if (o.model) env.ANTHROPIC_MODEL = o.model;
   const reviewers = {};
   for (const name of o.reviewers) {
     const p = await probeReviewer(name, { env });
@@ -342,10 +457,19 @@ async function main() {
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,
+    // The reviewer-loop change this run measures, if any.
+    changeId: o.change,
+    // Hard caps apart from forecast stops; on the laptop path --max-usd can
+    // only be held as a forecast, and the end record says which stopped it.
+    budget: { hardCaps: caps, forecastStops: { ...forecast, estimate }, judgeIncluded: true, allowOver: o.allowOver },
+    // Whether every scanner the cases call for was installed (failure 18).
+    scannersComplete: preflight.complete,
+    scannersMissing: preflight.missing.map((m) => ({ case: m.case, scanner: m.scanner })),
   };
-  // A resume is refused when any setting, or the spec copy of any case, differs from the run's.
+  // A resume is refused when any setting, or the spec copy of any case,
+  // differs from the run's; adding repeats changes only the repeats.
   const checkResume = (earlier) => {
-    const differ = resumeProblems(earlier, settings);
+    const differ = resumeProblems(earlier, o.addRepeats !== null ? { ...settings, repeat: earlier.repeat } : settings);
     for (const c of o.cases) {
       const copy = join(out, "cases", `${c}.json`);
       if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(snap, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
@@ -366,6 +490,10 @@ async function main() {
   };
   process.on("SIGINT", () => halt("stopped by Ctrl-C"));
   process.on("SIGTERM", () => halt("stopped by SIGTERM"));
+
+  // The run's ledger, in its folder: each review's reported cost, tokens and
+  // time, which the launch rule reads before the next review (failure 11).
+  const budget = runBudget({ dir: out, caps, forecast, estimate, path: PATH_KIND });
 
   // One attempt, saved as its own scored sample whatever happened (failure 4).
   const attempt = async (job, k) => {
@@ -388,6 +516,8 @@ async function main() {
     const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere });
     writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
     appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+    const tokens = Number.isInteger(rec.usage?.input_tokens) && Number.isInteger(rec.usage?.output_tokens) ? rec.usage.input_tokens + rec.usage.output_tokens : null;
+    budget.recordReview({ jobId: job.jobId, usd: typeof rec.usage?.cost_usd === "number" ? rec.usage.cost_usd : null, tokens, wallMs: rec.wallMs });
     const cost = rec.usage?.cost_usd;
     console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(2)}` : ""}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
     for (const file of filesUnder(dir)) {
@@ -406,9 +536,10 @@ async function main() {
       if (stop !== null) return;
       if (first?.unavailable) return halt(`${job.case} ${job.config}: ${first.cause}`);
       if (!first?.infra) return;
+      // A limit or a login wall in the failure itself stops the run at once, without a probe.
+      if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`);
       const p = await probeReviewer(job.reviewer, { env });
       if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`);
-      if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`);
       console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${first.cause}); running it once more`);
       const second = await attempt(job, jobState(out, job).next);
       if (stop !== null) return;
@@ -421,7 +552,8 @@ async function main() {
   // The folder is taken, the manifest with every planned job written (or the
   // resume checked) and the specs copied before the first review starts
   // (lib/runner.mjs executeRun). The manifest is the first invocation's; a
-  // resume never writes it (failure 9).
+  // resume never writes it, except to add repeats (failure 9). Before each
+  // review the budget is asked; its stop ends the run as "budget".
   let ended;
   try {
     ({ ended } = await executeRun({
@@ -434,6 +566,9 @@ async function main() {
       concurrency: o.concurrency,
       runJob,
       stopReason: () => stop,
+      budget,
+      addRepeats: o.addRepeats !== null ? { repeat: o.repeat, at: new Date().toISOString() } : null,
+      resumeNote: { budget: settings.budget },
       log: (done, total) => {
         if (done % 10 === 0) console.log(`${done} of ${total} reviews done`);
       },
@@ -443,9 +578,11 @@ async function main() {
     leave(2);
   }
   const finished = ended.reviewsWithAnAttempt;
-  console.log(stop === null ? `Done: ${finished} reviews saved in ${shown(out)}` : `Stopped after ${finished} of ${jobs.length} reviews: ${stop}`);
+  const spent = typeof ended.spentUsd === "number" ? `; $${ended.spentUsd.toFixed(2)} spent` : "";
+  if (ended.how === "finished") console.log(`Done: ${finished} reviews saved in ${shown(out)}${spent}`);
+  else console.log(`Stopped${ended.how === "budget" ? " by the budget" : ""} after ${finished} of ${jobs.length} reviews${spent}: ${ended.why}${ended.how === "budget" ? `. Resume with --resume and a larger limit to finish it; until then it is not a full run.` : ""}`);
   console.log(`Score it: node benchmark/score.mjs ${shown(out)}`);
-  process.exit(stop === null ? 0 : 1);
+  process.exit(ended.how === "finished" ? 0 : 1);
 }
 
 await main();

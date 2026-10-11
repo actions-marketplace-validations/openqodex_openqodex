@@ -37,6 +37,22 @@
 //    file naming its process; a lock whose process has ended is taken
 //    over), and a folder that holds a manifest or samples is refused
 //    without --resume.
+// 12. Drift (load, time of day) lands on the same cases in every repeat:
+//    within each repeat the case order is rotated by the repeat number, as
+//    the configuration order alternates.
+// 13. A run stopped by its budget reads as finished or as stopped by hand,
+//    and is taken for a full run: executeRun asks the budget before every
+//    launch, and a stop it gives ends the run as "budget", naming the limit,
+//    whether it is a hard cap or a forecast, and what was spent and held.
+// 14. A run on a machine that lacks a scanner its cases need is taken for a
+//    run with every scanner: scannerPreflight asks the real CLI's doctor, in
+//    each case's own repository, which scanners the case calls for and
+//    whether each is installed; a run with one missing is refused unless
+//    --allow-missing-scanners, and then records scannersComplete false.
+// 15. Repeats added to a finished run are scored as unplanned, or replace
+//    the plan the first reviews ran under: --add-repeats keeps every planned
+//    job, writes the longer plan into the manifest before any added review
+//    starts, and records the addition in the manifest and resumes.jsonl.
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -46,17 +62,19 @@ import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
 
 // The jobs of a run in run order: per repeat, every case, every
-// configuration, with the configuration order alternating by repeat so
-// drift lands on no one configuration. `caseIds` maps each case name to its
-// frozen id; a job's id is <caseId>/<config>/<repeat>. A plan that holds a
-// job id twice is refused (failure 9).
+// configuration, with the configuration order alternating and the case
+// order rotated by repeat so drift lands on no one configuration or case
+// (failure 12). `caseIds` maps each case name to its frozen id; a job's id
+// is <caseId>/<config>/<repeat>. A plan that holds a job id twice is
+// refused (failure 9).
 export function planJobs({ cases, caseIds, reviewers, graph, repeat }) {
   const configs = [];
   for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
-    for (const c of cases) for (const cfg of order) jobs.push({ jobId: jobIdOf(caseIds[c], cfg.id, r), caseId: caseIds[c], case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
+    const shift = cases.length === 0 ? 0 : (r - 1) % cases.length;
+    for (const c of [...cases.slice(shift), ...cases.slice(0, shift)]) for (const cfg of order) jobs.push({ jobId: jobIdOf(caseIds[c], cfg.id, r), caseId: caseIds[c], case: c, config: cfg.id, reviewer: cfg.reviewer, graph: cfg.graph, repeat: r });
   }
   const seen = new Set();
   for (const j of jobs) {
@@ -166,12 +184,20 @@ const readJsonFile = (path) => {
 // 2. copies each [from, path in the run] in `copies` that is not there yet
 //    (the specs the run scores against);
 // 3. runs every job with no saved attempt, `concurrency` at a time, as
-//    runJob(job, attempt), where attempt is the job's next free attempt
-//    number, until `stopReason()` names a reason;
+//    runJob(job, attempt, ticket), where attempt is the job's next free
+//    attempt number, until `stopReason()` names a reason. With a `budget`
+//    (lib/budget.mjs runBudget), each launch is asked of budget.admit(job)
+//    first: a ticket (closed when the job ends; a model review's meter), a
+//    wait for a running job to end, or a stop that ends the run as
+//    "budget" (failure 13);
 // 4. records how it ended in the manifest (a new run) or resumes.jsonl (a
 //    resume), and gives the folder back.
+// `addRepeats` ({ repeat, jobs, at }) adds repeats to a finished run, as a
+// resume whose plan grows: the manifest gets the longer plan, under the
+// folder's lock, before the first added review (failure 15). `resumeNote`
+// is added to the resume's first line (the budget it runs under).
 // Throws before any review when the folder is refused.
-export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {} }) {
+export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {}, budget = null, addRepeats = null, resumeNote = {} }) {
   const release = lockRun(out);
   try {
     const manifestPath = join(out, "manifest.json");
@@ -180,7 +206,13 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
       const earlier = readJsonFile(manifestPath);
       if (!earlier) throw new Error(`${out} has no manifest.json; there is no run to resume`);
       const differ = checkResume(earlier);
-      if (differ.length > 0) throw new Error(`${out} cannot be resumed: resuming would mix two runs. Start a new run with --out.\n${differ.map((d) => `- ${d}`).join("\n")}`);
+      if (addRepeats) differ.push(...repeatsProblems(earlier, readJsonLines(resumesPath), addRepeats, jobs));
+      if (differ.length > 0) throw new Error(`${out} cannot be ${addRepeats ? "given more repeats" : "resumed"}: ${addRepeats ? "it" : "resuming"} would mix two runs. Start a new run with --out.\n${differ.map((d) => `- ${d}`).join("\n")}`);
+      if (addRepeats) {
+        const added = { at: addRepeats.at, from: earlier.repeat, to: addRepeats.repeat, jobs: jobs.length - earlier.jobs.length };
+        writeFileSync(manifestPath, `${JSON.stringify({ ...earlier, repeat: addRepeats.repeat, planned: jobs.length, jobs: jobs.map(({ jobId, caseId, config, repeat }) => ({ jobId, caseId, config, repeat })), repeatsAdded: [...(earlier.repeatsAdded ?? []), added] }, null, 2)}\n`);
+        appendFileSync(resumesPath, `${JSON.stringify({ event: "repeats-added", ...added })}\n`);
+      }
     } else {
       if (existsSync(manifestPath) || existsSync(join(out, "samples"))) throw new Error(`${out} already holds a run (a manifest or samples); pass --resume to finish it, or --out for a new folder`);
       writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -192,27 +224,84 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
       cpSync(from, to);
     }
     const queue = jobs.map((job) => ({ job, state: jobState(out, job) })).filter((x) => !x.state.done);
-    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: queue.length })}\n`);
+    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: queue.length, ...resumeNote })}\n`);
     const total = queue.length;
     let done = 0;
+    let running = 0;
+    let budgetStop = null;
+    const waiting = [];
     const worker = async () => {
-      while (stopReason() === null && queue.length > 0) {
+      while (stopReason() === null && budgetStop === null && queue.length > 0) {
+        let ticket = null;
+        if (budget) {
+          const a = budget.admit(queue[0].job);
+          if (a.stop) {
+            budgetStop ??= a.stop;
+            break;
+          }
+          if (a.wait) {
+            // The room is held by reviews running now; one of them ends and gives back what it did not spend.
+            if (running === 0) {
+              budgetStop ??= { how: "budget", limit: "max-usd", limitKind: "hard", why: "hard cap --max-usd: the room left is held by another process's reservation" };
+              break;
+            }
+            await new Promise((wake) => waiting.push(wake));
+            continue;
+          }
+          ticket = a.review ?? null;
+        }
         const { job } = queue.shift();
-        // Read again now: the attempt number is the next free folder at the time the job starts.
-        await runJob(job, jobState(out, job).next);
+        running++;
+        try {
+          // Read again now: the attempt number is the next free folder at the time the job starts.
+          await runJob(job, jobState(out, job).next, ticket);
+        } finally {
+          running--;
+          ticket?.close?.();
+          for (const wake of waiting.splice(0)) wake();
+        }
         done++;
         log(done, total);
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
     const why = stopReason();
-    const ended = { at: new Date().toISOString(), how: why === null ? "finished" : "stopped", why, reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length, planned: jobs.length };
+    const spent = budget ? (budgetStop ?? budget.stopped()) : null;
+    const how = why !== null ? "stopped" : spent ? "budget" : "finished";
+    const ended = {
+      at: new Date().toISOString(),
+      how,
+      why: why ?? spent?.why ?? null,
+      ...(how === "budget" ? { limit: spent.limit, limitKind: spent.limitKind } : {}),
+      ...(budget ? budget.summary() : {}),
+      reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length,
+      planned: jobs.length,
+    };
     if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended })}\n`);
     else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ended }, null, 2)}\n`);
     return { ended, ran: total };
   } finally {
     release();
   }
+}
+
+const readJsonLines = (path) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+
+// Why repeats cannot be added to the run in its folder: it must have ended
+// finished (a stopped run is resumed first), and every job it planned must
+// stay in the longer plan, unchanged.
+function repeatsProblems(earlier, resumes, addRepeats, jobs) {
+  const out = [];
+  const last = [...resumes].reverse().find((r) => r.event === "ended") ?? earlier.ended;
+  if (last?.how !== "finished") out.push(`the run ended "${last?.how ?? "never"}", not finished; resume it with --resume before adding repeats`);
+  if (!Array.isArray(earlier.jobs)) out.push("the run's manifest lists no jobs, so the repeats it planned cannot be kept");
+  else {
+    const now = new Set(jobs.map((j) => j.jobId));
+    const lost = earlier.jobs.filter((j) => !now.has(j.jobId));
+    if (lost.length > 0) out.push(`the longer plan leaves out ${lost.length} reviews the run planned, such as ${lost[0].jobId}`);
+  }
+  if (!(addRepeats.repeat > (earlier.repeat ?? 0))) out.push(`the run has ${earlier.repeat} repeats; adding repeats must raise that`);
+  return out;
 }
 
 export function attemptDir(out, job, attempt) {
@@ -287,6 +376,15 @@ export function resumeProblems(earlier, now) {
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);
   if (earlier.repeat !== undefined || now.repeat !== undefined) same("repeats", earlier.repeat, now.repeat);
+  // The per-review cap shapes what a review may finish; the run's own caps
+  // and forecast stops may change on a resume, which is how a run stopped by
+  // its budget is finished.
+  if (earlier.budget !== undefined || now.budget !== undefined) same("--review-max-usd", earlier.budget?.hardCaps?.reviewMaxUsd, now.budget?.hardCaps?.reviewMaxUsd);
+  if (earlier.scannersComplete !== undefined || now.scannersComplete !== undefined) {
+    same("scanners complete", earlier.scannersComplete, now.scannersComplete);
+    same("scanners missing", earlier.scannersMissing, now.scannersMissing);
+  }
+  if (earlier.changeId !== undefined || now.changeId !== undefined) same("change", earlier.changeId, now.changeId);
   for (const c of Object.keys(now.caseHashes ?? {})) {
     if (earlier.caseHashes?.[c] !== now.caseHashes[c]) out.push(`case ${c}: its files or spec differ from the run's (or the run recorded no hash)`);
   }
@@ -352,3 +450,45 @@ export function provenanceProblems(provenance, bundleNow) {
 
 // Defined beside the Codex probe; here because the runner records it.
 export { codexModelFrom } from "./reviewers.mjs";
+
+// ---------- the scanner preflight ----------
+
+// Which scanners each case's repository calls for, and which of those this
+// machine has not installed, as the real CLI's doctor reports them in that
+// repository (failure 14). `repos`: [{ case, dir }], each a built case
+// repository; `env`: the environment the reviews get, so the doctor reads
+// the same tools folder. Throws when the doctor gives no answer to read.
+export function scannerPreflight({ cli, repos, env = process.env }) {
+  const needed = {};
+  const missing = [];
+  for (const { case: name, dir } of repos) {
+    let stdout;
+    try {
+      stdout = execFileSync(process.execPath, [cli, "doctor", "--json", "--cwd", dir], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      // The doctor exits 2 when git or the folder is wrong, after printing its report.
+      stdout = error.stdout ?? "";
+    }
+    let report;
+    try {
+      report = JSON.parse(stdout);
+    } catch {
+      throw new Error(`${name}: openqodex doctor --json gave no report to read the scanners from`);
+    }
+    if (!Array.isArray(report.selection)) throw new Error(`${name}: openqodex doctor could not say which scanners the case's files call for (${report.config ?? "no config line"})`);
+    needed[name] = report.selection.filter((s) => s.wanted).map((s) => s.scanner);
+    for (const scanner of needed[name]) {
+      const status = (report.scanners ?? []).find((s) => s.scanner === scanner);
+      if (status?.state !== "ready") missing.push({ case: name, scanner, state: status?.state ?? "unknown", detail: status?.detail ?? null });
+    }
+  }
+  return { complete: missing.length === 0, needed, missing };
+}
+
+// Why a run cannot start with the scanners this machine has; empty when it
+// can, or when --allow-missing-scanners lets it go as incomplete.
+export function preflightRefusals(preflight, { allowMissing }) {
+  if (preflight.complete || allowMissing) return [];
+  const lines = preflight.missing.map((m) => `${m.case} needs ${m.scanner}, which is ${m.state === "needs_runtime" ? `missing its runtime${m.detail ? ` (${m.detail})` : ""}` : m.state === "will_install" ? "not installed yet" : m.state}`);
+  return [...lines, "Install them first (node packages/cli/dist/bin.js doctor --install --all-scanners), or run with --allow-missing-scanners: the run then records scannersComplete false and is never accepted."];
+}
