@@ -23,8 +23,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { benchRoot, caseIdFromHash, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
+import { benchRoot, buildCase, caseIdFromHash, casesRoot, git, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
+import { materialisePr } from "./materialise.mjs";
 
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -271,4 +272,23 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
     item.onChangedLines = null;
   }
   return truth;
+}
+
+// The repository a review of the case reads, built into `into` (a new or
+// empty folder) in the shape asked: laptop, the base committed and the
+// change uncommitted; server, the base and the change as two commits.
+// Returns { dir, shape, base, head }, the commits a server review names
+// (head is null in the laptop shape of a planted case, whose change is
+// never committed). A pull request case goes through the clone cache
+// (lib/materialise.mjs), and its result also names upstream's commits.
+export function materialise(c, into, { shape = "laptop", cache = cacheRoot(), heldOut = false, casesDir = casesRoot } = {}) {
+  if (c.materialise?.kind === "pr") return materialisePr(c, into, { shape, cache, heldOut });
+  if (shape !== "laptop" && shape !== "server") throw new Error(`the shape is laptop or server, not ${JSON.stringify(shape)}`);
+  const { dir } = buildCase(c.name, into, casesDir);
+  if (shape === "server") {
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "Change");
+  }
+  const at = (rev) => git(dir, "rev-parse", rev).trim();
+  return shape === "server" ? { dir, shape, base: at("HEAD~1"), head: at("HEAD") } : { dir, shape, base: at("HEAD"), head: null };
 }
