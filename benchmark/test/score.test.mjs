@@ -310,6 +310,8 @@ describe("a rule constant changes without a version bump, and old and new scores
     3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
     // Severity agreement and the finder of each found truth item.
     4: "01790c27b9e182e7c6b4c142c8e04a0c020eb5f739bd0efab7c601b6877963db",
+    // A person's rulings and the location match of an unlisted finding.
+    5: "ff7b2ece2aff21df3b948e5bd849d872dfba298cfa928203e784780061050511",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

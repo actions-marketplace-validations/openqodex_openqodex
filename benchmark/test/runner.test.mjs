@@ -157,6 +157,55 @@ describe("a plan with one job twice counts that job twice", () => {
   });
 });
 
+describe("drift lands on the same cases in every repeat", () => {
+  it("rotates the case order by the repeat number, as the configuration order alternates", () => {
+    const ids = { a: "planted/a@aaaaaaaa", b: "planted/b@bbbbbbbb", c: "planted/c@cccccccc" };
+    const { jobs } = planJobs({ cases: ["a", "b", "c"], caseIds: ids, reviewers: ["claude"], graph: ["off", "on"], repeat: 3 });
+    const order = (r) => [...new Set(jobs.filter((j) => j.repeat === r).map((j) => j.case))];
+    expect([order(1), order(2), order(3)]).toEqual([["a", "b", "c"], ["b", "c", "a"], ["c", "a", "b"]]);
+    expect(jobs.filter((j) => j.repeat === 2).map((j) => j.config).slice(0, 2)).toEqual(["claude-graph-on", "claude-graph-off"]);
+  });
+});
+
+describe("repeats added to a finished run are scored as unplanned", () => {
+  it("writes the longer plan into the manifest before the added reviews run, and scores every repeat as planned", async () => {
+    const { out, jobs, manifest, copies } = runInputs(1);
+    await executeRun({ out, manifest, jobs, copies, runJob: async (job, attempt) => saveAttempt(out, job, attempt, hitReport) });
+    const longer = planJobs({ cases: ["one"], caseIds: { one: ID }, reviewers: ["claude"], graph: ["on"], repeat: 3 }).jobs;
+    const ran = [];
+    await executeRun({
+      out,
+      manifest: null,
+      resume: true,
+      jobs: longer,
+      copies,
+      addRepeats: { repeat: 3, at: "2026-10-11T12:00:00.000Z" },
+      runJob: async (job, attempt) => {
+        // The longer plan is on disk before the first added review starts.
+        expect(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")).planned).toBe(3);
+        ran.push(job.repeat);
+        saveAttempt(out, job, attempt, hitReport);
+      },
+    });
+    expect(ran).toEqual([2, 3]);
+    const saved = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+    expect(saved).toMatchObject({ started_at: manifest.started_at, repeat: 3, planned: 3, repeatsAdded: [{ from: 1, to: 3, jobs: 2 }] });
+    const { score } = scoreRun(loadRun(out));
+    expect(score.population.unplanned).toEqual([]);
+    expect(score.byConfig["claude-graph-on"].population).toMatchObject({ planned: 3, complete: 3, unstarted: 0 });
+  });
+
+  it("refuses to add repeats to a run that did not finish, or with a plan that drops a review the run planned", async () => {
+    const { out, jobs, manifest, copies } = runInputs(2);
+    await executeRun({ out, manifest, jobs, copies, stopReason: () => "stopped by Ctrl-C", runJob: async () => {} });
+    const longer = planJobs({ cases: ["one"], caseIds: { one: ID }, reviewers: ["claude"], graph: ["on"], repeat: 3 }).jobs;
+    await expect(executeRun({ out, manifest: null, resume: true, jobs: longer, copies, addRepeats: { repeat: 3, at: "t" }, runJob: async () => {} })).rejects.toThrow(/not finished/);
+    const other = planJobs({ cases: ["one"], caseIds: { one: ID }, reviewers: ["codex"], graph: ["on"], repeat: 3 }).jobs;
+    await expect(executeRun({ out, manifest: null, resume: true, jobs: other, copies, addRepeats: { repeat: 3, at: "t" }, runJob: async () => {} })).rejects.toThrow(/leaves out 2 reviews/);
+    expect(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")).repeat).toBe(2);
+  });
+});
+
 describe("a resumed run reruns a crashed first attempt in its folder, so a later success replaces the crash", () => {
   it("keeps a first-attempt folder that never got its sample.json, runs the job again as attempt 2, and scores the crash as the first attempt", async () => {
     const { out, jobs, manifest, copies } = runInputs();
