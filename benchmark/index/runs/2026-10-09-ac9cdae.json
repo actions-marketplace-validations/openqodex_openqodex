@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "runId": "2026-10-09-ac9cdae",
+  "date": "2026-10-09",
+  "suite": "planted",
+  "split": "dev",
+  "splitHash": null,
+  "mode": "review",
+  "path": "laptop",
+  "build": {
+    "commit": "ac9cdae1c68edbc466b8fc6faad0d8860635d8b4",
+    "short": "ac9cdae",
+    "cliVersion": "0.10.0",
+    "dirty": true,
+    "bundleHash": "18aaa1db66265eb155e9bb702944e2fefc17fbd867c916a12538efbc9acc67df"
+  },
+  "reviewers": {
+    "claude": {
+      "version": "2.1.295",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "configs": [
+    "claude-graph-on"
+  ],
+  "repeat": 1,
+  "web": "on",
+  "caseSetHash": null,
+  "caseIds": [
+    "planted/clean-python-feature@9ec4022c",
+    "planted/clean-ts-refactor@932afbb6",
+    "planted/demo-polyglot@6ac43976",
+    "planted/django-model-view@1c282ee0",
+    "planted/express-admin-routes@e9cc8bd1",
+    "planted/flask-path-traversal@0ca5ead7",
+    "planted/go-http-handler@d94de84a",
+    "planted/js-dynamic-dispatch-gap@2b036d38",
+    "planted/nextjs-react-hooks@ef6f5582",
+    "planted/python-caller-break@32735853",
+    "planted/rails-controller-model@44f38142",
+    "planted/suppression-comments@f224edf0",
+    "planted/ts-interface-dispatch-break@d28ad8d5",
+    "planted/ts-removed-export@4998a203",
+    "planted/ts-workspace-caller-break@d99bea74"
+  ],
+  "rulesVersion": null,
+  "scannersComplete": null,
+  "external": null,
+  "ended": {
+    "how": "finished",
+    "why": null
+  },
+  "release": null,
+  "scores": {
+    "claude-graph-on": {
+      "samples": 15,
+      "complete": 14,
+      "incomplete": 0,
+      "failed": 1,
+      "recall": {
+        "hit": 29,
+        "of": 38,
+        "ci": null
+      },
+      "precision": {
+        "hit": 29,
+        "of": 29,
+        "ci": null
+      },
+      "controls": {
+        "hit": 2,
+        "of": 2
+      },
+      "falseFindings": 0,
+      "wallMsMean": 132916.53333333333,
+      "costUsdMean": 0.11061642857142857,
+      "costUsdTotal": 1.54863
+    }
+  },
+  "perCase": {
+    "claude-graph-on": {
+      "clean-python-feature": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "clean-ts-refactor": {
+        "recall": [
+          0,
+          0
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "demo-polyglot": {
+        "recall": [
+          8,
+          12
+        ],
+        "precision": [
+          8,
+          8
+        ]
+      },
+      "django-model-view": {
+        "recall": [
+          0,
+          4
+        ],
+        "precision": [
+          0,
+          0
+        ]
+      },
+      "express-admin-routes": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "flask-path-traversal": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "go-http-handler": {
+        "recall": [
+          3,
+          3
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "js-dynamic-dispatch-gap": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "nextjs-react-hooks": {
+        "recall": [
+          3,
+          4
+        ],
+        "precision": [
+          3,
+          3
+        ]
+      },
+      "python-caller-break": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "rails-controller-model": {
+        "recall": [
+          4,
+          4
+        ],
+        "precision": [
+          4,
+          4
+        ]
+      },
+      "suppression-comments": {
+        "recall": [
+          2,
+          2
+        ],
+        "precision": [
+          2,
+          2
+        ]
+      },
+      "ts-interface-dispatch-break": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "ts-removed-export": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      },
+      "ts-workspace-caller-break": {
+        "recall": [
+          1,
+          1
+        ],
+        "precision": [
+          1,
+          1
+        ]
+      }
+    }
+  },
+  "asset": {
+    "url": "https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-ac9cdae.tar.gz",
+    "sha256": "a78a18929b27ee7b525b804a72a2122a68d4148836f0a70e2ea77b991bfc8f58",
+    "bytes": 179588,
+    "files": 172,
+    "listHash": "7f4b0d04960687baac3f7c1b2a53bfa64c3b1d2d76acafab8bbd5286b73024ed"
+  },
+  "accepted": false,
+  "acceptedAt": null,
+  "acceptedBy": null,
+  "legacy": true,
+  "privateListHash": "a3619b4a3c25d188a3c4bad8ace36205c2679a7728ea56a81f2871cecf03a0de",
+  "scoreFile": "score.json",
+  "specsFrom": "cases",
+  "scorer": {
+    "commit": "f863f870790b5e298c4c961b3debd4b146be5810",
+    "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+  },
+  "scoreFiles": [
+    {
+      "file": "score.json",
+      "scores": "2026-10-09-ac9cdae",
+      "specsFrom": "cases",
+      "scorer": {
+        "commit": "f863f870790b5e298c4c961b3debd4b146be5810",
+        "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+      }
+    }
+  ],
+  "originals": {
+    "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884",
+    "path": "benchmark/results/2026-10-09-ac9cdae"
+  },
+  "notes": [
+    "The build is marked dirty: its tree differs from the commit's. The docs say 18 untracked scratch files under .tmp/ made the difference; the manifest records only the two tree hashes.",
+    "The run stopped when the django-model-view review failed (the Mac slept), was resumed and finished (resumes.jsonl). That failed review is a sample of this run; the docs' phase 2 column takes django-model-view from 2026-10-09-ac9cdae-django-retry instead."
+  ]
+}
