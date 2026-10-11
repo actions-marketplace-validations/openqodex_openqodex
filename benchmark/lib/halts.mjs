@@ -8,8 +8,9 @@
 // - provider-blocked: the endpoint refused the key (HTTP 401 or 403) or the
 //   quota (a 429 that names a quota, or insufficient_quota). At once: every
 //   later call would get the same answer.
-// - served-model-changed: a review names a served model the run's earlier
-//   reviews did not, or names two. The deployment changed under the run.
+// - served-model-changed: a review names a served model the earlier reviews
+//   of its configuration did not, or names two. The deployment changed
+//   under the run. Each configuration (each model reviewer) has its own.
 // - same-reason-twice: two reviews in a row, in the order they ended, did
 //   not complete, for the same reason class (reasonClass).
 // - from the 10th review of this invocation on: incomplete-share (more than
@@ -74,13 +75,15 @@ const money = (usd) => `$${usd.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}
  * The halt rules of one invocation. `maxUsd` is the run's cap, `toRun` the
  * reviews this invocation plans, `estimatePerReview` the estimate's dollars
  * per review (null when there is none), `servedBefore` the served models
- * the run's earlier samples named, and `spentBefore` what the run had spent
+ * the run's earlier samples named, per configuration ({ <config>: [models] }),
+ * and `spentBefore` what the run had spent
  * when this invocation started. `after(record, { spentUsd })` is asked with
  * each saved sample record (lib/server-review.mjs) and the ledger's total
  * spent; it returns { rule, why } or null.
  */
-export function haltRules({ maxUsd, toRun, estimatePerReview = null, servedBefore = [], spentBefore = 0 }) {
-  const served = new Set(servedBefore.filter((m) => typeof m === "string" && m !== ""));
+export function haltRules({ maxUsd, toRun, estimatePerReview = null, servedBefore = {}, spentBefore = 0 }) {
+  // Per configuration: each model reviewer of a run answers from its own deployment.
+  const servedBy = new Map(Object.entries(servedBefore).map(([config, models]) => [config, new Set(models.filter((m) => typeof m === "string" && m !== ""))]));
   let reviews = 0;
   let notComplete = 0;
   let lastClass = null;
@@ -95,8 +98,10 @@ export function haltRules({ maxUsd, toRun, estimatePerReview = null, servedBefor
       if (blocked !== null) return halt("provider-blocked", `the model endpoint refused the key or the quota (${cls}): ${blocked}`);
       const named = (rec.servedModels ?? []).filter((m) => typeof m === "string" && m !== "");
       if (named.length > 1) return halt("served-model-changed", `one review was answered by ${named.join(" and ")}`);
+      if (!servedBy.has(rec.config)) servedBy.set(rec.config, new Set());
+      const served = servedBy.get(rec.config);
       const fresh = named.filter((m) => !served.has(m));
-      if (fresh.length > 0 && served.size > 0) return halt("served-model-changed", `the served model changed from ${[...served].join(" and ")} to ${fresh.join(" and ")}`);
+      if (fresh.length > 0 && served.size > 0) return halt("served-model-changed", `the served model of ${rec.config} changed from ${[...served].join(" and ")} to ${fresh.join(" and ")}`);
       for (const m of named) served.add(m);
       const previous = lastClass;
       lastClass = cls;

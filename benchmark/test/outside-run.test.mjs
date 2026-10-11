@@ -166,7 +166,7 @@ describe("burning budget on a broken setup", () => {
 });
 
 describe("a provider refusal, a served-model change, a share of incomplete reviews or a cost past the estimate is read as one more sample", () => {
-  const complete = (more = {}) => ({ status: "complete", failure: null, servedModels: ["m-1"], usage: { cost_usd: 0.1 }, ...more });
+  const complete = (more = {}) => ({ config: "model-x-graph-on", status: "complete", failure: null, servedModels: ["m-1"], usage: { cost_usd: 0.1 }, ...more });
   const incomplete = (failure, more = {}) => complete({ status: "incomplete", failure, ...more });
 
   it("stops at once on a key or quota refusal from the endpoint", () => {
@@ -180,10 +180,17 @@ describe("a provider refusal, a served-model change, a share of incomplete revie
   });
 
   it("stops when the served model changes during the run, or a review names two", () => {
-    const rules = haltRules({ maxUsd: 10, toRun: 20, servedBefore: ["m-1"] });
+    const rules = haltRules({ maxUsd: 10, toRun: 20, servedBefore: { "model-x-graph-on": ["m-1"] } });
     expect(rules.after(complete(), { spentUsd: 0.1 })).toBeNull();
     expect(rules.after(complete({ servedModels: ["m-2"] }), { spentUsd: 0.2 })).toMatchObject({ rule: "served-model-changed" });
     expect(haltRules({ maxUsd: 10, toRun: 20 }).after(complete({ servedModels: ["m-1", "m-2"] }), { spentUsd: 0.1 })).toMatchObject({ rule: "served-model-changed" });
+  });
+
+  it("does not halt when two model reviewers of one run are answered by their own models", () => {
+    const rules = haltRules({ maxUsd: 10, toRun: 20, servedBefore: { "model-x-graph-on": ["m-1"] } });
+    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-2"] }), { spentUsd: 0.1 })).toBeNull();
+    expect(rules.after(complete(), { spentUsd: 0.2 })).toBeNull();
+    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-3"] }), { spentUsd: 0.3 })).toMatchObject({ rule: "served-model-changed" });
   });
 
   it("does not halt on two incomplete reviews in a row with different reasons", () => {

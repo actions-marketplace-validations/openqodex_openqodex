@@ -1261,7 +1261,7 @@ async function main() {
   // The halt rules of a model run, counting this invocation's reviews, with
   // the served models the run's earlier samples named (failure 32).
   const priced = estimate.reviews - estimate.unpriced;
-  const rules = server ? haltRules({ maxUsd: o.maxUsd, toRun: todo.length, estimatePerReview: priced > 0 ? estimate.usd / priced : null, servedBefore: readRows(out).flatMap((r) => r.servedModels ?? []), spentBefore }) : null;
+  const rules = server ? haltRules({ maxUsd: o.maxUsd, toRun: todo.length, estimatePerReview: priced > 0 ? estimate.usd / priced : null, servedBefore: servedByConfig(out), spentBefore }) : null;
 
   // Each saved file is checked for a generated secret and, for a model
   // endpoint, its key or base URL (failure 27), and on the server path,
