@@ -5,10 +5,15 @@
 // cases, sits in the index as a sound entry. The entry is built the way
 // publish-run.mjs builds it, from a saved run scored with format 3 in a temp
 // folder; every committed entry must stay sound under the same validator.
-import { mkdirSync, writeFileSync } from "node:fs";
+// Also guarded: two runs of one suite and configuration that differ only in
+// their subset (dev-smoke, dev-laptop) share one trend group and one
+// accepted pointer, so each overwrites the other's baseline; and a run with
+// no subset gets another key than it had, which orphans the committed
+// accepted pointer.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { assetUrl, buildEntry, entryProblems, listEntries } from "../lib/index.mjs";
+import { acceptedPath, assetUrl, buildEntry, entryProblems, groupKeys, listEntries } from "../lib/index.mjs";
 import { planJobs, sampleRecord } from "../lib/runner.mjs";
 import { RULES_VERSION } from "../lib/score.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
@@ -35,8 +40,9 @@ const spec = {
 const finding = { origin: "agent", severity: "critical", category: "security", confidence: 0.9, file_path: "app.py", line_number: 4, line_end: 4, title: "SQL injection", problem: "p", consequence: "c", fix: "f", candidate: null, source: null };
 const report = { findings: [finding], outside_change: [], dropped: [], completion: { status: "complete", missing: [], reviewer: { usage: { cost_usd: 0.2 } } } };
 
-// One planted case, one configuration, one repeat, reviewed once.
-function scoredRun() {
+// One planted case, one configuration, one repeat, reviewed once. `extra`
+// is added to the manifest the entry is built from (after scoring).
+function scoredRun(extra = {}) {
   const out = join(tempDir("oq-index-"), RUN_ID);
   const { jobs } = planJobs({ cases: ["one"], caseIds: { one: CASE_ID }, reviewers: ["claude"], graph: ["on"], repeat: 1 });
   const manifest = {
@@ -61,7 +67,7 @@ function scoredRun() {
   write(join(dir, "report", "report.json"), JSON.stringify(report));
   write(join(dir, "report", "scan.json"), JSON.stringify({ candidates: [] }));
   const { score } = scoreRun(loadRun(out));
-  return buildEntry({ runId: RUN_ID, manifest, resumes: [], score, asset: { url: assetUrl(RUN_ID), sha256: "e".repeat(64), bytes: 1000, files: 12, listHash: "f".repeat(64) }, privateListHash: "9".repeat(64) });
+  return buildEntry({ runId: RUN_ID, manifest: { ...manifest, ...extra }, resumes: [], score, asset: { url: assetUrl(RUN_ID), sha256: "e".repeat(64), bytes: 1000, files: 12, listHash: "f".repeat(64) }, privateListHash: "9".repeat(64) });
 }
 
 describe("a test-split entry without a release is accepted", () => {
@@ -93,5 +99,35 @@ describe("a test-split entry without a release is accepted", () => {
     const entries = listEntries();
     expect(entries.length).toBeGreaterThan(0);
     for (const { entry } of entries) expect(entryProblems(entry)).toEqual([]);
+  });
+});
+
+describe("two runs that differ only in their subset share a trend group and an accepted pointer", () => {
+  const real = { suite: "aacr", split: "dev", splitHash: "ab".repeat(32) };
+
+  it("puts two runs that differ only in subset in two groups, each key naming its subset", () => {
+    const smoke = groupKeys(scoredRun({ ...real, subset: "dev-smoke" })).map((g) => g.key);
+    const laptop = groupKeys(scoredRun({ ...real, subset: "dev-laptop" })).map((g) => g.key);
+    expect(smoke).not.toEqual(laptop);
+    expect(smoke[0]).toBe(`aacr|dev|${"ab".repeat(32)}|review|laptop|claude|claude-opus-5-5|claude-graph-on|${RULES_VERSION}|dev-smoke`);
+    expect(laptop[0]).toMatch(/\|dev-laptop$/);
+    expect(entryProblems(scoredRun({ ...real, subset: "dev-smoke" }))).toEqual([]);
+    expect(entryProblems({ ...scoredRun(real), subset: "" }).join("\n")).toMatch(/subset/);
+  });
+
+  it("keeps the key a run with no subset had, writes no subset field, and reads --subset all as no subset", () => {
+    const none = scoredRun(real);
+    expect("subset" in none).toBe(false);
+    expect(groupKeys(none)[0].key).toBe(`aacr|dev|${"ab".repeat(32)}|review|laptop|claude|claude-opus-5-5|claude-graph-on|${RULES_VERSION}`);
+    expect(groupKeys(scoredRun({ ...real, subset: "all" }))).toEqual(groupKeys(none));
+    expect("subset" in scoredRun({ ...real, subset: null })).toBe(false);
+  });
+
+  it("still finds every committed accepted run under the key its pointer names", () => {
+    const pointer = JSON.parse(readFileSync(acceptedPath(), "utf8"));
+    const byId = new Map(listEntries().map(({ entry }) => [entry.runId, entry]));
+    const groups = Object.entries(pointer.groups ?? {});
+    expect(groups.length).toBeGreaterThan(0);
+    for (const [key, g] of groups) expect(groupKeys(byId.get(g.runId)).map((x) => x.key)).toContain(key);
   });
 });
