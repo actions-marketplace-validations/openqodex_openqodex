@@ -37,17 +37,28 @@
 //    the model each call asked for apart from the models the provider named
 //    as answering (from the library's usage records); one served model is
 //    named only when every answered call named that one, and none is named
-//    when the provider named none. The manifest records the deployment, an
-//    alias that led to it, and the settings (effort, maxOutputTokens).
+//    when the provider named none. The manifest records the model asked for
+//    (`requestedModel`), an alias that led to it, and the settings (effort,
+//    maxOutputTokens); its `model` is null until a review answers, then the
+//    id that review was served by (recordServed), and a later review served
+//    by another id, or one served by two, stops the run.
 // 4. A model nobody probed is reviewed with: resolveModelReviewer takes
 //    `model:scripted`, a deployment boards.json records with a probed date,
 //    or a name in boards.json's aliases map that points at one, and refuses
 //    anything else before a run starts.
-// 5. The key or the base URL of the model endpoint lands in a saved file:
-//    the settings never enter a record, and run.mjs checks every saved file
-//    with the settings' appearsIn and stops the run on a hit.
+// 5. The key or the base URL of the model endpoint lands in a saved file,
+//    rows.jsonl or stdout: the settings never enter a record, and before
+//    anything of a sample is written or printed, every text it would hold
+//    (the report, the summary, the served model, the usage, the progress
+//    lines and the record) is checked with the settings' appearsIn; on a hit
+//    only a record of the refusal is written, with nothing from the answer,
+//    and run.mjs stops the run. run.mjs checks every saved file again.
+// 6. A resume reaches another endpoint than the run's: the manifest records
+//    the endpoint as the sha256 of its base URL (never the URL), and a resume
+//    whose endpoint differs is refused (lib/runner.mjs resumeProblems).
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { gitEnv, repoRoot } from "./cases.mjs";
@@ -58,6 +69,9 @@ import { createScriptedReviewer, DEFAULT_SCRIPT, readScript } from "./scripted-m
 
 const BOARDS = new URL("../outside/boards.json", import.meta.url);
 export const SCRIPTED = "model:scripted";
+
+/** The one line a sample records when its answer held the endpoint's key or address. */
+export const LEAK_REFUSED = "refused: the provider's answer held the endpoint's key or address";
 
 /** True when the name is a model reviewer's (`model:<id>`). */
 export const isModelReviewer = (name) => typeof name === "string" && name.startsWith("model:");
@@ -94,17 +108,19 @@ const shownFile = (path) => {
  * The ModelReviewer for a resolved model, with what the manifest records
  * about it and what the budget prices its calls at. `scriptPath` is the
  * scripted model's script; the endpoint's settings come from
- * lib/model-env.mjs and never enter `record`. `appearsIn(text)` is true when
- * a text holds the endpoint's key or base URL (null for the scripted model).
+ * lib/model-env.mjs and never enter `record`, except as `endpoint`, the
+ * sha256 of the base URL (failure 6). `appearsIn(text)` is true when a text
+ * holds the endpoint's key or base URL (null for the scripted model). The
+ * record's `model` is null until a review answers (recordServed).
  */
 export function createModelReviewer(resolved, { effort, maxOutputTokens = 32000, scriptPath = DEFAULT_SCRIPT, env = process.env } = {}) {
   const settings = { effort: effort ?? null, maxOutputTokens };
-  const base = { name: resolved.name, kind: "model", version: null, settings, modelFrom: "the served model each call's response names, recorded in each sample" };
+  const base = { name: resolved.name, kind: "model", version: null, model: null, settings, modelFrom: "the model the provider named as serving the run's first answered review; every later review must be served by the same one" };
   if (resolved.kind === "scripted") {
     const { script, sha256 } = readScript(scriptPath);
     return {
       reviewer: createScriptedReviewer(script, { maxOutputTokens }),
-      record: { ...base, model: script.model, deployment: null, alias: null, script: { file: shownFile(scriptPath), sha256 } },
+      record: { ...base, requestedModel: script.model, deployment: null, alias: null, endpoint: null, script: { file: shownFile(scriptPath), sha256 } },
       prices: { [script.model]: script.prices },
       appearsIn: null,
     };
@@ -112,10 +128,40 @@ export function createModelReviewer(resolved, { effort, maxOutputTokens = 32000,
   const endpoint = loadModelEnv({ env });
   return {
     reviewer: createOpenAIReviewer({ model: resolved.deployment, baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey, authHeader: endpoint.authHeader, maxOutputTokens, effort }),
-    record: { ...base, model: resolved.deployment, deployment: resolved.deployment, alias: resolved.alias, provider: resolved.provider, api: "responses", authHeader: endpoint.authHeader, probed: resolved.probed, servedAtProbe: resolved.servedAtProbe },
+    record: { ...base, requestedModel: resolved.deployment, deployment: resolved.deployment, alias: resolved.alias, provider: resolved.provider, api: "responses", authHeader: endpoint.authHeader, endpoint: endpointIdentity(endpoint.baseUrl), probed: resolved.probed, servedAtProbe: resolved.servedAtProbe },
     prices: {},
     appearsIn: endpoint.appearsIn,
   };
+}
+
+/** The endpoint a run's calls go to, as the sha256 of its base URL without a trailing slash; never the URL. */
+export const endpointIdentity = (baseUrl) => createHash("sha256").update(baseUrl.replace(/\/+$/, "")).digest("hex");
+
+/**
+ * Holds a run to one served model per model reviewer (failure 3). The run's
+ * manifest (`manifestPath`) names in `reviewers[name].model` the id that
+ * served its first answered review: set here from `record` (a sample record)
+ * when it is null, and written back. Returns { why, model }: why the run may
+ * not go on (a review served by another id than the manifest's, or by two),
+ * or null; and the manifest's model now. A review served by no named model
+ * changes nothing.
+ */
+export function recordServed({ manifestPath, name, record }) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const entry = manifest.reviewers?.[name];
+  if (!entry) throw new Error(`the run's manifest names no reviewer ${name}`);
+  const served = record.servedModels ?? [];
+  if (served.length > 1) return { why: `${name} was served by ${served.join(" and ")} in one review; a run holds one served model per reviewer`, model: entry.model ?? null };
+  if (served.length === 0) return { why: null, model: entry.model ?? null };
+  if (entry.model !== null && entry.model !== undefined) {
+    return { why: entry.model === served[0] ? null : `${name} was served by ${served[0]}, and the run's earlier reviews by ${entry.model}; a run holds one served model per reviewer`, model: entry.model };
+  }
+  entry.model = served[0];
+  if (manifest.reviewer?.name === name) manifest.reviewer.model = served[0];
+  const temp = `${manifestPath}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`);
+  renameSync(temp, manifestPath);
+  return { why: null, model: served[0] };
 }
 
 /**
@@ -169,12 +215,14 @@ const within = (child, parent) => {
  * under `out`. `repo` is { dir, base, head } (lib/suites.mjs materialise in
  * the server shape); `meter` is the review's meter (lib/budget.mjs:
  * authorize and wrap); `hide(text)` replaces machine paths in what is
- * saved; `stopped()` names why the run is halting, if it is. Returns
- * { record, error }: the sample record, and what the review threw, if it
- * threw. Throws before any review when the work root lies in the clone or
- * the results folder.
+ * saved; `stopped()` names why the run is halting, if it is; `appearsIn(text)`
+ * is true when a text holds the endpoint's key or base URL (lib/model-env.mjs).
+ * Returns { record, error, leaked }: the sample record, what the review
+ * threw, if it threw, and whether the answer held the endpoint's key or
+ * address, so that only the refusal was saved (failure 5). Throws before any
+ * review when the work root lies in the clone or the results folder.
  */
-export async function serverAttempt({ reviewChange, job, attempt, out, repo, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null }) {
+export async function serverAttempt({ reviewChange, job, attempt, out, repo, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null, appearsIn = null }) {
   for (const [what, dir] of [["the clone", repo.dir], ["the results folder", out]]) {
     if (within(workRoot, dir)) throw new Error(`the work root ${workRoot} lies in ${what} (${dir}); a review writes only in a workDir of its own, outside both`);
   }
@@ -207,27 +255,34 @@ export async function serverAttempt({ reviewChange, job, attempt, out, repo, rev
   const outside = cloneChanges(before, cloneState(repo.dir));
   rmSync(workDir, { recursive: true, force: true });
   const clean = (text) => hide(swaps.reduce((t, [path, label]) => t.split(path).join(label), String(text)));
-  const save = (path, text) => {
-    mkdirSync(dirname(join(sampleDir, path)), { recursive: true });
-    writeFileSync(join(sampleDir, path), clean(text));
-  };
   const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
+  // Every file the sample would hold, as it would be written, and its
+  // record: nothing is written or returned before all of it is checked
+  // (failure 5).
+  const files = [];
   let report = null;
   if (result !== null) {
     const rendered = result.render.json();
-    save("report/report.json", rendered);
-    save("report/report.md", result.render.markdown());
-    if (result.scan) save("report/scan.json", json(result.scan));
-    save("usage.json", json(result.usage));
-    save("completion.json", json(result.completion));
-    save("dispositions.json", json(result.dispositions));
-    save("rounds.json", json(result.rounds));
+    files.push(["report/report.json", rendered], ["report/report.md", result.render.markdown()]);
+    if (result.scan) files.push(["report/scan.json", json(result.scan)]);
+    files.push(["usage.json", json(result.usage)], ["completion.json", json(result.completion)], ["dispositions.json", json(result.dispositions)], ["rounds.json", json(result.rounds)]);
     report = JSON.parse(rendered);
   }
-  save("progress.txt", progress.map((l) => `${l}\n`).join(""));
-  const record = serverSampleRecord({ job, attempt, startedAt, wallMs, result, report, error, outside, stopped: stopped(), requested: reviewer.model });
-  save("sample.json", json(record));
-  return { record, error };
+  files.push(["progress.txt", progress.map((l) => `${l}\n`).join("")]);
+  const full = serverSampleRecord({ job, attempt, startedAt, wallMs, result, report, error, outside, stopped: stopped(), requested: reviewer.model });
+  const texts = [...files.map(([path, text]) => [path, clean(text)]), ["sample.json", clean(json(full))]];
+  const save = (path, text) => {
+    mkdirSync(dirname(join(sampleDir, path)), { recursive: true });
+    writeFileSync(join(sampleDir, path), text);
+  };
+  if (appearsIn !== null && texts.some(([, text]) => appearsIn(text))) {
+    // Nothing from the answer: the record of an attempt that saved nothing.
+    const record = { ...serverSampleRecord({ job, attempt, startedAt, wallMs, result: null, report: null, error: null, outside, stopped: stopped(), requested: reviewer.model }), failure: LEAK_REFUSED };
+    save("sample.json", clean(json(record)));
+    return { record, error: null, leaked: true };
+  }
+  for (const [path, text] of texts) save(path, text);
+  return { record: full, error, leaked: false };
 }
 
 // The models the provider named as answering, from the library's usage
