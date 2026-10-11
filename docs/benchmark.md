@@ -253,7 +253,7 @@ For a miss, the first cause that holds wins:
 | wrong-kind | a shown finding finds it but for its kind |
 | unresolved | a finding nobody has ruled on may be it: one on its lines, or one in its file that names it, of its kind, by a word no other truth item lists |
 | candidate-dropped | a dropped scanner candidate located it; each drop is kept with its reason and its class above |
-| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it |
+| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it. Each part must be on record (a complete trace or the brief for the lines, `submission.json`, and `rounds.json` when the review took correction rounds); a file the review did not save makes the miss unresolved, never judged wrong |
 
 A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
 

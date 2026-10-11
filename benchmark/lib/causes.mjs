@@ -36,7 +36,10 @@
 //                       kept with its reason and its class from drops.mjs.
 //   judged-wrong        none of the above: its lines were in front of the
 //                       reviewer, no dropped candidate located it, and the
-//                       review raised nothing that finds it.
+//                       review raised nothing that finds it. Each part must be
+//                       on record (the lines seen, its proof read when it has
+//                       some, the final answer and every correction round
+//                       saved); a part that is not makes the miss unresolved.
 // A shown finding counted in precision that finds no truth item gets one
 // cause from its outcome: line-off (near), wrong-kind, real-unlisted (a
 // person ruled it a real issue the truth does not list), false (a person
@@ -76,6 +79,12 @@
 //    unknown and those two checks are skipped rather than guessed.
 // 8. A finding a correction round rejected reads as never raised: each
 //    round's answer is read.
+// 9. Absent data is read as evidence: a file the review did not save is
+//    unknown, never empty. Without a complete trace, or with correction
+//    rounds taken and no rounds.json, a place nothing else covers is not
+//    known to be unseen; without submission.json no round's finding is
+//    known to be left out; and a miss whose lines, proof, final answer or
+//    rounds are not on record is unresolved, never judged wrong.
 import { classifyReportDrops } from "./drops.mjs";
 import { bugRuling, matchRuling } from "./rulings.mjs";
 import { classify, locatedBy, names, normPath, normText, scannerPlaces, shownFindings } from "./score.mjs";
@@ -148,15 +157,29 @@ export function briefRanges(brief) {
   return out;
 }
 
+// What the saved files of an attempt record: the reads (a trace that is
+// complete), the correction rounds (rounds.json, or a review that took none)
+// and the final answer (submission.json). What is not recorded is unknown,
+// never empty.
+function recorded(a) {
+  const taken = a?.report?.completion?.reviewer?.rounds;
+  return {
+    reads: Array.isArray(a?.trace) && a?.report?.completion?.trace_complete !== false,
+    rounds: Array.isArray(a?.rounds) || (typeof taken === "number" && taken <= 1),
+    taken: typeof taken === "number" ? taken - 1 : null,
+    submission: Array.isArray(a?.submission?.findings),
+  };
+}
+
 // Whether a place was in front of the reviewer: true when the brief's diff,
 // a correction round's delivered range or a read covered one of its lines;
-// false when none did and both the brief and the reads are known; null when
-// one of them is unknown (no saved brief, or a trace that records no reads).
-function sightings(a) {
+// false when none did and the brief, the reads and the rounds are all
+// recorded; null when one of them is not (no saved brief, a trace that
+// records no reads, or correction rounds taken with no rounds.json).
+function sightings(a, known) {
   const brief = briefRanges(a?.brief ?? null);
   const reads = new Map();
   const delivered = { right: new Map(), left: new Map() };
-  const readsKnown = Array.isArray(a?.trace) && a?.report?.completion?.trace_complete !== false;
   for (const t of Array.isArray(a?.trace) ? a.trace : []) if (t?.tool === "Read" && t.ok && t.inside === true && typeof t.path === "string" && Array.isArray(t.range)) push(reads, normPath(t.path), t.range);
   for (const r of Array.isArray(a?.rounds) ? a.rounds : []) for (const h of r?.delivered ?? []) push(h.deletion ? delivered.left : delivered.right, normPath(h.path), [h.start, h.end]);
   return (place) => {
@@ -164,7 +187,7 @@ function sightings(a) {
     if (brief !== null && overlaps(brief[side].get(place.file) ?? [], place.lines)) return true;
     if (overlaps(delivered[side].get(place.file) ?? [], place.lines)) return true;
     if (side === "right" && overlaps(reads.get(place.file) ?? [], place.lines)) return true;
-    return brief === null || !readsKnown ? null : false;
+    return brief === null || !known.reads || !known.rounds ? null : false;
   };
 }
 
@@ -173,7 +196,7 @@ const findingKey = (f) => `${normPath(f?.file_path)}\0${f?.line_number}\0${normT
 const findingsOf = (answer) => (Array.isArray(answer?.findings) ? answer.findings.filter((f) => f && typeof f === "object") : []);
 
 // The cause of one missed truth item, as { cause, why, drops? }.
-function missCause({ bug, job, attempt, spec, rulings, sees, testOnly }) {
+function missCause({ bug, job, attempt, spec, rulings, sees, known, testOnly }) {
   if (job.status !== "complete") return { cause: "incomplete", why: job.status === "unstarted" ? "the planned review never started" : `the review is ${job.status}` };
   if (bugRuling(job.caseId, bug.id, rulings) === "disputed") return { cause: "spec-disputed", why: "a person ruled this truth item wrong" };
   const places = placesOf(bug);
@@ -196,8 +219,9 @@ function missCause({ bug, job, attempt, spec, rulings, sees, testOnly }) {
   if (under) return { cause: "finalize-floor", why: `"${under[0].title}" at confidence ${under[1].confidence}, under the floor ${under[1].floor}` };
   const counted = hidden.find((f) => !low.has(`${normPath(f.file_path)}\0${normText(f.title)}`));
   if (counted && (report?.below_threshold ?? 0) > 0) return { cause: "finalize-threshold", why: `"${counted.title}" rated ${counted.severity}, counted below the threshold` };
+  // A round's finding is left out only of a final answer that was saved.
   const final = new Set(findingsOf(attempt?.submission).map(findingKey));
-  for (const r of Array.isArray(attempt?.rounds) ? attempt.rounds : []) {
+  for (const r of known.submission && Array.isArray(attempt?.rounds) ? attempt.rounds : []) {
     const gone = findingsOf(r?.answer).find((f) => finds(f) && !final.has(findingKey(f)));
     if (gone) return { cause: "finalize-rejected", why: `"${gone.title}" was in the answer of round ${r.round}, which failed: ${(r.errors ?? []).join("; ") || "no error named"}` };
   }
@@ -222,7 +246,16 @@ function missCause({ bug, job, attempt, spec, rulings, sees, testOnly }) {
   const expected = bug.found_by ?? bug.expectedFinder ?? [];
   const drops = classifyReportDrops(report, attempt?.scan ?? null).filter((d) => d.candidate && typeof d.candidate === "object" && locatedBy(scannerPlaces({ candidates: [d.candidate] }), bug, expected).length > 0);
   if (drops.length > 0) return { cause: "candidate-dropped", why: drops.map((d) => `${d.candidate.token ?? d.candidate.id}: ${d.reason}`).join(" | "), drops: drops.map((d) => ({ candidate: d.candidate.id ?? null, token: d.candidate.token ?? null, reason: d.reason, class: d.class, tags: d.tags })) };
-  return { cause: "judged-wrong", why: seen.includes(true) ? "its lines were in front of the reviewer, no dropped candidate located it, and nothing raised finds it" : "no dropped candidate located it and nothing raised finds it; whether its lines were read is not recorded" };
+  // Judged wrong says the reviewer had the lines and raised nothing that finds
+  // the item: each part must be on record, or the miss is unresolved.
+  const unknown = [];
+  if (!seen.includes(true)) unknown.push("whether its lines were in front of the reviewer");
+  const proofUnknown = proof.find((p) => sees(p) === null);
+  if (proofUnknown) unknown.push(`whether its proof at ${where(proofUnknown)} was read`);
+  if (!known.submission) unknown.push("the final answer (no submission.json)");
+  if (!known.rounds) unknown.push(`what ${known.taken === null ? "its correction rounds" : `its ${known.taken} correction round${known.taken === 1 ? "" : "s"}`} held (no rounds.json)`);
+  if (unknown.length > 0) return { cause: "unresolved", why: `not recorded: ${unknown.join("; ")}` };
+  return { cause: "judged-wrong", why: "its lines were in front of the reviewer, no dropped candidate located it, and nothing raised finds it" };
 }
 
 // The non-hit cause of one shown finding, as { cause, why }, or null for a
@@ -247,11 +280,12 @@ function findingCause(f) {
 // the rulings in force (lib/rulings.mjs resolveRulings). Returns { bugs:
 // { <truth id>: cause or null }, findings: [cause or null, by index] }.
 export function jobCauses({ job, attempt, spec, rulings }) {
-  const sees = sightings(attempt);
+  const known = recorded(attempt);
+  const sees = sightings(attempt, known);
   const truth = new Map((spec.bugs ?? []).map((b) => [b.id, b]));
   const testOnly = job.origin === "planted";
   const bugs = {};
-  for (const b of job.bugs) bugs[b.id] = b.found ? null : missCause({ bug: truth.get(b.id), job, attempt, spec, rulings, sees, testOnly });
+  for (const b of job.bugs) bugs[b.id] = b.found ? null : missCause({ bug: truth.get(b.id), job, attempt, spec, rulings, sees, known, testOnly });
   return { bugs, findings: job.findings.map(findingCause) };
 }
 

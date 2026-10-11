@@ -113,9 +113,10 @@ async function savedRun(reviews, caseSpec = spec) {
     const dir = attemptDir(out, job, 1);
     write(join(dir, "sample.json"), JSON.stringify(sampleRecord({ job, attempt: 1, result: { code: 0, signal: null, wallMs: 1000 }, report: r.report, who: null, startedAt: "t", failure: null, stopped: null })));
     write(join(dir, "report", "report.json"), JSON.stringify(r.report));
-    write(join(dir, "report", "submission.json"), JSON.stringify(r.submission));
+    // A file set to null was not saved, as by an older review.
+    if (r.submission !== null) write(join(dir, "report", "submission.json"), JSON.stringify(r.submission));
     write(join(dir, "report", "brief.md"), r.brief ?? BRIEF);
-    write(join(dir, "report", "trace.json"), JSON.stringify(r.trace ?? []));
+    if (r.trace !== null) write(join(dir, "report", "trace.json"), JSON.stringify(r.trace ?? []));
     if (r.rounds) write(join(dir, "report", "rounds.json"), JSON.stringify(r.rounds));
   } });
   return out;
@@ -280,6 +281,37 @@ describe("a miss the reviewer never saw is blamed on its judgement", () => {
     const s = scored(await savedRun([r], withBoth));
     expect(causeOf(s, "late")).toBe("judged-wrong");
     expect(causeOf(s, "proof")).toBe("judged-wrong");
+  });
+});
+
+describe("absent data is read as evidence", () => {
+  const late = truth("late", "app/late.py", [100, 100], ["bug"], "major", ["late"], ["reasoning"]);
+  const withLate = { ...spec, bugs: [...spec.bugs, late] };
+
+  it("labels a miss unresolved, not judged-wrong, when no trace records the reads and the brief does not hold its lines", async () => {
+    const r = review({ submitted: [SQLI, APT, ADMIN] });
+    r.trace = null;
+    const s = scored(await savedRun([r], withLate));
+    expect(causeOf(s, "late")).toBe("unresolved");
+    // The brief holds the loop's lines, so its miss is still judged wrong.
+    expect(causeOf(s, "loop")).toBe("judged-wrong");
+  });
+
+  it("labels a miss unresolved, not not-in-brief or judged-wrong, when the review took correction rounds and saved no rounds.json", async () => {
+    const r = review({ submitted: [SQLI, APT, ADMIN] });
+    r.report.completion.reviewer.rounds = 2;
+    const s = scored(await savedRun([r], withLate));
+    expect(causeOf(s, "late")).toBe("unresolved");
+    expect(causeOf(s, "loop")).toBe("unresolved");
+  });
+
+  it("labels a miss unresolved, not finalize-rejected or judged-wrong, when the submission was not saved", async () => {
+    const r = review({ submitted: [APT, ADMIN] });
+    r.submission = null;
+    r.rounds = [{ by: "primary", round: 1, errors: ["finding 1 cites app/search.py:40, which the change does not touch"], delivered: [], later: 0, answer: { findings: [SQLI, APT, ADMIN] } }];
+    const s = scored(await savedRun([r]));
+    expect(causeOf(s, "sqli")).toBe("unresolved");
+    expect(causeOf(s, "loop")).toBe("unresolved");
   });
 });
 
