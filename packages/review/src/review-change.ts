@@ -63,7 +63,6 @@ import type {
   ReviewerRecord,
   RunManifest,
   RunTarget,
-  RunTimings,
   ScanResult,
   ScannerSource,
   SelectedLens,
@@ -764,9 +763,9 @@ function refuseSecond(second: Reviewer | undefined): void {
 }
 
 // A review that stopped before a reviewer could be given the change: no
-// finding, no usage, and outputs that say why. `timings`: the phases it ran.
-// `scope`: the decision, when the proofs got that far.
-function stoppedResult(status: "complete" | "incomplete", reason: string, timings: RunTimings, scope: ReviewScope | null = null, notes: string[] = []): ReviewResult {
+// finding, no usage, and outputs that say why. `scope`: the decision, when
+// the proofs got that far.
+function stoppedResult(status: "complete" | "incomplete", reason: string, scope: ReviewScope | null = null, notes: string[] = []): ReviewResult {
   const lead = status === "complete" ? "Review complete" : "Review incomplete";
   return {
     status,
@@ -784,7 +783,6 @@ function stoppedResult(status: "complete" | "incomplete", reason: string, timing
     notes,
     disagreements: [],
     context: [],
-    timings,
     render: {
       markdown: () => `# ${lead}\n\n${display(reason)}\n`,
       sarif: () => `${JSON.stringify({ $schema: "https://json.schemastore.org/sarif-2.1.0.json", version: "2.1.0", runs: [{ tool: { driver: { name: "openqodex", rules: [] } }, results: [], properties: { status, reason } }] }, null, 2)}\n`,
@@ -863,18 +861,33 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
     ...(input.previousReviewedSha !== undefined ? { previousReviewedSha: input.previousReviewedSha } : {}),
     ...(input.fullReviewRequested !== undefined ? { fullReviewRequested: input.fullReviewRequested } : {}),
   });
-  if (!decision.ok) return stoppedResult("incomplete", decision.reason, clock.timings());
+  if (!decision.ok) return timed({ result: stoppedResult("incomplete", decision.reason), report: null }, clock);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
   // Everything the review writes besides its snapshot: the change source's
   // temporary folders and the scanners' caches, temporary folders, HOME and
   // TMPDIR (scanners/src/scratch.ts). Removed when the review ends.
   const scratch = join(options.workDir, "scratch");
   mkdirSync(join(scratch, "tmp"), { recursive: true, mode: 0o700 });
+  let done: Reviewed;
   try {
-    return await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say, deadlineAt, clock);
+    done = await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say, deadlineAt, clock);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+  return timed(done, clock);
+}
+
+// A result, and the report its renderers draw from (null for a review that
+// stopped before a reviewer was given the change).
+type Reviewed = { result: ReviewResult; report: Report | null };
+
+// The result with the clock read now, once the result is built and the
+// scratch folder removed, just before reviewChange returns; the report its
+// JSON rendering draws from holds the same reading.
+function timed(done: Reviewed, clock: PhaseClock): ReviewResult {
+  const timings = clock.timings();
+  if (done.report !== null) done.report.timings = timings;
+  return { ...done.result, timings };
 }
 
 // The review once the merge base is proved, its decision made and its
@@ -890,7 +903,7 @@ async function reviewInScope(
   say: (line: string) => void,
   deadlineAt: number,
   clock: PhaseClock,
-): Promise<ReviewResult> {
+): Promise<Reviewed> {
   const scope = serverScope({
     clonePath: input.clonePath,
     workDir: options.workDir,
@@ -937,15 +950,15 @@ async function reviewInScope(
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof MissingObjects) return stoppedResult("incomplete", error.message, clock.timings(), decision.scope, scope.notes());
-    if (error instanceof OpenQodexError) return stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, clock.timings(), decision.scope, scope.notes());
+    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes()), report: null };
+    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes()), report: null };
     throw error;
   }
   if (r.ended === "nothing") {
     const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
-    return stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, clock.timings(), decision.scope, scope.notes());
+    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes()), report: null };
   }
-  if (r.ended !== "model-reviewed") return stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", clock.timings(), decision.scope, scope.notes());
+  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes()), report: null };
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;
@@ -973,10 +986,9 @@ async function reviewInScope(
     completion = withSecondReviewer(completion, disagreements, r.secrets);
   }
   const notes = [...(completion.notes ?? []), ...scope.notes()];
-  // The core's reading, taken again now the report is finished here.
-  const timings = clock.timings();
   // Every renderer gets who found each finding, the second reviewer's
-  // dropped candidates, the notes and the timings, as the result holds them.
+  // dropped candidates and the notes, as the result holds them, and the
+  // timings reviewChange reads last (timed).
   const report = modelReport(
     redactStored(
       {
@@ -984,14 +996,13 @@ async function reviewInScope(
         findings: checked.findings.map((f, i) => ({ ...f, found_by: foundBy[i] ?? [] })),
         ...(secondDropped ? { second_dropped: secondDropped } : {}),
         ...(notes.length > 0 ? { notes } : {}),
-        timings,
       },
       r.secrets,
     ),
     completion,
   );
   const complete = completion.status === "complete";
-  return {
+  const result: ReviewResult = {
     status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
     ...(complete ? {} : { reason: completion.missing.join("; ") }),
     scope: decision.scope,
@@ -1007,7 +1018,7 @@ async function reviewInScope(
     notes: report.notes ?? [],
     disagreements: completion.disagreements ?? [],
     context: r.context ?? [],
-    timings,
     render: reviewRender(report),
   };
+  return { result, report };
 }
