@@ -60,13 +60,16 @@ import { findMarkers, SUPPRESSION_MARKERS } from "./suppression.js";
 
 // A custom scanner prepared by the custom module. `skipped` is set when the
 // entry must not run (untrusted, changed since approval); the runner then
-// records that summary and never calls `run`. `paths`: the changed files its
-// `paths` globs match; it runs only when there is one. `scratch`: where the
-// run may write (scratch.ts); the laptop's places when left out.
+// records that summary and never calls `run`. `wants`: whether the change
+// holds a file it checks. `paths`, when given: those files, the changed
+// files its `paths` globs match; the runner then asks it instead of `wants`
+// and records them in the scan's selection. `scratch`: where the run may
+// write (scratch.ts); the laptop's places when left out.
 export type CustomAdapter = {
   source: ScannerSource;
   skipped: ScannerRunSummary | null;
-  paths(changedPaths: string[]): string[];
+  wants(changedPaths: string[]): boolean;
+  paths?(changedPaths: string[]): string[];
   run(args: { repoDir: string; changedPaths: string[]; scratch?: Scratch }): Promise<AdapterResult & { version: string | null }>;
 };
 
@@ -239,7 +242,7 @@ export async function runScanners(args: {
       ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
     };
   });
-  const { trail, omitted, stages } = trailOf(raw.concat(own), { dropped, absorbed, ids, order });
+  const { trail, omitted, stages } = trailOf(raw.concat(own), { dropped, absorbed, ids, order, secrets });
 
   const kept = new Map<ScannerSource, number>();
   for (const c of candidates) kept.set(c.source, (kept.get(c.source) ?? 0) + 1);
@@ -264,7 +267,11 @@ export async function runScanners(args: {
       fixturesDropped,
       secretFingerprints: fingerprintSecrets(secrets),
       projects: projectsOf(args.changedPaths, facts),
-      selection,
+      // A matched secret can sit in a changed file's name.
+      selection: selection.map((c) => {
+        const clean = (text: string) => redactSecrets(text, secrets);
+        return { ...c, paths: c.paths.map(clean), projects: c.projects.map(clean), skip: c.skip === null ? null : clean(c.skip) };
+      }),
       trail,
       trailOmitted: omitted,
     },
@@ -286,7 +293,9 @@ const TRAIL_ORDER: readonly TrailStage[] = ["kept", "merged", "disabled-rule", "
 // that dropped it, the candidate it became (`id`), or the candidate dedup
 // folded it into (`into`). And per scanner, how many each stage dropped,
 // over every finding, written or not. Never the message: it can quote a
-// secret.
+// secret. A matched secret can sit in a file's name too, and a finding a
+// filter dropped has no candidate whose path a later pass redacts, so the
+// token and the file are redacted here.
 function trailOf(
   findings: StaticFinding[],
   at: {
@@ -294,6 +303,7 @@ function trailOf(
     absorbed: Map<StaticFinding, StaticFinding>;
     ids: Map<StaticFinding, string>;
     order: (a: StaticFinding, b: StaticFinding) => number;
+    secrets: string[];
   },
 ): { trail: TrailEntry[]; omitted: number; stages: Map<ScannerSource, ScannerStages> } {
   const stages = new Map<ScannerSource, ScannerStages>();
@@ -316,7 +326,14 @@ function trailOf(
   });
   staged.sort((a, b) => TRAIL_ORDER.indexOf(a.stage) - TRAIL_ORDER.indexOf(b.stage) || at.order(a.f, b.f));
   const trail = staged.slice(0, TRAIL_MAX).map(({ f, stage }): TrailEntry => {
-    const entry: TrailEntry = { token: `${f.source}:${f.ruleId}`, file: f.filePath, lineStart: f.lineStart, lineEnd: f.lineEnd, severity: f.severity, stage };
+    const entry: TrailEntry = {
+      token: redactSecrets(`${f.source}:${f.ruleId}`, at.secrets),
+      file: redactSecrets(f.filePath, at.secrets),
+      lineStart: f.lineStart,
+      lineEnd: f.lineEnd,
+      severity: f.severity,
+      stage,
+    };
     if (stage === "kept") entry.id = at.ids.get(f);
     if (stage === "merged") entry.into = at.ids.get(at.absorbed.get(f)!);
     return entry;
@@ -325,11 +342,20 @@ function trailOf(
 }
 
 // A custom scanner as the selector would list it: the changed files its
-// globs match, and why it does not run when it does not.
+// globs match (none listed for an adapter with no `paths`), and why it does
+// not run when it does not. The adapter's code runs here outside the
+// scanner's guard, so a throw is recorded, never raised; its run, under the
+// guard, records the error.
 function customSelection(custom: CustomAdapter, changedPaths: string[]): ScannerSelection {
-  const paths = custom.paths(changedPaths);
-  if (custom.skipped) return { scanner: custom.source, wanted: false, paths, projects: [], skip: custom.skipped.reason ?? custom.skipped.status };
-  return { scanner: custom.source, wanted: paths.length > 0, paths, projects: [], skip: paths.length > 0 ? null : NOTHING_TO_CHECK };
+  const scanner = custom.source;
+  try {
+    const paths = custom.paths?.(changedPaths) ?? [];
+    if (custom.skipped) return { scanner, wanted: false, paths, projects: [], skip: custom.skipped.reason ?? custom.skipped.status };
+    const wanted = custom.paths ? paths.length > 0 : custom.wants(changedPaths);
+    return { scanner, wanted, paths, projects: [], skip: wanted ? null : NOTHING_TO_CHECK };
+  } catch {
+    return { scanner, wanted: false, paths: [], projects: [], skip: "failed" };
+  }
 }
 
 // The projects the changed files belong to, with their frameworks, for the
@@ -529,13 +555,14 @@ async function runCustom(
 ): Promise<Outcome> {
   const started = Date.now();
   if (custom.skipped) return { summary: { ...custom.skipped, ...NOT_RUN }, findings: [], secrets: [] };
-  const paths = custom.paths(args.changedPaths);
-  if (paths.length === 0) {
+  const paths = custom.paths?.(args.changedPaths);
+  if (paths ? paths.length === 0 : !custom.wants(args.changedPaths)) {
     return skippedOutcome(custom.source, "no_matching_files", null, started);
   }
   const result = await custom.run({ repoDir: args.repoDir, changedPaths: args.changedPaths, scratch: args.scratch });
-  // Its binary was fetched and checked when it was approved: nothing to resolve.
-  return ranOutcome(custom.source, result, result.version, started, { resolveMs: 0, files: paths.length });
+  // Its binary was fetched and checked when it was approved: nothing to
+  // resolve. Without a file list, it was handed every changed file.
+  return ranOutcome(custom.source, result, result.version, started, { resolveMs: 0, files: (paths ?? args.changedPaths).length });
 }
 
 // A scanner whose run threw is recorded as failed; the throw never escapes.

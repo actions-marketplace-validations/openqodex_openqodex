@@ -498,6 +498,7 @@ function skippedAdapter(entry: CustomScanner, reason: string): CustomAdapter {
   return {
     source,
     skipped: { scanner: source, status: "untrusted", version: null, rawCount: 0, keptCount: 0, durationMs: 0, reason },
+    wants: () => false,
     paths: matcher(entry),
     run: async () => ({ findings: [], error: null, version: null }),
   };
@@ -510,6 +511,7 @@ function trustedAdapter(entry: CustomScanner, record: TrustRecord): CustomAdapte
   return {
     source,
     skipped: null,
+    wants: (changedPaths) => matching(changedPaths).length > 0,
     paths: matching,
     async run({ repoDir, changedPaths, scratch }) {
       const tokens = splitCommand(entry.run);

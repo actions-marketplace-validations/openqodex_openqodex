@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
+import { REDACTED } from "@openqodex/core";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 import { plant, resolveFirst, scan, withLoggingProxy } from "./subprocess-support.js";
 import type { Case } from "./subprocess-support.js";
@@ -141,6 +142,17 @@ describe("builtin scanner subprocesses", () => {
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {
     const result = await scan(cases[0]!);
     expect(result.scan.candidates.some((c) => c.ruleId === "stripe-access-token")).toBe(true);
+    expect(JSON.stringify(result.scan)).not.toContain(generatedSecret);
+  }, 300_000);
+
+  // The fixture filter drops the finding, so only the trail keeps its file,
+  // and that file's name is the secret.
+  it("a secret gitleaks finds in a fixture file named after it never reaches the scan's trail", async () => {
+    const file = `fixtures/${generatedSecret}.txt`;
+    const result = await scan({ scanner: "gitleaks", rule: "stripe-access-token", files: { [file]: `STRIPE_KEY = '${generatedSecret}'\n` }, anchor: file });
+    const entries = (result.scan.trail ?? []).filter((e) => e.token === "gitleaks:stripe-access-token");
+    expect(entries.map((e) => e.stage)).toEqual(["fixture"]);
+    expect(entries[0]!.file).toBe(`fixtures/${REDACTED}.txt`);
     expect(JSON.stringify(result.scan)).not.toContain(generatedSecret);
   }, 300_000);
 });

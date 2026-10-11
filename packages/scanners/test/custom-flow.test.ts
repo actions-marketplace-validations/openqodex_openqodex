@@ -102,8 +102,10 @@ describe("custom scanner trust flow", () => {
     // 5: the approved adapter runs on the changed workflow file.
     const [adapter] = customAdapters(repo, config);
     expect(adapter?.skipped).toBeNull();
-    expect(adapter?.paths(["README.md"])).toEqual([]);
-    expect(adapter?.paths(changed)).toEqual(changed);
+    expect(adapter?.wants(["README.md"])).toBe(false);
+    expect(adapter?.wants(changed)).toBe(true);
+    expect(adapter?.paths?.(["README.md"])).toEqual([]);
+    expect(adapter?.paths?.(changed)).toEqual(changed);
     const result = await adapter!.run({ repoDir: repo, changedPaths: [...changed, "README.md"] });
     expect(result.error).toBeNull();
     expect(result.version).toBe("1.7.12");
