@@ -12,12 +12,35 @@
 //                          [--add-repeats <n>] [--change <RC-id>]
 //                          [--model <id>] [--web off|on] [--dry-run]
 //                          [--draft] [--allow-retired] [--allow-missing-scanners]
+//   node benchmark/run.mjs --reviewers model:<deployment>|model:scripted
+//                          --max-usd <n> --max-minutes <n> --review-max-usd <n>
+//                          [--cases a,b | --cases <suite>/<name>,...]
+//                          [--model-effort <level>] [--max-output-tokens <n>]
+//                          [--model-script <file>] [--install-root <dir>/tools]
+//                          [--concurrency 2] [--timeout <s>] [the flags above]
 //   node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1]
 //                          [--check-identical] [--scanner-config <file>]
 //                          [--allow-missing-scanners] [--timeout 120]
 //                          [--out <folder>] [--dry-run] [--draft]
 //
 // Without --cases, every case the lock does not mark retired runs.
+//
+// --reviewers model:<id> is the server path (lib/server-review.mjs): each
+// review is the library's reviewChange in the server profile, on the case
+// materialised as two commits (lib/suites.mjs), with the model reviewer as
+// the host's model, every call held by the run's budget ledger, scanners
+// read from --install-root (default $OPENQODEX_HOME/tools or
+// ~/.openqodex/tools, never installed) and a workDir of its own. <id> is
+// `scripted` (the scripted model, lib/scripted-model.mjs, answering from
+// --model-script, by default lib/scripted-model.json; no network), a
+// deployment boards.json records as probed, or a name its aliases map
+// points at one; anything else is refused. The server profile always builds
+// the code graph and gives the reviewer no web tool, so --graph is on and
+// --web off; reviews run 2 at a time unless --concurrency says otherwise;
+// --review-max-usd is required. --cases may name pull request cases
+// (<suite>/<name> or a full case id, development split only), which only
+// model reviewers review here; their resolved truth is copied into the
+// run's cases/ folder. Laptop and model reviewers never share a run.
 //
 // Exit codes: 0 finished; 1 stopped (a limit or login wall, the budget, the
 // same failure twice, Ctrl-C); 2 refused (flags, build, lock, budget
@@ -173,31 +196,55 @@
 //    the Semgrep rule packs each sample consumed ("mixed" when two differ)
 //    and a hash of the osv.dev advisories, read from the saved scans, never
 //    downloaded again (lib/external.mjs).
+// Model reviewers (the server path):
+// 25. A model nobody probed is spent on: model:<id> is resolved against
+//    boards.json before anything else (lib/server-review.mjs), and the
+//    manifest records the deployment, the alias that named it, and the
+//    settings (effort, maxOutputTokens, the scripted model's script).
+//    A resume is refused when the endpoint, recorded as the sha256 of its
+//    base URL, differs from the run's.
+// 26. The model recorded is not the one that answered: each sample records
+//    the model asked for apart from the ones the provider named as
+//    answering, and the manifest's model is the id that served the run's
+//    first answered review (requestedModel is the one asked for); a review
+//    served by another id stops the run.
+// 27. A review writes outside its workDir, or the key or base URL of the
+//    model endpoint lands in a saved file: either stops the run. An answer
+//    that holds the key or the address is checked before anything of its
+//    sample is written or printed, and only the refusal is saved.
+// 28. The scanner preflight reads another tools folder than the reviews:
+//    --install-root names the tools folder of an OpenQodex home, and the
+//    doctor runs with that home.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, homedir, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, git, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
-import { estimateRun, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
+import { estimateRun, loadPrices, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
 import { externalOf, toolchainOf } from "./lib/external.mjs";
 import { comparePasses } from "./lib/identical.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
+import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
+import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
+import { materialise, readCase as readSuiteCase, readSuite, realCaseId, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]";
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]";
 
-// What this runner reviews today: the planted suite, through the laptop
-// reviewers (Claude Code and Codex).
-const SUITE = "planted";
-const PATH_KIND = "laptop";
-
-// Flags only a review run reads, and flags only a scanner-only run reads.
-const REVIEW_ONLY = ["--reviewers", "--graph", "--web", "--model", "--resume", "--max-usd", "--max-minutes", "--max-tokens", "--max-reviews", "--review-max-usd", "--add-repeats", "--change", "--allow-over"];
+// Flags only a review run reads, flags only a scanner-only run reads, and
+// flags only a model reviewer reads.
+const REVIEW_ONLY = ["--reviewers", "--graph", "--web", "--model", "--resume", "--max-usd", "--max-minutes", "--max-tokens", "--max-reviews", "--review-max-usd", "--add-repeats", "--change", "--allow-over", "--model-effort", "--max-output-tokens", "--model-script", "--install-root"];
 const SCAN_ONLY = ["--scanner-config", "--check-identical"];
+const MODEL_ONLY = ["--model-effort", "--max-output-tokens", "--model-script", "--install-root"];
+
+// A --cases entry that names a pull request case: <suite>/<name> or a full
+// case id, never a planted case's bare name.
+const isRealRef = (c) => c.includes("/");
 
 const positive = (flag, value, whole = false) => {
   const n = Number(value);
@@ -206,7 +253,7 @@ const positive = (flag, value, whole = false) => {
 };
 
 function parseArgs(argv) {
-  const o = { mode: "review", repeat: null, repeatGiven: false, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: null, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, scannerConfig: null, checkIdentical: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { mode: "review", repeat: null, repeatGiven: false, cases: null, graph: null, reviewers: ["claude"], concurrency: null, timeout: null, out: null, resume: false, addRepeats: null, change: null, model: null, web: "off", dryRun: false, allowMore: false, draft: false, allowRetired: false, allowMissingScanners: false, allowOver: false, maxUsd: null, maxMinutes: null, maxTokens: null, maxReviews: null, reviewMaxUsd: null, scannerConfig: null, checkIdentical: false, modelEffort: undefined, maxOutputTokens: 32000, modelScript: DEFAULT_SCRIPT, installRoot: null, cli: join(repoRoot, "packages/cli/dist/bin.js") };
   const given = new Set();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -238,6 +285,10 @@ function parseArgs(argv) {
     else if (a === "--timeout") o.timeout = Number(next());
     else if (a === "--out") o.out = resolve(next());
     else if (a === "--model") o.model = next();
+    else if (a === "--model-effort") o.modelEffort = next();
+    else if (a === "--max-output-tokens") o.maxOutputTokens = positive(a, next(), true);
+    else if (a === "--model-script") o.modelScript = resolve(next());
+    else if (a === "--install-root") o.installRoot = resolve(next());
     else if (a === "--web") o.web = next();
     else if (a === "--cli") o.cli = resolve(next());
     else if (a === "--resume") o.resume = true;
@@ -249,14 +300,30 @@ function parseArgs(argv) {
   }
   if (o.mode !== "review" && o.mode !== "scan") throw new Error("--mode takes review or scan");
   const scan = o.mode === "scan";
+  // Model reviewers are the server path; Claude Code and Codex the laptop path.
+  const models = o.reviewers.filter(isModelReviewer);
+  const server = !scan && models.length > 0;
+  o.path = server ? "server" : "laptop";
+  const real = (o.cases ?? []).filter(isRealRef);
+  o.realRefs = real.length > 0 ? real : null;
   // A scan is deterministic (--check-identical proves it), so one repeat; a scan has no reviewer to wait on.
   o.repeat ??= scan ? 1 : 3;
-  o.timeout ??= scan ? 120 : 900;
+  o.timeout ??= scan ? 120 : o.realRefs ? 1800 : 900;
+  // The server profile always builds the code graph.
+  o.graph ??= server ? ["on"] : ["off", "on"];
+  // Model reviews wait on the endpoint, not this machine, so two run at once.
+  o.concurrency ??= server ? 2 : 1;
   const wrong = (scan ? REVIEW_ONLY : SCAN_ONLY).filter((f) => given.has(f));
   if (wrong.length > 0) {
     throw new Error(scan ? `${wrong.join(", ")}: a scanner-only run (--mode scan) runs no reviewer and spends nothing, and is run again rather than resumed` : `${wrong.join(", ")}: only a scanner-only run (--mode scan) reads ${wrong.length === 1 ? "it" : "them"}`);
   }
   if (scan && o.concurrency !== 1) throw new Error("--mode scan runs one scan at a time: every case is built at the one repository path the overlay's approval names, and scan times compare only at concurrency 1");
+  if (!scan) modelChecks(o, given, models);
+  if (o.realRefs !== null) {
+    if (real.length !== o.cases.length) throw new Error("--cases names planted cases and pull request cases together; one run reviews one suite");
+    if (!server) throw new Error("pull request cases (--cases <suite>/<name>) are reviewed here by model reviewers only (--reviewers model:<id>); the laptop reviewers run the planted cases");
+    for (const f of ["--draft", "--allow-retired"]) if (given.has(f)) throw new Error(`${f} is for planted cases, whose lock it reads; a pull request case is frozen by its suite entry`);
+  }
   if (o.scannerConfig !== null && !existsSync(o.scannerConfig)) throw new Error(`--scanner-config: there is no file ${o.scannerConfig}`);
   if (!scan && (o.maxUsd === null || o.maxMinutes === null)) throw new Error("--max-usd and --max-minutes are required: every run names what it may spend and how long it may take");
   if (!Number.isInteger(o.repeat) || o.repeat < 1 || o.repeat > 6) throw new Error("--repeat takes a whole number from 1 to 6");
@@ -269,14 +336,79 @@ function parseArgs(argv) {
   if (!Number.isInteger(o.concurrency) || o.concurrency < 1) throw new Error("--concurrency takes a whole number from 1");
   if (!Number.isInteger(o.timeout) || o.timeout < 60) throw new Error("--timeout takes whole seconds, at least 60");
   if (o.graph.some((g) => g !== "off" && g !== "on")) throw new Error("--graph takes off, on or off,on");
-  if (o.reviewers.some((r) => r !== "claude" && r !== "codex")) throw new Error("--reviewers takes claude, codex or both");
+  if (o.reviewers.some((r) => r !== "claude" && r !== "codex" && !isModelReviewer(r))) throw new Error("--reviewers takes claude, codex or both, or model reviewers (model:<deployment>, model:scripted)");
   if (o.web !== "on" && o.web !== "off") throw new Error("--web takes on or off");
   if (o.model !== null && o.reviewers.includes("codex")) {
     throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
   }
   const all = listCases();
-  for (const c of o.cases ?? []) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
+  for (const c of o.cases ?? []) if (!isRealRef(c) && !all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   return o;
+}
+
+// The rules for model reviewers, and against their flags elsewhere. Each
+// model:<id> is resolved against boards.json here, before anything else runs
+// (failure 25).
+function modelChecks(o, given, models) {
+  if (models.length === 0) {
+    const wrong = MODEL_ONLY.filter((f) => given.has(f));
+    if (wrong.length > 0) throw new Error(`${wrong.join(", ")}: only model reviewers (--reviewers model:<id>) read ${wrong.length === 1 ? "it" : "them"}`);
+    return;
+  }
+  if (models.length !== o.reviewers.length) throw new Error("--reviewers mixes laptop reviewers (claude, codex) and model reviewers: the two paths run apart, one run each");
+  if (new Set(o.reviewers).size !== o.reviewers.length) throw new Error("--reviewers names one model reviewer twice");
+  o.modelReviewers = Object.fromEntries(models.map((name) => [name, resolveModelReviewer(name)]));
+  if (o.graph.includes("off")) throw new Error("--graph off: the server profile always builds the code graph, so a model reviewer runs graph on only");
+  if (o.web !== "off") throw new Error("--web on: the server profile gives the reviewer no web tool");
+  if (o.model !== null) throw new Error("--model is Claude Code's; a model reviewer names its deployment in --reviewers model:<deployment>");
+  if (o.reviewMaxUsd === null) throw new Error("--review-max-usd is required for model reviewers: every call is held to it before it is sent");
+  if (o.modelEffort !== undefined && !/^[a-z]+$/.test(o.modelEffort)) throw new Error("--model-effort takes a reasoning effort level, such as low, medium or high");
+  if (given.has("--model-script") && !models.includes(SCRIPTED)) throw new Error("--model-script is the scripted model's script; it needs --reviewers model:scripted");
+  if (o.installRoot !== null && basename(o.installRoot) !== "tools") throw new Error("--install-root names the tools folder of an OpenQodex home (<home>/tools): the scanner preflight reads that home's doctor, so it must be the folder the reviews read");
+}
+
+// The pull request cases --cases names (<suite>/<name> or a full case id),
+// read from their suite, with the truth each is scored against, and the
+// spec copy the run saves in its cases/ folder. Exits 2 on a refusal,
+// leaving no temp folder.
+function realCases(refs) {
+  const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
+  const refuse = (lines) => {
+    rmSync(tempRoot, { recursive: true, force: true });
+    console.error("The run cannot start:");
+    for (const r of lines) console.error(`- ${r}`);
+    process.exit(2);
+  };
+  const byName = {};
+  const problems = [];
+  for (const ref of refs) {
+    try {
+      let c;
+      if (/^[a-z]+\/[^@\s]+@[0-9a-f]{8}$/.test(ref)) c = readSuiteCase(ref);
+      else {
+        const [suite, name] = ref.split("/");
+        const entry = readSuite(suite).byName.get(name);
+        if (!entry) throw new Error(`suite ${suite} holds no case named ${name}`);
+        c = readSuiteCase(realCaseId(suite, name, entry.hash));
+      }
+      if (c.status !== "usable") throw new Error(`${c.id} is excluded: ${c.excludedWhy ?? "no reason recorded"}`);
+      if (c.split !== "dev") throw new Error(`${c.id} is ${c.split === "test" ? "held out: only a release run reviews it" : "on no side of its split"}`);
+      if (byName[c.name]) throw new Error(`${c.id} is named twice`);
+      // The truth it is scored against, read now from the pinned files, and
+      // saved with the case as the run's spec copy.
+      const spec = { ...c, bugs: truthOf(c).items };
+      const file = join(tempRoot, "specs", `${c.name}.json`);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(spec, null, 2)}\n`);
+      byName[c.name] = { case: c, specFile: file };
+    } catch (error) {
+      problems.push(`${ref}: ${error.message.split("\n")[0]}`);
+    }
+  }
+  if (problems.length > 0) refuse(problems);
+  const suites = [...new Set(Object.values(byName).map((x) => x.case.suite))];
+  if (suites.length > 1) refuse([`--cases names cases of ${suites.join(" and ")}; one run reviews one suite`]);
+  return { tempRoot, byName, suite: suites[0] };
 }
 
 // The cases this run may use, copied once into a temp folder (failures 16
@@ -687,8 +819,15 @@ async function main() {
     console.error(`${error.message}\n${USAGE}`);
     process.exit(2);
   }
-  const { cases, snap, hashes, tempRoot } = lockedCases(o);
+  // Planted cases come from a copy checked against the lock; pull request
+  // cases from their suite, with their truth read now.
+  const real = o.realRefs ? realCases(o.realRefs) : null;
+  const { cases, snap, hashes, tempRoot } = real
+    ? { cases: Object.keys(real.byName), snap: null, hashes: Object.fromEntries(Object.entries(real.byName).map(([n, x]) => [n, x.case.hash])), tempRoot: real.tempRoot }
+    : lockedCases(o);
   o.cases = cases;
+  const suite = real ? real.suite : "planted";
+  const server = o.path === "server";
   // Every exit before the reviews start leaves no copy behind.
   const leave = (code) => {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -701,7 +840,18 @@ async function main() {
   }
   if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave });
   const date = new Date().toISOString().slice(0, 10);
-  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
+  const out = o.out ?? join(benchRoot, "results", server ? `${date}-${build.short}-${suite}-review-server` : `${date}-${build.short}`);
+  // The repository a review of the case reads, in the shape its path needs:
+  // laptop, the change uncommitted; server, the base and the change as two
+  // commits (lib/suites.mjs).
+  const buildRepo = (name, into, shape) => {
+    if (real) return materialise(real.byName[name].case, into, { shape });
+    if (shape === "server") return materialise({ name, materialise: { kind: "folders" } }, into, { shape, casesDir: snap });
+    return buildCase(name, into, snap);
+  };
+  // The spec each case is scored against: a planted case's own, or a pull
+  // request case with its resolved truth.
+  const specFile = (name) => (real ? real.byName[name].specFile : join(snap, name, "case.json"));
   // --add-repeats: the run's own repeats plus the added ones, as a resume of
   // that run whose plan grows (lib/runner.mjs executeRun, failure 15 there).
   if (o.addRepeats !== null) {
@@ -718,7 +868,7 @@ async function main() {
     }
   }
   // The jobs in run order, each with its id (lib/runner.mjs planJobs; failure 7).
-  const idOf = Object.fromEntries(o.cases.map((c) => [c, caseIdFromHash(c, hashes[c])]));
+  const idOf = Object.fromEntries(o.cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c])]));
   let configs;
   let jobs;
   try {
@@ -747,28 +897,51 @@ async function main() {
   for (const k of Object.keys(env)) if (k.startsWith("GIT_") || k === "FORCE_COLOR") delete env[k];
   if (o.model) env.ANTHROPIC_MODEL = o.model;
 
+  // The model reviewers, before anything is spent: each one's adapter and
+  // what the manifest records about it (failure 25). The endpoint's settings
+  // are read here and never printed.
+  const models = {};
+  if (server) {
+    for (const name of o.reviewers) {
+      try {
+        models[name] = createModelReviewer(o.modelReviewers[name], { effort: o.modelEffort, maxOutputTokens: o.maxOutputTokens, scriptPath: o.modelScript });
+      } catch (error) {
+        console.error(`The ${name} reviewer cannot run: ${error.message}`);
+        leave(2);
+      }
+      const r = models[name].record;
+      console.log(`Reviewer ${name}: model ${r.requestedModel}${r.alias ? ` (the alias ${r.alias} in boards.json)` : ""}${r.script ? `, script ${r.script.file} (${r.script.sha256.slice(0, 12)})` : ""}, effort ${r.settings.effort ?? "the deployment's default"}, at most ${r.settings.maxOutputTokens} output tokens per call`);
+    }
+  }
+  // The scanners a model review reads, never installed, and the doctor's
+  // view of the same folder (failure 28).
+  const installRoot = server ? (o.installRoot ?? join(process.env.OPENQODEX_HOME ? resolve(process.env.OPENQODEX_HOME) : join(homedir(), ".openqodex"), "tools")) : null;
+  const doctorEnv = server ? { ...env, OPENQODEX_HOME: dirname(installRoot) } : env;
+
   // The budget, before anything is spent (failure 11): the estimate of what
   // is left to run, on top of what the run's ledger says is spent already.
   const caps = { maxUsd: o.maxUsd, reviewMaxUsd: o.reviewMaxUsd };
   const forecast = { maxMinutes: o.maxMinutes, maxTokens: o.maxTokens, maxReviews: o.maxReviews };
-  const estimate = estimateRun({ jobs: todo, suite: SUITE, path: PATH_KIND, concurrency: o.concurrency });
+  const estimate = estimateRun({ jobs: todo, suite, path: o.path, concurrency: o.concurrency });
   const spentBefore = readLedger(out).spentUsd;
   const usd = (n) => `$${n.toFixed(2)}`;
-  console.log(`Estimate: ${usd(estimate.usd)} for ${estimate.reviews - estimate.unpriced} reviews${estimate.unpriced > 0 ? ` (${estimate.unpriced} more report tokens, not dollars)` : ""}, about ${Math.ceil(estimate.minutes)} minutes; from ${[...new Set(Object.values(estimate.perConfig).map((p) => p.from))].join(" and ")}.`);
-  console.log(`Budget: --max-usd ${usd(o.maxUsd)}${spentBefore > 0 ? ` (${usd(spentBefore)} spent already)` : ""}, --max-minutes ${o.maxMinutes}${o.maxTokens ? `, --max-tokens ${o.maxTokens}` : ""}${o.maxReviews ? `, --max-reviews ${o.maxReviews}` : ""}. Claude Code and Codex report their cost after each review, so these are forecast stops: no review starts once the next would pass a limit.`);
-  const refusals = startRefusals({ estimate, caps, forecast, spentUsd: spentBefore, allowOver: o.allowOver, path: PATH_KIND });
+  console.log(`Estimate: ${usd(estimate.usd)} for ${estimate.reviews - estimate.unpriced} reviews${estimate.unpriced > 0 ? ` (${estimate.unpriced} more ${server ? "with no measured cost yet" : "report tokens, not dollars"})` : ""}, about ${Math.ceil(estimate.minutes)} minutes; from ${[...new Set(Object.values(estimate.perConfig).map((p) => p.from))].join(" and ")}.`);
+  if (server) console.log(`Budget: --max-usd ${usd(o.maxUsd)}${spentBefore > 0 ? ` (${usd(spentBefore)} spent already)` : ""}, --review-max-usd ${usd(o.reviewMaxUsd)}, --max-minutes ${o.maxMinutes}${o.maxReviews ? `, --max-reviews ${o.maxReviews}` : ""}. These are hard caps: each model review holds --review-max-usd against --max-usd before it starts, and each call reserves its worst case before it is sent.`);
+  else console.log(`Budget: --max-usd ${usd(o.maxUsd)}${spentBefore > 0 ? ` (${usd(spentBefore)} spent already)` : ""}, --max-minutes ${o.maxMinutes}${o.maxTokens ? `, --max-tokens ${o.maxTokens}` : ""}${o.maxReviews ? `, --max-reviews ${o.maxReviews}` : ""}. Claude Code and Codex report their cost after each review, so these are forecast stops: no review starts once the next would pass a limit.`);
+  const refusals = startRefusals({ estimate, caps, forecast, spentUsd: spentBefore, allowOver: o.allowOver, path: o.path });
 
   // The scanners each case needs, from the CLI's own doctor in each case's
   // repository (failure 18).
   let preflight;
   try {
-    const repos = o.cases.map((c) => ({ case: c, dir: buildCase(c, join(tempRoot, "preflight", c, "repo"), snap).dir }));
-    preflight = scannerPreflight({ cli: o.cli, repos, env });
+    const repos = o.cases.map((c) => ({ case: c, dir: buildRepo(c, join(tempRoot, "preflight", c, "repo"), server ? "server" : "laptop").dir }));
+    preflight = scannerPreflight({ cli: o.cli, repos, env: doctorEnv });
   } catch (error) {
     console.error(`The scanner preflight failed: ${error.message}`);
     leave(2);
   }
-  if (preflight.complete) console.log("Scanners: every scanner the cases call for is installed.");
+  if (server) rmSync(join(tempRoot, "preflight"), { recursive: true, force: true });
+  if (preflight.complete) console.log(`Scanners: every scanner the cases call for is installed${server ? ` in ${hideHome(installRoot)}` : ""}.`);
   else {
     console.log(`Scanners missing: ${preflight.missing.map((m) => `${m.scanner} for ${m.case} (${m.state})`).join(", ")}.`);
     if (o.allowMissingScanners) console.log("--allow-missing-scanners: the run records scannersComplete false and is never accepted.");
@@ -785,9 +958,10 @@ async function main() {
   }
 
   // The reviewers, before anything is spent (failure 3), with the model each
-  // one really answers with (failure 14).
-  const reviewers = {};
-  for (const name of o.reviewers) {
+  // one really answers with (failure 14). A model reviewer's served model is
+  // recorded in each sample (failure 26).
+  const reviewers = Object.fromEntries(Object.entries(models).map(([name, m]) => [name, m.record]));
+  for (const name of server ? [] : o.reviewers) {
     const p = await probeReviewer(name, { env });
     if (!p.ok) {
       console.error(`The ${name} reviewer cannot run: ${p.text}`);
@@ -804,11 +978,17 @@ async function main() {
   const settings = {
     runId: basename(out),
     mode: "review",
+    suite,
+    split: "dev",
+    splitHash: real ? (Object.values(real.byName)[0].case.splitHash ?? null) : null,
+    path: o.path,
     build,
     machine: machine(),
     reviewer: o.reviewers.length === 1 ? reviewers[o.reviewers[0]] : null,
     reviewers,
-    review: { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
+    review: server
+      ? { web: "off", timeoutSeconds: o.timeout, profile: "server", installRoot: hideHome(installRoot), flags: "reviewChange in the server profile: a workDir per review, the budget from the run's ledger, scanners preinstalled, tools { web: false, shell: false }" }
+      : { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
     // The frozen ids (planted/<name>@<hash8>) that scores and the index key by.
     caseIds,
@@ -834,14 +1014,14 @@ async function main() {
     const differ = resumeProblems(earlier, o.addRepeats !== null ? { ...settings, repeat: earlier.repeat } : settings);
     for (const c of o.cases) {
       const copy = join(out, "cases", `${c}.json`);
-      if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(snap, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
+      if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(specFile(c), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
     }
     return differ;
   };
 
-  console.log(`Case repositories: ${tempRoot}`);
+  if (!server) console.log(`Case repositories: ${tempRoot}`);
   const secrets = new Set();
-  for (const c of o.cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
+  if (!real) for (const c of o.cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
 
   let stop = null;
   const halt = (why) => {
@@ -855,7 +1035,51 @@ async function main() {
 
   // The run's ledger, in its folder: each review's reported cost, tokens and
   // time, which the launch rule reads before the next review (failure 11).
-  const budget = runBudget({ dir: out, caps, forecast, estimate, path: PATH_KIND });
+  // A model review's calls are priced from prices.json, and the scripted
+  // model's from its script.
+  const prices = server ? Object.assign(loadPrices(), ...Object.values(models).map((m) => m.prices)) : null;
+  const budget = runBudget({ dir: out, caps, forecast, estimate, path: o.path, prices });
+
+  // Each saved file is checked for a generated secret and, for a model
+  // endpoint, its key or base URL (failure 27).
+  const checkSaved = (dir) => {
+    for (const file of filesUnder(dir)) {
+      const text = readFileSync(file, "utf8");
+      for (const s of secrets) if (text.includes(s)) halt(`the generated secret is in ${relative(out, file)}; nothing more runs until that is fixed`);
+      for (const [name, m] of Object.entries(models)) if (m.appearsIn?.(text)) halt(`the ${name} endpoint's key or base URL is in ${relative(out, file)}; nothing more runs until that is fixed`);
+    }
+  };
+
+  // One model review (the server path), saved as its own scored sample
+  // whatever happened (failure 4), in a workDir of its own under the run's
+  // short work root; the attempt's clone is removed once the sample is saved.
+  const lib = server ? await import(pathToFileURL(join(dirname(o.cli), "lib.js")).href) : null;
+  const workRoot = server ? makeWorkRoot() : null;
+  const serverJob = async (job, k, meter) => {
+    const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${k}`);
+    const repo = buildRepo(job.case, join(caseDir, "repo"), "server");
+    const replacements = [[tempRoot, "<temp>"], [realpathSync(tempRoot), "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
+    let saved;
+    try {
+      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop, appearsIn: models[job.reviewer].appearsIn });
+    } finally {
+      rmSync(caseDir, { recursive: true, force: true });
+    }
+    const rec = saved.record;
+    appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+    const cost = rec.usage?.cost_usd;
+    console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(4)}` : ""}, served by ${rec.servedModel ?? (rec.servedModels.length > 0 ? rec.servedModels.join(" and ") : "a model the provider did not name")}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
+    checkSaved(attemptDir(out, job, k));
+    if (rec.outside.length > 0) halt(`${job.case} ${job.config} #${job.repeat}: the review wrote outside its workDir: ${rec.outside.join("; ")}`);
+    if (saved.error) halt(`${job.case} ${job.config} #${job.repeat}: the review threw: ${String(saved.error.message ?? saved.error).split("\n")[0]}`);
+    if (saved.leaked) return halt(`${job.case} ${job.config} #${job.repeat}: the provider's answer held the ${job.reviewer} endpoint's key or address; only the refusal was saved`);
+    // The manifest names the model that served the run's first answered
+    // review, on disk now and in the copy executeRun writes at the end; a
+    // review served by another stops the run (failure 26).
+    const served = recordServed({ manifestPath: join(out, "manifest.json"), name: job.reviewer, record: rec });
+    settings.reviewers[job.reviewer].model = served.model;
+    if (served.why) halt(`${job.case} ${job.config} #${job.repeat}: ${served.why}`);
+  };
 
   // One attempt, saved as its own scored sample whatever happened (failure 4).
   const attempt = async (job, k) => {
@@ -882,17 +1106,23 @@ async function main() {
     budget.recordReview({ jobId: job.jobId, usd: typeof rec.usage?.cost_usd === "number" ? rec.usage.cost_usd : null, tokens, wallMs: rec.wallMs });
     const cost = rec.usage?.cost_usd;
     console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(2)}` : ""}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
-    for (const file of filesUnder(dir)) {
-      const text = readFileSync(file, "utf8");
-      for (const s of secrets) if (text.includes(s)) halt(`the generated secret is in ${relative(out, file)}; nothing more runs until that is fixed`);
-    }
+    checkSaved(dir);
     return failure;
   };
 
   // One job's reviews: its next free attempt (a first attempt that started
   // and never saved is kept, and the work goes to the next folder), and one
-  // more after a reviewer failure.
-  const runJob = async (job, k) => {
+  // more after a reviewer failure. A model review gets one attempt: its
+  // ticket is the review's meter, which holds its cap.
+  const runJob = async (job, k, ticket) => {
+    if (server) {
+      try {
+        await serverJob(job, k, ticket);
+      } catch (error) {
+        halt(`${job.case} ${job.config} #${job.repeat}: the benchmark itself failed: ${error.message}`);
+      }
+      return;
+    }
     try {
       const first = await attempt(job, k);
       if (stop !== null) return;
@@ -923,7 +1153,7 @@ async function main() {
       manifest: o.resume ? null : runManifest({ startedAt: new Date().toISOString(), settings, jobs }),
       resume: o.resume,
       checkResume,
-      copies: o.cases.map((c) => [join(snap, c, "case.json"), join("cases", `${c}.json`)]),
+      copies: o.cases.map((c) => [specFile(c), join("cases", `${c}.json`)]),
       jobs,
       concurrency: o.concurrency,
       runJob,
@@ -937,8 +1167,14 @@ async function main() {
     }));
   } catch (error) {
     console.error(error.message);
+    if (workRoot) rmSync(workRoot, { recursive: true, force: true });
     leave(2);
   }
+  // A model review's clone is removed once its sample is saved, so the
+  // server path keeps no temp folder; the laptop path keeps its case
+  // repositories to look at.
+  if (workRoot) rmSync(workRoot, { recursive: true, force: true });
+  if (server) rmSync(tempRoot, { recursive: true, force: true });
   const finished = ended.reviewsWithAnAttempt;
   const spent = typeof ended.spentUsd === "number" ? `; $${ended.spentUsd.toFixed(2)} spent` : "";
   if (ended.how === "finished") console.log(`Done: ${finished} reviews saved in ${shown(out)}${spent}`);
