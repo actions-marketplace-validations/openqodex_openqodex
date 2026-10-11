@@ -11,6 +11,7 @@ export * from "./lenses.js";
 export * from "./missing-tests.js";
 export * from "./brief.js";
 export * from "./finalize.js";
+export * from "./timings.js";
 export * from "./completion.js";
 export * from "./push-gate.js";
 export * from "./render/index.js";
