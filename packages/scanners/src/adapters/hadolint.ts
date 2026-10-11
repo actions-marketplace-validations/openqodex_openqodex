@@ -58,7 +58,7 @@ export async function runHadolint(args: {
         throw new Error(`parse: ${message.slice(0, 200)}`);
       }
     });
-    return { findings, error: null };
+    return { findings: findings.filter((f) => f.ruleId !== "DL3020"), error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { findings: [], error: message.slice(0, 300) };
