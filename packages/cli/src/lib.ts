@@ -74,6 +74,7 @@ export const render = { renderMarkdown, renderSarif, renderJson, renderReview };
 export type {
   // the finding, report and completion types
   Report,
+  RunTimings,
   ReportFinding,
   Verdict,
   CompletionRecord,

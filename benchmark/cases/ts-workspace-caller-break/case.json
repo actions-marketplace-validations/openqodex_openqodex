@@ -32,12 +32,32 @@
       "kind": [
         "bug"
       ],
+      "class": "contract-break",
       "severity": "major",
       "found_by": [
         "reasoning",
         "graph"
       ],
-      "truth": "safeGit now returns an object and no longer throws, but its callers in packages/cli still treat the result as a string (out.split, name.trim) and rely on the throw to detect a failure, so both break at run time. The fix is to update changedFiles and currentBranch to read stdout and check code, or keep the old function beside the new one."
+      "truth": "safeGit now returns an object and no longer throws, but its callers in packages/cli still treat the result as a string (out.split, name.trim) and rely on the throw to detect a failure, so both break at run time. The fix is to update changedFiles and currentBranch to read stdout and check code, or keep the old function beside the new one.",
+      "tags": [
+        "needs-callers"
+      ],
+      "evidence": [
+        {
+          "file": "packages/cli/src/status.ts",
+          "lines": [
+            5,
+            7
+          ]
+        },
+        {
+          "file": "packages/cli/src/branch.ts",
+          "lines": [
+            5,
+            9
+          ]
+        }
+      ]
     }
   ]
 }

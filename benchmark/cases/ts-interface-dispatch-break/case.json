@@ -36,12 +36,39 @@
       "kind": [
         "bug"
       ],
+      "class": "contract-break",
       "severity": "major",
       "found_by": [
         "reasoning",
         "graph"
       ],
-      "truth": "SqlCache.get now throws for a missing or stale key, but the Cache interface it implements promises an empty string for a key that holds nothing, and readSession and isEnabled call it through that interface and test for an empty string, so a first visit or an unset flag throws inside the request handler and crashes the server. The fix is to return an empty string for a missing or stale row, or change the interface and every caller together."
+      "truth": "SqlCache.get now throws for a missing or stale key, but the Cache interface it implements promises an empty string for a key that holds nothing, and readSession and isEnabled call it through that interface and test for an empty string, so a first visit or an unset flag throws inside the request handler and crashes the server. The fix is to return an empty string for a missing or stale row, or change the interface and every caller together.",
+      "tags": [
+        "needs-callers"
+      ],
+      "evidence": [
+        {
+          "file": "src/cache/cache.ts",
+          "lines": [
+            1,
+            3
+          ]
+        },
+        {
+          "file": "src/session.ts",
+          "lines": [
+            4,
+            5
+          ]
+        },
+        {
+          "file": "src/flags.ts",
+          "lines": [
+            9,
+            10
+          ]
+        }
+      ]
     }
   ]
 }

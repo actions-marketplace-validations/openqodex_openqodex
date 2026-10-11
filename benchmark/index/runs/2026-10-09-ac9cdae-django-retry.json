@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "runId": "2026-10-09-ac9cdae-django-retry",
+  "date": "2026-10-09",
+  "suite": "planted",
+  "split": "dev",
+  "splitHash": null,
+  "mode": "review",
+  "path": "laptop",
+  "build": {
+    "commit": "ac9cdae1c68edbc466b8fc6faad0d8860635d8b4",
+    "short": "ac9cdae",
+    "cliVersion": "0.10.0",
+    "dirty": true,
+    "bundleHash": "18aaa1db66265eb155e9bb702944e2fefc17fbd867c916a12538efbc9acc67df"
+  },
+  "reviewers": {
+    "claude": {
+      "version": "2.1.295",
+      "model": "claude-opus-5-5"
+    }
+  },
+  "configs": [
+    "claude-graph-on"
+  ],
+  "repeat": 1,
+  "web": "on",
+  "caseSetHash": null,
+  "caseIds": [
+    "planted/django-model-view@1c282ee0"
+  ],
+  "rulesVersion": null,
+  "scannersComplete": null,
+  "external": null,
+  "ended": {
+    "how": "finished",
+    "why": null
+  },
+  "release": null,
+  "scores": {
+    "claude-graph-on": {
+      "samples": 1,
+      "complete": 1,
+      "incomplete": 0,
+      "failed": 0,
+      "recall": {
+        "hit": 4,
+        "of": 4,
+        "ci": null
+      },
+      "precision": {
+        "hit": 4,
+        "of": 4,
+        "ci": null
+      },
+      "controls": {
+        "hit": 0,
+        "of": 0
+      },
+      "falseFindings": 0,
+      "wallMsMean": 41214,
+      "costUsdMean": 0.1239152,
+      "costUsdTotal": 0.1239152
+    }
+  },
+  "perCase": {
+    "claude-graph-on": {
+      "django-model-view": {
+        "recall": [
+          4,
+          4
+        ],
+        "precision": [
+          4,
+          4
+        ]
+      }
+    }
+  },
+  "asset": {
+    "url": "https://github.com/openqodex/openqodex/releases/download/benchmark-data/2026-10-09-ac9cdae-django-retry.tar.gz",
+    "sha256": "959a2f4d6dc01ae6cc2e4bd3ca49dd123cfcc63634e86b0d6f813bfe4c9323a4",
+    "bytes": 34823,
+    "files": 20,
+    "listHash": "8f8a1649ff8d5852aa91be8469d7991e04e3b153a3ce79d1fa55c1fcc67fa3b7"
+  },
+  "accepted": false,
+  "acceptedAt": null,
+  "acceptedBy": null,
+  "legacy": true,
+  "privateListHash": "785227ea36293673fa0b0089f4f655b5117c8785e1bcfac5a370878fb48b5263",
+  "scoreFile": "score.json",
+  "specsFrom": "cases",
+  "scorer": {
+    "commit": "f863f870790b5e298c4c961b3debd4b146be5810",
+    "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+  },
+  "scoreFiles": [
+    {
+      "file": "score.json",
+      "scores": "2026-10-09-ac9cdae-django-retry",
+      "specsFrom": "cases",
+      "scorer": {
+        "commit": "f863f870790b5e298c4c961b3debd4b146be5810",
+        "sha256": "84521c206fd7814ccc6fd1bc9cf1dda96ac3c32850364a68ae63ef873eb21555"
+      }
+    }
+  ],
+  "originals": {
+    "commit": "9c4d516a15954ba3ed648fe1177038c92fb8f884",
+    "path": "benchmark/results/2026-10-09-ac9cdae-django-retry"
+  },
+  "notes": [
+    "The django-model-view review of 2026-10-09-ac9cdae, run again on the same build after it failed."
+  ]
+}

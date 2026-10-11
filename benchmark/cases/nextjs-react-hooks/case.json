@@ -26,12 +26,15 @@
       "kind": [
         "bug"
       ],
+      "class": "framework-misuse",
       "severity": "major",
       "found_by": [
         "reasoning",
         "oxlint"
       ],
-      "truth": "useState and useEffect are called after an early return, so the number of hooks changes when the query appears or disappears, which React rejects with an error. The fix is to call every hook before the early return."
+      "truth": "useState and useEffect are called after an early return, so the number of hooks changes when the query appears or disappears, which React rejects with an error. The fix is to call every hook before the early return.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "effect-without-deps",
@@ -56,11 +59,14 @@
         "bug",
         "performance"
       ],
+      "class": "framework-misuse",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "The effect has no dependency list, so it runs after every render, and setResults with a new array renders again: the page fetches in a loop. The fix is [query] as the dependency list, and ignoring a stale answer."
+      "truth": "The effect has no dependency list, so it runs after every render, and setResults with a new array renders again: the page fetches in a loop. The fix is [query] as the dependency list, and ignoring a stale answer.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "query-as-html",
@@ -83,12 +89,15 @@
       "kind": [
         "security"
       ],
+      "class": "xss",
       "severity": "critical",
       "found_by": [
         "semgrep",
         "reasoning"
       ],
-      "truth": "The search term from the URL is put into the page as HTML, so a link with a script in q runs that script for whoever opens it (cross-site scripting). The fix is to render the text as a child, {`Results for ${query}`}, which React escapes."
+      "truth": "The search term from the URL is put into the page as HTML, so a link with a script in q runs that script for whoever opens it (cross-site scripting). The fix is to render the text as a child, {`Results for ${query}`}, which React escapes.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "list-without-key",
@@ -110,12 +119,15 @@
         "performance",
         "style"
       ],
+      "class": "framework-misuse",
       "severity": "minor",
       "found_by": [
         "reasoning",
         "oxlint"
       ],
-      "truth": "The list items have no key, so React cannot match them between renders and warns. The fix is key={product.id}."
+      "truth": "The list items have no key, so React cannot match them between renders and warns. The fix is key={product.id}.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

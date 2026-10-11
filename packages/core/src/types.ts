@@ -721,6 +721,38 @@ export type Report = {
   // not hold or a second reviewer's failure, one plain line each.
   second_dropped?: { candidate: Candidate; reason: string; cited?: { file_path: string; line_number: number } }[];
   notes?: string[];
+  // How long each phase of the run took. Absent in a review from the
+  // two-step protocol and in a report written before the field existed.
+  timings?: RunTimings;
+};
+
+// How long each phase of a run took, in milliseconds on the run's clock.
+// The phases run one after another, and each moment of the run counts in
+// the phase it was spent in, so they add up to about total_ms: only the
+// command's own start and end, such as reading the config, count in no
+// phase. total_ms is read from the clock, from the start of the run to the
+// moment the report was made; it is never a sum.
+//   change_ms    working out the change and making its snapshot
+//   scan_ms      the scanner stage, from its start to its last scanner's end
+//   graph_ms     the code graph and the files it writes for the reviewer
+//   brief_ms     the rest of what the reviewer is given: the snapshot's
+//                redaction and hash, the owners' instructions, the brief
+//                and the manifest
+//   reviewer_ms  choosing the reviewer, its boundary check and its run, the
+//                correction rounds and the check of each answer included,
+//                and a second reviewer's run
+//   finalize_ms  the completion record, the report and what report.html shows
+// A scan has change_ms, scan_ms and total_ms only. change_ms and scan_ms
+// are 0 for a phase the run did not reach; another phase it did not reach
+// is absent.
+export type RunTimings = {
+  change_ms: number;
+  scan_ms: number;
+  graph_ms?: number;
+  brief_ms?: number;
+  reviewer_ms?: number;
+  finalize_ms?: number;
+  total_ms: number;
 };
 
 // A piece of context a host gives a review with the change (reviewChange):

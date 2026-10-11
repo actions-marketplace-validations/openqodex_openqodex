@@ -66,7 +66,8 @@ export function loadRun(folder, { specsDir = null } = {}) {
   for (const c of dirs(join(folder, "samples"))) {
     const spec = readJson(join(from, `${c}.json`));
     if (!spec) throw new Error(`${join(from, `${c}.json`)} is missing; a spec is needed to score ${c}`);
-    problems.push(...specProblems(spec, c));
+    // The matching rules only: the scorer reads no label, and runs made before the freeze saved specs without them.
+    problems.push(...specProblems(spec, c, { labels: false }));
     specs[c] = spec;
     ownSpecs[c] = readJson(join(folder, "cases", `${c}.json`));
     for (const config of dirs(join(folder, "samples", c))) {

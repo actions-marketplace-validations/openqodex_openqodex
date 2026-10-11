@@ -1,0 +1,4 @@
+:include .gitignore
+benchmark/cases/
+examples/demo-repo/
+packages/scanners/test/fixtures/

@@ -26,12 +26,15 @@
       "kind": [
         "security"
       ],
+      "class": "command-injection",
       "severity": "critical",
       "found_by": [
         "suppression",
         "reasoning"
       ],
-      "truth": "The file name from the upload form goes into a shell command, and the nosec comment hides the scanner rule that would report it, so a name with shell syntax runs commands. The fix is to pass an argument list without shell=True and to drop the suppression."
+      "truth": "The file name from the upload form goes into a shell command, and the nosec comment hides the scanner rule that would report it, so a name with shell syntax runs commands. The fix is to pass an argument list without shell=True and to drop the suppression.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "suppressed-eval",
@@ -54,12 +57,15 @@
       "kind": [
         "security"
       ],
+      "class": "command-injection",
       "severity": "critical",
       "found_by": [
         "suppression",
         "reasoning"
       ],
-      "truth": "eval runs the expr query parameter as JavaScript, so any caller runs code on the server; two suppression comments hide the rules that would report it. The fix is an arithmetic parser, never eval, and no suppression."
+      "truth": "eval runs the expr query parameter as JavaScript, so any caller runs code on the server; two suppression comments hide the rules that would report it. The fix is an arithmetic parser, never eval, and no suppression.",
+      "tags": [],
+      "evidence": []
     }
   ],
   "extras": [

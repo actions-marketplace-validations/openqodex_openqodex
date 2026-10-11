@@ -115,3 +115,12 @@ it("12. the frozen answer is the one answer.mjs makes from the recorded candidat
   const manifest = JSON.parse(golden("expected/claude/run/manifest.json"));
   expect(answerText(scan, manifest.change_id)).toBe(golden("stand-ins/submission.json"));
 });
+
+it("13. replaces every value of the report's phase timings, and no other number named like one", () => {
+  const timings = (ms: number) => JSON.stringify({ timings: { change_ms: ms, scan_ms: ms + 1, graph_ms: ms + 2, brief_ms: ms + 3, reviewer_ms: ms + 4, finalize_ms: ms + 5, total_ms: ms + 6 }, stats: { files: 7 } }, null, 2);
+  const masked = normalize("report.json", timings(40), context);
+  expect(masked).toBe(normalize("report.json", timings(4000), context));
+  expect(JSON.parse(masked)).toEqual({ timings: { change_ms: "<DURATION_MS>", scan_ms: "<DURATION_MS>", graph_ms: "<DURATION_MS>", brief_ms: "<DURATION_MS>", reviewer_ms: "<DURATION_MS>", finalize_ms: "<DURATION_MS>", total_ms: "<DURATION_MS>" }, stats: { files: 7 } });
+  const elsewhere = '{"total_ms": 12, "lines": {"scan_ms": 3}}';
+  expect(normalize("report.json", elsewhere, context)).toBe(elsewhere);
+});

@@ -1,0 +1,3 @@
+benchmark/cases/** linguist-vendored
+examples/demo-repo/** linguist-vendored
+packages/scanners/test/fixtures/** linguist-vendored

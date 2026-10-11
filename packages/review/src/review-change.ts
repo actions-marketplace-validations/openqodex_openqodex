@@ -42,6 +42,7 @@ import {
   getTreeChange,
   getWholeRepo,
   modelCoverage,
+  phaseClock,
   readCoverage,
   redactSecrets,
   safeGit,
@@ -56,6 +57,7 @@ import type {
   Config,
   Display,
   ImpactSummary,
+  PhaseClock,
   Report,
   ResolveTool,
   ReviewerRecord,
@@ -230,6 +232,11 @@ export type ReviewDeps = {
   // Where the scanners write (pipeline.ts ScanHost): left out, the laptop's
   // places; given, only under it.
   scratchRoot?: string;
+  // The run's phase clock (core's timings.ts), started when the host began
+  // the run; left out, one started as the core starts, on `now`. The core
+  // enters each phase as it runs it, and the report it makes carries the
+  // reading (`timings`).
+  clock?: PhaseClock;
 };
 
 export type ReviewCoreResult =
@@ -347,12 +354,14 @@ async function headOf(repoRoot: string): Promise<string> {
   return sha;
 }
 
-// The change and its snapshot. `keep` receives the snapshot as soon as it
-// exists, so the caller removes it whatever fails later.
-async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHost, keep: (s: Snapshot) => void): Promise<Prepared | null> {
+// The change and its snapshot, then the scan, each timed on `clock`. `keep`
+// receives the snapshot as soon as it exists, so the caller removes it
+// whatever fails later.
+async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHost, clock: PhaseClock, keep: (s: Snapshot) => void): Promise<Prepared | null> {
   const { repoRoot, config, only, skip } = inputs;
   const say = (line: string) => deps.onEvent({ type: "progress", line });
   const warn = (line: string) => deps.onEvent({ type: "warning", line });
+  clock.enter("change");
   if (inputs.target !== undefined) {
     const t = await deps.resolveTarget(inputs.target);
     try {
@@ -372,6 +381,7 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
       const runTarget: RunTarget = { spec: inputs.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
       const readBase = deps.scoped ? { readBase: deps.scoped.readBase } : {};
+      clock.enter("scan");
       const scanned = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost, ...readBase });
       // A delta review scans only the delta, but the snapshot, the tools and
       // the outputs hold the whole change: its secrets are collected over the
@@ -384,6 +394,7 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
       const p = wholeSecrets.length === 0 ? scanned : { ...scanned, secrets: [...new Set([...scanned.secrets, ...wholeSecrets])] };
       return { p, snapshot, tree: null, target: runTarget, ...(scoped ? { full: scoped.full } : {}) };
     } finally {
+      clock.enter("change");
       await t.release();
     }
   }
@@ -409,6 +420,7 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
     // The whole repository as the snapshot holds it, so nothing written in
     // the developer's folder from here on is part of the review.
     const whole = await getWholeRepo({ repoRoot: snap.tree, exclude: config.exclude });
+    clock.enter("scan");
     const p = await scanChange<WholeRepo>({ repoRoot, workDir: snap.tree, config, change: whole, wholeRepo: true, only, skip, host: scanHost });
     return p.scan === null ? null : { p, snapshot: snap, tree: treeSha, whole: p.change };
   }
@@ -417,6 +429,7 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
     return null;
   }
   say(`Reviewing the change against ${change.baseRef}: ${change.stats.files} ${change.stats.files === 1 ? "file" : "files"}, +${change.stats.additions} -${change.stats.deletions}`);
+  clock.enter("scan");
   const p = await scanChange({ repoRoot, workDir: snap.tree, config, change, only, skip, host: scanHost });
   return { p, snapshot: snap, tree: treeSha };
 }
@@ -427,6 +440,9 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
   const warn = (line: string) => deps.onEvent({ type: "warning", line });
   // Refused whole, never cut, before anything runs.
   const contextItems = inputs.context ? checkContext(inputs.context) : null;
+  // Each phase timed as it runs, for the report's timings.
+  const clock = deps.clock ?? phaseClock(deps.now);
+  clock.enter("reviewer");
   const chosen: Chosen = deps.model ? { model: deps.model } : await chooseReviewer(inputs.reviewer, deps.drivers, repoRoot);
   const deadline = inputs.deadlineAt ?? deps.now() + inputs.timeoutMs;
 
@@ -455,11 +471,12 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
   };
   const graphHost: GraphHost = { store: deps.graphStore, onProgress: say, warn, ...(deps.scoped ? { inventory: deps.scoped.inventory, readBase: deps.scoped.readBase } : {}) };
   try {
-    const prep = await prepare(inputs, deps, scanHost, (s) => (snapshot = s));
+    const prep = await prepare(inputs, deps, scanHost, clock, (s) => (snapshot = s));
     if (prep === null) {
       if (inputs.all) warn("Nothing to review: the repository has no files");
       return await finish({ ended: "nothing" });
     }
+    clock.enter("brief");
     const { p } = prep;
     const scan = p.scan as ScanResult;
     const change = p.change;
@@ -483,11 +500,14 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // The graph a model reviewer's find_callers asks, and why there is none.
     let graph: Graph | null = null;
     if (prep.whole) {
+      clock.enter("graph");
       const hot = await buildHotSpots(p, graphHost, inputs.noGraph);
+      clock.enter("brief");
       impact = hot.impact;
       lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     } else {
+      clock.enter("graph");
       const run = await buildGraphRun(p, graphHost, inputs.noGraph);
       graphLease = run.lease;
       impact = run.impact;
@@ -503,6 +523,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           throw error;
         }
       }
+      clock.enter("brief");
       lenses = selectLenses(change, undefined, ruleCoverage(p));
       brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     }
@@ -528,8 +549,10 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     const traced = agent ? agent.driver.traced : true;
     // The driver's per-run proof of its boundary (Codex's sandbox probe),
     // on the redacted snapshot, before its hash is taken.
+    clock.enter("reviewer");
     const unsafe = agent ? ((await agent.driver.check?.({ snapshotDir: prep.snapshot.tree, bin: agent.bin, register: (cleanup) => (checking = cleanup) })) ?? null) : null;
     if (agent && unsafe !== null) return await finish({ ended: "unavailable", reasons: [`${agent.driver.name}: ${unsafe}`], change, scan, secrets: p.secrets });
+    clock.enter("brief");
     const before = hashSnapshot(prep.snapshot.tree);
     const lineCount = lineCounter(prep.snapshot.tree);
     // A secret in a path would reach the reviewer through any listing: the
@@ -550,6 +573,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     // the turns reach the conversation unchanged.
     let metered: { session: ReviewerSession; calls(): CallRecord[] } | null = null;
     let pid: number | null = null;
+    clock.enter("reviewer");
     if (refused === null && model) {
       modelTalk = modelSession({
         reviewer: model.reviewer,
@@ -628,15 +652,19 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     }).finally(async () => {
       await session?.close();
     });
+    clock.enter("finalize");
     if (talk.failure !== null) warn(`openqodex: ${talk.failure}`);
     const after = hashSnapshot(prep.snapshot.tree);
 
     if ("model" in chosen) {
       const evidence = modelEvidence({ role: "primary", model: chosen.model.reviewer.model, session: modelTalk, talk, change, snapshot: { tree: prep.tree, before, after }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt: startedIso });
+      clock.enter("reviewer");
       const second = await secondReview(chosen.model, modelTalk, evidence);
+      clock.enter("finalize");
       // The checked report, or an empty one; the model record goes in it
-      // where the record is built (modelReport).
-      const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), impact };
+      // where the record is built (modelReport). A host that gave the clock
+      // reads it again once it has finished the report.
+      const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), impact, timings: clock.timings() };
       const calls = [...evidence.attempts, ...(second?.evidence.attempts ?? [])];
       return await finish({ ended: "model-reviewed", report, evidence, submission: talk.report ? talk.submission : (talk.checked?.submission ?? talk.submission), change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
     }
@@ -690,6 +718,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         })
       : buildDisplay({ change: full, secrets: p.secrets });
     const calls = metered?.calls() ?? [];
+    report.timings = clock.timings();
     return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change: full, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null, usage: { calls, totals: usageTotals(calls) }, ...(context ? { context: context.manifest } : {}) });
   } finally {
     over = true;
@@ -834,6 +863,10 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   refuseUnsupported(input, reviewer, options);
   // One deadline for the whole review, fixed before any work.
   const deadlineAt = Date.now() + options.budget.deadlineMs;
+  // The result's timings run from here. Proving the merge base and the
+  // previous review's commit is working out the change.
+  const clock = phaseClock(Date.now);
+  clock.enter("change");
   const model = reviewer as ModelReviewer;
   const say = options.onProgress ?? (() => {});
   const decision = await decideIncremental({
@@ -843,18 +876,33 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
     ...(input.previousReviewedSha !== undefined ? { previousReviewedSha: input.previousReviewedSha } : {}),
     ...(input.fullReviewRequested !== undefined ? { fullReviewRequested: input.fullReviewRequested } : {}),
   });
-  if (!decision.ok) return stoppedResult("incomplete", decision.reason);
+  if (!decision.ok) return timed({ result: stoppedResult("incomplete", decision.reason), report: null }, clock);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
   // Everything the review writes besides its snapshot: the change source's
   // temporary folders and the scanners' caches, temporary folders, HOME and
   // TMPDIR (scanners/src/scratch.ts). Removed when the review ends.
   const scratch = join(options.workDir, "scratch");
   mkdirSync(join(scratch, "tmp"), { recursive: true, mode: 0o700 });
+  let done: Reviewed;
   try {
-    return await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say, deadlineAt);
+    done = await reviewInScope(input, model, options, runtimeVersion, decision, config, scratch, say, deadlineAt, clock);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+  return timed(done, clock);
+}
+
+// A result, and the report its renderers draw from (null for a review that
+// stopped before a reviewer was given the change).
+type Reviewed = { result: ReviewResult; report: Report | null };
+
+// The result with the clock read now, once the result is built and the
+// scratch folder removed, just before reviewChange returns; the report its
+// JSON rendering draws from holds the same reading.
+function timed(done: Reviewed, clock: PhaseClock): ReviewResult {
+  const timings = clock.timings();
+  if (done.report !== null) done.report.timings = timings;
+  return { ...done.result, timings };
 }
 
 // The review once the merge base is proved, its decision made and its
@@ -869,7 +917,8 @@ async function reviewInScope(
   scratch: string,
   say: (line: string) => void,
   deadlineAt: number,
-): Promise<ReviewResult> {
+  clock: PhaseClock,
+): Promise<Reviewed> {
   const scope = serverScope({
     clonePath: input.clonePath,
     workDir: options.workDir,
@@ -909,21 +958,22 @@ async function reviewInScope(
           if (e.type === "progress" || e.type === "warning") say(e.line);
         },
         now: Date.now,
+        clock,
         model: { reviewer: model, budget: options.budget, ...(options.secondReviewer ? { second: options.secondReviewer as ModelReviewer } : {}) },
       },
     );
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof MissingObjects) return stoppedResult("incomplete", error.message, decision.scope, scope.notes());
-    if (error instanceof OpenQodexError) return stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes());
+    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes()), report: null };
+    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes()), report: null };
     throw error;
   }
   if (r.ended === "nothing") {
     const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
-    return stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes());
+    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes()), report: null };
   }
-  if (r.ended !== "model-reviewed") return stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes());
+  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes()), report: null };
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;
@@ -952,7 +1002,8 @@ async function reviewInScope(
   }
   const notes = [...(completion.notes ?? []), ...scope.notes()];
   // Every renderer gets who found each finding, the second reviewer's
-  // dropped candidates and the notes, as the result holds them.
+  // dropped candidates and the notes, as the result holds them, and the
+  // timings reviewChange reads last (timed).
   const report = modelReport(
     redactStored(
       {
@@ -966,7 +1017,7 @@ async function reviewInScope(
     completion,
   );
   const complete = completion.status === "complete";
-  return {
+  const result: ReviewResult = {
     status: complete ? (report.verdict === "blocked" ? "complete_blocking" : "complete") : "incomplete",
     ...(complete ? {} : { reason: completion.missing.join("; ") }),
     scope: decision.scope,
@@ -985,4 +1036,5 @@ async function reviewInScope(
     context: r.context ?? [],
     render: reviewRender(report),
   };
+  return { result, report };
 }

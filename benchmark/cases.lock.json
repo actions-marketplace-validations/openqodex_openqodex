@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "historyFrom": {
+    "before": "2026-10-10",
+    "runs": [
+      "2026-10-08-752b77f",
+      "2026-10-08-588a38c",
+      "2026-10-09-ac9cdae",
+      "2026-10-09-ac9cdae-django-retry",
+      "2026-10-09-95efb19",
+      "2026-10-09-602a140",
+      "2026-10-09-602a140-django-graph-off",
+      "2026-10-09-4850f66",
+      "2026-10-09-881318b",
+      "2026-10-09-5227579",
+      "2026-10-09-4a7d198"
+    ],
+    "withoutCaseHashes": [
+      "2026-10-08-752b77f"
+    ]
+  },
+  "cases": {
+    "clean-python-feature": {
+      "hash": "f4a966171640cd63f471a3d90e2a45c9c91d5e5a10b831a7f3effe3e68338860",
+      "frozenAt": "2026-10-11",
+      "history": "lock entry rewritten on 2026-10-11 although 7 local run(s) used 9ec4022c: the case hash now covers each file's executable mode, so the id changed although no file did",
+      "retired": false
+    },
+    "clean-ts-refactor": {
+      "hash": "203def17a5d2382bc6b4cb7cea7d4e32614413b3af707b20efd1e2998a3030b4",
+      "frozenAt": "2026-10-11",
+      "history": "lock entry rewritten on 2026-10-11 although 7 local run(s) used 932afbb6: the case hash now covers each file's executable mode, so the id changed although no file did",
+      "retired": false
+    },
+    "demo-polyglot": {
+      "hash": "8784029fad70b00c423cdd0d829202becb5168db2206005fc6b5107f42ed2a90",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "django-model-view": {
+      "hash": "1e2d2658352244d6c857702bc0fc5a820d106bb82e90a288615245681fa6acda",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "django-renamed-view": {
+      "hash": "88fe20f53629a6fa6f21bde09b044f9ea472f3b654165f32b6756f5f121e51e6",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "express-admin-routes": {
+      "hash": "168bf06469aa74ac5978b4e2fc7bd06ce32476af939ad8b96c73f20f7d786ab5",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "express-route-param": {
+      "hash": "f6a2194af29efbea5228a8facf649b9992d7d61408a072f15603967f39610c25",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "flask-path-traversal": {
+      "hash": "72a23ef7bb3c25b2056193ac3a93bb517f4659124d98b014f0e61d456836285e",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "go-http-handler": {
+      "hash": "2f14de7884cee23b15e8a09ddef91b9fdd90e1c9c553594d51bebabdcd3b0b43",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "js-dynamic-dispatch-gap": {
+      "hash": "525683c5e14f7d21936a4f92a4600c76d4da37c7daf0aeeb8eb87df562b7e988",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "kubernetes-host-access": {
+      "hash": "6411d9ba0eba1dc730264d9c0101bbdb73a97c6f2b63801303d4a10ee2aa777d",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "nextjs-react-hooks": {
+      "hash": "cf5c787fd4d5cf3e6821cfebf9e55e6eb86835943bb4fd16e8fa087a5af57ba9",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "postgres-migration-locks": {
+      "hash": "ffcde74219e3ad3751f770f993a6ecb094a0fbf0a0c810f38c52917aa3c42ab5",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "python-caller-break": {
+      "hash": "2689ff224e6b4d307e3da078d280e2885ab9e0acbf1558896bc2c0dbf94f25d4",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "rails-controller-model": {
+      "hash": "71515c07f3ee0d8e7e93add7f1d9cf0b783ee0be41fb5e0370a8b590e92bea1c",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "suppression-comments": {
+      "hash": "e47d5270cbdc7dfc951b3ff518d02aa0316ec06f8b0f43536181c0ad8ce09541",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "terraform-open-ingress": {
+      "hash": "11c4fe9537a6f7cdf4ccaddb66a4b0f4caab535a73cac76f9c804828bf3144cf",
+      "frozenAt": "2026-10-11",
+      "history": "edited after runs before 2026-10-10",
+      "retired": false
+    },
+    "ts-interface-dispatch-break": {
+      "hash": "e6a6512f9c81ec84d18f0dc9efb6dd9355c80a2150396c1fc3307499075116f4",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "ts-removed-export": {
+      "hash": "5e7053460180d4687fb0ea4c8224149a2e01c55d45015362f8b54eaa8435be83",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "ts-workspace-caller-break": {
+      "hash": "ee94f473588735c09c512ff7f7ded727b9b159681cede9b783a038400ff7dec1",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    },
+    "workflow-untrusted-checkout": {
+      "hash": "aba748463a19593cc071fed4eb67b696114e275c12be8f1ed3c96e86a6c4e58c",
+      "frozenAt": "2026-10-11",
+      "history": null,
+      "retired": false
+    }
+  }
+}

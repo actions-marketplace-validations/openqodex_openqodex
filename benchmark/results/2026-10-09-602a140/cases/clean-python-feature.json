@@ -1,8 +1,0 @@
-{
-  "id": "clean-python-feature",
-  "guards": "a correct small Python feature (a formatter, its one caller and its tests) gets no finding",
-  "language": "python",
-  "framework": "none",
-  "clean": true,
-  "bugs": []
-}
