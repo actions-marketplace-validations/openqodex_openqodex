@@ -516,6 +516,8 @@ export function publishRun(folder, { dryRun = false, writeIndex = false, out = n
   folder = resolve(folder);
   const recipes = readRecipes();
   const runId = basename(folder);
+  // A smoke run (run.mjs --smoke) checks that the runner works; its numbers are never indexed.
+  if (existsSync(join(folder, "manifest.json")) && readJson(join(folder, "manifest.json")).smoke === true) throw new Error(`refused: ${runId} is a smoke run (run.mjs --smoke), which is never indexed or published`);
   const recipe = recipes.runs[runId] ?? null;
   if (!recipe && !existsSync(join(folder, "score.json"))) {
     const scored = spawnSync(process.execPath, [join(benchRoot, "score.mjs"), folder], { encoding: "utf8" });

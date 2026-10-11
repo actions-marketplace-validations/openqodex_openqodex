@@ -198,16 +198,17 @@ const readJsonFile = (path) => {
 //    first: a ticket (closed when the job ends; a model review's meter), a
 //    wait for a running job to end, or a stop that ends the run as
 //    "budget" (failure 13);
-// 4. records how it ended, with the minutes it took, and what `finish()`
-//    adds once every job is done (a scanner-only run's external inputs), in
-//    the manifest (a new run) or resumes.jsonl (a resume), and gives the
-//    folder back.
+// 4. records how it ended, with the minutes it took, the halt rule that
+//    stopped it when `haltOf()` names one ({ rule, why }, lib/halts.mjs),
+//    and what `finish()` adds once every job is done (a scanner-only run's
+//    external inputs, a model run's served models), in the manifest (a new
+//    run) or resumes.jsonl (a resume), and gives the folder back.
 // `addRepeats` ({ repeat, jobs, at }) adds repeats to a finished run, as a
 // resume whose plan grows: the manifest gets the longer plan, under the
 // folder's lock, before the first added review (failure 15). `resumeNote`
 // is added to the resume's first line (the budget it runs under).
 // Throws before any review when the folder is refused.
-export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {}, budget = null, addRepeats = null, resumeNote = {}, finish = () => ({}) }) {
+export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, haltOf = () => null, log = () => {}, budget = null, addRepeats = null, resumeNote = {}, finish = () => ({}) }) {
   const release = lockRun(out);
   const started = Date.now();
   try {
@@ -279,10 +280,12 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
     const why = stopReason();
     const spent = budget ? (budgetStop ?? budget.stopped()) : null;
     const how = why !== null ? "stopped" : spent ? "budget" : "finished";
+    const halt = how === "stopped" ? haltOf() : null;
     const ended = {
       at: new Date().toISOString(),
       how,
       why: why ?? spent?.why ?? null,
+      ...(halt ? { halt } : {}),
       ...(how === "budget" ? { limit: spent.limit, limitKind: spent.limitKind } : {}),
       ...(budget ? budget.summary() : {}),
       reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length,
@@ -450,6 +453,8 @@ export function resumeProblems(earlier, now) {
     same("scanners missing", earlier.scannersMissing, now.scannersMissing);
   }
   if (earlier.changeId !== undefined || now.changeId !== undefined) same("change", earlier.changeId, now.changeId);
+  // A smoke run stays one: it is never indexed, so a resume may not make it a full run.
+  if (earlier.smoke !== undefined || now.smoke !== undefined) same("smoke", earlier.smoke ?? false, now.smoke ?? false);
   for (const c of Object.keys(now.caseHashes ?? {})) {
     if (earlier.caseHashes?.[c] !== now.caseHashes[c]) out.push(`case ${c}: its files or spec differ from the run's (or the run recorded no hash)`);
   }
