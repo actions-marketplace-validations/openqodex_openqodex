@@ -6,6 +6,7 @@ import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OpenQodexError, outsideSnapshot, redactSecrets, redactSecretsKeepingLines, removedRuns, secretTexts } from "@openqodex/core";
 import type { Change, Hunk, Report, TraceEntry } from "@openqodex/core";
+import { TIMED_OUT } from "./agents/driver.js";
 import type { Turn } from "./agents/driver.js";
 import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
@@ -305,6 +306,8 @@ export async function converse(args: {
   now: () => number;
   // Called with each correction round before it is sent.
   onRound?: (round: Omit<CorrectionRound, "by">) => void;
+  // The failure of a turn the deadline stopped, in place of TIMED_OUT.
+  timedOut?: string;
 }): Promise<Conversation> {
   const startedAt = args.now();
   const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
@@ -316,7 +319,7 @@ export async function converse(args: {
       c.rounds++;
       let timer: NodeJS.Timeout | undefined;
       const late = new Promise<Turn>((done) => {
-        timer = setTimeout(() => done({ finalText: "", calls: [], usage: c.usage, sessionId: null, failure: "the reviewer timed out and was stopped" }), Math.max(0, args.deadline - args.now()));
+        timer = setTimeout(() => done({ finalText: "", calls: [], usage: c.usage, sessionId: null, failure: TIMED_OUT }), Math.max(0, args.deadline - args.now()));
       });
       let turn: Turn;
       try {
@@ -330,7 +333,7 @@ export async function converse(args: {
       c.trace.push(...(turn.brain?.trace ?? turn.calls.map((call): TraceEntry => (args.traced ? classify(args.snapshotDir, call, turn.own ?? null) : { tool: call.tool, path: null, inside: null, range: null, ok: call.ok, detail: JSON.stringify(call.input ?? null).slice(0, MAX_DETAIL_CHARS) }))));
       c.usage = turn.usage;
       if (turn.failure !== null) {
-        c.failure = turn.failure;
+        c.failure = turn.failure === TIMED_OUT ? (args.timedOut ?? TIMED_OUT) : turn.failure;
         break;
       }
       // An attempt outside the snapshot ends the review: it never completes.

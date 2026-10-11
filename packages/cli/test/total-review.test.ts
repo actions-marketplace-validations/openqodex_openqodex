@@ -93,6 +93,13 @@
 //     tell no round from a round not saved; or a secret the reviewer's answer
 //     holds as a key is saved there as it is; or a rounds.json that cannot
 //     be written stops the review.
+// 37. A review typed with no --timeout runs under the old ten minute cap: a
+//     change, a branch or a pull request gets less than 30 minutes, or the
+//     whole repository (--all) less than 2 hours.
+// 38. --timeout no longer wins over the default, for a change or for --all.
+// 39. A review stopped at its cap does not say which cap it hit and which
+//     flag raises it, on the terminal or in the report; or a reviewer that
+//     never answers is not stopped at the cap it was given.
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -101,9 +108,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "@openqodex/core";
 import { parseFlags } from "../src/flags.js";
-import { DEPTH_ENV, DELIVER_LINES, claudeDriver, classify, deliverRanges, killGroup, redactSnapshot, reviewerEnv, spawnGroup } from "@openqodex/review";
+import { DEPTH_ENV, DELIVER_LINES, TIMED_OUT, claudeDriver, classify, deliverRanges, killGroup, redactSnapshot, reviewerEnv, spawnGroup } from "@openqodex/review";
 import type { ReviewerDriver, ReviewerSession, ToolCall, Turn } from "@openqodex/review";
 import { runReview } from "../src/review-run.js";
+import { run as reviewCommand } from "../src/commands/review.js";
 import { readHomeReceipt } from "../src/receipts.js";
 import { cli, sandbox } from "./init-helpers.js";
 import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
@@ -133,7 +141,8 @@ function repo(): string {
 }
 
 type Answer = (text: string, snapshotDir: string) => Partial<Turn> | Promise<Partial<Turn>>;
-type Fake = ReviewerDriver & { sent: string[]; snapshots: string[]; closed: number };
+// `deadlines`: each start's deadline, with the clock when it started.
+type Fake = ReviewerDriver & { sent: string[]; snapshots: string[]; closed: number; deadlines: { deadline: number; at: number }[] };
 
 // The model provider stand-in: each send answers with the next recorded turn.
 function fake(answers: Answer[], available = true): Fake {
@@ -143,11 +152,13 @@ function fake(answers: Answer[], available = true): Fake {
     sent: [],
     snapshots: [],
     closed: 0,
+    deadlines: [],
     async detect() {
       return available ? { ok: true as const, version: "9.9.9", bin: "/fake/claude" } : { ok: false as const, missing: "claude is not installed", fix: "install Claude Code" };
     },
-    start({ snapshotDir }): ReviewerSession {
+    start({ snapshotDir, deadline }): ReviewerSession {
       driver.snapshots.push(snapshotDir);
+      driver.deadlines.push({ deadline, at: Date.now() });
       return {
         pid: 4242,
         async send(text: string): Promise<Turn> {
@@ -1210,5 +1221,64 @@ describe("36. every correction round beside the report", () => {
     expect(await withReportDir(repo(), fake([noDisposition, good]), folder)).toBe(0);
     expect((JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report).completion?.status).toBe("complete");
     expect(err.match(/could not write rounds\.json/g)).toHaveLength(1);
+  });
+});
+
+describe("37, 38, 39. the review's time cap", () => {
+  // The line a review stopped at its cap prints and reports.
+  const capLine = (cap: string) => `the reviewer timed out and was stopped at the ${cap} cap; pass --timeout <seconds> to allow more`;
+  // A reviewer whose own stop at the deadline fired, as a driver reports it.
+  const stopped: Answer = () => ({ failure: TIMED_OUT });
+
+  // `openqodex review` as typed, with the stand-in as its one reviewer. The
+  // deadline was fixed between the call and the reviewer's start, so the
+  // cap lies between the two readings returned.
+  async function typed(driver: Fake, flags: string[]): Promise<{ code: number; cap: [number, number]; folder: string }> {
+    const folder = join(tempDir("oq-cap-"), "review");
+    const before = Date.now();
+    const code = await reviewCommand(["--cwd", repo(), "--no-color", "--only", "sqllint", "--no-graph", "--report-dir", folder, ...flags], [driver]);
+    const { deadline, at } = driver.deadlines[0]!;
+    return { code, cap: [deadline - at, deadline - before], folder };
+  }
+
+  function expectCap(cap: [number, number], ms: number): void {
+    expect(cap[0]).toBeLessThanOrEqual(ms);
+    expect(cap[1]).toBeGreaterThanOrEqual(ms);
+  }
+
+  it("37, 39. a change gets 30 minutes and --all 2 hours, and a reviewer stopped there names the cap and --timeout on the terminal and in the report", async () => {
+    for (const [flags, ms, cap] of [
+      [[], 1_800_000, "30 minute"],
+      [["--all"], 7_200_000, "120 minute"],
+    ] as const) {
+      err = "";
+      const r = await typed(fake([stopped]), [...flags]);
+      expect(r.code).toBe(2);
+      expectCap(r.cap, ms);
+      expect(err).toContain(`openqodex: ${capLine(cap)}`);
+      expect((JSON.parse(readFileSync(join(r.folder, "report.json"), "utf8")) as Report).completion?.missing).toContain(capLine(cap));
+      expect(readFileSync(join(r.folder, "report.md"), "utf8")).toContain(`stopped at the ${cap} cap; pass --timeout \\<seconds\\> to allow more`);
+    }
+  });
+
+  it("38. --timeout 5 wins over the default for a change and for --all", async () => {
+    for (const flags of [[], ["--all"]]) {
+      err = "";
+      const r = await typed(fake([stopped]), [...flags, "--timeout", "5"]);
+      expectCap(r.cap, 5_000);
+      expect(err).toContain(capLine("5 second"));
+    }
+  });
+
+  it("39. a reviewer that never answers is stopped at --timeout 1, exits 2 and says so on the terminal and in the report", async () => {
+    const driver = fake([() => new Promise(() => {})]);
+    const r = await typed(driver, ["--timeout", "1"]);
+    expect(r.code).toBe(2);
+    expect(driver.closed).toBe(1);
+    expect(err).toContain(`openqodex: ${capLine("1 second")}`);
+    const report = JSON.parse(readFileSync(join(r.folder, "report.json"), "utf8")) as Report;
+    expect(report.verdict).toBe("incomplete");
+    expect(report.completion?.missing).toContain(capLine("1 second"));
+    expect(out).toContain(`Missing: ${capLine("1 second")}`);
   });
 });
