@@ -12,6 +12,7 @@
 //    transcript line included, refuses the publish, and the refusal never
 //    prints the key.
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -141,7 +142,8 @@ describe("nothing private or third-party leaves in an asset", () => {
   it("refuses a run whose transcript holds the model key or base URL, without printing either", () => {
     const run = plantedRun();
     const envFile = join(tempDir("oq-model-env-"), "azure.env");
-    const key = "k3y-f0r-the-test-0123456789abcdef";
+    // Made at run time, so no secret scanner reading this file takes it for a real key.
+    const key = `test-model-key-${randomBytes(16).toString("hex")}`;
     const base = "https://test-resource.openai.example/openai/v1";
     writeFileSync(envFile, `AZURE_OPENAI_KEY=${key}\nAZURE_OPENAI_BASE=${base}\n`);
     addSample(run, "flask-path-traversal", "model-gpt-6.1-sol", { "transcript.jsonl": `{"role":"system","note":"sent with api-key ${key}"}\n` });
