@@ -27,12 +27,25 @@
       "kind": [
         "bug"
       ],
+      "class": "contract-break",
       "severity": "major",
       "found_by": [
         "reasoning",
         "graph"
       ],
-      "truth": "src/routes/users.js registers getUser for /:id under the /users mount, so Express fills req.params.id; req.params.userId is always undefined and every GET /users/:id now answers 404. Read req.params.id, or rename the route parameter to :userId."
+      "truth": "src/routes/users.js registers getUser for /:id under the /users mount, so Express fills req.params.id; req.params.userId is always undefined and every GET /users/:id now answers 404. Read req.params.id, or rename the route parameter to :userId.",
+      "tags": [
+        "needs-callers"
+      ],
+      "evidence": [
+        {
+          "file": "src/routes/users.js",
+          "lines": [
+            7,
+            7
+          ]
+        }
+      ]
     }
   ]
 }

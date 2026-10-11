@@ -35,12 +35,15 @@
       "kind": [
         "security"
       ],
+      "class": "secret",
       "severity": "critical",
       "found_by": [
         "gitleaks",
         "semgrep"
       ],
-      "truth": "A live Stripe secret key is committed in the source. Anyone with the code can charge the account; the key must be revoked and read from the environment."
+      "truth": "A live Stripe secret key is committed in the source. Anyone with the code can charge the account; the key must be revoked and read from the environment.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "sql-injection",
@@ -60,12 +63,15 @@
       "kind": [
         "security"
       ],
+      "class": "sql-injection",
       "severity": "critical",
       "found_by": [
         "bandit",
         "semgrep"
       ],
-      "truth": "The search term from the query string is put into the SQL text with an f-string, so a caller can run any SQL. The fix is a placeholder with the term passed as a parameter."
+      "truth": "The search term from the query string is put into the SQL text with an f-string, so a caller can run any SQL. The fix is a placeholder with the term passed as a parameter.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "docker-latest-base",
@@ -90,11 +96,14 @@
         "security",
         "bug"
       ],
+      "class": "container-config",
       "severity": "minor",
       "found_by": [
         "hadolint"
       ],
-      "truth": "The base image is the moving latest tag, so a rebuild can pull a different Python. The fix is a pinned version tag, as the base had."
+      "truth": "The base image is the moving latest tag, so a rebuild can pull a different Python. The fix is a pinned version tag, as the base had.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "docker-apt-install",
@@ -121,11 +130,14 @@
         "performance",
         "bug"
       ],
+      "class": "container-config",
       "severity": "minor",
       "found_by": [
         "hadolint"
       ],
-      "truth": "apt-get install runs without -y, without pinned versions and without cleaning the package lists, so the build can stop at a prompt and the image keeps the lists. The fix is -y --no-install-recommends, pinned versions and removing /var/lib/apt/lists."
+      "truth": "apt-get install runs without -y, without pinned versions and without cleaning the package lists, so the build can stop at a prompt and the image keeps the lists. The fix is -y --no-install-recommends, pinned versions and removing /var/lib/apt/lists.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "docker-add",
@@ -147,11 +159,14 @@
         "security",
         "bug"
       ],
+      "class": "container-config",
       "severity": "minor",
       "found_by": [
         "hadolint"
       ],
-      "truth": "ADD is used for a local file, where COPY says exactly what happens; ADD also fetches URLs and unpacks archives. The fix is COPY."
+      "truth": "ADD is used for a local file, where COPY says exactly what happens; ADD also fetches URLs and unpacks archives. The fix is COPY.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "docker-pip-cache",
@@ -171,11 +186,14 @@
         "maintainability",
         "performance"
       ],
+      "class": "container-config",
       "severity": "minor",
       "found_by": [
         "hadolint"
       ],
-      "truth": "pip install keeps its download cache in the image, which makes the image larger. The fix is --no-cache-dir, as the base had."
+      "truth": "pip install keeps its download cache in the image, which makes the image larger. The fix is --no-cache-dir, as the base had.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "docker-root",
@@ -194,11 +212,16 @@
       "kind": [
         "security"
       ],
+      "class": "container-config",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "The change removes the useradd and USER lines, so the container now runs as root. The fix is to keep the unprivileged user."
+      "truth": "The change removes the useradd and USER lines, so the container now runs as root. The fix is to keep the unprivileged user.",
+      "tags": [
+        "deletion"
+      ],
+      "evidence": []
     },
     {
       "id": "vulnerable-lodash",
@@ -232,11 +255,14 @@
       "kind": [
         "security"
       ],
+      "class": "dependency-vulnerability",
       "severity": "major",
       "found_by": [
         "osv-scanner"
       ],
-      "truth": "lodash is downgraded to 4.17.15, which has known prototype pollution advisories (CVE-2020-8203 among them). The fix is to keep 4.18.1 or later."
+      "truth": "lodash is downgraded to 4.17.15, which has known prototype pollution advisories (CVE-2020-8203 among them). The fix is to keep 4.18.1 or later.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "shell-rm-unquoted",
@@ -260,11 +286,14 @@
         "bug",
         "security"
       ],
+      "class": "shell-safety",
       "severity": "major",
       "found_by": [
         "shellcheck"
       ],
-      "truth": "rm -rf on an unquoted variable with no empty check: an empty or spaced DEPLOY_DIR deletes the wrong folder, up to /. The fix is \"${DEPLOY_DIR:?}/\", as the base had."
+      "truth": "rm -rf on an unquoted variable with no empty check: an empty or spaced DEPLOY_DIR deletes the wrong folder, up to /. The fix is \"${DEPLOY_DIR:?}/\", as the base had.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "shell-ls-loop",
@@ -288,11 +317,14 @@
         "bug",
         "maintainability"
       ],
+      "class": "shell-safety",
       "severity": "minor",
       "found_by": [
         "shellcheck"
       ],
-      "truth": "The loop splits the output of ls on spaces, so a file name with a space becomes two names. The fix is a glob, as the base had."
+      "truth": "The loop splits the output of ls on spaces, so a file name with a space becomes two names. The fix is a glob, as the base had.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "workflow-injection",
@@ -314,13 +346,16 @@
       "kind": [
         "security"
       ],
+      "class": "workflow-injection",
       "severity": "major",
       "found_by": [
         "actionlint",
         "semgrep",
         "zizmor"
       ],
-      "truth": "The pull request title is put straight into a shell command, so a title with shell syntax runs commands in CI. The fix is to pass it through an environment variable and quote it."
+      "truth": "The pull request title is put straight into a shell command, so a title with shell syntax runs commands in CI. The fix is to pass it through an environment variable and quote it.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "migration-index-lock",
@@ -342,12 +377,15 @@
         "performance",
         "bug"
       ],
+      "class": "migration-lock",
       "severity": "major",
       "found_by": [
         "squawk",
         "reasoning"
       ],
-      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on items until the index is built, so the shop stops taking writes for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction."
+      "truth": "CREATE INDEX without CONCURRENTLY holds a lock that blocks every insert and update on items until the index is built, so the shop stops taking writes for as long as the build takes on a large table. The fix is CREATE INDEX CONCURRENTLY, outside a transaction.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "terraform-ssh-open",
@@ -372,13 +410,24 @@
       "kind": [
         "security"
       ],
+      "class": "iac-exposure",
       "severity": "critical",
       "found_by": [
         "trivy",
         "checkov",
         "reasoning"
       ],
-      "truth": "The security group now accepts SSH on port 22 from every address on the internet, not only the office range, so anyone can try to log in to the API hosts. The fix is to keep the office range and restore the VPN, or to reach the hosts through a bastion or a session manager."
+      "truth": "The security group now accepts SSH on port 22 from every address on the internet, not only the office range, so anyone can try to log in to the API hosts. The fix is to keep the office range and restore the VPN, or to reach the hosts through a bastion or a session manager.",
+      "tags": [],
+      "evidence": [
+        {
+          "file": "infra/main.tf",
+          "lines": [
+            23,
+            25
+          ]
+        }
+      ]
     },
     {
       "id": "kubernetes-privileged",
@@ -401,13 +450,16 @@
       "kind": [
         "security"
       ],
+      "class": "kubernetes-privilege",
       "severity": "critical",
       "found_by": [
         "checkov",
         "kube-linter",
         "reasoning"
       ],
-      "truth": "privileged: true gives the API container every capability and the node's devices, so a flaw in the app becomes root on the node; allowPrivilegeEscalation: true lets its processes gain more privileges than they started with. A raw-socket health check needs only the NET_RAW capability, so the fix is to drop privileged, keep allowPrivilegeEscalation false and add NET_RAW alone."
+      "truth": "privileged: true gives the API container every capability and the node's devices, so a flaw in the app becomes root on the node; allowPrivilegeEscalation: true lets its processes gain more privileges than they started with. A raw-socket health check needs only the NET_RAW capability, so the fix is to drop privileged, keep allowPrivilegeEscalation false and add NET_RAW alone.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "pagination-off-by-one",
@@ -432,11 +484,14 @@
       "kind": [
         "bug"
       ],
+      "class": "logic",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "Page numbers start at 1, but the offset is page times the page size, so page 1 skips the first 20 items. The fix is (page - 1) * PAGE_SIZE, as the base had."
+      "truth": "Page numbers start at 1, but the offset is page times the page size, so page 1 skips the first 20 items. The fix is (page - 1) * PAGE_SIZE, as the base had.",
+      "tags": [],
+      "evidence": []
     }
   ]
 }

@@ -8,6 +8,9 @@
 //                          [--reviewers claude[,codex]] [--concurrency 1]
 //                          [--timeout 900] [--out <folder>] [--resume]
 //                          [--model <id>] [--web on|off] [--dry-run]
+//                          [--draft] [--allow-retired]
+//
+// Without --cases, every case the lock does not mark retired runs.
 //
 // One results folder per run, benchmark/results/<date>-<commit>/ unless
 // --out names another:
@@ -71,19 +74,32 @@
 //    reaches Claude Code through ANTHROPIC_MODEL, which its driver passes
 //    on; Codex runs with --ignore-user-config and takes no model setting, so
 //    --model with Codex is refused.
+// 16. A case edited after a run is run again under its old name, so the two
+//    runs compare across different code: a case whose files do not hash to
+//    its entry in benchmark/cases.lock.json, or that has none, is refused
+//    unless --draft (the manifest then says draft, and a draft run is never
+//    accepted); a retired case is refused unless --allow-retired; a lock
+//    that is there but unsound is refused for every run, a draft included;
+//    the manifest lists every case's id, planted/<name>@<first 8 hex of its
+//    hash>.
+// 17. A case edited while the run goes is rebuilt from the live folders for
+//    later attempts, while the manifest keeps the first hash and id: at the
+//    start the run copies every folder its cases build from (the demo's
+//    examples/demo-repo included) into its temp folder, and every hash,
+//    lock check, spec copy and attempt comes from that copy.
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-import { benchRoot, buildCase, caseHash, casesRoot, generatedValue, listCases, readCase, repoRoot } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, failureOf, provenanceProblems, resumeProblems, sampleRecord } from "./lib/runner.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run]";
+const USAGE = "usage: node benchmark/run.mjs [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--model <id>] [--web on|off] [--dry-run] [--draft] [--allow-retired]";
 
 function parseArgs(argv) {
-  const o = { repeat: 3, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, model: null, web: "on", dryRun: false, allowMore: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
+  const o = { repeat: 3, cases: null, graph: ["off", "on"], reviewers: ["claude"], concurrency: 1, timeout: 900, out: null, resume: false, model: null, web: "on", dryRun: false, allowMore: false, draft: false, allowRetired: false, cli: join(repoRoot, "packages/cli/dist/bin.js") };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -104,6 +120,8 @@ function parseArgs(argv) {
     else if (a === "--resume") o.resume = true;
     else if (a === "--dry-run") o.dryRun = true;
     else if (a === "--allow-more") o.allowMore = true;
+    else if (a === "--draft") o.draft = true;
+    else if (a === "--allow-retired") o.allowRetired = true;
     else throw new Error(`unknown flag ${a}`);
   }
   if (!Number.isInteger(o.repeat) || o.repeat < 1) throw new Error("--repeat takes a whole number from 1");
@@ -118,8 +136,39 @@ function parseArgs(argv) {
   }
   const all = listCases();
   for (const c of o.cases ?? []) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
-  o.cases ??= all;
   return o;
+}
+
+// The cases this run may use, copied once into a temp folder (failures 16
+// and 17): the lock is checked against that copy, and every hash, spec and
+// attempt comes from it. Exits 2 on a refusal, leaving no temp folder.
+function lockedCases(o) {
+  let lock;
+  try {
+    lock = loadRunLock(lockPath, { draft: o.draft });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  const cases = o.cases ?? listCases().filter((c) => lock.cases[c]?.retired !== true);
+  const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
+  const refuse = (lines) => {
+    rmSync(tempRoot, { recursive: true, force: true });
+    console.error("The run cannot start:");
+    for (const r of lines) console.error(`- ${r}`);
+    process.exit(2);
+  };
+  let snap;
+  let hashes;
+  try {
+    snap = snapshotCases(cases, join(tempRoot, "cases-snapshot"));
+    hashes = Object.fromEntries(cases.map((c) => [c, caseHash(c, snap)]));
+  } catch (error) {
+    refuse([error.message]);
+  }
+  const refusals = lockRefusals(cases, lock, { draft: o.draft, allowRetired: o.allowRetired }, snap);
+  if (refusals.length > 0) refuse(refusals);
+  return { cases, snap, hashes, tempRoot };
 }
 
 const readJson = (path) => {
@@ -224,10 +273,17 @@ async function main() {
     console.error(`${error.message}\n${USAGE}`);
     process.exit(2);
   }
+  const { cases, snap, hashes, tempRoot } = lockedCases(o);
+  o.cases = cases;
+  // Every exit before the reviews start leaves no copy behind.
+  const leave = (code) => {
+    rmSync(tempRoot, { recursive: true, force: true });
+    process.exit(code);
+  };
   const { problems, build } = buildInfo(o.cli);
   if (problems.length > 0) {
     for (const p of problems) console.error(p);
-    process.exit(2);
+    leave(2);
   }
   const date = new Date().toISOString().slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}`);
@@ -237,14 +293,17 @@ async function main() {
   const saved = (job) => existsSync(join(attemptDir(out, job, 1), "sample.json"));
   if (existsSync(join(out, "samples")) && !o.resume) {
     console.error(`${out} already holds samples; pass --resume to finish that run, or --out for a new folder`);
-    process.exit(2);
+    leave(2);
   }
   const todo = jobs.filter((j) => !saved(j));
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
   console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
+  const caseIds = o.cases.map((c) => caseIdFromHash(c, hashes[c]));
+  console.log(`Cases: ${caseIds.join(", ")}`);
+  if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
   if (o.dryRun) {
     for (const j of todo) console.log(`  ${j.case} ${j.config} #${j.repeat}`);
-    return;
+    leave(0);
   }
 
   // The reviewers, before anything is spent (failure 3), with the model each
@@ -257,11 +316,11 @@ async function main() {
     const p = await probeReviewer(name, { env });
     if (!p.ok) {
       console.error(`The ${name} reviewer cannot run: ${p.text}`);
-      process.exit(2);
+      leave(2);
     }
     if (o.model && name === "claude" && p.model !== o.model) {
       console.error(`Asked for the model ${o.model}, but Claude Code answered with ${JSON.stringify(p.model)}; nothing runs.`);
-      process.exit(2);
+      leave(2);
     }
     reviewers[name] = { name, version: p.version, model: p.model, modelFrom: name === "claude" ? "the model Claude Code names in its answer" : "the model line of the header Codex prints" };
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
@@ -269,7 +328,6 @@ async function main() {
 
   const manifestPath = join(out, "manifest.json");
   const resumesPath = join(out, "resumes.jsonl");
-  const hashes = Object.fromEntries(o.cases.map((c) => [c, caseHash(c)]));
   const settings = {
     build,
     machine: machine(),
@@ -277,8 +335,12 @@ async function main() {
     reviewers,
     review: { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
+    // The frozen ids (planted/<name>@<hash8>) that scores and the index key by.
+    caseIds,
     // What each case was built from, so a comparison can tell an edited case from a product change.
     caseHashes: hashes,
+    // A draft run used cases that need not match the lock; it is never accepted.
+    draft: o.draft,
     configs: configs.map((c) => c.id),
     repeat: o.repeat,
     concurrency: o.concurrency,
@@ -288,17 +350,17 @@ async function main() {
     const earlier = readJson(manifestPath);
     if (!earlier) {
       console.error(`${shown(out)} has no manifest.json; there is no run to resume`);
-      process.exit(2);
+      leave(2);
     }
     const differ = resumeProblems(earlier, settings);
     for (const c of o.cases) {
       const copy = join(out, "cases", `${c}.json`);
-      if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(casesRoot, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
+      if (existsSync(copy) && readFileSync(copy, "utf8") !== readFileSync(join(snap, c, "case.json"), "utf8")) differ.push(`case ${c}: its spec differs from the copy the run saved`);
     }
     if (differ.length > 0) {
       console.error(`${shown(out)} cannot be resumed: resuming would mix two runs. Start a new run with --out.`);
       for (const d of differ) console.error(`- ${d}`);
-      process.exit(2);
+      leave(2);
     }
     appendFileSync(resumesPath, `${JSON.stringify({ event: "resumed", at: new Date().toISOString(), toRun: todo.length })}\n`);
   } else {
@@ -308,12 +370,11 @@ async function main() {
   }
   // The specs this run scores against; a resume keeps the copies it made first.
   mkdirSync(join(out, "cases"), { recursive: true });
-  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(casesRoot, c, "case.json"), join(out, "cases", `${c}.json`));
+  for (const c of o.cases) if (!existsSync(join(out, "cases", `${c}.json`))) cpSync(join(snap, c, "case.json"), join(out, "cases", `${c}.json`));
 
-  const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
   console.log(`Case repositories: ${tempRoot}`);
   const secrets = new Set();
-  for (const c of o.cases) for (const g of readCase(c).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
+  for (const c of o.cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
 
   let stop = null;
   const halt = (why) => {
@@ -329,7 +390,7 @@ async function main() {
   const attempt = async (job, k) => {
     const dir = attemptDir(out, job, k);
     const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${k}`);
-    const { dir: repo } = buildCase(job.case, join(caseDir, "repo"));
+    const { dir: repo } = buildCase(job.case, join(caseDir, "repo"), snap);
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
     const args = ["review", "--cwd", repo, "--report-dir", reportDir, "--reviewer", job.reviewer, "--reviewer-web", o.web, "--timeout", String(o.timeout), "--no-color"];

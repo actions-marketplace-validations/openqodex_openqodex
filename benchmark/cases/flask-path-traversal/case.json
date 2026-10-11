@@ -26,12 +26,15 @@
       "kind": [
         "security"
       ],
+      "class": "path-traversal",
       "severity": "critical",
       "found_by": [
         "semgrep",
         "reasoning"
       ],
-      "truth": "The name from the query string is joined to the upload folder unchecked, so ../ or an absolute path reads any file the server can read. The fix is send_from_directory(UPLOAD_DIR, name), or resolving the path and checking it stays inside the folder."
+      "truth": "The name from the query string is joined to the upload folder unchecked, so ../ or an absolute path reads any file the server can read. The fix is send_from_directory(UPLOAD_DIR, name), or resolving the path and checking it stays inside the folder.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "debug-on-all-interfaces",
@@ -53,13 +56,16 @@
       "kind": [
         "security"
       ],
+      "class": "debug-config",
       "severity": "major",
       "found_by": [
         "bandit",
         "semgrep",
         "reasoning"
       ],
-      "truth": "The development server now listens on every interface with debug on, so anyone on the network reaches the Werkzeug debugger, which runs code. The fix is to keep 127.0.0.1 and leave debug off."
+      "truth": "The development server now listens on every interface with debug on, so anyone on the network reaches the Werkzeug debugger, which runs code. The fix is to keep 127.0.0.1 and leave debug off.",
+      "tags": [],
+      "evidence": []
     }
   ]
 }

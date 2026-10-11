@@ -24,13 +24,16 @@
       "kind": [
         "security"
       ],
+      "class": "sql-injection",
       "severity": "critical",
       "found_by": [
         "brakeman",
         "semgrep",
         "reasoning"
       ],
-      "truth": "params[:q] is put into the SQL string of where, so a caller can run any SQL. The fix is a bound value: where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\")."
+      "truth": "params[:q] is put into the SQL string of where, so a caller can run any SQL. The fix is a bound value: where(\"email LIKE ?\", \"%#{User.sanitize_sql_like(params[:q])}%\").",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "destroy-skips-admin",
@@ -63,11 +66,14 @@
       "kind": [
         "security"
       ],
+      "class": "access-control",
       "severity": "critical",
       "found_by": [
         "reasoning"
       ],
-      "truth": "destroy is added to the actions that skip require_admin, so any user with a token can delete any user. The fix is to leave destroy out of except."
+      "truth": "destroy is added to the actions that skip require_admin, so any user with a token can delete any user. The fix is to leave destroy out of except.",
+      "tags": [],
+      "evidence": []
     },
     {
       "id": "permit-all",
@@ -91,13 +97,31 @@
       "kind": [
         "security"
       ],
+      "class": "access-control",
       "severity": "critical",
       "found_by": [
         "brakeman",
         "semgrep",
         "reasoning"
       ],
-      "truth": "profile lets every user update their own record with permit!, which allows every attribute, so a user can send admin=true or a new api_token and make themselves an administrator. The fix is to permit the editable attributes by name, such as permit(:email)."
+      "truth": "profile lets every user update their own record with permit!, which allows every attribute, so a user can send admin=true or a new api_token and make themselves an administrator. The fix is to permit the editable attributes by name, such as permit(:email).",
+      "tags": [],
+      "evidence": [
+        {
+          "file": "app/controllers/application_controller.rb",
+          "lines": [
+            7,
+            7
+          ]
+        },
+        {
+          "file": "app/controllers/application_controller.rb",
+          "lines": [
+            12,
+            12
+          ]
+        }
+      ]
     },
     {
       "id": "welcome-on-every-save",
@@ -120,11 +144,14 @@
       "kind": [
         "bug"
       ],
+      "class": "framework-misuse",
       "severity": "major",
       "found_by": [
         "reasoning"
       ],
-      "truth": "after_save runs on every update, so a user gets the welcome email again each time their record changes. The fix is after_create_commit."
+      "truth": "after_save runs on every update, so a user gets the welcome email again each time their record changes. The fix is after_create_commit.",
+      "tags": [],
+      "evidence": []
     }
   ]
 }
