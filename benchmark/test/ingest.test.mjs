@@ -3,7 +3,7 @@
 // Every test runs the real ingest on a small dataset written here, in
 // AACR-Bench's own row shape, with the pinned files and GitHub's answers
 // placed in a temp cache, so nothing reaches the network but the one test
-// that serves a file over a local HTTP server. Five failures are guarded:
+// that serves a file over a local HTTP server. Six failures are guarded:
 //
 // 1. An upstream edit to the dataset changes the truth under a frozen id.
 // 2. A pull request with no licence is used.
@@ -11,13 +11,15 @@
 // 4. A repository group holding a Martian or ReviewBench pull request lands
 //    in development.
 // 5. The laptop sample is the smallest changes.
+// 6. A pull request whose head the host no longer serves (pushed over after
+//    the dataset was made) is offered to a run, which then cannot fetch it.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ingestAacr, writeIngest } from "../ingest/aacr.mjs";
-import { classify, saveRepoAnswer } from "../lib/licence.mjs";
+import { classify, saveCommitAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { listCases, readCase, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -105,7 +107,8 @@ const encode = (rows) => Buffer.from(`${JSON.stringify(rows, null, 2)}\n`);
 
 // A cache holding the pinned files and every GitHub answer the ingest asks
 // for, and the board pins that name them.
-function setup({ positive, negative } = dataset(), { url = (path) => `https://example.invalid/${path}`, seedRaw = true } = {}) {
+// `unserved` lists heads (<owner>/<name>#<number>) the host no longer serves.
+function setup({ positive, negative } = dataset(), { url = (path) => `https://example.invalid/${path}`, seedRaw = true, unserved = [] } = {}) {
   const cache = tempDir("oq-ingest-cache-");
   const files = { aacr: { [POSITIVE]: encode(positive), [NEGATIVE]: encode(negative) }, martian: Object.fromEntries(Object.entries(MARTIAN).map(([p, rows]) => [p, encode(rows)])) };
   if (seedRaw) {
@@ -130,6 +133,10 @@ function setup({ positive, negative } = dataset(), { url = (path) => `https://ex
     saveRepoAnswer(cache, { asked: repo, readOn: "2026-10-11", found: true, fullName: extra.fullName ?? repo, fork: Boolean(extra.fork), source: extra.fork ?? null, licence });
   }
   for (const [repo, extra] of OTHERS) saveRepoAnswer(cache, { asked: repo, readOn: "2026-10-11", found: extra.found ?? true, fullName: extra.found === false ? null : repo, fork: false, source: null });
+  for (const r of positive) {
+    const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(r.githubPrUrl);
+    saveCommitAnswer(cache, { repo: m[1], sha: r.target_commit, readOn: "2026-10-11", served: !unserved.includes(`${m[1]}#${m[2]}`) });
+  }
   return { cache, boards, files };
 }
 
@@ -255,6 +262,32 @@ describe("a pull request with no licence is used", () => {
     expect(classify("NOASSERTION")).toEqual({ chosen: null, class: "unknown" });
     expect(classify("WTFPL")).toEqual({ chosen: null, class: "unknown" });
     expect(classify(null)).toEqual({ chosen: null, class: "none" });
+  });
+});
+
+describe("a pull request whose head the host no longer serves is offered to a run", () => {
+  it("excludes it with the reason, the way a licence exclusion is recorded, with its id and the split unchanged", async () => {
+    const before = await ingestInto(setup());
+    const gone = ["acme__alpha-3", "py__one-2"];
+    const after = await ingestInto(setup(dataset(), { unserved: ["acme/alpha#3", "py/one#2"] }));
+    const at = (r, name) => r.cases.cases.find((e) => e.name === name);
+    for (const name of gone) {
+      expect(at(after, name)).toMatchObject({ status: "excluded", id: at(before, name).id, hash: at(before, name).hash });
+      expect(at(after, name).excludedWhy).toMatch(/^head no longer served by the host: /);
+      expect(listCases({ suite: "aacr", root: after.root }).some((id) => id.startsWith(`aacr/${name}@`))).toBe(false);
+    }
+    expect(listCases({ suite: "aacr", root: after.root }).length).toBe(listCases({ suite: "aacr", root: before.root }).length - 2);
+    for (const e of after.cases.cases.filter((x) => !gone.includes(x.name))) expect(e).toEqual(at(before, e.name));
+    expect(readFileSync(join(after.root, "splits/aacr-v1.json"), "utf8")).toBe(readFileSync(join(before.root, "splits/aacr-v1.json"), "utf8"));
+    expect(after.report).toMatch(/head no longer served by the host[^\n]*: 2 pull requests in 2 repositories: acme\/alpha 1 \(#3\), py\/one 1 \(#2\)/);
+  });
+
+  it("stops offline when the host was never asked about a head, rather than using the case", async () => {
+    const ctx = setup();
+    const r = dataset().positive[0];
+    const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(r.githubPrUrl)[1];
+    renameSync(join(ctx.cache, "github", "commits", repo.toLowerCase().replace("/", "__"), `${r.target_commit}.json`), join(ctx.cache, "moved-away.json"));
+    await expect(ingestAacr({ boards: ctx.boards, cache: ctx.cache, offline: true })).rejects.toThrow(/no cached GitHub answer for acme\/alpha commit/);
   });
 });
 

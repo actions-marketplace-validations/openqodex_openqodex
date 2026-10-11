@@ -39,11 +39,17 @@
 //    with other content (a new split is a new file).
 // 7. A person's frozen matchSignatures are lost on a re-ingest: an entry
 //    whose truth hash is unchanged keeps them.
+// 8. A pull request whose head the host no longer serves (pushed over after
+//    the dataset was made) is offered to a run: GitHub is asked once per
+//    head (cached), and such a case is excluded with the reason, the way a
+//    licence exclusion is. Status is not hashed, so no id changes, and the
+//    split is made from the licensed pull requests, so the split file stays
+//    as it was; listCases skips the excluded names it still lists.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
-import { cacheRoot, licenceExclusion, licenceRecord, repoAnswer } from "../lib/licence.mjs";
+import { cacheRoot, commitAnswer, licenceExclusion, licenceRecord, repoAnswer } from "../lib/licence.mjs";
 import { AACR_CATEGORIES, HASHED, SUITES, aacrTruth, checkPinned, entryHash, rawPath, realCaseId, sha256, truthHashOf } from "../lib/suites.mjs";
 
 export const SALT = "openqodex-aacr-split-v1";
@@ -51,6 +57,7 @@ export const SPLIT_NAME = "aacr-v1";
 export const SHARE = { dev: 0.8, test: 0.2 };
 export const LAPTOP_PER_THIRD = 12;
 export const SMOKE = 5;
+export const HEAD_GONE = "head no longer served by the host";
 const BOARDS_PATH = join(benchRoot, "outside", "boards.json");
 
 const PR_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)\/?$/;
@@ -312,6 +319,11 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   // Entries.
   const prevByName = new Map((previous?.cases ?? []).map((e) => [e.name, e]));
   const entries = [];
+  // The pull requests whose licence allows them: the population the split
+  // is made from. A head the host no longer serves is excluded after the
+  // split, so losing one never moves a group or rewrites the split file.
+  const licensed = new Set();
+  let headsAsked = 0;
   for (const r of rows) {
     const m = PR_URL.exec(r.githubPrUrl);
     const repo = `${m[1]}/${m[2]}`;
@@ -320,7 +332,13 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     const truthHash = truthHashOf(truth.items);
     const answer = answers.get(key(repo));
     const licence = licenceRecord(answer);
-    const excludedWhy = answer?.found ? licenceExclusion(licence) : "GitHub does not know the repository (deleted, private, or moved without a redirect), so neither its licence nor its code can be read";
+    const licenceWhy = answer?.found ? licenceExclusion(licence) : "GitHub does not know the repository (deleted, private, or moved without a redirect), so neither its licence nor its code can be read";
+    let excludedWhy = licenceWhy;
+    if (licenceWhy === null) {
+      licensed.add(name);
+      if (!commitAnswer(repo, r.target_commit, { cache, offline }).served) excludedWhy = `${HEAD_GONE}: GitHub no longer has the head commit ${r.target_commit.slice(0, 12)} of ${repo} (the pull request was pushed over after the dataset was made), so its code cannot be fetched`;
+      if (++headsAsked % 25 === 0) log(`GitHub's answer ready, from the cache or GitHub, for ${headsAsked} head commits`);
+    }
     const prev = prevByName.get(name);
     const entry = {
       name,
@@ -349,10 +367,11 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   }
   entries.sort((a, b) => byBytes(a.name, b.name));
   const usable = entries.filter((e) => e.status === "usable");
+  const splitPool = entries.filter((e) => licensed.has(e.name));
 
   // Split.
   const groups = new Map();
-  for (const e of usable) {
+  for (const e of splitPool) {
     if (!groups.has(e.repoGroup)) groups.set(e.repoGroup, { group: e.repoGroup, names: [], languages: new Map() });
     const g = groups.get(e.repoGroup);
     g.names.push(e.name);
@@ -388,8 +407,8 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     }
     perLanguage.push({ language, total, ...count });
   }
-  const dev = usable.filter((e) => sideOf.get(e.repoGroup) === "dev").map((e) => e.name).sort(byBytes);
-  const test = usable.filter((e) => sideOf.get(e.repoGroup) === "test").map((e) => e.name).sort(byBytes);
+  const dev = splitPool.filter((e) => sideOf.get(e.repoGroup) === "dev").map((e) => e.name).sort(byBytes);
+  const test = splitPool.filter((e) => sideOf.get(e.repoGroup) === "test").map((e) => e.name).sort(byBytes);
 
   // Subsets.
   const entryOf = new Map(entries.map((e) => [e.name, e]));
@@ -418,7 +437,7 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     groups: groupList.map((g) => ({ group: g.group, members: membersOf.get(g.group).sort(byBytes), language: g.language, prs: g.names.length, split: sideOf.get(g.group), reserved: g.reserved, order: g.order })),
     cases: { dev, test },
     subsets: { "dev-laptop": laptop, "dev-smoke": smoke },
-    counts: { usable: usable.length, dev: dev.length, test: test.length, reserved: reservedGroups.reduce((n, g) => n + g.names.length, 0), groups: { dev: groupList.filter((g) => sideOf.get(g.group) === "dev").length, test: groupList.filter((g) => sideOf.get(g.group) === "test").length, reserved: reservedGroups.length } },
+    counts: { usable: splitPool.length, dev: dev.length, test: test.length, reserved: reservedGroups.reduce((n, g) => n + g.names.length, 0), groups: { dev: groupList.filter((g) => sideOf.get(g.group) === "dev").length, test: groupList.filter((g) => sideOf.get(g.group) === "test").length, reserved: reservedGroups.length } },
   };
 
   const suite = {
@@ -443,12 +462,15 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     ["licence unknown (GitHub names no single licence for the licence file)", (e) => e.licence.class === "unknown" && e.excludedWhy?.startsWith("licence unknown")],
     ["licence none (no licence file)", (e) => e.licence.class === "none" && e.excludedWhy?.startsWith("licence none")],
     ["repository unknown to GitHub", (e) => e.excludedWhy?.startsWith("GitHub does not know")],
+    [`${HEAD_GONE} (excluded after the split; the split file still lists them)`, (e) => e.excludedWhy?.startsWith(HEAD_GONE)],
   ];
   for (const [label, test] of reasons) {
     const hit = entries.filter((e) => e.status === "excluded" && test(e));
     const repos = new Map();
     for (const e of hit) repos.set(e.repo, (repos.get(e.repo) ?? 0) + 1);
     const detail = [...repos.entries()].sort((a, b) => b[1] - a[1] || byBytes(a[0], b[0])).map(([r, n]) => {
+      // A head names its pull requests; a licence names the licence file.
+      if (label.startsWith(HEAD_GONE)) return `${r} ${n} (${hit.filter((e) => e.repo === r).map((e) => prRef(e.prUrl).replace(/^.*#/, "#")).join(", ")})`;
       const l = entries.find((e) => e.repo === r).licence;
       return `${r} ${n}${l.spdx ? ` (${l.spdx}, ${l.file ?? "no file"})` : ""}`;
     });
@@ -484,9 +506,11 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   const joined = groupList.filter((g) => membersOf.get(g.group).length > 1 && !g.reserved);
   say(`  Other groups of more than one repository: ${joined.length ? joined.map((g) => `${g.group} (${membersOf.get(g.group).sort(byBytes).join(", ")})`).join("; ") : "none"}`);
   say();
-  say(`Split ${SPLIT_NAME} (by repository group, within each language, dev ${SHARE.dev} and test ${SHARE.test}, salt ${SALT}):`);
-  say(`  development: ${plural(split.counts.groups.dev, "group")}, ${plural(dev.length, "pull request")} (${pct(dev.length, usable.length)}%)`);
-  say(`  held-out: ${plural(split.counts.groups.test, "group")}, ${plural(test.length, "pull request")} (${pct(test.length, usable.length)}%): ${split.counts.reserved} reserved, ${test.length - split.counts.reserved} by hash`);
+  say(`Split ${SPLIT_NAME} (by repository group, within each language, dev ${SHARE.dev} and test ${SHARE.test}, salt ${SALT}), made from the ${splitPool.length} licensed pull requests:`);
+  say(`  development: ${plural(split.counts.groups.dev, "group")}, ${plural(dev.length, "pull request")} (${pct(dev.length, splitPool.length)}%)`);
+  say(`  held-out: ${plural(split.counts.groups.test, "group")}, ${plural(test.length, "pull request")} (${pct(test.length, splitPool.length)}%): ${split.counts.reserved} reserved, ${test.length - split.counts.reserved} by hash`);
+  const goneIn = (names) => names.filter((n) => entryOf.get(n).excludedWhy?.startsWith(HEAD_GONE));
+  say(`  listed but excluded because the host no longer serves the head: ${goneIn(dev).length} development, ${goneIn(test).length} held-out, ${goneIn(laptop).length} of dev-laptop, ${goneIn(smoke).length} of dev-smoke`);
   say("  language      usable  dev  held-out  of which reserved");
   for (const l of perLanguage) say(`  ${l.language.padEnd(12)} ${String(l.total).padStart(7)} ${String(l.dev).padStart(4)} ${String(l.test).padStart(9)} ${String(l.reservedTest).padStart(18)}`);
   const ends = thirds.map((t) => (t.length ? entryOf.get(t.at(-1)).changeLines : null));
