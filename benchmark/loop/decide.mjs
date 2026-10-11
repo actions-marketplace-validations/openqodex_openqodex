@@ -28,8 +28,8 @@
 //   change) past zero in the better direction.
 // - Every other metric, and the primary everywhere else (every path the
 //   change runs on, every reviewer, the planted, real and pooled strata), is
-//   a guard: its bound in the worse direction must stay inside the
-//   acceptable loss the record declared before any run. A guard no review
+//   a guard: its bound in the worse direction must stay strictly inside the
+//   acceptable loss the record declared before any run (on it fails). A guard no review
 //   measures (no clean case, no cost on either side) is named and does not
 //   decide.
 // - The hard rules (compare.mjs hardRules) refuse whatever the bounds read.
@@ -75,14 +75,21 @@
 // 9. A decision is made twice for one change, or for runs of another
 //    commit: a decided change is refused, and the candidate's build commit
 //    must be the record's.
-import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+// 10. A guard holds at exactly its predeclared loss, or the rounding
+//    allowance widens what passes: a bound must stay strictly inside the
+//    loss, and the allowance only narrows what holds.
+// 11. A reader of the ledger sees half a line: a line goes in by writing
+//    the whole ledger to a temp file, flushing it and renaming it into
+//    place under the lock (appendLedgerLine).
+import { randomBytes } from "node:crypto";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decisionsPath } from "../score.mjs";
 import { GATE_METRICS, comparePairs, loadSides, lossIn, metricOf, pairsOf, readRulings } from "./compare.mjs";
 import { ToolError } from "./leak-check.mjs";
 import { LEDGER, lockLedger, readLedger } from "./propose.mjs";
+import { RULE_FILES, ruleHash } from "./rule-hash.mjs";
 
 export const LOOP_ALPHA = 0.05;
 export const alphaAt = (t) => LOOP_ALPHA / (t * (t + 1));
@@ -92,17 +99,53 @@ export const MIN_REPEATS = 3;
 export const REQUIRED_REVIEWERS = { laptop: ["claude", "codex"] };
 // A validation counts only with this many simulated look sequences.
 export const MIN_SEQUENCES = 1000;
+// A rounding allowance for bounds computed in floating point. It only ever
+// narrows what passes a guard, never widens it.
 const EPS = 1e-12;
 
-// The rule's own files: a change to any of them needs a new validation.
-const RULE_FILES = ["./compare.mjs", "./decide.mjs", "../lib/interval.mjs"];
-export function ruleHash() {
-  const h = createHash("sha256");
-  for (const f of RULE_FILES) h.update(`${f}\0${readFileSync(fileURLToPath(new URL(f, import.meta.url)), "utf8")}\0`);
-  return h.digest("hex");
-}
+// The rule's own files are hashed by rule-hash.mjs, a module that loads none
+// of them, so validate.mjs can hash them before it loads them.
+export { RULE_FILES, ruleHash };
 
 export class Refusal extends Error {}
+
+// Appends one line to a ledger so that no reader ever sees half of it: the
+// whole ledger and the new line are written to a temp file beside it,
+// flushed to disk, and renamed over the ledger in one step. The caller holds
+// the ledger's lock (propose.mjs lockLedger), so no other writer works in
+// between. A ledger cut mid-line is refused and left as it is.
+export function appendLedgerLine(ledger, line) {
+  const before = existsSync(ledger) ? readFileSync(ledger, "utf8") : "";
+  if (before !== "" && !before.endsWith("\n")) throw new Refusal(`${ledger} does not end with a newline; a line was cut, so nothing is appended until a person mends it`);
+  const text = `${JSON.stringify(line)}\n`;
+  JSON.parse(text);
+  const temp = join(dirname(ledger), `.${basename(ledger)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  let moved = false;
+  try {
+    const fd = openSync(temp, "wx");
+    try {
+      writeSync(fd, before + text);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, ledger);
+    moved = true;
+  } finally {
+    if (!moved && existsSync(temp)) unlinkSync(temp);
+  }
+  // The rename itself reaches the disk with the folder's entry.
+  try {
+    const dir = openSync(dirname(ledger), "r");
+    try {
+      fsyncSync(dir);
+    } finally {
+      closeSync(dir);
+    }
+  } catch {
+    // A folder that cannot be opened for a flush still holds the renamed file.
+  }
+}
 
 // The look number the next decision takes: one past the looks the ledger
 // holds, which must run 1, 2, 3 in order.
@@ -150,15 +193,16 @@ export function primaryVerdict(r, share) {
   return "unclear";
 }
 
-// A guard: holds when its bound in the worse direction stays inside the
-// loss; breaks when both like for like readings put even the better bound
-// past the loss.
+// A guard: holds when its bound in the worse direction stays strictly
+// inside the loss; a bound on the loss is a loss of that much, and fails.
+// Breaks when both like for like readings put even the better bound on the
+// loss or past it. The rounding allowance only narrows what holds.
 export function guardVerdict(metric, r, lossAbs) {
   if (!r.measured) return "not measured";
   if (!r.comparable) return "unclear";
   const up = higher(metric);
-  if (up ? r.lo >= -lossAbs - EPS : r.hi <= lossAbs + EPS) return "holds";
-  if (likeReadings(r).every((x) => x.comparable && (up ? x.hi < -lossAbs - EPS : x.lo > lossAbs + EPS))) return "breaks";
+  if (up ? r.lo > -lossAbs + EPS : r.hi < lossAbs - EPS) return "holds";
+  if (likeReadings(r).every((x) => x.comparable && (up ? x.hi <= -lossAbs : x.lo >= lossAbs))) return "breaks";
   return "unclear";
 }
 
@@ -174,7 +218,8 @@ export function aaHalfWidths(cell, losses) {
     const x = r.like?.lower ?? r;
     const halfWidth = Math.max(x.delta - x.lo, x.hi - x.delta);
     const loss = lossIn(m, losses[m], x.parent);
-    const underpowered = halfWidth > loss + EPS;
+    // A half-width on the loss would leave a null comparison's bound on the loss, which fails.
+    const underpowered = !(halfWidth < loss - EPS);
     const clusters = r.clusters;
     out[m] = { halfWidth, loss, clusters, clustersNeeded: underpowered ? (loss > 0 ? Math.ceil(clusters * (halfWidth / loss) ** 2) : null) : clusters, underpowered };
   }
@@ -454,7 +499,7 @@ function main() {
       result = decide({ id: o.change, record, pairs, look: lookOf(lines), stage: o.stage, final: o.final, aaPairs });
       line = decisionLine(result, { pairs, pr: o.pr });
       if (!lock.held()) throw new Refusal(`the ledger lock ${o.ledger}.lock was taken over while this decision ran; nothing is written, decide again`);
-      appendFileSync(o.ledger, `${JSON.stringify(line)}\n`);
+      appendLedgerLine(o.ledger, line);
     } finally {
       lock.release();
     }

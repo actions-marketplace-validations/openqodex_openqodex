@@ -22,15 +22,15 @@
 // ledger line with no false accept and no missed harm.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mulberry32, seedOf } from "../lib/interval.mjs";
 import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
-import { comparePairs, makeSide } from "../loop/compare.mjs";
-import { alphaAt, decide, ruleHash } from "../loop/decide.mjs";
-import { SIM_DEFAULTS, simulateHarm, simulateNull, simulatePower, simulatedWorld, drawSide, validateSaved, validationLine } from "../loop/validate.mjs";
+import { changeVerdict, comparePairs, makeSide } from "../loop/compare.mjs";
+import { alphaAt, appendLedgerLine, decide, guardVerdict, ruleHash } from "../loop/decide.mjs";
+import { HASH_AT_LOAD, SIM_DEFAULTS, simulateHarm, simulateNull, simulatePower, simulatedWorld, drawSide, validateSaved, validationLine, writeValidationLine } from "../loop/validate.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -280,8 +280,11 @@ describe("a later look uses the same bound as the first", () => {
     // The first look of the loop: accepted.
     const one = join(root, "one.jsonl");
     write(one, [passingValidation(), proposed("RC-0001", "c".repeat(40))].map((l) => `${JSON.stringify(l)}\n`).join(""));
+    const inodeBefore = statSync(one).ino;
     const a = node(DECIDE, ["--change", "RC-0001", ...pair, "--stage", "3", "--ledger", one]);
     expect(a.status, a.stdout + a.stderr).toBe(0);
+    // The line went in by replacing the whole ledger, never by an append in place.
+    expect(statSync(one).ino).not.toBe(inodeBefore);
     const lineA = readLines(one).at(-1);
     expect(lineA).toMatchObject({ v: 1, id: "RC-0001", event: "decided", look: 1, decision: "accepted" });
     expect(lineA.alpha).toBeCloseTo(0.05 / 2, 15);
@@ -415,5 +418,90 @@ describe("the comparison pairs only what can be paired", () => {
     expect(p.like.lower.delta).toBe(0);
     expect(p.parent).toBe(1);
     expect(p.candidate).toBe(0.5);
+  });
+});
+
+// Review findings on the first version (sol, PR 152), each guarded here:
+// 5. A guard holds at exactly its predeclared loss, and the rounding
+//    allowance widens what passes: a reading at the loss fails the guard,
+//    and the allowance may only shrink what passes.
+// 6. A metric with two bounds gets two chances to reject no change within
+//    one share, one per like for like reading: each reading is tested at
+//    half the share (one test at the whole share when both bounds are the
+//    same sums).
+// 7. A reader of the ledger sees a half written line: a line goes in by
+//    writing the whole ledger to a temp file and renaming it into place.
+// 8. The validation line names the hash of files other than the code that
+//    ran: the hash is taken before the rule's modules load and again before
+//    the line is written, and a difference refuses the write.
+describe("a guard holds at exactly its predeclared loss", () => {
+  it("fails a guard whose bound sits on the loss, or inside it by less than rounding", () => {
+    const at = (lo, hi) => ({ measured: true, comparable: true, lo, hi, like: null });
+    expect(guardVerdict("recall", at(-0.02, 0.01), 0.02)).not.toBe("holds");
+    expect(guardVerdict("recall", at(-0.02 + 1e-13, 0.01), 0.02)).not.toBe("holds");
+    expect(guardVerdict("recall", at(-0.019, 0.01), 0.02)).toBe("holds");
+    expect(guardVerdict("costPerReview", at(-0.01, 0.015), 0.015)).not.toBe("holds");
+    expect(guardVerdict("costPerReview", at(-0.01, 0.0149), 0.015)).toBe("holds");
+    // A better bound on the loss is a loss of at least that much.
+    expect(guardVerdict("recall", at(-0.05, -0.02), 0.02)).toBe("breaks");
+    expect(guardVerdict("costPerReview", at(0.015, 0.05), 0.015)).toBe("breaks");
+  });
+});
+
+describe("a metric with two bounds gets two chances to reject within one share", () => {
+  const two = (lower, upper, same = false) => ({ measured: true, comparable: true, like: { same, lower: { comparable: true, ...lower }, upper: { comparable: true, ...upper } } });
+  it("tests each like for like reading at half the share", () => {
+    expect(changeVerdict(two({ pBetter: 0.0015, pWorse: 1 }, { pBetter: 1, pWorse: 1 }), 0.002)).toBe("no change");
+    expect(changeVerdict(two({ pBetter: 1, pWorse: 1 }, { pBetter: 1, pWorse: 0.0015 }), 0.002)).toBe("no change");
+    expect(changeVerdict(two({ pBetter: 0.0009, pWorse: 1 }, { pBetter: 1, pWorse: 1 }), 0.002)).toBe("better");
+    expect(changeVerdict(two({ pBetter: 0.0009, pWorse: 1 }, { pBetter: 1, pWorse: 0.0009 }), 0.002)).toBe("mixed");
+  });
+  it("tests once at the whole share when the two bounds are the same sums, or the metric has one", () => {
+    expect(changeVerdict(two({ pBetter: 0.0015, pWorse: 1 }, { pBetter: 0.0015, pWorse: 1 }, true), 0.002)).toBe("better");
+    expect(changeVerdict({ measured: true, comparable: true, pBetter: 1, pWorse: 0.0015, like: null }, 0.002)).toBe("worse");
+  });
+  it("marks the two readings as the same sums when nothing is unresolved", () => {
+    const { parent, candidate } = tenOfTwelve();
+    const p = comparePairs([{ parent, candidate }], { alpha: 0.01 }).cells[0].strata.pooled.metrics.recall;
+    expect(p.like.same).toBe(true);
+  });
+});
+
+describe("a reader of the ledger sees a half written line", () => {
+  it("replaces the ledger whole through a temp file, and leaves a ledger cut mid-line as it is", () => {
+    const dir = tempDir("oq-bench-ledger-");
+    const ledger = join(dir, "reviewer.jsonl");
+    write(ledger, `${JSON.stringify({ v: 1, id: "A" })}\n`);
+    const before = statSync(ledger).ino;
+    appendLedgerLine(ledger, { v: 1, id: "B", big: "x".repeat(200_000) });
+    expect(statSync(ledger).ino).not.toBe(before);
+    expect(readLines(ledger).map((l) => l.id)).toEqual(["A", "B"]);
+    expect(readdirSync(dir)).toEqual(["reviewer.jsonl"]);
+    const cut = `${JSON.stringify({ v: 1, id: "A" })}\n{"v":1,"id":`;
+    write(ledger, cut);
+    expect(() => appendLedgerLine(ledger, { v: 1, id: "C" })).toThrow(/newline/);
+    expect(readFileSync(ledger, "utf8")).toBe(cut);
+    expect(readdirSync(dir)).toEqual(["reviewer.jsonl"]);
+  });
+});
+
+describe("the validation line names the hash of files other than the code that ran", () => {
+  it("hashes the rule's files before it loads them: its static imports load none of them", () => {
+    const src = readFileSync(VALIDATE, "utf8");
+    const statics = [...src.matchAll(/^import [^;]* from "([^"]+)";$/gm)].map((m) => m[1]);
+    expect(statics.length).toBeGreaterThan(0);
+    for (const s of statics) expect(s.startsWith("node:") || s === "./rule-hash.mjs", s).toBe(true);
+    expect(HASH_AT_LOAD).toBe(ruleHash());
+  });
+
+  it("refuses to write the line when the rule's files changed after they were loaded", () => {
+    const dir = tempDir("oq-bench-ledger-");
+    const ledger = join(dir, "reviewer.jsonl");
+    const build = (id) => ({ v: 1, id, event: "validation", ruleHash: "0".repeat(64), pass: true });
+    expect(() => writeValidationLine({ ledger, build, hashAtLoad: "0".repeat(64) })).toThrow(/changed/);
+    expect(existsSync(ledger)).toBe(false);
+    const line = writeValidationLine({ ledger, build: (id) => ({ ...build(id), ruleHash: HASH_AT_LOAD }), hashAtLoad: HASH_AT_LOAD });
+    expect(line.id).toBe("VAL-0001");
+    expect(readLines(ledger)).toHaveLength(1);
   });
 });
