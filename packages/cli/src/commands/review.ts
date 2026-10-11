@@ -44,7 +44,7 @@ import {
 import type { Change, ChangeScope, Config, Display, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
 import { renderImpactBlock } from "@openqodex/graph";
 import { checkoutsDir, redactStored, ruleCoverage, wholeRepoLenses } from "@openqodex/review";
-import type { PipelineResult } from "@openqodex/review";
+import type { PipelineResult, ReviewerDriver } from "@openqodex/review";
 import { announceRepoFiles } from "../agents/repo-folder.js";
 import { addTargetCheckout, checkoutOwner, inCheckouts, lfsPaths, placeSettings, removeTargetCheckout, sweepCheckouts } from "../checkout.js";
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
@@ -54,7 +54,7 @@ import { readInstructions } from "../instructions.js";
 import { readHomeRun, writeHomeLastReview, writeHomeReceipt, writeHomeRun } from "../receipts.js";
 import type { RunRecord } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
-import { DEFAULT_TIMEOUT_SECONDS, runReview } from "../review-run.js";
+import { ALL_TIMEOUT_SECONDS, CHANGE_TIMEOUT_SECONDS, runReview } from "../review-run.js";
 import type { GlobalFlags } from "../flags.js";
 import {
   buildHotSpots,
@@ -97,7 +97,8 @@ type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 // reviewer's web tools off whatever the runner's user config says.
 const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--report-dir", "--reviewer-web"];
 
-export async function run(args: string[]): Promise<number> {
+// `drivers`: the reviewers to choose from; tests pass a model provider stand-in.
+export async function run(args: string[], drivers?: ReviewerDriver[]): Promise<number> {
   const { global, bools, values, positionals } = parseFlags(args, {
     bools: [...SCOPE_BOOLS, "--agent", "--finalize", ALL, NO_GRAPH, HANDED_OFF],
     values: [...SCOPE_VALUES, "--only", "--skip", "--run", ...OWN_REVIEW_FLAGS],
@@ -147,11 +148,12 @@ export async function run(args: string[]): Promise<number> {
       skip: values.get("--skip"),
       noGraph,
       reviewer: values.get("--reviewer"),
-      timeoutMs: timeoutSeconds(values.get("--timeout")) * 1000,
+      timeoutMs: timeoutSeconds(values.get("--timeout"), bools.has(ALL)) * 1000,
       blockOn: blockOn as Severity | undefined,
       instructions: values.get("--instructions"),
       reportDir: values.get("--report-dir"),
       web: web === undefined ? undefined : web === "on",
+      drivers,
     });
   }
   if (target !== undefined) {
@@ -161,10 +163,16 @@ export async function run(args: string[]): Promise<number> {
   return runAgent(global, scope, values.get("--only"), values.get("--skip"), noGraph);
 }
 
-function timeoutSeconds(value: string | undefined): number {
-  if (value === undefined) return DEFAULT_TIMEOUT_SECONDS;
+// The longest --timeout: a timer longer than 2^31 - 1 milliseconds fires at
+// once, which would stop the reviewer as it starts.
+const MAX_TIMEOUT_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+// --timeout, or the cap for the scope: the whole repository (--all) gets
+// longer than a change, a branch or a pull request.
+function timeoutSeconds(value: string | undefined, all: boolean): number {
+  if (value === undefined) return all ? ALL_TIMEOUT_SECONDS : CHANGE_TIMEOUT_SECONDS;
   const n = Number(value);
-  if (!/^\d+$/.test(value) || n < 1) throw new OpenQodexError(`--timeout takes a whole number of seconds, not ${value}`);
+  if (!/^\d+$/.test(value) || n < 1 || n > MAX_TIMEOUT_SECONDS) throw new OpenQodexError(`--timeout takes a whole number of seconds from 1 to ${MAX_TIMEOUT_SECONDS}, not ${value}`);
   return n;
 }
 
