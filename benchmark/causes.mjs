@@ -53,6 +53,7 @@ function runCausesOf({ run, specs }, d) {
   const folder = folderOf(run);
   const loaded = loadRun(folder, { specsDir: specsOf(folder, specs) });
   const { score, causes } = scoreRun(loaded, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
+  if (causes === null) throw new Error(`${basename(folder)} is a scanner-only run: no reviewer ran, so its misses have no reviewer cause`);
   return { run: basename(folder), specsFrom: score.specsFrom, decisionsHash: d.hash, rulings: score.rulings, configs: Object.keys(score.byConfig), misses: causes.misses, nonHits: causes.nonHits };
 }
 
