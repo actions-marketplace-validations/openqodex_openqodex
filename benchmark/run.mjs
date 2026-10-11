@@ -211,8 +211,8 @@
 //    boards.json before anything else (lib/server-review.mjs), and the
 //    manifest records the deployment, the alias that named it, and the
 //    settings (effort, maxOutputTokens, the scripted model's script).
-//    A resume is refused when the endpoint, recorded as the sha256 of its
-//    base URL, differs from the run's.
+//    A resume is refused when the endpoint, recorded as an HMAC-SHA256 of
+//    its base URL keyed with the endpoint's key, differs from the run's.
 // 26. The model recorded is not the one that answered: each sample records
 //    the model asked for apart from the ones the provider named as
 //    answering, and the manifest's model is the id that served the run's
