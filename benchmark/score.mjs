@@ -304,6 +304,7 @@ export function renderV3(s) {
     ["Findings per clean change", (c) => (c.cleanFindingsPerCase.cases === 0 ? "n/a" : (c.cleanFindingsPerCase.findings / c.cleanFindingsPerCase.cases).toFixed(2))],
     ["Reviews complete / incomplete / failed / never started", (c) => `${c.population.complete} / ${c.population.incomplete} / ${c.population.failed} / ${c.population.unstarted}`],
     ["Planted-rule precision (format 2 rule, planted only)", (c) => (c.plantedLegacy ? pct(c.plantedLegacy.precision) : "n/a")],
+    ["Requests for a test on planted cases (out of both bounds)", (c) => (c.plantedLegacy ? String(c.plantedLegacy.testGaps) : "n/a")],
     ["Location diagnostic (line rule, K=1)", loc],
     ["Graph gaps disclosed in the brief", (c) => pct(c.brief.gaps)],
     ["Callers listed in the brief", (c) => pct(c.brief.callers)],

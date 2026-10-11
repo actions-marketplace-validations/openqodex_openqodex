@@ -133,7 +133,7 @@ export function headlineV3(c) {
     controls: { hit: c.controls.hit, of: c.controls.of },
     cleanFindingsPerCase: c.cleanFindingsPerCase,
     location: { precision: c.location.precision, recall: c.location.recall, knownNoise: c.location.knownNoise },
-    plantedLegacy: c.plantedLegacy ? { precision: c.plantedLegacy.precision } : null,
+    plantedLegacy: c.plantedLegacy ? { precision: c.plantedLegacy.precision, testGaps: c.plantedLegacy.testGaps } : null,
     wallMsMean: c.wallMs.mean,
     costUsdMean: c.costUsd.mean,
     costUsdTotal: c.costUsd.total,

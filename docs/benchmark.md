@@ -12,9 +12,9 @@ From the saved reports it counts (score format 3):
 
 - The population: every review the run planned, scored by its first attempt. A review that failed or never started misses every bug of its case and adds no finding. A retry is reported apart, with its cost, and never replaces the first attempt.
 - Issue recall: planted bugs found, over planted bugs, overall and for critical and major bugs. A bug found by two findings counts once.
-- Precision, as a lower and an upper bound over every finding the developer is shown. A hit, a second hit on a bug already found and a side issue the case lists as real are correct; a finding on a clean case is false. Any other finding (one the case does not list, a near miss, a wrong kind, a request for a test) is unresolved until a person rules on it: the lower bound counts it as wrong, the upper as right.
+- Precision, as a lower and an upper bound over every finding the developer is shown, except a request for a test on a planted case. A hit, a second hit on a bug already found and a side issue the case lists as real are correct; a finding on a clean case is false. Any other finding (one the case does not list, a near miss, a wrong kind) is unresolved until a person rules on it: the lower bound counts it as wrong, the upper as right.
 - Unique-issue precision counts each issue once, and redundancy is the share of findings beyond one per issue.
-- Planted-rule precision: the earlier rule, which leaves out duplicates, listed side issues and requests for a test. It is computed on planted cases only and never pooled with other numbers.
+- Planted-rule precision: the earlier rule, which leaves out duplicates, listed side issues and requests for a test, with the count of those requests. It is computed on planted cases only and never pooled with other numbers.
 - A location diagnostic: findings within one line of a planted bug's lines, whatever they say (the line rule of AACR-Bench). It never decides anything.
 - Clean controls: two cases have no bug. Any finding on them is false. A clean case passes only when its review completed with no finding; an incomplete or failed review fails it.
 - Graph disclosure, for the cases that need the graph: whether the brief named the callers the change breaks, and whether it said what the graph could not see (a caller list that is a floor, a call it could not bind).
@@ -26,7 +26,7 @@ A script matches each finding in `report.json` to its case. A finding matches a 
 
 The checks run in this order, and the first that holds decides:
 
-1. Test gap: a finding of kind `maintainability` or `style` whose title asks for a test ("has no covering test", "lacks tests", "untested"), even when its lines span a planted bug. On a case with planted bugs it is unresolved in precision and left out of planted-rule precision (the planted cases ship no tests). On a clean case, which ships its tests, it is false.
+1. Test gap: a finding of kind `maintainability` or `style` whose title asks for a test ("has no covering test", "lacks tests", "untested"), even when its lines span a planted bug. On a case with planted bugs it is left out of both precision bounds and counted apart in the planted-rule block (the planted cases ship no tests). On a clean case, which ships its tests, it is false.
 2. Accepted: a side issue the case lists as real but not planted, matched by place and words. It is correct in precision and left out of planted-rule precision.
 3. Hit: a planted bug, matched by place, kind and words. When two bugs share the lines, the one whose anchor line is nearest wins. A second hit on a bug already found in the same review is a duplicate: it is correct in precision, counts once in unique-issue precision, and is left out of planted-rule precision.
 4. Near miss or wrong kind: a hit in every way but the lines (within three lines of the range), or in every way but the kind. Neither is a hit; both are unresolved in precision and count against planted-rule precision. A near miss is listed so a spec that names the wrong line can be fixed.

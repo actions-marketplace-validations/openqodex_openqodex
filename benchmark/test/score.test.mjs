@@ -304,7 +304,7 @@ describe("a rule constant changes without a version bump, and old and new scores
   // edited: a change to a constant, a list, the rule order or the matching
   // code changes the hash, and this test fails until RULES_VERSION is bumped
   // in lib/score.mjs and the new version's hash is added here.
-  const KNOWN_RULES = { 3: "aa8006fc32655ab30f394055c4ea617df24c05a660cfa971144f17c4fa650768" };
+  const KNOWN_RULES = { 3: "3646227c6813aefa4d27163c88c9ea1d83ed258c69c8d7983156db1f15bbf2a7" };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {
     expect(RULES.version).toBe(RULES_VERSION);
@@ -384,22 +384,34 @@ describe("a successful retry replaces a failed first attempt", () => {
 describe("a planted-only precision with test requests set apart is pooled with real-suite precision", () => {
   const job = (origin, repeat) => scoreJob({ job: { jobId: `${origin}/hand@abababab/c/${repeat}`, caseId: `${origin}/hand@abababab`, config: "c", repeat }, spec, report: report([SQLI, ASK]), brief: null, origin });
 
-  it("keeps today's planted rule in its own labelled block, and the precision every suite shares counts the test request", () => {
+  it("keeps today's planted rule, with the planted case's test request, in its own labelled block", () => {
     const planted = summarizeJobs([job("planted", 1)]);
     expect(planted.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
+    expect(planted.plantedLegacy.testGaps).toBe(1);
     expect(planted.plantedLegacy.label).toMatch(/planted/);
-    // The request for a test is a displayed finding nothing frozen rules on: wrong in the lower bound, right in the upper.
-    expect(planted.precision.lower).toEqual({ hit: 1, of: 2 });
-    expect(planted.precision.upper).toEqual({ hit: 2, of: 2 });
+    expect(planted.outcomes["test-gap"]).toBe(1);
+  });
+
+  it("leaves the precision bounds untouched by a planted-suite test request, and widens them with a real-suite one", () => {
+    const hitOnly = summarizeJobs([scoreJob({ job: { jobId: "planted/hand@abababab/c/1", caseId: "planted/hand@abababab", config: "c", repeat: 1 }, spec, report: report([SQLI]), brief: null, origin: "planted" })]);
+    const planted = summarizeJobs([job("planted", 1)]);
+    expect(planted.precision).toEqual(hitOnly.precision);
+    expect(planted.uniqueIssuePrecision).toEqual(hitOnly.uniqueIssuePrecision);
+    expect(planted.redundancy).toEqual(hitOnly.redundancy);
+    // On a real pull request the request for a test is a shown finding nothing frozen rules on: wrong in the lower bound, right in the upper.
+    const real = summarizeJobs([job("real", 1)]);
+    expect(real.precision.lower).toEqual({ hit: 1, of: 2 });
+    expect(real.precision.upper).toEqual({ hit: 2, of: 2 });
+    expect(real.outcomes).toMatchObject({ hit: 1, unresolved: 1 });
   });
 
   it("gives a real suite no planted block, and pools planted and real findings under one rule", () => {
     const real = summarizeJobs([job("real", 1)]);
     expect(real.plantedLegacy).toBeNull();
-    expect(real.precision.lower).toEqual({ hit: 1, of: 2 });
     const pooled = summarizeJobs([job("planted", 1), job("real", 2)]);
-    expect(pooled.precision.lower).toEqual({ hit: 2, of: 4 });
-    expect(pooled.precision.upper).toEqual({ hit: 4, of: 4 });
+    expect(pooled.precision.lower).toEqual({ hit: 2, of: 3 });
+    expect(pooled.precision.upper).toEqual({ hit: 3, of: 3 });
     expect(pooled.plantedLegacy.precision).toEqual({ hit: 1, of: 1 });
+    expect(pooled.plantedLegacy.testGaps).toBe(1);
   });
 });

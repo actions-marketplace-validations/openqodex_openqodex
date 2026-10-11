@@ -475,8 +475,9 @@ export function regressions(oldSamples, newSamples) {
 //     redundancy is the share of displayed findings beyond one per issue.
 // 19. Today's planted precision, with test requests set apart, is pooled
 //     with real-suite numbers: it is kept in its own labelled block, over
-//     planted cases only, and the precision every suite shares counts every
-//     displayed finding under one rule.
+//     planted cases only, with the planted cases' requests for a test
+//     counted there and kept out of both bounds; on a real suite a request
+//     for a test is an unlisted finding and widens the bounds like any other.
 // 20. A line match is read as finding the issue: the location block (AACR's
 //     line rule) is labelled a diagnostic and never decides anything.
 // 21. A rule changes and old and new scores are compared as equal: every
@@ -490,15 +491,18 @@ export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near
 // How each outcome counts in precision. Correct and wrong count the same in
 // both bounds; an unresolved one, which nothing frozen decides and no person
 // has ruled on, is wrong in the lower bound and right in the upper. A near
-// miss, a wrong kind and a request for a test are unresolved for precision
-// and never find a truth item.
-export const PRECISION = { correct: ["hit", "duplicate", "accepted"], wrong: ["false"], unresolved: ["unresolved", "near", "wrong-kind", "test-gap"] };
-const OUTCOMES = [...PRECISION.correct, ...PRECISION.unresolved, ...PRECISION.wrong];
+// miss and a wrong kind are unresolved and never find a truth item. A
+// request for a test on a planted case (test-gap) is set apart: it stays out
+// of both bounds and is counted in the labelled planted-rule block. On a
+// real pull request the test-only rule does not apply, so such a request is
+// an unlisted finding like any other.
+export const PRECISION = { correct: ["hit", "duplicate", "accepted"], wrong: ["false"], unresolved: ["unresolved", "near", "wrong-kind"], apart: ["test-gap"] };
+const OUTCOMES = [...PRECISION.correct, ...PRECISION.unresolved, ...PRECISION.wrong, ...PRECISION.apart];
 // The evidence behind an outcome that the frozen spec decides.
 const FROZEN = new Set(["hit", "duplicate", "accepted", "false"]);
 
 export const LOCATION_LABEL = "Location diagnostic: AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart). A board output; never an acceptance metric.";
-export const PLANTED_LEGACY_LABEL = "Only planted cases: the format 2 rule, with duplicates, accepted side issues and requests for a test set apart. Never pooled with real-suite precision.";
+export const PLANTED_LEGACY_LABEL = "Only planted cases: the format 2 rule, with duplicates, accepted side issues and requests for a test set apart; testGaps counts the requests for a test, which stay out of both precision bounds. Never pooled with real-suite precision.";
 export const ALL_ATTEMPTS_LABEL = "Every saved attempt, retries included and unstarted jobs left out, as score format 2 counted them. A diagnostic only.";
 
 // The kind of case a suite holds.
@@ -525,7 +529,7 @@ export function outcomeOf(outcome, spec) {
   return outcome === "false" && !spec.clean ? "unresolved" : outcome;
 }
 
-const treatment = (outcome) => (PRECISION.correct.includes(outcome) ? "correct" : PRECISION.wrong.includes(outcome) ? "wrong" : "unresolved");
+const treatment = (outcome) => (PRECISION.correct.includes(outcome) ? "correct" : PRECISION.wrong.includes(outcome) ? "wrong" : PRECISION.apart.includes(outcome) ? "apart" : "unresolved");
 
 // The issue a finding raises: the truth item it finds, the side issue it
 // names, or itself (by findingId) until a person consolidates it with others.
@@ -604,8 +608,10 @@ export function scoreJob({ job, spec, report = null, brief = null, row = {}, ori
     const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
     return { ...g, issue: issueKey(g), evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
   });
+  // Precision, issues and redundancy count every shown finding but the ones set apart.
+  const inPrecision = findings.filter((f) => treatment(f.outcome) !== "apart");
   const counted = (list) => ({ correct: list.filter((x) => x === "correct").length, unresolved: list.filter((x) => x === "unresolved").length, of: list.length });
-  const issues = new Map(findings.map((f) => [f.issue, treatment(f.outcome)]));
+  const issues = new Map(inPrecision.map((f) => [f.issue, treatment(f.outcome)]));
   return {
     jobId: job.jobId,
     caseId: job.caseId,
@@ -619,10 +625,11 @@ export function scoreJob({ job, spec, report = null, brief = null, row = {}, ori
     findings,
     controls: base.controls,
     issueRecall: { all: base.recall, criticalMajor: add(base.bySeverity.critical, base.bySeverity.major) },
-    precision: counted(findings.map((f) => treatment(f.outcome))),
+    precision: counted(inPrecision.map((f) => treatment(f.outcome))),
     issues: counted([...issues.values()]),
     location: lineMatches(base.findings, spec.bugs ?? []),
     plantedLegacy: planted ? base.precision : null,
+    testGaps: findings.length - inPrecision.length,
     gaps: base.gaps,
     callers: base.callers,
     failures: started ? base.failures : [],
@@ -680,7 +687,7 @@ export function summarizeJobs(jobs, retries = []) {
     cleanFindingsPerCase: { findings: sum(clean, (j) => j.precision.of), cases: clean.length },
     controls: total((j) => j.controls),
     location: { label: LOCATION_LABEL, precision: { hit: matches, of: generated }, recall: { hit: matches, of: expected }, matches, generated, expected, knownNoise: sum(jobs, (j) => j.location.knownNoise) },
-    plantedLegacy: planted.length === 0 ? null : { label: PLANTED_LEGACY_LABEL, precision: planted.reduce((a, j) => add(a, j.plantedLegacy), ratio()) },
+    plantedLegacy: planted.length === 0 ? null : { label: PLANTED_LEGACY_LABEL, precision: planted.reduce((a, j) => add(a, j.plantedLegacy), ratio()), testGaps: sum(planted, (j) => j.testGaps) },
     outcomes,
     brief: { gaps: total((j) => j.gaps), callers: total((j) => j.callers) },
     causes: null,
@@ -746,7 +753,7 @@ const RULES_BLOCK = {
   aacrLineK: AACR_LINE_K,
   overlap: "A finding's lines are [line_number, max(line_end, line_number)]. A hit needs a gap of 0 between them and one of the truth item's locations (its file and lines, or an entry of also), paths normalised.",
   words: { rule: "A mention matches case-insensitively, without stemming, at the start of the text or after a character that is not a letter or digit.", fields: ["title", "problem", "consequence", "fix", "description", "suggested_change"] },
-  testOnly: { pattern: TEST_ONLY.source, flags: TEST_ONLY.flags, kinds: TEST_ONLY_KINDS, applies: "planted cases only; on a clean case such a finding is false" },
+  testOnly: { pattern: TEST_ONLY.source, flags: TEST_ONLY.flags, kinds: TEST_ONLY_KINDS, applies: "planted cases only, where such a finding is set apart from precision; on a clean case it is false" },
   order: OUTCOME_ORDER,
   precision: PRECISION,
   population: "Every planned job's first attempt. A job with no attempt is unstarted; an unstarted or failed job misses every truth item of its case and adds no finding. Retries are diagnostics only.",
