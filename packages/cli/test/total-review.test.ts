@@ -90,7 +90,9 @@
 //     raised: rounds.json beside the report lacks a correction round's
 //     errors, the answer they judged or the changed ranges the round
 //     carried; or it is missing when no round was needed, so a reader cannot
-//     tell no round from a round not saved.
+//     tell no round from a round not saved; or a secret the reviewer's answer
+//     holds as a key is saved there as it is; or a rounds.json that cannot
+//     be written stops the review.
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -698,6 +700,21 @@ describe("21. secrets outside file contents", () => {
     expect(await reviewWithGitleaks(dir, fake([leak]))).toBe(2);
     expect(out + err + runFiles(dir)).not.toContain(key);
   });
+
+  it("36. a secret the reviewer's answer holds as a key is redacted in rounds.json and every other run file", async () => {
+    if (gitleaks === null) return void process.stdout.write("round key secret: skipped, gitleaks is not installed\n");
+    const key = secret();
+    const dir = withSecret(key, false);
+    // Every answer fails its checks and holds the secret as a key, so each
+    // correction round saves an answer with it.
+    const keyed: Answer = (text) => ({ finalText: JSON.stringify({ ...(JSON.parse(submission(text, { findings: [] })) as object), [key]: 0 }) });
+    expect(await reviewWithGitleaks(dir, fake([keyed]))).toBe(2);
+    const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
+    const rounds = JSON.parse(readFileSync(join(run, "rounds.json"), "utf8")) as { answer: Record<string, unknown> }[];
+    expect(rounds).toHaveLength(2);
+    for (const r of rounds) expect(Object.keys(r.answer)).toContain("[redacted]");
+    expect(out + err + runFiles(dir)).not.toContain(key);
+  });
 });
 
 describe("22, 23, 24. ranges the brief could not carry", () => {
@@ -1183,5 +1200,15 @@ describe("36. every correction round beside the report", () => {
     const clean = join(tempDir("oq-report-dir-"), "review");
     expect(await withReportDir(repo(), fake([good]), clean)).toBe(0);
     expect(JSON.parse(readFileSync(join(clean, "rounds.json"), "utf8"))).toEqual([]);
+  });
+
+  it("a rounds.json that cannot be written is named once on stderr and the review goes on", async () => {
+    // A folder in the place of rounds.json fails the write when the reviewer
+    // starts and again at the correction round.
+    const folder = join(tempDir("oq-report-dir-"), "review");
+    mkdirSync(join(folder, "rounds.json"), { recursive: true });
+    expect(await withReportDir(repo(), fake([noDisposition, good]), folder)).toBe(0);
+    expect((JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report).completion?.status).toBe("complete");
+    expect(err.match(/could not write rounds\.json/g)).toHaveLength(1);
   });
 });
