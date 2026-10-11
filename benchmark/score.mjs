@@ -46,12 +46,21 @@
 //    the original its index entry names: the folder the files go to, the
 //    run's own or --out, is checked by its canonical path, and is refused
 //    when it is, or lies in, a folder named for any legacy run.
+// 7. A scanner-only run is scored by the review rules, which read findings
+//    a reviewer wrote: a run whose manifest says mode "scan" is scored by
+//    lib/scan-score.mjs from each sample's scan.json, under its own rules
+//    block, into the same score format.
+// 8. Two runs whose scans read other Semgrep rule packs or other osv.dev
+//    advisories are compared as builds: every difference in their external
+//    inputs is printed above the comparison, labelled as an input.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
+import { inputDifferences } from "./lib/external.mjs";
 import { runIntervals } from "./lib/interval.mjs";
+import { SCAN_RULES, scanRegressions, scoreScanAttempts } from "./lib/scan-score.mjs";
 import { RULES, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
@@ -115,9 +124,11 @@ export function loadRun(folder, { specsDir = null } = {}) {
         }
         const report = readJson(join(dir, "report", "report.json"));
         const brief = readText(join(dir, "report", "brief.md"));
+        // What the scanners handed on: the scanner-only score reads it.
+        const scan = readJson(join(dir, "report", "scan.json"));
         const sample = scoreSample({ spec, report, brief, row });
         samples.push(sample);
-        attempts.push({ case: c, config, ...which, row, report, brief, sample });
+        attempts.push({ case: c, config, ...which, row, report, brief, scan, sample });
       }
     }
   }
@@ -217,15 +228,19 @@ function repoGroups(origin, jobs, specs) {
 // of outcomes.jsonl, `jobs` the scored jobs (for a comparison).
 export function scoreRun(run, { decisionsHash = null } = {}) {
   const m = run.manifest;
-  // The scoring itself, attempt selection included, is lib/score.mjs scoreAttempts, which the rules hash covers.
-  const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs });
+  // The scoring itself, attempt selection included, is lib/score.mjs
+  // scoreAttempts, which the rules hash covers, or for a scanner-only run
+  // lib/scan-score.mjs scoreScanAttempts, which the scan rules hash covers.
+  const scan = m.mode === "scan";
+  const s = (scan ? scoreScanAttempts : scoreAttempts)({ manifest: m, attempts: run.attempts, specs: run.specs });
   // The intervals are seeded from the run id, the folder's name, never its
-  // path, so a copy elsewhere draws the same intervals.
+  // path, so a copy elsewhere draws the same intervals. A scanner-only run's
+  // second pass (run.mjs --check-identical) carries its first pass's run id.
   const perCase = caseSums(s.perCase, s.jobs);
   const { byConfig, intervals } = runIntervals({ runId: m.runId ?? basename(run.folder), byConfig: s.byConfig, perCase, groups: repoGroups(originOf(s.suite), s.jobs, run.specs) });
   const score = {
     version: 3,
-    rules: RULES,
+    rules: scan ? SCAN_RULES : RULES,
     run: run.name,
     suite: s.suite,
     split: m.split ?? "dev",
@@ -343,9 +358,10 @@ export function renderV3(s) {
   return out.join("\n");
 }
 
-// Everything besides the build that differs between two runs.
+// Everything besides the build that differs between two runs, the
+// external inputs their scans consumed included.
 export function differences(older, newer) {
-  return [...runDifferences(older.manifest, newer.manifest), ...specDifferences(older.specs, newer.specs)];
+  return [...runDifferences(older.manifest, newer.manifest), ...specDifferences(older.specs, newer.specs), ...inputDifferences(older.manifest.external ?? null, newer.manifest.external ?? null)];
 }
 
 export function renderCompare(older, newer, so, sn, regs) {
@@ -380,9 +396,96 @@ export function renderCompare(older, newer, so, sn, regs) {
 }
 
 // The adjudication file's hash, or null while there is none (P1-T8 adds it).
-function decisionsHash() {
+export function decisionsHash() {
   const path = join(benchRoot, "review-queue", "decisions.jsonl");
   return existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
+}
+
+const ciText = (r) => (Array.isArray(r?.ci) ? ` [${Math.round(r.ci[0] * 100)}%, ${Math.round(r.ci[1] * 100)}%]` : "");
+const describePacks = (p) => (Array.isArray(p) ? (p.length === 0 ? "none consumed" : p.map((x) => `${x.pack} ${x.sha256.slice(0, 12)}`).join(", ")) : `${p ?? "not recorded"}`);
+
+// A scanner-only run's score as markdown tables: the headline numbers, the
+// inputs the scans consumed, each scanner, each case and every bug missed.
+export function renderScan(s, manifest = {}) {
+  const configs = Object.keys(s.byConfig);
+  const out = [];
+  const p = s.population;
+  const x = s.external;
+  out.push(`Run ${s.run}`);
+  out.push(`Build ${s.build?.short ?? "unknown"} (openqodex ${s.build?.cliVersion ?? "unknown"}${s.build?.dirty ? ", built from a tree the commit does not hold" : ""}); suite ${s.suite}, split ${s.split}; scanner-only, no reviewer; scan rules version ${s.rules.version} (${s.rules.hash.slice(0, 12)}).`);
+  out.push(`Population: ${p.planned} planned scans, each scored by its first attempt: ${p.complete} complete, ${p.failed} failed, ${p.unstarted} never started.`);
+  if (x) out.push(`Inputs: scanner toolchain ${x.toolchainHash.slice(0, 12)}; Semgrep rule packs ${describePacks(x.semgrepPacks)}; osv.dev advisories ${x.osvAdvisories.advisories} (${x.osvAdvisories.sha256.slice(0, 12)}).`);
+  const missing = manifest.scannersMissing ?? [];
+  if (missing.length > 0) out.push(`Not installed on this machine, so not run: ${missing.map((m) => `${m.scanner} (${m.detail ?? m.state})`).join(", ")}.`);
+  const iv = s.intervals;
+  if (iv) out.push(`Intervals in brackets: ${Math.round(iv.level * 100)}% percentile bootstrap over ${iv.cluster === "case" ? "cases" : "repository groups"}, ${iv.resamples} resamples, seeded from the run id ${iv.runId}; none with fewer than ${iv.minClusters} ${iv.cluster === "case" ? "cases" : "groups"} to count.`);
+  out.push("");
+  const rows = [
+    ["Issue recall, all", (c) => `${pct(c.issueRecall.all)}${ciText(c.issueRecall.all)}`],
+    ["Issue recall, critical and major", (c) => `${pct(c.issueRecall.criticalMajor)}${ciText(c.issueRecall.criticalMajor)}`],
+    ["Recall on bugs a scanner is expected to find", (c) => pct(c.scannerRecall)],
+    ["Precision, lower to upper bound", (c) => (c.precision.lower.of === 0 ? "n/a" : `${pct(c.precision.lower)} to ${pct(c.precision.upper)}`)],
+    ["Unresolved candidates (no frozen evidence)", (c) => String(c.precision.unresolved)],
+    ["Redundancy (candidates beyond one per issue)", (c) => pct(c.redundancy)],
+    ["Clean changes with no candidate", (c) => pct(c.controls)],
+    ["Candidates per clean change", (c) => (c.cleanFindingsPerCase.cases === 0 ? "n/a" : (c.cleanFindingsPerCase.findings / c.cleanFindingsPerCase.cases).toFixed(2))],
+    ["Location diagnostic (line rule, K=1)", (c) => `precision ${pct(c.location.precision)}, recall ${pct(c.location.recall)}`],
+    ["Time per scan, mean (median)", (c) => (c.wallMs.n === 0 ? "n/a" : `${(c.wallMs.mean / 1000).toFixed(1)} s (${(c.wallMs.median / 1000).toFixed(1)} s)`)],
+  ];
+  out.push(table(["Measure", ...configs], rows.map(([label, f]) => [label, ...configs.map((c) => f(s.byConfig[c]))])));
+  for (const config of configs) {
+    const per = s.byConfig[config].perScanner;
+    out.push("");
+    out.push(`Each finder (${config}): its candidates by outcome, and the bugs it was expected to find, located over looked at, with the scans where it did not run apart:`);
+    out.push("");
+    out.push(table(["Finder", "Candidates", "Hits", "Duplicates", "Unresolved", "False", "Expected bugs located", "Not run"], Object.entries(per).map(([name, r]) => [name, r.candidates, r.hits, r.duplicates, r.unresolved, r.false, pct(r.expected), r.notRun].map(String))));
+  }
+  out.push("");
+  out.push("Per case (issue recall; precision bounds):");
+  out.push("");
+  const caseIds = [...new Set(configs.flatMap((c) => Object.keys(s.perCase[c] ?? {})))].sort();
+  out.push(table(["Case", ...configs], caseIds.map((id) => [id, ...configs.map((c) => {
+    const r = s.perCase[c]?.[id];
+    return r ? `${pct(r.issueRecall)}; ${bounds(r.precision)}` : "n/a";
+  })])));
+  const missed = configs.flatMap((c) => Object.entries(s.perBug[c] ?? {}).flatMap(([id, bugs]) => Object.entries(bugs).filter(([, b]) => b.found.some((f) => !f)).map(([bug, b]) => [c, id, bug, b.severity ?? "n/a", `${b.found.filter(Boolean).length}/${b.found.length}`])));
+  if (missed.length > 0) {
+    out.push("");
+    out.push("Truth items no scanner found:");
+    out.push("");
+    out.push(table(["Configuration", "Case", "Bug", "Severity", "Found"], missed));
+  }
+  return out.join("\n");
+}
+
+// Two scanner-only runs compared: every difference besides the build, then
+// each bug the earlier run found and the later one does not.
+export function renderScanCompare(older, newer, regs) {
+  const out = [`Comparing ${older.name} (build ${older.manifest.build?.short}) with ${newer.name} (build ${newer.manifest.build?.short}).`];
+  const diffs = differences(older, newer);
+  if (diffs.length > 0) {
+    out.push("These differ besides the build, so a change below may not be the product's:");
+    for (const d of diffs) out.push(`- ${d}`);
+  }
+  if (regs.length === 0) out.push("No regression: every bug the earlier run found is still found.");
+  else {
+    out.push("Regressions (found before, missed now):");
+    for (const r of regs) out.push(`- ${r.config} ${r.case} ${r.bug}`);
+  }
+  return out.join("\n");
+}
+
+// Scores a run folder and writes score.json and outcomes.jsonl into it, as
+// node benchmark/score.mjs <folder> does with no other option; run.mjs calls
+// it at the end of a scanner-only pass. Returns the score and the run.
+export function saveScore(folder) {
+  const run = loadRun(resolve(folder));
+  const legacy = legacyFolderOf(run.folder, readRecipes());
+  if (legacy !== null) throw new Error(`${run.folder} is, or lies in, the folder of the legacy run ${legacy}; its score is the one its own scorer wrote`);
+  const { score, outcomes } = scoreRun(run, { decisionsHash: decisionsHash() });
+  writeFileSync(join(run.folder, "score.json"), `${JSON.stringify({ ...score, comparedWith: null }, null, 2)}\n`);
+  writeFileSync(join(run.folder, "outcomes.jsonl"), outcomes.map((o) => `${JSON.stringify(o)}\n`).join(""));
+  return { score, run };
 }
 
 function main() {
@@ -425,7 +528,12 @@ function main() {
     process.exit(2);
   }
   const { score, outcomes, jobs } = scored;
-  const regs = older ? regressions(olderScored.jobs, jobs) : [];
+  const scanOnly = score.mode === "scan";
+  if (older && (older.manifest.mode ?? "review") !== score.mode) {
+    console.error(`${older.name} is a ${older.manifest.mode ?? "review"} run and ${run.name} a ${score.mode} run; compare runs of one mode`);
+    process.exit(2);
+  }
+  const regs = older ? (scanOnly ? scanRegressions(olderScored.jobs, jobs) : regressions(olderScored.jobs, jobs)) : [];
   const doc = { ...score, comparedWith: older ? { run: older.name, build: older.manifest.build, differences: differences(older, run), regressions: regs } : null };
   // Scored against other specs, the score gets its own files, so the score
   // against the run's own specs is never overwritten.
@@ -435,8 +543,8 @@ function main() {
   writeFileSync(join(dest, `outcomes${suffix}.jsonl`), outcomes.map((o) => `${JSON.stringify(o)}\n`).join(""));
   if (json) console.log(JSON.stringify(doc, null, 2));
   else {
-    console.log(renderV3(score));
-    if (older) console.log(`\n${renderCompare(older, run, olderScored.score, score, regs)}`);
+    console.log(scanOnly ? renderScan(score, run.manifest) : renderV3(score));
+    if (older) console.log(`\n${scanOnly ? renderScanCompare(older, run, regs) : renderCompare(older, run, olderScored.score, score, regs)}`);
     const shown = (p) => (relative(repoRoot, p).startsWith("..") ? p : relative(repoRoot, p));
     console.log(`\nScore saved: ${shown(join(dest, `score${suffix}.json`))}, with ${outcomes.length} finding outcomes in ${shown(join(dest, `outcomes${suffix}.jsonl`))}`);
   }

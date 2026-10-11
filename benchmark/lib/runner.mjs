@@ -43,16 +43,19 @@ import { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, r
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
+import { SCAN_CONFIG } from "./scan-score.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
 
 // The jobs of a run in run order: per repeat, every case, every
 // configuration, with the configuration order alternating by repeat so
 // drift lands on no one configuration. `caseIds` maps each case name to its
 // frozen id; a job's id is <caseId>/<config>/<repeat>. A plan that holds a
-// job id twice is refused (failure 9).
-export function planJobs({ cases, caseIds, reviewers, graph, repeat }) {
+// job id twice is refused (failure 9). A scanner-only run (`mode: "scan"`)
+// has one configuration, "scan", with no reviewer.
+export function planJobs({ cases, caseIds, reviewers = [], graph = [], repeat, mode = "review" }) {
   const configs = [];
-  for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  if (mode === "scan") configs.push({ id: SCAN_CONFIG, reviewer: null, graph: false });
+  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
@@ -168,11 +171,14 @@ const readJsonFile = (path) => {
 // 3. runs every job with no saved attempt, `concurrency` at a time, as
 //    runJob(job, attempt), where attempt is the job's next free attempt
 //    number, until `stopReason()` names a reason;
-// 4. records how it ended in the manifest (a new run) or resumes.jsonl (a
-//    resume), and gives the folder back.
+// 4. records how it ended, with the minutes it took, and what `finish()`
+//    adds once every job is done (a scanner-only run's external inputs), in
+//    the manifest (a new run) or resumes.jsonl (a resume), and gives the
+//    folder back.
 // Throws before any review when the folder is refused.
-export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {} }) {
+export async function executeRun({ out, manifest, resume = false, checkResume = () => [], copies = [], jobs, concurrency = 1, runJob, stopReason = () => null, log = () => {}, finish = () => ({}) }) {
   const release = lockRun(out);
+  const started = Date.now();
   try {
     const manifestPath = join(out, "manifest.json");
     const resumesPath = join(out, "resumes.jsonl");
@@ -206,9 +212,10 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
     const why = stopReason();
-    const ended = { at: new Date().toISOString(), how: why === null ? "finished" : "stopped", why, reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length, planned: jobs.length };
-    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended })}\n`);
-    else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ended }, null, 2)}\n`);
+    const ended = { at: new Date().toISOString(), how: why === null ? "finished" : "stopped", why, reviewsWithAnAttempt: jobs.filter((j) => jobState(out, j).done).length, planned: jobs.length, elapsedMin: Math.round((Date.now() - started) / 600) / 100 };
+    const more = finish();
+    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended, ...more })}\n`);
+    else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ...more, ended }, null, 2)}\n`);
     return { ended, ran: total };
   } finally {
     release();
@@ -264,7 +271,46 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
     rounds: report?.completion?.reviewer?.rounds ?? null,
     graphStatus: report?.impact?.status ?? null,
     graphMs: report?.impact?.build?.durationMs ?? null,
-    scanners: (report?.scanners ?? []).map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, kept: s.keptCount, ms: s.durationMs })),
+    scanners: scannerRows(report?.scanners ?? []),
+    // The product's phase times, as report.json gives them.
+    timings: report?.timings ?? null,
+  };
+}
+
+// Each scanner of a scan as a sample records it: its status and version,
+// its raw and kept counts, its time and the time to find its tool, the
+// files it was handed, what each filter stage dropped, and, for semgrep,
+// the rule packs it consumed.
+function scannerRows(list) {
+  return list.map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, raw: s.rawCount ?? null, kept: s.keptCount, ms: s.durationMs, resolveMs: s.resolveMs ?? null, files: s.files ?? null, stages: s.stages ?? null, ...(Array.isArray(s.rules) ? { rules: s.rules } : {}), reason: s.reason ?? null }));
+}
+
+// The saved record of one attempt of a scanner-only run: `scan` is the
+// scan.json it wrote and `report` its report.json (null when it wrote
+// none), `failure` why it wrote none.
+export function scanSampleRecord({ job, attempt, result, scan, report, startedAt, failure, stopped }) {
+  return {
+    jobId: job.jobId ?? null,
+    caseId: job.caseId ?? null,
+    firstAttempt: attempt === 1,
+    case: job.case,
+    config: job.config,
+    reviewer: null,
+    graph: "off",
+    repeat: job.repeat,
+    attempt,
+    started_at: startedAt,
+    exit: result.code ?? null,
+    signal: result.signal ?? null,
+    wallMs: result.wallMs ?? null,
+    status: scan ? "complete" : "failed",
+    failure: failure?.cause ?? null,
+    stopped: stopped ?? null,
+    verdict: report?.verdict ?? null,
+    candidates: scan ? scan.candidates.length : null,
+    findings: report ? report.findings.length : null,
+    timings: report?.timings ?? null,
+    scanners: scannerRows(scan?.scanners ?? []),
   };
 }
 
