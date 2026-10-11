@@ -11,7 +11,7 @@
 //          of every response.
 // Nothing a reviewer says about itself is proof: what was read, what was
 // shown and what was used come from the brain's own records.
-import type { Category, Config, ContextItem, Coverage, Disagreement, ModelCompletionRecord, RunManifest, RunTimings, Severity } from "@openqodex/core";
+import type { Category, Config, ContextItem, Coverage, Disagreement, ModelCompletionRecord, RunManifest, RunTimings, ScanResult, Severity } from "@openqodex/core";
 import type { ReviewerDriver, Turn } from "./agents/driver.js";
 import type { CorrectionRound } from "./conversation.js";
 import type { ReviewScope } from "./incremental.js";
@@ -249,9 +249,13 @@ export type Disposition = {
 // change, and why; null when a proof failed before the decision.
 // `rounds`: every correction round sent, the second reviewer's after the
 // primary's (conversation.ts CorrectionRound), redacted like the report.
-// `timings`: how long each phase took, from the call to the result
-// (RunTimings); the JSON report of a review a reviewer was given holds the
-// same object.
+// `scan`: the scan record, the object the command writes to scan.json (the
+// candidates, each scanner's summary, the selection and the trail),
+// redacted with every secret the run matched and without the secrets'
+// fingerprints, which only the command's own files need; null when the
+// review stopped before the scanners ran. `timings`: how long each phase
+// took, from the call to the result (RunTimings); the JSON report of a
+// review a reviewer was given holds the same object.
 export type ReviewResult = {
   status: ReviewStatus;
   reason?: string;
@@ -269,6 +273,7 @@ export type ReviewResult = {
   notes: string[];
   disagreements: Disagreement[];
   context: NonNullable<RunManifest["context"]>;
-  timings?: RunTimings;
+  scan: Omit<ScanResult, "secretFingerprints"> | null;
+  timings: RunTimings;
   render: { markdown(): string; sarif(): string; json(): string };
 };
