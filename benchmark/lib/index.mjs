@@ -150,6 +150,9 @@ export function headlineV3(c) {
     cleanFindingsPerCase: c.cleanFindingsPerCase,
     location: { precision: c.location.precision, recall: c.location.recall, knownNoise: c.location.knownNoise },
     plantedLegacy: c.plantedLegacy ? { precision: c.plantedLegacy.precision, testGaps: c.plantedLegacy.testGaps } : null,
+    // Rules version 4 and later: severity agreement and who found each found issue. The matrix stays in score.json.
+    ...(c.severity ? { severity: { exact: r(c.severity.exact), withinOne: r(c.severity.withinOne), oneOff: r(c.severity.oneOff), off: r(c.severity.off), over: c.severity.over, under: c.severity.under, unknown: c.severity.unknown } } : {}),
+    ...(c.finder ? { finder: { match: r(c.finder.match), byExpected: c.finder.byExpected, byFinder: c.finder.byFinder, scannerExpectedReviewerFound: c.finder.scannerExpectedReviewerFound, unjudged: c.finder.unjudged, droppedCandidates: c.finder.droppedCandidates } } : {}),
     wallMsMean: c.wallMs.mean,
     costUsdMean: c.costUsd.mean,
     costUsdTotal: c.costUsd.total,
@@ -255,8 +258,9 @@ const reach = (f, x) => {
 };
 
 // A format 3 headline (headlineV3): the population adds up, every ratio is
-// hits over checks, and each pair of bounds is over the same findings.
-function headlineProblems(s, at) {
+// hits over checks, and each pair of bounds is over the same findings. From
+// rules version 4 it gives severity agreement and the finder too.
+function headlineProblems(s, at, rulesVersion) {
   const p = [];
   const need = (cond, what) => {
     if (!cond) p.push(`${at}: ${what}`);
@@ -269,6 +273,12 @@ function headlineProblems(s, at) {
     need(isRatio(b?.lower) && isRatio(b?.upper) && b.lower.of === b.upper.of && b.lower.hit <= b.upper.hit, `${name} must be a lower and an upper bound over the same findings`);
   }
   need(isRatio(s?.redundancy) && isRatio(s?.controls), "redundancy and controls must be hits over checks");
+  if (rulesVersion >= 4) {
+    const sev = s?.severity;
+    need(["exact", "withinOne", "oneOff", "off"].every((k) => isRatio(sev?.[k]) && sev[k].of === sev.exact.of) && isInt(sev?.over) && isInt(sev?.under) && isInt(sev?.unknown), "severity must give exact, within one, one off and off as hits over the same found issues, with the over-rated, under-rated and unknown counts");
+    const f = s?.finder;
+    need(isRatio(f?.match) && f.byExpected && typeof f.byExpected === "object" && Object.values(f.byExpected).every(isRatio) && isInt(f?.byFinder?.scanner) && isInt(f?.byFinder?.reviewer) && isInt(f?.scannerExpectedReviewerFound) && isInt(f?.unjudged), "finder must give the match and each expected finder as hits over checks, the scanner and reviewer finds, the scanner-expected finds the reviewer made alone, and the unjudged ones");
+  }
   return p;
 }
 
@@ -300,7 +310,7 @@ export function entryProblems(e) {
     if (e.legacy) {
       need(isRatio(s.recall) && isRatio(s.precision) && isRatio(s.controls), `scores.${config}: recall, precision and controls must be hits over checks`);
       need(isInt(s.samples) && isInt(s.complete) && isInt(s.incomplete) && isInt(s.failed) && s.complete + s.incomplete + s.failed === s.samples, `scores.${config}: complete, incomplete and failed must add up to samples`);
-    } else headlineProblems(s, `scores.${config}`).forEach((what) => need(false, what));
+    } else headlineProblems(s, `scores.${config}`, e.rulesVersion).forEach((what) => need(false, what));
   }
   need(e.release === null || (typeof e.release === "string" && e.release !== ""), "release must be a version or null");
   if (e.split === "test") {

@@ -13,11 +13,12 @@
 //
 // Writes score format 3: score.json (the population of planned first
 // attempts, issue recall, precision as bounds, unique-issue precision,
-// redundancy, the location and planted-rule blocks, per-case ratios, per-bug
-// results, the rules block, and a 95% cluster bootstrap interval on each
-// issue-level ratio, lib/interval.mjs, seeded from the run id so a rescore
-// draws the same interval), outcomes.jsonl (one line per finding of every
-// first attempt) and unresolved.jsonl (each finding that still asks a
+// redundancy, severity agreement and who found each bug (from each review's
+// own scan.json), the location and planted-rule blocks, per-case ratios,
+// per-bug results, the rules block, and a 95% cluster bootstrap interval on
+// each issue-level ratio, lib/interval.mjs, seeded from the run id so a
+// rescore draws the same interval), outcomes.jsonl (one line per finding of
+// every first attempt) and unresolved.jsonl (each finding that still asks a
 // person a question, with its text and the code it cites, for queue.mjs
 // add), into the results folder or --out. It applies the rulings in the
 // adjudication file, benchmark/review-queue/decisions.jsonl unless
@@ -58,7 +59,7 @@ import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs"
 import { runIntervals } from "./lib/interval.mjs";
 import { unresolvedItems } from "./lib/queue.mjs";
 import { readDecisions } from "./lib/rulings.mjs";
-import { RULES, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
+import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
 const readJson = (path) => {
@@ -121,9 +122,11 @@ export function loadRun(folder, { specsDir = null } = {}) {
         }
         const report = readJson(join(dir, "report", "report.json"));
         const brief = readText(join(dir, "report", "brief.md"));
+        // The scanners' own record, which decides who found each bug (null when the review saved none).
+        const scan = readJson(join(dir, "report", "scan.json"));
         const sample = scoreSample({ spec, report, brief, row });
         samples.push(sample);
-        attempts.push({ case: c, config, ...which, row, report, brief, sample });
+        attempts.push({ case: c, config, ...which, row, report, brief, scan, sample });
       }
     }
   }
@@ -319,6 +322,13 @@ export function renderV3(s) {
     ["Clean changes with no finding", (c) => pct(c.controls)],
     ["Findings per clean change", (c) => (c.cleanFindingsPerCase.cases === 0 ? "n/a" : (c.cleanFindingsPerCase.findings / c.cleanFindingsPerCase.cases).toFixed(2))],
     ["Reviews complete / incomplete / failed / never started", (c) => `${c.population.complete} / ${c.population.incomplete} / ${c.population.failed} / ${c.population.unstarted}`],
+    ["Severity as the spec rates it, of found issues", (c) => pct(c.severity.exact)],
+    ["Severity one step off / two or more off", (c) => `${pct(c.severity.oneOff)} / ${pct(c.severity.off)}`],
+    ["Severity rated higher / lower than the spec", (c) => `${c.severity.over} / ${c.severity.under}`],
+    ["Found by whom the spec expects", (c) => pct(c.finder.match)],
+    ["Found issues a scanner located / the reviewer alone", (c) => `${c.finder.byFinder.scanner} / ${c.finder.byFinder.reviewer}${c.finder.unjudged > 0 ? ` (${c.finder.unjudged} with no saved scan)` : ""}`],
+    ["Expected from a scanner, found by the reviewer alone", (c) => String(c.finder.scannerExpectedReviewerFound)],
+    ["Truth items with a scanner candidate the reviewer dropped", (c) => String(c.finder.droppedCandidates)],
     ["Planted-rule precision (format 2 rule, planted only)", (c) => (c.plantedLegacy ? pct(c.plantedLegacy.precision) : "n/a")],
     ["Requests for a test on planted cases (out of both bounds)", (c) => (c.plantedLegacy ? String(c.plantedLegacy.testGaps) : "n/a")],
     ["Location diagnostic (line rule, K=1)", loc],
@@ -331,6 +341,20 @@ export function renderV3(s) {
   ];
   out.push(table(["Measure", ...configs], rows.map(([label, f]) => [label, ...configs.map((c) => f(s.byConfig[c]))])));
   out.push("");
+  for (const c of configs) {
+    const m = s.byConfig[c].severity.matrix;
+    out.push(`Severity given (columns) against the spec's (rows), found issues (${c}):`);
+    out.push("");
+    out.push(table(["Spec", ...SEVERITY_ORDER], SEVERITY_ORDER.map((e) => [e, ...SEVERITY_ORDER.map((g) => String(m[e][g]))])));
+    out.push("");
+  }
+  const expected = [...new Set(configs.flatMap((c) => Object.keys(s.byConfig[c].finder.byExpected)))].sort();
+  if (expected.length > 0) {
+    out.push("Found issues by the finder the spec expects (a scanner: it located the issue; reasoning or graph: no scanner located it):");
+    out.push("");
+    out.push(table(["Expected finder", ...configs], expected.map((name) => [name, ...configs.map((c) => (s.byConfig[c].finder.byExpected[name] ? pct(s.byConfig[c].finder.byExpected[name]) : "n/a"))])));
+    out.push("");
+  }
   out.push("Per case (issue recall; precision bounds):");
   out.push("");
   const caseIds = [...new Set(configs.flatMap((c) => Object.keys(s.perCase[c] ?? {})))].sort();
