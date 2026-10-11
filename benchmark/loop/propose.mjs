@@ -268,8 +268,9 @@ export function lockLedger(ledger) {
       const aside = `${path}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
       try {
         renameSync(path, aside);
-      } catch {
-        continue; // another proposal moved it first
+      } catch (error) {
+        if (error.code === "ENOENT") continue; // another proposal moved it first
+        throw new ToolError(`the stale ledger lock ${path} cannot be moved aside (${error.message})`);
       }
       if (readOrNull(aside) !== held) {
         try {
