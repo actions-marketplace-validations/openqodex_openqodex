@@ -962,6 +962,62 @@ export function scoreAttempts({ manifest, attempts, specs }) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The wording verdict: what benchmark/judge.mjs's model said about the
+// sentences of each finding the script matched to a planted bug, read from
+// judge.json and reported beside the score. It is not a scoring rule: no
+// rule reads it, so it never changes a hit, a count, an exit code or an
+// accept, and it lies outside the rules hash.
+//
+// Failure list, written before the code:
+// 29. The totals in score.json differ from the judge.json they came from:
+//     the judge and the scorer both count them with wordingTotals, from the
+//     file's saved verdicts, the way the judge has counted them from the
+//     start: an unparsed answer is left out of every ratio, and an unknown
+//     cost adds nothing to costUsd and is counted in costUnknown.
+// 30. A verdict changes a score: the scorer adds the block to each
+//     configuration after the configuration is scored.
+export const WORDING_SENTENCES = ["problem", "consequence", "fix"];
+export const WORDING_LABEL = "A model's verdict on the wording of each finding the script matched to a planted bug: whether its problem, consequence and fix sentences are plain and correct. Report only: it never changes a hit, a count, an exit code or an accept.";
+
+/** judge.json's totals per configuration, counted from its samples' verdicts. */
+export function wordingTotals(samples) {
+  const totals = {};
+  for (const s of samples) {
+    const t = (totals[s.config] ??= { findings: 0, unparsed: 0, costUsd: 0, costUnknown: 0, ...Object.fromEntries(WORDING_SENTENCES.map((k) => [k, { plain: ratio(), correct: ratio() }])) });
+    if (typeof s.costUsd === "number") t.costUsd += s.costUsd;
+    else t.costUnknown++;
+    for (const f of s.findings ?? []) {
+      t.findings++;
+      if (!f.verdict) {
+        t.unparsed++;
+        continue;
+      }
+      for (const k of WORDING_SENTENCES) {
+        t[k].plain.of++;
+        t[k].correct.of++;
+        if (f.verdict[k]?.plain === true) t[k].plain.hit++;
+        if (f.verdict[k]?.correct === true) t[k].correct.hit++;
+      }
+    }
+  }
+  return totals;
+}
+
+/**
+ * One configuration's wording block for score.json, from a judge.json
+ * document (`from` says which file): the judge model, the models that
+ * answered, the specs it judged by and the totals. Null when the document
+ * judged no review of that configuration.
+ */
+export function wordingBlock(doc, config, from = "judge.json") {
+  if (!Array.isArray(doc?.samples)) return null;
+  const totals = wordingTotals(doc.samples)[config];
+  if (totals === undefined) return null;
+  const served = [...new Set(doc.samples.filter((s) => s.config === config).map((s) => s.servedModel).filter((m) => typeof m === "string" && m !== ""))].sort();
+  return { label: WORDING_LABEL, model: doc.model ?? null, servedModels: served, specs: doc.specs ?? null, from, ...totals };
+}
+
 // Why two scores' numbers cannot be compared as they stand: their rules
 // differ, by version or, under one version, by hash. Empty when the rules
 // are the same.

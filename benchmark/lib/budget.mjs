@@ -52,9 +52,9 @@
 //    on is wrong.
 // 4. Judge calls are left out of the run cap: meteredComplete reserves a
 //    judge's call against the run's ledger, which openRunLedger opens from
-//    the run folder with the run's own caps, from any process; and until
-//    benchmark/judge.mjs sends its calls that way, the manifest says
-//    judgeIncluded false.
+//    the run folder with the run's own caps, from any process;
+//    benchmark/judge.mjs sends every call that way, and the manifest says
+//    judgeIncluded true only while it does.
 // 5. A call reports no cost, or throws after the provider may have billed
 //    it: it keeps its whole reservation as spent.
 // 6. A process dies with reservations open: the next process to take the
@@ -541,11 +541,10 @@ export async function meteredComplete(ledger, reviewer, request, { prices = load
 // ---------- the manifest's record ----------
 
 // Whether benchmark/judge.mjs sends its model calls through the run's ledger
-// (meteredComplete). It does not yet: it still asks Claude Code, so the
-// manifest says judgeIncluded false. The task that moves the judge to
-// GPT-5.2 (P1-T7) routes it through meteredComplete and sets this true; a
-// test holds the two together.
-export const JUDGE_HELD_BY_LEDGER = false;
+// (meteredComplete). It does: the judge calls GPT-5.2 through the model
+// adapter and holds each call to the run's cap, so the manifest says
+// judgeIncluded true. A test holds the two together.
+export const JUDGE_HELD_BY_LEDGER = true;
 
 /** The manifest's `budget`: the hard caps apart from the forecast stops, with the estimate. */
 export function manifestBudget({ caps, forecast, estimate, allowOver = false }) {
