@@ -31,10 +31,11 @@
 //    parse with v 1, and a ledger not ending in a newline stops the write.
 // 6. The record chooses the commit its diff is read from: a parent one
 //    commit past an edited split would hide the edit. The diff is read from
-//    the loop's base, which is the last accepted commit once
-//    benchmark/index/accepted.json on origin/main names one, and until then
-//    the merge-base of the branch with origin/main, fetched first. A record
-//    whose parent is not that base is refused, with the base and the reason.
+//    the loop's base, which is the commit of the review run accepted last
+//    once benchmark/index/accepted.json on origin/main names one, and until
+//    then the merge-base of the branch with origin/main, fetched first. A
+//    record whose parent is not that base is refused, with the base and the
+//    reason. A scanner-only accept never moves the base.
 // 7. Two proposals for one branch read the ledger before either appends, so
 //    both pass the duplicate check and append one id with different losses:
 //    a proposal holds <ledger>.lock, created exclusively, from before the
@@ -179,11 +180,16 @@ const nextId = (lines) => `RC-${String(lines.reduce((n, l) => Math.max(n, Number
 // the companions. null when it is outside both.
 const entryFor = (path, lever, reg) => [...lever.files, ...reg.companions].find((f) => globRegex(f.glob).test(path)) ?? null;
 
-// The commit the loop trusts as the base of a branch: the last accepted
-// commit once benchmark/index/accepted.json on origin/main names one (its
-// "commit" field), else the merge-base of the branch with origin/main.
-// origin's main is fetched first. Returns { base, why }; base is null when
-// the branch shares no history with main.
+// The commit the loop trusts as the base of a branch: the build commit of
+// the review run accepted last, once benchmark/index/accepted.json on
+// origin/main names one in a review group, else the merge-base of the
+// branch with origin/main. A group key's fourth field is its mode
+// (lib/index.mjs groupKeys). A scanner-only run (the bench-scan CI job's
+// baseline) is accepted in a scan group and may be the run the top level
+// names, but reviews are compared with the accepted review run, built at
+// its own commit, so a scan accept never moves the base. origin's main is
+// fetched first. Returns { base, why }; base is null when the branch shares
+// no history with main.
 export function trustedBase(top, commit) {
   git(top, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", REMOTE, `+refs/heads/${MAIN}:refs/remotes/${REMOTE}/${MAIN}`]);
   const main = revParse(top, `refs/remotes/${REMOTE}/${MAIN}`);
@@ -196,9 +202,15 @@ export function trustedBase(top, commit) {
     } catch (error) {
       throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} is not JSON (${error.message}), so the loop's base is unknown`);
     }
-    const base = typeof pointer?.commit === "string" ? revParse(top, pointer.commit) : null;
-    if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names no commit this repository holds (its "commit" field), so the loop's base is unknown`);
-    return { base, why: `the last accepted commit in ${ACCEPTED} on ${REMOTE}/${MAIN}` };
+    const groups = pointer?.groups && typeof pointer.groups === "object" ? Object.entries(pointer.groups) : null;
+    if (groups === null) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} has no groups, so the loop's base is unknown`);
+    const reviews = groups.filter(([key]) => key.split("|")[3] === "review").map(([, a]) => a);
+    const last = reviews.sort((a, b) => (String(a?.acceptedAt) < String(b?.acceptedAt) ? 1 : String(a?.acceptedAt) > String(b?.acceptedAt) ? -1 : 0))[0];
+    if (last !== undefined) {
+      const base = typeof last?.commit === "string" ? revParse(top, last.commit) : null;
+      if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names an accepted review run (${last?.runId}) whose commit this repository does not hold, so the loop's base is unknown`);
+      return { base, why: `the commit of the review run accepted last in ${ACCEPTED} on ${REMOTE}/${MAIN}` };
+    }
   }
   const base = git(top, ["merge-base", commit, main], { ok: [0, 1] }).out.trim() || null;
   return { base, why: `the merge-base of the branch with ${REMOTE}/${MAIN}` };

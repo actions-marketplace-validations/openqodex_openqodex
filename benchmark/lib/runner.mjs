@@ -72,8 +72,10 @@ import { RULES_VERSION, jobIdOf } from "./score.mjs";
 // configuration, "scan", with no reviewer.
 export function planJobs({ cases, caseIds, reviewers = [], graph = [], repeat, mode = "review" }) {
   const configs = [];
+  // A model reviewer's name (model:<deployment>) holds a colon, which a
+  // configuration id, a folder name, writes as a dash.
   if (mode === "scan") configs.push({ id: SCAN_CONFIG, reviewer: null, graph: false });
-  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer}-graph-${g}`, reviewer, graph: g === "on" });
+  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer.replace(/:/g, "-")}-graph-${g}`, reviewer, graph: g === "on" });
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
@@ -374,7 +376,7 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
 // its raw and kept counts, its time and the time to find its tool, the
 // files it was handed, what each filter stage dropped, and, for semgrep,
 // the rule packs it consumed.
-function scannerRows(list) {
+export function scannerRows(list) {
   return list.map((s) => ({ scanner: s.scanner, status: s.status, version: s.version, raw: s.rawCount ?? null, kept: s.keptCount, ms: s.durationMs, resolveMs: s.resolveMs ?? null, files: s.files ?? null, stages: s.stages ?? null, ...(Array.isArray(s.rules) ? { rules: s.rules } : {}), reason: s.reason ?? null }));
 }
 
@@ -419,10 +421,23 @@ export function resumeProblems(earlier, now) {
   for (const n of names) {
     same(`${n} reviewer version`, earlier.reviewers?.[n]?.version, now.reviewers?.[n]?.version);
     same(`${n} model`, earlier.reviewers?.[n]?.model, now.reviewers?.[n]?.model);
+    // A model reviewer's settings (effort, maxOutputTokens), the alias that
+    // named it and the scripted model's script.
+    same(`${n} settings`, earlier.reviewers?.[n]?.settings, now.reviewers?.[n]?.settings);
+    same(`${n} alias`, earlier.reviewers?.[n]?.alias, now.reviewers?.[n]?.alias);
+    same(`${n} script`, earlier.reviewers?.[n]?.script?.sha256, now.reviewers?.[n]?.script?.sha256);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);
+  // The tools folder a model review reads its scanners from.
+  same("install root", earlier.review?.installRoot, now.review?.installRoot);
   same("concurrency", earlier.concurrency, now.concurrency);
+  // The cases' suite and where in it they come from; a run made before the
+  // manifest named them is a planted run on the dev split.
+  same("suite", earlier.suite ?? "planted", now.suite ?? "planted");
+  same("split", earlier.split ?? "dev", now.split ?? "dev");
+  same("split file hash", earlier.splitHash ?? null, now.splitHash ?? null);
+  same("subset", earlier.subset ?? null, now.subset ?? null);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);
   if (earlier.repeat !== undefined || now.repeat !== undefined) same("repeats", earlier.repeat, now.repeat);
