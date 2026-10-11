@@ -13,7 +13,9 @@
 // Writes score format 3: score.json (the population of planned first
 // attempts, issue recall, precision as bounds, unique-issue precision,
 // redundancy, the location and planted-rule blocks, per-case ratios, per-bug
-// results and the rules block) and outcomes.jsonl (one line per finding of
+// results, the rules block, and a 95% cluster bootstrap interval on each
+// issue-level ratio, lib/interval.mjs, seeded from the run id so a rescore
+// draws the same interval) and outcomes.jsonl (one line per finding of
 // every first attempt), into the results folder or --out. A legacy run (one
 // with a recipe in benchmark/legacy/recipes.json) keeps the score its own
 // scorer wrote: its folder is the published original, so its format 3 score
@@ -49,7 +51,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFi
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, parseCaseId, repoRoot, specProblems } from "./lib/cases.mjs";
-import { RULES, attemptOf, bugStability, caseSetHash, groupBy, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
+import { runIntervals } from "./lib/interval.mjs";
+import { RULES, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 
 const readJson = (path) => {
@@ -179,12 +182,47 @@ export function summary(run) {
   };
 }
 
+// The per-case sums the intervals and the trend pair on: the rules' own
+// per-case ratios, plus critical and major recall and the clean control,
+// summed over every repeat of the case from the scored jobs. A sum of the
+// jobs' numbers, so no scoring rule lives here.
+function caseSums(perCase, jobs) {
+  const out = structuredClone(perCase);
+  const plus = (a, b) => ({ hit: a.hit + b.hit, of: a.of + b.of });
+  for (const config of Object.keys(out)) for (const c of Object.values(out[config])) Object.assign(c, { criticalMajor: { hit: 0, of: 0 }, controls: { hit: 0, of: 0 } });
+  for (const j of jobs) {
+    const c = out[j.config][j.caseId];
+    c.criticalMajor = plus(c.criticalMajor, j.issueRecall.criticalMajor);
+    c.controls = plus(c.controls, j.controls);
+  }
+  return out;
+}
+
+// The repository group of each real case, from its spec: the cluster its
+// interval draws. Null on a planted suite, where the case is the cluster. A
+// real case without one would count its pull requests as independent of
+// their repository's others, so it stops the scoring.
+function repoGroups(origin, jobs, specs) {
+  if (origin === "planted") return null;
+  const out = {};
+  for (const j of jobs) {
+    const group = specs[j.case]?.repoGroup;
+    if (typeof group !== "string" || group === "") throw new Error(`the ${origin} case ${j.caseId} names no repoGroup, so its interval cannot keep a repository's pull requests together`);
+    out[j.caseId] = group;
+  }
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
 // Score format 3 of a loaded run: `score` is score.json, `outcomes` the lines
 // of outcomes.jsonl, `jobs` the scored jobs (for a comparison).
 export function scoreRun(run, { decisionsHash = null } = {}) {
   const m = run.manifest;
   // The scoring itself, attempt selection included, is lib/score.mjs scoreAttempts, which the rules hash covers.
   const s = scoreAttempts({ manifest: m, attempts: run.attempts, specs: run.specs });
+  // The intervals are seeded from the run id, the folder's name, never its
+  // path, so a copy elsewhere draws the same intervals.
+  const perCase = caseSums(s.perCase, s.jobs);
+  const { byConfig, intervals } = runIntervals({ runId: m.runId ?? basename(run.folder), byConfig: s.byConfig, perCase, groups: repoGroups(originOf(s.suite), s.jobs, run.specs) });
   const score = {
     version: 3,
     rules: RULES,
@@ -206,8 +244,9 @@ export function scoreRun(run, { decisionsHash = null } = {}) {
     resumes: run.resumes,
     specsFrom: run.specsFrom ?? "the run's own cases/",
     specsDiffer: run.specsDiffer,
-    byConfig: s.byConfig,
-    perCase: s.perCase,
+    byConfig,
+    intervals,
+    perCase,
     perBug: s.perBug,
     briefFailures: s.briefFailures,
   };
@@ -229,6 +268,10 @@ export function legacyFolderOf(path, recipes) {
 }
 
 const bounds = (b) => (b.lower.of === 0 ? "n/a" : `${pct(b.lower)} to ${pct(b.upper)}`);
+// A ratio with its interval, when the score carries one.
+const ci = (r) => (Array.isArray(r.ci) ? ` [${Math.round(r.ci[0] * 100)}%, ${Math.round(r.ci[1] * 100)}%]` : "");
+const withCi = (r) => `${pct(r)}${ci(r)}`;
+const boundsCi = (b) => (b.lower.of === 0 ? "n/a" : `${withCi(b.lower)} to ${withCi(b.upper)}`);
 
 export function renderV3(s) {
   const configs = Object.keys(s.byConfig);
@@ -249,12 +292,14 @@ export function renderV3(s) {
     if (same && x.population.retries === 0 && x.population.unstarted === 0) continue;
     out.push(`${c}: counting every saved attempt, as score format 2 did, gives recall ${pct(a.recall)} and planted-rule precision ${pct(a.precision)} over ${a.samples} attempts; this score counts the first attempt of each of ${x.population.planned} planned reviews (${x.population.retries} retries left out, ${x.population.unstarted} never started), so recall is ${pct(x.issueRecall.all)}${legacy ? ` and planted-rule precision ${pct(legacy)}` : ""}.`);
   }
+  const iv = s.intervals;
+  if (iv) out.push(`Intervals in brackets: ${Math.round(iv.level * 100)}% percentile bootstrap over ${iv.cluster === "case" ? "cases" : "repository groups"}, ${iv.resamples} resamples, seeded from the run id ${iv.runId}; none with fewer than ${iv.minClusters} ${iv.cluster === "case" ? "cases" : "groups"} to count.`);
   out.push("");
   const loc = (c) => `precision ${pct(c.location.precision)}, recall ${pct(c.location.recall)}${c.location.knownNoise > 0 ? `, ${c.location.knownNoise} known noise` : ""}`;
   const rows = [
-    ["Issue recall, all", (c) => pct(c.issueRecall.all)],
-    ["Issue recall, critical and major", (c) => pct(c.issueRecall.criticalMajor)],
-    ["Precision, lower to upper bound", (c) => bounds(c.precision)],
+    ["Issue recall, all", (c) => withCi(c.issueRecall.all)],
+    ["Issue recall, critical and major", (c) => withCi(c.issueRecall.criticalMajor)],
+    ["Precision, lower to upper bound", (c) => boundsCi(c.precision)],
     ["Unresolved findings (no ruling yet)", (c) => String(c.precision.unresolved)],
     ["Unique-issue precision, lower to upper", (c) => bounds(c.uniqueIssuePrecision)],
     ["Redundancy (findings beyond one per issue)", (c) => pct(c.redundancy)],
