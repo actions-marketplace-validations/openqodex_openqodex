@@ -163,6 +163,26 @@ node benchmark/judge.mjs benchmark/results/<run> [--model claude-sonnet-5] [--li
 
 A model reads each finding that the script matched to a planted bug, with the bug's planted truth, and says whether its problem, consequence and fix sentences are plain and correct. It judges wording only, never whether the bug was found. It writes `judge.json` and prints a table. Nothing reads `judge.json`, and its verdict never blocks. Use a judge model other than the reviewer's.
 
+## Why scanner candidates were dropped
+
+```
+node benchmark/drops.mjs <run>... [--audit N] [--seed S] [--json]
+```
+
+A script puts each scanner candidate the reviewer dropped into one class, from the saved files only. The first class that fits wins, and the candidate's rule, path and cited line are read before the reason's words:
+
+| Class | When | Points at |
+| --- | --- | --- |
+| config-owned | a settings-file or suppression candidate, or a reason that starts with `repo instructions:` | nothing, unless all of at least 20 are dropped |
+| fixture | a path the scan's fixture filter matches, or a reason about fixture, sample or placeholder data | a missing fixture pattern |
+| test | a test path, or a reason about a test file or an assert | that rule's adapter, skipped in test paths |
+| duplicate | the reason names another candidate, cites a raised candidate's line away from its own, or says it repeats one | dedup |
+| out-of-change | the reason says the code is not part of the change | the changed-line filter |
+| low-value | style, a nitpick, size, hygiene, no impact | the rule's default or severity |
+| rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
+
+A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+
 ## What it does not measure
 
 - How often real changes carry these bugs. The cases are small and synthetic; the share of bugs found here is not the share found in your repository.
