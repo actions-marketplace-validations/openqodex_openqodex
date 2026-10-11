@@ -206,6 +206,28 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 
 A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
 
+## What each scanner contributed
+
+```
+node benchmark/scanners.mjs <run> [--specs <folder>] [--out <folder>] [--json]
+node benchmark/scanners.mjs <run> --against <baseline> [--specs <folder>] [--input-change pin-bump:<scanner>|semgrep-packs]
+```
+
+A script reads each planned job's first attempt that saved a `scan.json`, in a review run or a scanner-only run, and prints six tables: each scanner (what it raised, what each filter and the reviewer did with it, the truth it found), each rule, the drop classes above, the gaps by language and class, the time, and what the ensemble loses without each scanner. It writes them to `scanners.json` in the run folder, or in the folder `--out` names. A legacy run's folder is the published original, so its `scanners.json` is written only with `--out`. `--specs` applies to the run named before it, as in `causes.mjs`.
+
+- A scanner finds a truth item when one of its candidates sits on the item's lines and either the spec expects that scanner or the candidate's rule or message names the item's words. This is the scanner-only scorer's rule. A finding that dedup merged into another scanner's candidate counts for its own scanner. A candidate on the lines that names nothing of the item is a location match: shown in its own column, never counted as finding it.
+- Counts are (sample, truth item) pairs. Every ratio is summed hits over summed checks, never an average of ratios, and every time carries its sample count.
+- Unique: a scanner found the item and no other scanner did. Leave one out: the items only that scanner found, and its candidates that absorbed no other scanner's finding.
+- The remit is the files the scan handed the scanner (the scan's `selection`), for items on lines the change touched. A miss is an item in the remit of a scanner that ran and did not find it. An item in the remit of a scanner that did not run (not installed, failed, disabled) is an infra miss, counted apart. A scan saved before the selection existed leaves the remit unknown, and the table says so rather than guess.
+- A rule meets the default-off bar with at least 30 kept candidates, at least 90% of them dropped, from at least 3 repositories, and no truth item found. Evidence from planted cases alone is provisional.
+- A language is a gap when it has at least 10 reachable truth items (or 5% of the run's) and no scanner but semgrep or gitleaks has any in its remit, or those scanners find under 30% of the ones in their remit.
+
+Runs saved before the scan recorded `selection`, `trail`, `stages` and `timings` still print. The script names what they lack first, and reads the scanner stage's time as the slowest scanner's.
+
+`--against <baseline>` judges the run as a change to the scanners. It exits 2, and judges nothing, when either run is from the test split, when the runs differ in suite or mode, when their Semgrep rule packs or scanner toolchains differ or are not recorded, when a scanner did not run where truth lies or may lie in its remit, or when a planned scan is missing. One input may differ: the one the change under test names with `--input-change`, either a version bump of one scanner (`pin-bump:<scanner>`) or the pack list (`semgrep-packs`). Otherwise it applies the first clause of the keep rule, K1. K1 holds when every truth item the baseline found is still found in every sample. A location match on a lost item's lines does not keep it. The script exits 1 when K1 fails and names each lost item, and 0 when K1 holds. The other clauses (a gain, the guards, and a review run when a candidate on a truth item changed) belong to the acceptance rule in `benchmark/loop/decide.mjs`, which is not built yet.
+
+A test-split run prints its tables only with `--release <version>` naming its own release, and is never judged.
+
 ## The review queue
 
 A finding that no frozen spec decides (one the case does not list, a near miss, a wrong kind) stays unresolved, however often it recurs: precision counts it wrong in its lower bound and right in its upper. Only a person's ruling moves it.
