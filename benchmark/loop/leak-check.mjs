@@ -23,9 +23,17 @@
 //    equality, a case label, a string or set method, or a lookup key) is
 //    refused. Tests never decide a review, so test files are not read for
 //    this.
-// 5. A diff is read wrong: paths come from `git diff -z --name-status
-//    --no-renames`, added lines from a per-file `git diff -U0` parsed by
-//    hunk header, never from a model and never from the working tree.
+// 5. A diff is read wrong: paths and modes come from `git diff -z --raw
+//    --no-renames`, added lines from a per-file `git diff --text -U0` parsed
+//    by hunk header, never from a model and never from the working tree.
+// 6. A changed path is a symbolic link or a submodule: the check reads the
+//    link's target string while the lens loader follows the link, so any
+//    changed entry with mode 120000 or 160000, on either side, is refused
+//    before its content is read.
+// 7. A changed file git calls binary (a NUL byte in a lens body) shows no
+//    hunks, so its added lines read as none and a case identifier passes:
+//    the diff is taken with --text, and a file whose new content holds a NUL
+//    byte or bytes that are not UTF-8 is refused as not text.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -203,17 +211,35 @@ export function caseIdentifiers(repo, rev, env = process.env) {
 
 // ---------- the diff ----------
 
-// Every changed path between two commits, both sides of a rename.
+// Every changed path between two commits, both sides of a rename, with its
+// old and new mode and its new blob.
 export function changedPaths(repo, parent, commit) {
-  const fields = git(repo, ["diff", "--no-ext-diff", "--no-renames", "-z", "--name-status", parent, commit]).out.split("\0");
+  const fields = git(repo, ["diff", "--no-ext-diff", "--no-renames", "--no-abbrev", "-z", "--raw", parent, commit]).out.split("\0");
   const out = [];
-  for (let i = 0; i + 1 < fields.length; i += 2) out.push({ status: fields[i], path: fields[i + 1] });
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const [oldMode, newMode, , newSha, status] = fields[i].replace(/^:/, "").split(" ");
+    out.push({ status, path: fields[i + 1], oldMode, newMode, newSha });
+  }
   return out;
+}
+
+const LINK_MODES = ["120000", "160000"];
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+// Whether a blob reads as text: no NUL byte and valid UTF-8.
+export function isText(bytes) {
+  if (bytes.includes(0)) return false;
+  try {
+    utf8.decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // The added lines of one file, with their line numbers in the commit.
 export function addedLines(repo, parent, commit, path) {
-  const text = git(repo, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "-U0", parent, commit, "--", path]).out;
+  const text = git(repo, ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--text", "-U0", parent, commit, "--", path]).out;
   const out = [];
   let line = null;
   for (const row of text.split("\n")) {
@@ -297,12 +323,18 @@ export function leakRefusals(repo, parent, commit, { modelNames, env = process.e
   const changed = changedPaths(repo, parent, commit);
   const plantedPrefixes = plantedFolders(repo, parent).flatMap((c) => c.folders);
   const ids = caseIdentifiers(repo, parent, env);
-  for (const { status, path } of changed) {
+  for (const { status, path, oldMode, newMode, newSha } of changed) {
     if (inTruth(path, plantedPrefixes)) {
       refusals.push(`${path}: a change to the loop's truth (planted cases and the folders they build from, real suites, splits, the review queue or the case lock) never enters the loop`);
       continue;
     }
+    const link = [oldMode, newMode].find((m) => LINK_MODES.includes(m));
+    if (link) {
+      refusals.push(`${path} is a symbolic link or a submodule (mode ${link}); a reviewer change holds plain files only, so what the product reads is what this check read`);
+      continue;
+    }
     if (status === "D") continue;
+    if (!isText(git(repo, ["cat-file", "blob", newSha], { buffer: true }).out)) refusals.push(`${path} is not text (it holds a NUL byte or bytes that are not UTF-8); a reviewer change holds text files only`);
     const checkModels = CODE.test(path) && !TEST.test(path);
     for (const { line, text } of addedLines(repo, parent, commit, path)) {
       // One refusal per line, naming the longest names only (flask-path-traversal, not also flask-path).

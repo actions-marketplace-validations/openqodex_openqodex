@@ -29,18 +29,32 @@
 // 5. Two writers number a line the same or a half-written ledger is read as
 //    sound: ids are one past the highest in the ledger, every line must
 //    parse with v 1, and a ledger not ending in a newline stops the write.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+// 6. The record chooses the commit its diff is read from: a parent one
+//    commit past an edited split would hide the edit. The diff is read from
+//    the loop's base, which is the last accepted commit once
+//    benchmark/index/accepted.json on origin/main names one, and until then
+//    the merge-base of the branch with origin/main, fetched first. A record
+//    whose parent is not that base is refused, with the base and the reason.
+// 7. Two proposals for one branch read the ledger before either appends, so
+//    both pass the duplicate check and append one id with different losses:
+//    a proposal holds <ledger>.lock, created exclusively, from before the
+//    ledger is read until after its line is appended. A lock whose process
+//    is gone, or older than ten minutes, is stale and taken over.
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { repoRoot } from "../lib/cases.mjs";
 import { ledgerPath } from "../lib/index.mjs";
-import { ToolError, git, leakRefusals, revParse } from "./leak-check.mjs";
+import { ToolError, blobsAt, git, leakRefusals, revParse } from "./leak-check.mjs";
 
 export const LEVERS_PATH = fileURLToPath(new URL("./levers.json", import.meta.url));
 export const LEDGER = ledgerPath("reviewer");
 export const PATHS = ["laptop", "server"];
 export const AIMS = ["quality", "simplify", "measure"];
+export const REMOTE = "origin";
+export const MAIN = "main";
+export const ACCEPTED = "benchmark/index/accepted.json";
 
 // A glob over repository paths: ** crosses folders, * and ? do not.
 export function globRegex(glob) {
@@ -164,9 +178,114 @@ const nextId = (lines) => `RC-${String(lines.reduce((n, l) => Math.max(n, Number
 // the companions. null when it is outside both.
 const entryFor = (path, lever, reg) => [...lever.files, ...reg.companions].find((f) => globRegex(f.glob).test(path)) ?? null;
 
+// The commit the loop trusts as the base of a branch: the last accepted
+// commit once benchmark/index/accepted.json on origin/main names one (its
+// "commit" field), else the merge-base of the branch with origin/main.
+// origin's main is fetched first. Returns { base, why }; base is null when
+// the branch shares no history with main.
+export function trustedBase(top, commit) {
+  git(top, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", REMOTE, `+refs/heads/${MAIN}:refs/remotes/${REMOTE}/${MAIN}`]);
+  const main = revParse(top, `refs/remotes/${REMOTE}/${MAIN}`);
+  if (!main) throw new ToolError(`${REMOTE}/${MAIN} is not in ${top} after the fetch, so the loop's base is unknown`);
+  const accepted = blobsAt(top, main, [ACCEPTED]).get(ACCEPTED);
+  if (accepted !== undefined) {
+    let pointer;
+    try {
+      pointer = JSON.parse(accepted);
+    } catch (error) {
+      throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} is not JSON (${error.message}), so the loop's base is unknown`);
+    }
+    const base = typeof pointer?.commit === "string" ? revParse(top, pointer.commit) : null;
+    if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names no commit this repository holds (its "commit" field), so the loop's base is unknown`);
+    return { base, why: `the last accepted commit in ${ACCEPTED} on ${REMOTE}/${MAIN}` };
+  }
+  const base = git(top, ["merge-base", commit, main], { ok: [0, 1] }).out.trim() || null;
+  return { base, why: `the merge-base of the branch with ${REMOTE}/${MAIN}` };
+}
+
+const LOCK_WAIT_MS = 60_000;
+const LOCK_STALE_MS = 10 * 60_000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const readOrNull = (path) => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
+const running = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+};
+
+// A lock is stale when the process that wrote it is gone, or when it is
+// older than LOCK_STALE_MS (a proposal takes seconds). A lock still being
+// written (empty) is judged by its age only.
+function staleLock(path, held) {
+  let pid = null;
+  try {
+    pid = JSON.parse(held).pid;
+  } catch {
+    pid = null;
+  }
+  if (Number.isInteger(pid) && pid > 0 && !running(pid)) return true;
+  try {
+    return Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+// Takes <ledger>.lock, created exclusively, and returns its release. A held
+// lock is waited for up to LOCK_WAIT_MS; a stale one is taken over.
+export function lockLedger(ledger) {
+  const path = `${ledger}.lock`;
+  const mine = JSON.stringify({ pid: process.pid, at: new Date().toISOString() });
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      writeFileSync(path, mine, { flag: "wx" });
+      return () => {
+        if (readOrNull(path) === mine) unlinkSync(path);
+      };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw new ToolError(`the ledger lock ${path} cannot be written (${error.message})`);
+    }
+    const held = readOrNull(path);
+    if (held !== null && staleLock(path, held)) {
+      if (readOrNull(path) === held) {
+        try {
+          unlinkSync(path);
+        } catch {
+          // another proposal took it over first
+        }
+      }
+      continue;
+    }
+    if (Date.now() > until) throw new ToolError(`the ledger lock ${path} is held by another proposal (${held ?? "gone"}); try again when it ends`);
+    pause(50);
+  }
+}
+
 // Checks a record and its branch and, when nothing is refused, appends the
-// proposed line. Returns { refusals, line }.
-export function propose(record, { repo = repoRoot, ledger = LEDGER, reg = loadLevers(), env = process.env, now = new Date() } = {}) {
+// proposed line. Returns { refusals, line }. The ledger lock is held from
+// before the ledger is read until after the line is appended.
+export function propose(record, options = {}) {
+  const ledger = options.ledger ?? LEDGER;
+  mkdirSync(dirname(ledger), { recursive: true });
+  const release = lockLedger(ledger);
+  try {
+    return proposeLocked(record, { ...options, ledger });
+  } finally {
+    release();
+  }
+}
+
+function proposeLocked(record, { repo = repoRoot, ledger, reg = loadLevers(), env = process.env, now = new Date() }) {
   const refusals = recordProblems(record, reg);
   const lines = readLedger(ledger);
   const lever = reg.levers.find((l) => l.id === record?.lever);
@@ -175,6 +294,14 @@ export function propose(record, { repo = repoRoot, ledger = LEDGER, reg = loadLe
   const parent = text(record?.parent) ? revParse(top, record.parent) : null;
   if (text(record?.branch) && !commit) refusals.push(`branch ${record.branch} is not in ${top}`);
   if (text(record?.parent) && !parent) refusals.push(`parent ${record.parent} is not a commit in ${top}`);
+
+  let base = null;
+  if (commit) {
+    const trusted = trustedBase(top, commit);
+    base = trusted.base;
+    if (!base) refusals.push(`branch ${record.branch} shares no history with ${REMOTE}/${MAIN}, so the loop has no base for it`);
+    else if (parent && parent !== base) refusals.push(`parent ${parent.slice(0, 8)} is not the loop's base ${base.slice(0, 8)} (${trusted.why}); a change is checked from the base the loop trusts, never from one the record chooses`);
+  }
 
   const before = lines.find((l) => l.event === "proposed" && (l.record?.branch === record?.branch || (commit && l.record?.commit === commit)));
   if (before) {
@@ -187,11 +314,11 @@ export function propose(record, { repo = repoRoot, ledger = LEDGER, reg = loadLe
   }
 
   let paths = [];
-  if (commit && parent && lever) {
-    if (git(top, ["merge-base", "--is-ancestor", parent, commit], { ok: [0, 1] }).status !== 0) refusals.push(`branch ${record.branch} does not start from its parent ${parent.slice(0, 8)}`);
+  if (commit && base && lever) {
+    if (git(top, ["merge-base", "--is-ancestor", base, commit], { ok: [0, 1] }).status !== 0) refusals.push(`branch ${record.branch} does not start from the loop's base ${base.slice(0, 8)}`);
     else {
-      const leak = leakRefusals(top, parent, commit, { modelNames: reg.modelNames, env });
-      if (leak.changed.length === 0) refusals.push(`branch ${record.branch} changes nothing against its parent`);
+      const leak = leakRefusals(top, base, commit, { modelNames: reg.modelNames, env });
+      if (leak.changed.length === 0) refusals.push(`branch ${record.branch} changes nothing against the loop's base`);
       const reached = new Set();
       for (const { path } of leak.changed) {
         const entry = entryFor(path, lever, reg);
@@ -216,7 +343,7 @@ export function propose(record, { repo = repoRoot, ledger = LEDGER, reg = loadLe
       title: record.title.trim(),
       hypothesis: record.hypothesis.trim(),
       branch: record.branch,
-      parent,
+      parent: base,
       commit,
       paths,
       target: record.target ?? reg.defaults.target,
@@ -241,7 +368,6 @@ export function propose(record, { repo = repoRoot, ledger = LEDGER, reg = loadLe
     minutes: 0,
     pr: null,
   };
-  mkdirSync(dirname(ledger), { recursive: true });
   appendFileSync(ledger, `${JSON.stringify(line)}\n`);
   return { refusals: [], line };
 }

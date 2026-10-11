@@ -12,10 +12,14 @@
 // 2. A change enters the loop with its acceptable losses unset, or edited
 //    after the first run, so the bar is set after the score is seen. Refused:
 //    a record without a hypothesis, a primary metric or a loss for every
-//    guard, and any second record for the same branch or commit. The ledger
-//    only grows.
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//    guard, and any second record for the same branch or commit, also when
+//    two proposals run at once. The ledger only grows.
+//
+// The diff is read from the loop's base, never from a parent the record
+// chooses: here the clone's origin is a bare repository whose main the tests
+// move, so origin/main is the base the loop trusts.
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -29,6 +33,7 @@ const LENS = "packages/core/lenses/eval-on-user-input.md";
 const MODEL_LOOP = "packages/review/src/model-loop.ts";
 
 let work;
+let bare;
 let clone;
 let base;
 let cache;
@@ -39,10 +44,20 @@ beforeAll(() => {
   clone = join(work, "repo");
   cache = join(work, "cache");
   mkdirSync(cache);
-  git(work, "clone", "-q", "--shared", "--no-checkout", repoRoot, clone);
+  bare = join(work, "origin.git");
   base = git(repoRoot, "rev-parse", "HEAD").trim();
+  git(work, "clone", "-q", "--bare", "--shared", repoRoot, bare);
+  git(bare, "update-ref", "refs/heads/main", base);
+  git(work, "clone", "-q", "--shared", "--no-checkout", bare, clone);
   git(clone, "checkout", "-q", "--detach", base);
 });
+
+// Moves origin's main to a commit of the clone (the loop's trusted base).
+let pushed = 0;
+function originMain(sha) {
+  git(clone, "push", "-q", "origin", `${sha}:refs/heads/scratch-${++pushed}`);
+  git(bare, "update-ref", "refs/heads/main", sha);
+}
 
 // A branch from `from` with each file written over (a function gets the old
 // text), committed. Returns the branch tip.
@@ -63,8 +78,10 @@ const appendLine = (line) => (old) => `${old}${old.endsWith("\n") ? "" : "\n"}${
 const lensLine = (line) => ({ [LENS]: appendLine(line) });
 const GENERIC = "A value read from a query string, a form field or a header is untrusted input as well.";
 
+const cliEnv = (env) => ({ ...process.env, OPENQODEX_BENCH_CACHE: cache, ...env });
+
 function cli(args, env = {}) {
-  const r = spawnSync(process.execPath, [PROPOSE, ...args], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_CACHE: cache, ...env } });
+  const r = spawnSync(process.execPath, [PROPOSE, ...args], { encoding: "utf8", env: cliEnv(env) });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -88,10 +105,23 @@ function fullRecord(lever, branchName, over = {}) {
   };
 }
 
-function propose(record, { ledger = join(work, `ledger-${++made}.jsonl`), env = {}, repo = clone } = {}) {
+function recordFile(record) {
   const file = join(work, `record-${++made}.json`);
   writeFileSync(file, JSON.stringify(record));
-  return { ...cli([file, "--repo", repo, "--ledger", ledger], env), ledger };
+  return file;
+}
+
+function propose(record, { ledger = join(work, `ledger-${++made}.jsonl`), env = {}, repo = clone } = {}) {
+  return { ...cli([recordFile(record), "--repo", repo, "--ledger", ledger], env), ledger };
+}
+
+// The same, started without waiting, so two can run at once.
+function proposeAsync(record, ledger) {
+  const child = spawn(process.execPath, [PROPOSE, recordFile(record), "--repo", clone, "--ledger", ledger], { env: cliEnv({}) });
+  let out = "";
+  child.stdout.on("data", (d) => (out += d));
+  child.stderr.on("data", (d) => (out += d));
+  return new Promise((done) => child.on("close", (code) => done({ code, out })));
 }
 
 const without = (object, key) => Object.fromEntries(Object.entries(object).filter(([k]) => k !== key));
@@ -160,16 +190,79 @@ describe("a change editing a spec or naming a case identifier in a lens enters t
   it("stops (exit 2) when a real suite's truth cannot be read, instead of passing its names unchecked", () => {
     const withSuite = branch("parent-with-aacr", { "benchmark/suites/aacr/cases.json": "[]\n" });
     branch("lens-over-aacr", lensLine(GENERIC), withSuite);
-    const missing = propose(fullRecord("lenses", "lens-over-aacr", { parent: withSuite }));
-    expect(missing.code, missing.out).toBe(2);
-    expect(missing.out).toMatch(/aacr/);
-    expect(missing.out).toMatch(/positive_samples\.json/);
-
     const unknown = branch("parent-with-other", { "benchmark/suites/other/cases.json": "[]\n" });
     branch("lens-over-other", lensLine(GENERIC), unknown);
-    const noReader = propose(fullRecord("lenses", "lens-over-other", { parent: unknown }));
-    expect(noReader.code, noReader.out).toBe(2);
-    expect(noReader.out).toMatch(/no identifier reader for suite other/);
+    try {
+      originMain(withSuite);
+      const missing = propose(fullRecord("lenses", "lens-over-aacr", { parent: withSuite }));
+      expect(missing.code, missing.out).toBe(2);
+      expect(missing.out).toMatch(/aacr/);
+      expect(missing.out).toMatch(/positive_samples\.json/);
+
+      originMain(unknown);
+      const noReader = propose(fullRecord("lenses", "lens-over-other", { parent: unknown }));
+      expect(noReader.code, noReader.out).toBe(2);
+      expect(noReader.out).toMatch(/no identifier reader for suite other/);
+    } finally {
+      originMain(base);
+    }
+  });
+
+  it("checks the diff from the loop's base, not from a parent the record chooses", () => {
+    // Commit A edits a split; commit B on top of it adds an allowed lens
+    // line; a record naming A as the parent would have only A..B checked.
+    const a = branch("split-then-lens", { "benchmark/splits/aacr-v1.json": '{"version":1,"test":[]}\n' });
+    branch("split-then-lens", lensLine(GENERIC), a);
+    const r = propose(fullRecord("lenses", "split-then-lens", { parent: a }));
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toMatch(/is not the loop's base/);
+    expect(r.out).toContain("benchmark/splits/aacr-v1.json");
+    expect(ledgerLines(r.ledger)).toEqual([]);
+  });
+
+  it("takes the last accepted commit as the base once benchmark/index/accepted.json names one", () => {
+    const later = branch("main-with-accepted", { "benchmark/index/accepted.json": `${JSON.stringify({ version: 1, commit: base, groups: {} })}\n` });
+    branch("lens-from-later", lensLine(GENERIC), later);
+    branch("lens-from-accepted", lensLine(GENERIC));
+    try {
+      originMain(later);
+      const fromLater = propose(fullRecord("lenses", "lens-from-later", { parent: later }));
+      expect(fromLater.code, fromLater.out).toBe(1);
+      expect(fromLater.out).toMatch(/is not the loop's base/);
+      expect(fromLater.out).toMatch(/accepted\.json/);
+      const fromAccepted = propose(fullRecord("lenses", "lens-from-accepted"));
+      expect(fromAccepted.code, fromAccepted.out).toBe(0);
+    } finally {
+      originMain(base);
+    }
+  });
+
+  it("refuses a lens replaced by a symbolic link, and a submodule added among the lenses", () => {
+    const outside = join(work, "outside-lens.md");
+    writeFileSync(outside, "Look at os.path.join(UPLOAD_DIR, name).\n");
+    git(clone, "checkout", "-q", "-B", "lens-as-link", base);
+    unlinkSync(join(clone, LENS));
+    symlinkSync(outside, join(clone, LENS));
+    git(clone, "add", "-A");
+    git(clone, "commit", "-q", "-m", "lens as a link");
+    const link = propose(fullRecord("lenses", "lens-as-link"));
+    expect(link.code, link.out).toBe(1);
+    expect(link.out).toContain(`${LENS} is a symbolic link or a submodule`);
+
+    git(clone, "checkout", "-q", "-B", "lens-submodule", base);
+    git(clone, "update-index", "--add", "--cacheinfo", `160000,${base},packages/core/lenses/vendor`);
+    git(clone, "commit", "-q", "-m", "a submodule among the lenses");
+    const sub = propose(fullRecord("lenses", "lens-submodule"));
+    expect(sub.code, sub.out).toBe(1);
+    expect(sub.out).toContain("packages/core/lenses/vendor is a symbolic link or a submodule");
+  });
+
+  it("refuses a lens that git reads as binary, and still finds the case identifier in it", () => {
+    branch("lens-with-nul", lensLine("Look at os.path.join(UPLOAD_DIR, name).\u0000"));
+    const r = propose(fullRecord("lenses", "lens-with-nul"));
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain(`${LENS} is not text`);
+    expect(r.out).toContain("upload_dir (planted/flask-path-traversal)");
   });
 
   it("accepts a lens-only branch with a full record and writes one proposed line", () => {
@@ -241,5 +334,28 @@ describe("a change enters the loop with its acceptable losses unset, or edited a
     const after = readFileSync(ledger, "utf8");
     expect(after.startsWith(first)).toBe(true);
     expect(ledgerLines(ledger).map((l) => l.id)).toEqual(["RC-0001", "RC-0002"]);
+  });
+
+  it("lets only one of two proposals for the same branch in when both run at once", async () => {
+    branch("raced", lensLine(GENERIC));
+    const ledger = join(work, "raced-ledger.jsonl");
+    const record = fullRecord("lenses", "raced");
+    const wider = { ...record, acceptableLoss: { ...record.acceptableLoss, recall: 10 } };
+    const results = await Promise.all([proposeAsync(record, ledger), proposeAsync(wider, ledger)]);
+    expect(results.map((r) => r.code).sort(), results.map((r) => r.out).join("\n")).toEqual([0, 1]);
+    expect(results.find((r) => r.code === 1).out).toMatch(/RC-0001/);
+    expect(ledgerLines(ledger).map((l) => l.id)).toEqual(["RC-0001"]);
+    expect(existsSync(`${ledger}.lock`)).toBe(false);
+  });
+
+  it("takes the ledger over from a proposal that died holding its lock", () => {
+    branch("after-crash", lensLine(GENERIC));
+    const ledger = join(work, "crashed-ledger.jsonl");
+    const dead = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    writeFileSync(`${ledger}.lock`, JSON.stringify({ pid: Number(dead.stdout), at: new Date().toISOString() }));
+    const r = propose(fullRecord("lenses", "after-crash"), { ledger });
+    expect(r.code, r.out).toBe(0);
+    expect(ledgerLines(ledger).map((l) => l.id)).toEqual(["RC-0001"]);
+    expect(existsSync(`${ledger}.lock`)).toBe(false);
   });
 });
