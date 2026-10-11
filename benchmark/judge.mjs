@@ -57,21 +57,38 @@
 //    review later.
 // 10. A second pass judges everything again, mixes two judges, or writes
 //    over verdicts already paid for: --resume keeps every review already
-//    judged and refuses a judge.json from another model; without --resume
-//    an existing judge.json is refused.
+//    judged and refuses a judge.json from another model or other specs;
+//    without --resume an existing judge.json is refused.
 // 11. The pass costs more than meant: one call per review, --limit caps the
 //    reviews, and the plan is printed before the first call.
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+// From the review of the first version:
+// 12. A write cut off part way (a full disk, a kill) leaves judge.json half
+//    written, so the verdicts already paid for are lost and --resume refuses
+//    the file: every file is written beside its place and renamed into it,
+//    and a write that fails stops the pass with the last whole file kept.
+// 13. A resumed pass sends and charges again a review whose answer was saved
+//    in judge-raw/ before its verdict reached judge.json: --resume takes such
+//    an answer, from the same model about the same findings, with no call
+//    and no reservation; without --resume, a judge-raw/ that holds answers is
+//    refused like judge.json.
+// 14. Two judges on one run send the same calls and write over each other:
+//    a judge takes judge.lock in the run folder by an exclusive create (the
+//    runner's lockRun), a second one is refused before any call, and the
+//    lock goes back on exit.
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BudgetRefused, meteredComplete, openRunLedger } from "./lib/budget.mjs";
 import { repoRoot } from "./lib/cases.mjs";
 import { loadModelEnv } from "./lib/model-env.mjs";
 import { createOpenAIReviewer } from "./lib/openai-reviewer.mjs";
+import { lockRun } from "./lib/runner.mjs";
 import { WORDING_SENTENCES, attemptOf, classify, wordingBlock, wordingTotals } from "./lib/score.mjs";
 import { renderWording } from "./score.mjs";
 
 const BOARDS = new URL("./outside/boards.json", import.meta.url);
+export const JUDGE_LOCK = "judge.lock";
 // Room for a verdict on every finding of one review and the model's
 // reasoning. A reply cut short does not parse and is recorded as unparsed.
 const MAX_OUTPUT_TOKENS = 8000;
@@ -168,12 +185,30 @@ async function main() {
   }
   const manifest = readJson(join(folder, "manifest.json"));
   if (!manifest) return refuse(`${folder} has no manifest.json; it is not a benchmark run`);
+  // One judge per run at a time, held until this process exits; a lock
+  // left by a judge that died is taken over.
+  try {
+    const release = lockRun(folder, { file: JUDGE_LOCK, who: "another judge", advice: "wait for it to end" });
+    process.on("exit", release);
+  } catch (error) {
+    return refuse(error.message);
+  }
+  // Saved relative to the repository when the specs lie in it, so no machine path is published.
+  const specsShown = specsDir === null ? "the run's own cases/" : (() => {
+    const r = relative(repoRoot, specsDir);
+    return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : specsDir;
+  })();
   const outPath = join(folder, "judge.json");
+  const rawDir = join(folder, "judge-raw");
+  const rawPath = (name) => join(rawDir, `${name}.json`);
   const earlier = existsSync(outPath) ? readJson(outPath) : null;
+  if (!resumeRun && (existsSync(outPath) || (existsSync(rawDir) && readdirSync(rawDir).length > 0))) {
+    return refuse(`${existsSync(outPath) ? outPath : rawDir} holds an earlier pass's verdicts; pass --resume to judge only the reviews it lacks, or move it away first`);
+  }
   if (existsSync(outPath)) {
-    if (!resumeRun) return refuse(`${outPath} exists; pass --resume to judge only the reviews it lacks, or move it away first`);
     if (earlier === null || !Array.isArray(earlier.samples)) return refuse(`${outPath} cannot be read as a judge.json; move it away first`);
     if (earlier.model !== reviewer.model) return refuse(`${outPath} was judged by ${earlier.model}; resuming with ${reviewer.model} would mix two judges, so move it away first`);
+    if (earlier.specs !== specsShown) return refuse(`${outPath} was judged by the specs in ${earlier.specs}; resuming with ${specsShown} would mix two sets of findings, so pass the same --specs or move it away first`);
   }
   // The run's own ledger and caps, which every call is held to.
   let ledger;
@@ -183,17 +218,30 @@ async function main() {
     return refuse(error.message);
   }
 
-  // Nothing written may hold the endpoint's key or address.
+  // Nothing written may hold the endpoint's key or address. Each file is
+  // written beside its place and renamed into it, so a write cut off part
+  // way never leaves it half written.
   const save = (path, text) => {
     if (settings.appearsIn(text)) throw new Error(`refused: ${path} would hold the model endpoint's key or address, so it was not written`);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, text);
+    const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      writeFileSync(temp, text);
+      renameSync(temp, path);
+    } catch (error) {
+      rmSync(temp, { force: true });
+      throw error;
+    }
   };
-  // Saved relative to the repository when the specs lie in it, so no machine path is published.
-  const specsShown = specsDir === null ? "the run's own cases/" : (() => {
-    const r = relative(repoRoot, specsDir);
-    return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : specsDir;
-  })();
+  // What a call is asked, as a hash: an answer saved for other findings is never taken for these.
+  const askedHash = (items) => createHash("sha256").update(JSON.stringify(items.map((i) => [i.id, i.bug, i.finding.title]))).digest("hex");
+  // An answer an earlier pass was charged for and saved before its verdict
+  // reached judge.json: from this model, about these findings. Null when there is none.
+  const savedAnswer = (name, items) => {
+    const raw = readJson(rawPath(name));
+    if (typeof raw?.message?.text !== "string" || raw?.usage?.model !== reviewer.model || raw?.asked !== askedHash(items)) return null;
+    return raw;
+  };
   const doc = earlier ?? {
     version: 2,
     model: reviewer.model,
@@ -235,22 +283,37 @@ async function main() {
   const write = () => {
     doc.servedModels = [...new Set(doc.samples.map((s) => s.servedModel).filter((m) => typeof m === "string" && m !== ""))].sort();
     doc.totals = wordingTotals(doc.samples);
-    save(outPath, `${JSON.stringify(doc, null, 2)}\n`);
+    return saved(outPath, `${JSON.stringify(doc, null, 2)}\n`);
   };
   let stopped = null;
+  // A file that could not be written stops the pass, and is not tried again.
+  let unwritten = false;
+  const saved = (path, text) => {
+    try {
+      save(path, text);
+      return true;
+    } catch (error) {
+      stopped = `could not write ${path}: ${error.message}`;
+      unwritten = true;
+      return false;
+    }
+  };
   for (const w of todo) {
     const name = `${w.case}-${w.config}-${w.repeat}`;
-    const request = { callId: `judge-${name}`, attempt: 1, purpose: "judge", messages: [{ role: "user", text: prompt(w.items) }], tools: [], maxOutputTokens: MAX_OUTPUT_TOKENS };
-    let answer;
-    try {
-      answer = await meteredComplete(ledger, reviewer, request, { what: `wording judge ${w.case}/${w.config}/${w.repeat}` });
-    } catch (error) {
-      // Nothing was sent when the budget refused; a call that failed is kept as its error.
-      if (!(error instanceof BudgetRefused)) save(join(folder, "judge-raw", `${name}.json`), `${JSON.stringify({ error: error.message }, null, 2)}\n`);
-      stopped = error.message;
-      break;
+    let answer = resumeRun ? savedAnswer(name, w.items) : null;
+    if (answer === null) {
+      const request = { callId: `judge-${name}`, attempt: 1, purpose: "judge", messages: [{ role: "user", text: prompt(w.items) }], tools: [], maxOutputTokens: MAX_OUTPUT_TOKENS };
+      try {
+        answer = await meteredComplete(ledger, reviewer, request, { what: `wording judge ${w.case}/${w.config}/${w.repeat}` });
+      } catch (error) {
+        // Nothing was sent when the budget refused; a call that failed is kept as its error.
+        if (!(error instanceof BudgetRefused)) saved(rawPath(name), `${JSON.stringify({ asked: askedHash(w.items), error: error.message }, null, 2)}\n`);
+        stopped = error.message;
+        break;
+      }
+      // The answer is kept before its verdict reaches judge.json, so a pass cut off between the two never pays for it again.
+      if (!saved(rawPath(name), `${JSON.stringify({ asked: askedHash(w.items), message: answer.message, usage: answer.usage }, null, 2)}\n`)) break;
     }
-    save(join(folder, "judge-raw", `${name}.json`), `${JSON.stringify({ message: answer.message, usage: answer.usage }, null, 2)}\n`);
     const verdicts = parseVerdicts(answer.message.text, w.items.map((i) => i.id));
     doc.samples.push({
       case: w.case,
@@ -261,12 +324,12 @@ async function main() {
       parsed: verdicts !== null,
       findings: w.items.map((i) => ({ bug: i.bug, title: i.finding.title, verdict: verdicts?.[i.id] ?? null })),
     });
-    write();
+    if (!write()) break;
   }
 
-  // A pass stopped before its first verdict leaves no judge.json behind.
-  if (doc.samples.length > 0 || stopped === null) {
-    write();
+  // A pass stopped before its first verdict leaves no judge.json behind, and
+  // one whose write failed keeps the last whole file.
+  if (!unwritten && (doc.samples.length > 0 || stopped === null) && write()) {
     const table = renderWording(Object.fromEntries(Object.keys(doc.totals).map((config) => [config, wordingBlock(doc, config)])));
     if (table !== null) console.log(`\n${table}`);
     console.log(`\nSaved: ${outPath} (judged by ${reviewer.model}; the reviewers were ${JSON.stringify(doc.reviewers)}). This verdict never blocks.`);

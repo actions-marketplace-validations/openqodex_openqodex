@@ -56,8 +56,9 @@
 //    when it is, or lies in, a folder named for any legacy run.
 // 7. The wording verdict changes the score or its exit code: it is added to
 //    each configuration after the scoring (lib/score.mjs wordingBlock), and
-//    a run's judge.json that cannot be read leaves the wording null with a
-//    line on stderr, never a failed scoring.
+//    a judge file (the run's own or --judge's) that cannot be read, or does
+//    not hold what judge.mjs writes, leaves the wording null with one line
+//    on stderr naming it, never a failed scoring.
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -154,8 +155,8 @@ export function loadRun(folder, { specsDir = null, judgeFile = null } = {}) {
   // The wording verdict: the run's own judge.json, or the file --judge names.
   const judgePath = judgeFile ?? join(folder, "judge.json");
   const judge = existsSync(judgePath) ? readJson(judgePath) : null;
-  if (judgeFile !== null && judge === null) throw new Error(`${judgeFile} cannot be read as a judge.json`);
-  const judgeProblem = judgeFile === null && judge === null && existsSync(judgePath) ? `${shownPath(judgePath)} cannot be read, so the score carries no wording verdict` : null;
+  // A judge file that cannot be read is named, and never fails the scoring.
+  const judgeProblem = judge === null && (judgeFile !== null || existsSync(judgePath)) ? `${shownPath(judgePath)} cannot be read as a judge.json, so the score carries no wording verdict` : null;
   const judgeFrom = judgeFile === null ? "judge.json" : shownPath(judgeFile);
   return { folder, name, manifest, specs, samples, attempts, unrecorded, resumes, specsFrom: specsName, specsDiffer, judge, judgeFrom, judgeProblem };
 }
@@ -249,8 +250,19 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
   // path, so a copy elsewhere draws the same intervals.
   const perCase = caseSums(s.perCase, s.jobs);
   const { byConfig, intervals } = runIntervals({ runId: m.runId ?? basename(run.folder), byConfig: s.byConfig, perCase, groups: repoGroups(originOf(s.suite), s.jobs, run.specs) });
-  // The wording verdict, added after the scoring: report only.
-  for (const config of Object.keys(byConfig)) byConfig[config].wording = run.judge ? wordingBlock(run.judge, config, run.judgeFrom) : null;
+  // The wording verdict, added after the scoring: report only. A judge.json
+  // that does not hold what the judge writes leaves every block null, with
+  // the problem named, and never fails the scoring.
+  let wordingProblem = null;
+  let wording = Object.fromEntries(Object.keys(byConfig).map((config) => [config, null]));
+  if (run.judge) {
+    try {
+      wording = Object.fromEntries(Object.keys(byConfig).map((config) => [config, wordingBlock(run.judge, config, run.judgeFrom)]));
+    } catch (error) {
+      wordingProblem = `${run.judgeFrom} does not hold what judge.mjs writes (${String(error.message).split("\n")[0]}), so the score carries no wording verdict`;
+    }
+  }
+  for (const config of Object.keys(byConfig)) byConfig[config].wording = wording[config];
   const score = {
     version: 3,
     rules: RULES,
@@ -280,7 +292,7 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
     briefFailures: s.briefFailures,
   };
   const unresolved = unresolvedItems({ runId: m.runId ?? basename(run.folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: s.suite, split: score.split, specsFrom: run.specsFrom ?? null, jobs: s.jobs, attempts: run.attempts, specs: run.specs });
-  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs };
+  return { score, outcomes: s.outcomes, unresolved, jobs: s.jobs, wordingProblem };
 }
 
 // The legacy run whose folder `path` is or lies in, wherever it is, by the
@@ -494,6 +506,7 @@ function main() {
     if (against) older = loadRun(resolve(against));
     const d = readDecisions(resolve(decisionsFile));
     scored = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
+    if (scored.wordingProblem !== null) console.error(scored.wordingProblem);
     if (older) olderScored = scoreRun(older, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
   } catch (error) {
     console.error(error.message);

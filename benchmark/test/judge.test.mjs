@@ -24,6 +24,13 @@
 // 4. A judge verdict changes `found`, a count, an exit code or an accept.
 // 5. The judge's key or base URL is saved in the run folder or printed,
 //    the provider's own error message included.
+// From the review of the first version:
+// 6. A write cut off part way leaves judge.json half written, so the
+//    verdicts already paid for are lost and --resume refuses the file.
+// 7. A resumed pass sends and charges again a review whose answer was
+//    saved in judge-raw/ before its verdict reached judge.json.
+// 8. Two judges on one run both send calls and write over each other.
+// 9. A malformed judge.json changes the score command's exit or its score.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -116,7 +123,7 @@ const SPEC = {
   bugs: [bug("sqli", "app/search.py", 14, ["security"], ["sql", "injection"], "The search query is built from request text."), bug("root", "Dockerfile", 11, ["security"], ["root"], "The container runs as root.")],
 };
 const finding = (file_path, line_number, title) => ({ origin: "agent", severity: "critical", category: "security", confidence: 0.9, file_path, line_number, line_end: line_number, title, description: title, suggested_change: null, source: null, candidate: null, notes: [], problem: `${title}.`, consequence: "An attacker reads the data.", fix: "Use a bound parameter." });
-const REPORT = {
+const BASE_REPORT = {
   version: 1,
   kind: "review",
   verdict: "blocked",
@@ -133,7 +140,7 @@ const CONFIG = "claude-graph-on";
 
 // Two reviews of the hand case, each with two findings on planted bugs and
 // one that is not, under a run cap of `maxUsd` dollars.
-async function savedRun({ maxUsd = 1 } = {}) {
+async function savedRun({ maxUsd = 1, report: REPORT = BASE_REPORT } = {}) {
   const root = tempDir("oq-judge-run-");
   const out = join(root, "2026-10-11-judge01");
   writeFileSync(join(root, "hand.json"), JSON.stringify(SPEC));
@@ -154,10 +161,13 @@ async function savedRun({ maxUsd = 1 } = {}) {
 }
 
 // The judge as a command, in its own process. Async, so the stand-in in
-// this process can answer while it runs.
-function judge(out, { env = {}, args = [] } = {}) {
+// this process can answer while it runs. `fileLimitKb` starts it under a
+// shell's file size limit, so a write past that size fails part way, as a
+// full disk would make it.
+function judge(out, { env = {}, args = [], fileLimitKb = null } = {}) {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [JUDGE, out, ...args], { env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    const command = fileLimitKb === null ? [process.execPath, JUDGE, out, ...args] : ["/bin/bash", "-c", `ulimit -f ${fileLimitKb} && exec "$0" "$@"`, process.execPath, JUDGE, out, ...args];
+    const child = spawn(command[0], command.slice(1), { env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
@@ -325,6 +335,91 @@ describe("the judge's key or base URL is saved", () => {
     expect(leaks(echo, out2, failed)).toEqual([]);
     // The failed call keeps its whole reservation as spent.
     expect(readLedger(out2).events.filter((e) => e.op === "settle").map((e) => e.how)).toEqual(["kept"]);
+  });
+});
+
+describe("a write cut off part way leaves judge.json half written", () => {
+  it("keeps the last whole judge.json and leaves no temporary file when a write fails part way", async () => {
+    const fake = await provider();
+    // Long titles make judge.json the one file of the pass that outgrows the size limit.
+    const long = (title) => `${title} ${"q".repeat(3000)}`;
+    const report = { ...BASE_REPORT, findings: [finding("app/search.py", 14, long("SQL injection in the search")), finding("Dockerfile", 11, long("Container runs as root"))] };
+    const out = await savedRun({ report });
+    const env = { OPENQODEX_BENCH_MODEL_ENV: settingsFile(fake.baseUrl) };
+    expect((await judge(out, { env, args: ["--limit", "1"] })).code).toBe(0);
+    const first = readFileSync(join(out, "judge.json"), "utf8");
+    expect(Buffer.byteLength(first)).toBeGreaterThan(4 * 1024);
+    // The second review's verdict makes judge.json larger than 4 KB can hold.
+    const cut = await judge(out, { env, args: ["--resume"], fileLimitKb: 4 });
+    expect(cut.code).toBe(1);
+    expect(cut.stderr).toMatch(/^Stopped: .*judge\.json/m);
+    expect(readFileSync(join(out, "judge.json"), "utf8")).toBe(first);
+    expect(readJson(join(out, "judge.json")).samples).toHaveLength(1);
+    expect(filesIn(out).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+});
+
+describe("a resumed pass sends and charges again a review whose answer was saved in judge-raw/", () => {
+  it("takes the saved answer into judge.json with no call and no ledger line", async () => {
+    const fake = await provider({ verdict: (id) => (id === "f1" ? ALL_TRUE() : ALL_FALSE()) });
+    const out = await savedRun();
+    const env = { OPENQODEX_BENCH_MODEL_ENV: settingsFile(fake.baseUrl) };
+    expect((await judge(out, { env })).code).toBe(0);
+    const whole = readJson(join(out, "judge.json"));
+    // A pass killed after it saved the second answer and before judge.json took its verdict.
+    writeFileSync(join(out, "judge.json"), JSON.stringify({ ...whole, samples: whole.samples.slice(0, 1) }));
+    const calls = fake.requests.length;
+    const lines = readLedger(out).events.length;
+    const resumed = await judge(out, { env, args: ["--resume"] });
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(fake.requests.length).toBe(calls);
+    expect(readLedger(out).events.length).toBe(lines);
+    const after = readJson(join(out, "judge.json"));
+    expect(after.samples).toEqual(whole.samples);
+    expect(after.totals).toEqual(whole.totals);
+  });
+});
+
+describe("two judges on one run both send calls and write over each other", () => {
+  it("refuses a second judge while the first holds the run's judge lock, before any call, and gives the lock back on exit", async () => {
+    const fake = await provider();
+    const env = { OPENQODEX_BENCH_MODEL_ENV: settingsFile(fake.baseUrl) };
+    const held = await savedRun();
+    // This test's own process is alive, so its lock is held.
+    writeFileSync(join(held, "judge.lock"), `${process.pid}\n`);
+    const second = await judge(held, { env });
+    expect(second.code).toBe(2);
+    expect(oneLine(second.stderr), second.stderr).toBe(true);
+    expect(second.stderr).toMatch(/^refused: .*another judge/);
+    expect(fake.requests).toHaveLength(0);
+    expect(readFileSync(join(held, "judge.lock"), "utf8").trim()).toBe(String(process.pid));
+    const free = await savedRun();
+    expect((await judge(free, { env })).code).toBe(0);
+    expect(existsSync(join(free, "judge.lock"))).toBe(false);
+  });
+});
+
+describe("a malformed judge.json changes the score command's exit or its score", () => {
+  it("scores a run whose judge.json does not hold samples the same as a run with none, with the wording null and one line naming the file", async () => {
+    const out = await savedRun();
+    const score = (name, args = []) => {
+      const dir = join(tempDir("oq-judge-bad-"), name);
+      const r = spawnSync(process.execPath, [SCORE, out, "--out", dir, ...args], { encoding: "utf8" });
+      return { r, text: existsSync(join(dir, "score.json")) ? readFileSync(join(dir, "score.json"), "utf8") : null };
+    };
+    const none = score("none");
+    writeFileSync(join(out, "judge.json"), JSON.stringify({ samples: [null] }));
+    const bad = score("bad");
+    expect([bad.r.status, none.r.status]).toEqual([0, 0]);
+    expect(bad.text).toBe(none.text);
+    expect(JSON.parse(bad.text).byConfig[CONFIG].wording).toBeNull();
+    expect(oneLine(bad.r.stderr), bad.r.stderr).toBe(true);
+    expect(bad.r.stderr).toMatch(/judge\.json/);
+    expect(() => scoreRun(loadRun(out))).not.toThrow();
+    // A --judge file that cannot be read is the same: a warning, never another exit.
+    const missing = score("missing", ["--judge", join(tempDir("oq-judge-none-"), "judge.json")]);
+    expect(missing.r.status).toBe(0);
+    expect(missing.text).toBe(none.text);
   });
 });
 
