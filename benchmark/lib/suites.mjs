@@ -155,6 +155,25 @@ export function readSuite(suite, { root = benchRoot } = {}) {
   return { def, file, split, splitHash: splitBytes ? sha256(splitBytes) : null, byName: new Map(file.cases.map((e) => [e.name, e])) };
 }
 
+// Why `next` may not replace the split file `old`: a split file is only
+// ever extended. Every case it placed keeps its side, every subset stays as
+// it is, and its name and salt stay; a case may only be added. Empty when
+// the rewrite is an extension (or no change).
+export function splitRewriteProblems(old, next) {
+  const out = [];
+  for (const k of ["name", "suite", "salt"]) if ((old?.[k] ?? null) !== (next?.[k] ?? null)) out.push(`its ${k} would change from ${JSON.stringify(old?.[k] ?? null)} to ${JSON.stringify(next?.[k] ?? null)}`);
+  for (const side of ["dev", "test"]) {
+    for (const name of old?.cases?.[side] ?? []) {
+      const now = sideIn(next, name);
+      if (now !== side) out.push(now === null ? `${name} would no longer be listed (it was ${side})` : `${name} would move from ${side} to ${now}`);
+    }
+  }
+  for (const [subset, names] of Object.entries(old?.subsets ?? {})) {
+    if (JSON.stringify(next?.subsets?.[subset] ?? null) !== JSON.stringify(names)) out.push(`the subset ${subset} would change`);
+  }
+  return out;
+}
+
 const sideIn = (split, name) => (split?.cases?.dev?.includes(name) ? "dev" : split?.cases?.test?.includes(name) ? "test" : null);
 const subsetsOf = (split, name) => Object.entries(split?.subsets ?? {}).filter(([, names]) => names.includes(name)).map(([s]) => s).sort();
 

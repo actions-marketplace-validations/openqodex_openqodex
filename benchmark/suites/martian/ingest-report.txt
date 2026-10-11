@@ -11,18 +11,19 @@ Golden comments: 173 in 50 pull requests.
   categories with no product counterpart (category null, raw kept): concurrency 14, api 13, doc_defect 9, data 7, speculative 5, test_gap 4
   severities off Martian's four (severity null, raw kept): 0
 
-Cases: 50 pull requests in 7 repositories. Usable: 40. Excluded: 10.
+Cases: 50 pull requests in 7 repositories. Usable: 50. Excluded: 0.
 Excluded, by reason:
-  licence unknown (GitHub names no single licence for the licence file): 10 pull requests: getsentry/sentry 6 (NOASSERTION, LICENSE.md), ai-code-review-evaluation/sentry-greptile 4 (NOASSERTION, LICENSE.md)
   licence none (no licence file): 0 pull requests
+  licence of no class this benchmark uses: 0 pull requests
   repository unknown to GitHub: 0 pull requests
   pull request not served by GitHub: 0 pull requests
   head no longer served by the host: 0 pull requests
-Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: 5: ai-code-review-evaluation/keycloak-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#1 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#2 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#3 "reviewed commit is not in the repo" (excluded); ai-code-review-evaluation/sentry-greptile#5 "there is no such PR, it is a mix of many PRs" (excluded)
+Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): 10 pull requests: getsentry/sentry 6 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0), ai-code-review-evaluation/sentry-greptile 4 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0)
+Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: 5: ai-code-review-evaluation/keycloak-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#2 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#3 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#5 "there is no such PR, it is a mix of many PRs" (usable)
 Left out before the cases (not cases): 0
 
 Repository groups (the cluster for intervals): calcom/cal.com 10 (calcom/cal.com, calcom/cal.diy); discourse/discourse 10 (ai-code-review-evaluation/discourse-graphite, discourse/discourse); getsentry/sentry 10 (ai-code-review-evaluation/sentry-greptile, getsentry/sentry); grafana/grafana 10; keycloak/keycloak 10 (ai-code-review-evaluation/keycloak-greptile, keycloak/keycloak)
 Languages (GitHub's, of the base repository): TypeScript 20, Java 10, Python 10, Ruby 10
 
-Split martian-v1: Held out: 50 of 50 pull requests (40 usable); development: none.
+Split martian-v1: Held out: 50 of 50 pull requests (50 usable); development: none.
 No Martian pull request was materialised, reviewed or scored by this ingest.

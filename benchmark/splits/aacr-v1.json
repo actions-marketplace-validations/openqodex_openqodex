@@ -2,7 +2,7 @@
   "version": 1,
   "name": "aacr-v1",
   "suite": "aacr",
-  "rule": "The unit is the repository group: a repository with its renames and fork source as GitHub names them, every repository of the same name, and the repositories Martian names as the originals of its evaluation copies. Every group holding a Martian or ReviewBench pull request goes to held-out first. Within each language, the other groups, ordered by sha256(salt, NUL, group), are taken one at a time: a group goes to held-out while held-out stays within half a pull request of 20% of that language's usable pull requests (counting the reserved ones), and to development otherwise. dev-laptop takes 12 development pull requests from each third by change size, in seeded order, one language at a time. dev-smoke takes the smallest development pull requests, one language at a time.",
+  "rule": "The unit is the repository group: a repository with its renames and fork source as GitHub names them, every repository of the same name, and the repositories Martian names as the originals of its evaluation copies. Every group holding a Martian or ReviewBench pull request goes to held-out first. Within each language, the other groups, ordered by sha256(salt, NUL, group), are taken one at a time: a group goes to held-out while held-out stays within half a pull request of 20% of that language's usable pull requests (counting the reserved ones), and to development otherwise. dev-laptop takes 12 development pull requests from each third by change size, in seeded order, one language at a time. dev-smoke takes the smallest development pull requests, one language at a time. The file is only ever extended: a group an earlier version placed keeps its side and language, the subsets stay as they were, and a new group (such as one whose licence became usable) is placed by the rule above, counting the groups already placed.",
   "salt": "openqodex-aacr-split-v1",
   "share": {
     "dev": 0.8,
@@ -162,6 +162,17 @@
       "split": "dev",
       "reserved": null,
       "order": "9f7e5b51070a53e095c01ab2d030c411506291012b756f7ad515956892f84ec0"
+    },
+    {
+      "group": "elastic/elasticsearch",
+      "members": [
+        "elastic/elasticsearch"
+      ],
+      "language": "Java",
+      "prs": 14,
+      "split": "dev",
+      "reserved": null,
+      "order": "7d805c5fe9edfb25c30c24dd8b678f2497e4ff78834fe90cc320271f3b00852a"
     },
     {
       "group": "electron/electron",
@@ -417,6 +428,17 @@
       "order": "2f28a56dfd6f72a33e22c7e4d51dcf0acca609f30225eab32f2672808cc5e3b4"
     },
     {
+      "group": "mpv-player/mpv",
+      "members": [
+        "mpv-player/mpv"
+      ],
+      "language": "C",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "85311dcdc4fed41e559fe123c6f0fecd45992bea02ae12ffcb557b4bfd4a5212"
+    },
+    {
       "group": "mrdoob/three.js",
       "members": [
         "mrdoob/three.js"
@@ -439,6 +461,17 @@
       "order": "1a3c598c1cf93bac7a9ea78d929aaa01c08e100215681282cbd9d089d649b817"
     },
     {
+      "group": "n8n-io/n8n",
+      "members": [
+        "n8n-io/n8n"
+      ],
+      "language": "TypeScript",
+      "prs": 6,
+      "split": "dev",
+      "reserved": null,
+      "order": "7a1a6f68431d5d40e51c9be7b398ef0a4097690105f413f4eef54ec423bd2f29"
+    },
+    {
       "group": "nextcloud/server",
       "members": [
         "nextcloud/server"
@@ -448,6 +481,17 @@
       "split": "test",
       "reserved": null,
       "order": "d4d75bde7ae802e4b9035d44e36189050fa9ece93a1b9c8678868e316d22b363"
+    },
+    {
+      "group": "nodejs/node",
+      "members": [
+        "nodejs/node"
+      ],
+      "language": "JavaScript",
+      "prs": 2,
+      "split": "dev",
+      "reserved": null,
+      "order": "5562c9f210302be6dda4e8fefa667838ff2a5da88b20dba52c93dbe3ad6e99c6"
     },
     {
       "group": "ollama/ollama",
@@ -525,6 +569,17 @@
       "split": "dev",
       "reserved": null,
       "order": "1ebabee8372b648827f006e0fe284f3ef3d06d82acb964c679128f3371b7907d"
+    },
+    {
+      "group": "timescale/timescaledb",
+      "members": [
+        "timescale/timescaledb"
+      ],
+      "language": "C",
+      "prs": 4,
+      "split": "dev",
+      "reserved": null,
+      "order": "6abf83de828665436cd6d684d192657fbd3a28ffbeeab27c17d54e93bec78884"
     },
     {
       "group": "unionlabs/union",
@@ -626,6 +681,20 @@
       "dotnet__aspnetcore-61006",
       "dotnet__aspnetcore-62734",
       "dotnet__aspnetcore-62936",
+      "elastic__elasticsearch-118183",
+      "elastic__elasticsearch-118626",
+      "elastic__elasticsearch-118895",
+      "elastic__elasticsearch-118998",
+      "elastic__elasticsearch-119759",
+      "elastic__elasticsearch-120546",
+      "elastic__elasticsearch-123744",
+      "elastic__elasticsearch-124403",
+      "elastic__elasticsearch-125732",
+      "elastic__elasticsearch-126376",
+      "elastic__elasticsearch-127697",
+      "elastic__elasticsearch-132077",
+      "elastic__elasticsearch-133365",
+      "elastic__elasticsearch-133945",
       "facebook__react-32499",
       "facebook__react-33059",
       "filamentphp__filament-15181",
@@ -677,9 +746,21 @@
       "microsoft__typescript-go-691",
       "microsoft__typescript-go-698",
       "microsoft__typescript-go-831",
+      "mpv-player__mpv-15828",
+      "mpv-player__mpv-16061",
+      "mpv-player__mpv-16090",
+      "mpv-player__mpv-16164",
       "mrdoob__three.js-30076",
       "mrdoob__three.js-30750",
       "mrdoob__three.js-31402",
+      "n8n-io__n8n-13323",
+      "n8n-io__n8n-15057",
+      "n8n-io__n8n-15362",
+      "n8n-io__n8n-20188",
+      "n8n-io__n8n-20210",
+      "n8n-io__n8n-20344",
+      "nodejs__node-56185",
+      "nodejs__node-57691",
       "ollama__ollama-10135",
       "ollama__ollama-12185",
       "ollama__ollama-8938",
@@ -694,6 +775,10 @@
       "symfony__symfony-60342",
       "symfony__symfony-60956",
       "symfony__symfony-61601",
+      "timescale__timescaledb-7632",
+      "timescale__timescaledb-7915",
+      "timescale__timescaledb-7935",
+      "timescale__timescaledb-8138",
       "unionlabs__union-3414",
       "valkey-io__valkey-1485",
       "valkey-io__valkey-1651",
@@ -791,12 +876,12 @@
     ]
   },
   "counts": {
-    "usable": 166,
-    "dev": 132,
+    "usable": 196,
+    "dev": 162,
     "test": 34,
     "reserved": 7,
     "groups": {
-      "dev": 31,
+      "dev": 36,
       "test": 14,
       "reserved": 1
     }

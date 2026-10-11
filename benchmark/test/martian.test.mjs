@@ -12,13 +12,17 @@
 // 2. A finding without problem, consequence or fix is saved for the judge.
 // 3. One finding extracted into two issues, or matched to two golden
 //    comments, loses a match.
+// Also: a pull request whose licence GitHub cannot name is usable for
+// private runs only, as unverified, with a person's reading of that very
+// file noted; official totals missing a field of their shape, and a match
+// across two pull requests, are refused.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { ingestMartian, writeMartianIngest } from "../ingest/martian.mjs";
-import { saveCommitAnswer, savePullAnswer, saveRepoAnswer } from "../lib/licence.mjs";
+import { LICENCE_READINGS, saveCommitAnswer, savePullAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { martianFindings, martianGolden, readMartianEvaluation } from "../lib/score.mjs";
 import { listCases, martianTruth, materialise, readCase, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -34,8 +38,8 @@ const fixture = (name) => JSON.parse(readFileSync(join(FIXTURES, name), "utf8"))
 
 // Golden files in Martian's shape: usable pull requests, an evaluation copy
 // with its original, one whose head the host no longer serves, one whose
-// repository's licence GitHub cannot name, one with no licence file, and one
-// GitHub does not serve at all.
+// repository's licence GitHub cannot name (Sentry's, which a person read),
+// one with no licence file, and one GitHub does not serve at all.
 const GOLDEN = {
   "offline/golden_comments/alpha.json": [
     { pr_title: "t", url: "https://github.com/alpha/app/pull/1", comments: [{ comment: "The cache entry is read after the lock is released.", severity: "High", category: "bug" }, { comment: "The flag name is vague.", severity: "Low", category: "style" }] },
@@ -44,17 +48,18 @@ const GOLDEN = {
     { pr_title: "t", url: "https://github.com/alpha/app/pull/7", az_comment: "reviewed commit is not in the repo", comments: [{ comment: "The endpoint answers 200 where clients expect 404.", severity: "High", category: "api" }] },
   ],
   "offline/golden_comments/beta.json": [
-    { pr_title: "t", url: "https://github.com/beta/svc/pull/5", comments: [{ comment: "The loop allocates on every row.", severity: "Medium", category: "perf" }] },
+    { pr_title: "t", url: "https://github.com/getsentry/sentry/pull/5", comments: [{ comment: "The loop allocates on every row.", severity: "Medium", category: "perf" }] },
     { pr_title: "t", url: "https://github.com/gamma/lib/pull/3", comments: [{ comment: "The docstring names the old argument.", severity: "Low", category: "doc_defect" }] },
     { pr_title: "t", url: "https://github.com/delta/gone/pull/4", comments: [{ comment: "The migration drops rows it should keep.", severity: "High", category: "data" }] },
-    { pr_title: "t", url: "https://github.com/eval-org/beta-copy/pull/2", original_url: "https://github.com/beta/svc/commit/abcdef0", comments: [{ comment: "This may break callers later.", severity: "Low", category: "speculative" }] },
+    { pr_title: "t", url: "https://github.com/eval-org/beta-copy/pull/2", original_url: "https://github.com/getsentry/sentry/commit/abcdef0", comments: [{ comment: "This may break callers later.", severity: "Low", category: "speculative" }] },
   ],
 };
-// [repository, GitHub's licence id (null: no licence file)]
+// [repository, GitHub's licence id (null: no licence file), the licence
+// file a person read, when one did]
 const REPOS = [
   ["alpha/app", "MIT"],
   ["eval-org/alpha-copy", "MIT"],
-  ["beta/svc", "NOASSERTION"],
+  ["getsentry/sentry", "NOASSERTION", LICENCE_READINGS["getsentry/sentry"]],
   ["gamma/lib", null],
   ["delta/gone", "Apache-2.0"],
   ["eval-org/beta-copy", "Apache-2.0"],
@@ -79,8 +84,8 @@ function setup(golden = GOLDEN) {
     pins.push({ path, url: raw(path), sha256: sha256(bytes), prCount: rows.length });
   }
   const boards = { version: 1, boards: { martian: { repo: BOARD, source: `https://github.com/${BOARD}/tree/${COMMIT}`, commit: COMMIT, licence: "MIT", data: pins, reservedPrUrls: Object.values(golden).flat().map((r) => r.url) } } };
-  for (const [repo, spdx] of REPOS) {
-    const licence = spdx === null ? null : { spdx, key: spdx.toLowerCase(), file: "LICENSE", fileSha256: sha256(`licence of ${repo}`) };
+  for (const [repo, spdx, read] of REPOS) {
+    const licence = spdx === null ? null : { spdx, key: spdx.toLowerCase(), file: read?.file ?? "LICENSE", fileSha256: read?.fileSha256 ?? sha256(`licence of ${repo}`) };
     saveRepoAnswer(cache, { asked: repo, readOn: "2026-10-11", found: true, fullName: repo, fork: false, source: null, licence });
   }
   for (const row of Object.values(golden).flat()) {
@@ -109,7 +114,7 @@ describe("a Martian case runs on the dev split", () => {
     expect(() => listCases({ suite: "martian", split: "dev", root })).toThrow(/held out/);
     const ids = listCases({ suite: "martian", split: "test", root });
     expect(ids).toEqual(listCases({ suite: "martian", root }));
-    expect(ids.length).toBe(4);
+    expect(ids.length).toBe(5);
     for (const id of ids) {
       const c = readCase(id, { root });
       expect(c).toMatchObject({ suite: "martian", split: "test", origin: "injected" });
@@ -135,8 +140,9 @@ describe("the Martian ingest", () => {
     const { cases, report } = await ingestInto(setup());
     expect(cases.cases.length).toBe(8);
     const by = Object.fromEntries(cases.cases.map((e) => [e.name, e]));
-    expect(by["beta__svc-5"]).toMatchObject({ status: "excluded", licence: { class: "unknown", spdx: "NOASSERTION" } });
-    expect(by["beta__svc-5"].excludedWhy).toMatch(/^licence unknown/);
+    // A licence GitHub cannot name is usable for private runs, unverified,
+    // with a person's reading of the very file noted beside it.
+    expect(by["getsentry__sentry-5"]).toMatchObject({ status: "usable", excludedWhy: null, licence: { class: "unverified", spdx: "NOASSERTION", excerpts: "omit", reading: { spdx: "FSL-1.1-Apache-2.0", by: "Sid", on: "2026-10-11" } } });
     expect(by["gamma__lib-3"]).toMatchObject({ status: "excluded", licence: { class: "none" } });
     expect(by["gamma__lib-3"].excludedWhy).toMatch(/^licence none/);
     expect(by["delta__gone-4"].status).toBe("excluded");
@@ -146,15 +152,24 @@ describe("the Martian ingest", () => {
     expect(by["alpha__app-7"].note).toBe("reviewed commit is not in the repo");
     // A copy whose head is served is usable, with Martian's note kept beside it.
     expect(by["eval-org__alpha-copy-1"]).toMatchObject({ status: "usable", excludedWhy: null, note: "reviewed commit is not in the repo", originalUrl: "https://github.com/alpha/app/pull/9", repoGroup: "alpha/app" });
-    expect(by["eval-org__beta-copy-2"].repoGroup).toBe("beta/svc");
+    expect(by["eval-org__beta-copy-2"].repoGroup).toBe("getsentry/sentry");
     for (const e of cases.cases) expect(e.status === "usable" ? e.excludedWhy === null : typeof e.excludedWhy === "string" && e.excludedWhy.length > 0, e.name).toBe(true);
     expect(by["alpha__app-1"]).toMatchObject({ baseSha: baseOf("alpha/app", 1), headSha: headOf("alpha/app", 1), mergeBaseSha: null, prRef: "refs/pull/1/head", cloneUrl: "https://github.com/alpha/app.git", changeLines: 13, language: "TypeScript", truth: { kind: "prose", items: 2 } });
-    expect(report).toMatch(/Usable: 4\. Excluded: 4\./);
-    expect(report).toMatch(/licence unknown[^\n]*: 1 pull request/);
+    expect(report).toMatch(/Usable: 5\. Excluded: 3\./);
+    expect(report).not.toMatch(/licence unknown/);
+    expect(report).toMatch(/unverified licence[^\n]*: 1 pull request[^\n]*getsentry\/sentry 1 \(NOASSERTION, LICENSE\.md; read by Sid on 2026-10-11 as FSL-1\.1-Apache-2\.0\)/);
     expect(report).toMatch(/licence none[^\n]*: 1 pull request/);
     expect(report).toMatch(/pull request not served[^\n]*: 1 pull request[^\n]*delta\/gone#4/);
     expect(report).toMatch(/head no longer served by the host[^\n]*: 1 pull request[^\n]*alpha\/app#7/);
     expect(report).toMatch(/Held out: 8 of 8/);
+
+    // A reading belongs to the file the person read: another file carries none.
+    const other = setup();
+    saveRepoAnswer(other.cache, { asked: "getsentry/sentry", readOn: "2026-10-11", found: true, fullName: "getsentry/sentry", fork: false, source: null, licence: { spdx: "NOASSERTION", key: "other", file: "LICENSE.md", fileSha256: "0".repeat(64) } });
+    const changed = await ingestInto(other);
+    const sentry = changed.cases.cases.find((e) => e.name === "getsentry__sentry-5");
+    expect(sentry).toMatchObject({ status: "usable", licence: { class: "unverified" } });
+    expect(sentry.licence.reading).toBeUndefined();
   });
 
   it("refuses a golden file that differs from its pin, and a pin that is not the board's raw file at its commit", async () => {
@@ -219,6 +234,28 @@ describe("the evaluation reader", () => {
     expect(read.ours.severity.matrix.major.minor).toBe(1);
     expect(read.ours.label).toMatch(/never an acceptance metric/);
     expect(read.ours.judge).toEqual(before.judge);
+  });
+
+  it("refuses official totals that lack a field of Martian's shape, naming it, rather than returning them as official", () => {
+    const { evaluation, findings, golden } = fixtureInputs();
+    const without = (path) => {
+      const e = structuredClone(evaluation);
+      const keys = path.split(".");
+      delete keys.slice(0, -1).reduce((o, k) => o[k], e)[keys.at(-1)];
+      return e;
+    };
+    for (const path of ["totals.core", "totals.strict.fbeta", "totals.all.fn", "totals.all.prs", "totals.beta"]) {
+      expect(() => readMartianEvaluation(without(path), { findings, golden }), path).toThrow(new RegExp(`${path.replace(/\./g, "\\.")}\\b`));
+    }
+    const text = structuredClone(evaluation);
+    text.totals.core.recall = "1.0";
+    expect(() => readMartianEvaluation(text, { findings, golden })).toThrow(/totals\.core\.recall/);
+  });
+
+  it("refuses a match that links a candidate of one pull request to a golden comment of another, naming both", () => {
+    const { evaluation, findings, golden } = fixtureInputs();
+    const crossed = { ...evaluation, matches: [...evaluation.matches, { candidateId: "https://github.com/alpha/app/pull/1#2", goldenId: "martian/eval-org__alpha-copy-1@4e5f6a7b#g1", verdict: "match", confidence: 0.6 }] };
+    expect(() => readMartianEvaluation(crossed, { findings, golden })).toThrow(/https:\/\/github\.com\/alpha\/app\/pull\/1#2[^\n]*martian\/alpha__app-1@0a1b2c3d[^\n]*martian\/eval-org__alpha-copy-1@4e5f6a7b#g1/);
   });
 });
 

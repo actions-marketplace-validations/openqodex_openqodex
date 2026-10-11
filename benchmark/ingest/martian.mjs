@@ -36,8 +36,10 @@
 //    anything is fetched.
 // 4. A pull request with no licence is used: the licence of the repository
 //    the code is fetched from is read the way AACR's is (lib/licence.mjs);
-//    none or unknown excludes the pull request, with the reason in the entry
-//    and the count in the report.
+//    none excludes the pull request, with the reason in the entry and the
+//    count in the report. A licence GitHub cannot name (Sentry's) is usable
+//    in private runs as unverified, never published (Sid, 2026-10-11), and
+//    the report names it with a person's reading of the file.
 // 5. A case is read at another commit on the next ingest, or after the pull
 //    request moves: its base and head come from GitHub's cached answer for
 //    the pull request (Martian names no commit), frozen in the entry.
@@ -59,8 +61,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
-import { cacheRoot, commitAnswer, licenceExclusion, licenceRecord, pullAnswer, repoAnswer } from "../lib/licence.mjs";
-import { HASHED, MARTIAN_SEVERITY, SUITES, entryHash, martianTruth, realCaseId, truthHashOf } from "../lib/suites.mjs";
+import { cacheRoot, commitAnswer, licenceExclusion, licenceNote, licenceRecord, pullAnswer, repoAnswer } from "../lib/licence.mjs";
+import { HASHED, MARTIAN_SEVERITY, SUITES, entryHash, martianTruth, realCaseId, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
 import { HEAD_GONE, UnionFind, fetchPinned } from "./aacr.mjs";
 
 export const SPLIT_NAME = "martian-v1";
@@ -256,8 +258,8 @@ export async function ingestMartian({ boards, cache = cacheRoot(), offline = fal
   say(`Cases: ${plural(entries.length, "pull request")} in ${plural(prRepos.length, "repository", "repositories")}. Usable: ${usable.length}. Excluded: ${entries.length - usable.length}.`);
   say("Excluded, by reason:");
   const reasons = [
-    ["licence unknown (GitHub names no single licence for the licence file)", (e) => e.excludedWhy?.startsWith("licence unknown"), "licence"],
     ["licence none (no licence file)", (e) => e.excludedWhy?.startsWith("licence none"), "licence"],
+    ["licence of no class this benchmark uses", (e) => e.excludedWhy?.startsWith("licence ") && !e.excludedWhy.startsWith("licence none"), "licence"],
     ["repository unknown to GitHub", (e) => e.excludedWhy?.startsWith("GitHub does not know"), "licence"],
     [`${PULL_GONE} by GitHub`, (e) => e.excludedWhy?.startsWith(PULL_GONE), "pull"],
     [HEAD_GONE, (e) => e.excludedWhy?.startsWith(HEAD_GONE), "pull"],
@@ -272,6 +274,8 @@ export async function ingestMartian({ boards, cache = cacheRoot(), offline = fal
         });
     say(`  ${label}: ${plural(hit.length, "pull request")}${detail.length ? `: ${detail.join(", ")}` : ""}`);
   }
+  const unverified = usable.filter((e) => e.licence.class === "unverified");
+  say(`Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): ${plural(unverified.length, "pull request")}${unverified.length ? `: ${countBy(unverified, (e) => e.repo).map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
   const noted = entries.filter((e) => e.note !== null);
   say(`Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: ${noted.length}${noted.length ? `: ${noted.map((e) => `${prRef(e.prUrl)} "${e.note}" (${e.status})`).join("; ")}` : ""}`);
   say(`Left out before the cases (not cases): ${notCases.length}${notCases.length ? `: ${notCases.map((x) => `${x.ref} (${x.why})`).join("; ")}` : ""}`);
@@ -297,12 +301,14 @@ export async function ingestMartian({ boards, cache = cacheRoot(), offline = fal
 }
 
 // Writes the ingest's files under `root` (the benchmark folder). A split
-// file that exists with other content is never rewritten: a new split is a
-// new file.
+// file that exists is only ever extended (lib/suites.mjs
+// splitRewriteProblems): a moved or dropped case needs a new split, which is
+// a new file.
 export function writeMartianIngest(result, { root = benchRoot } = {}) {
   const splitPath = join(root, SUITES.martian.split);
-  if (existsSync(splitPath) && readFileSync(splitPath, "utf8") !== result.files[SUITES.martian.split]) {
-    throw new Error(`${splitPath} exists with other content, and a new split is a new file: write it as ${SPLIT_NAME.replace(/\d+$/, (n) => String(Number(n) + 1))}, or move the old file to the Trash if no run has used it`);
+  const problems = existsSync(splitPath) ? splitRewriteProblems(JSON.parse(readFileSync(splitPath, "utf8")), JSON.parse(result.files[SUITES.martian.split])) : [];
+  if (problems.length > 0) {
+    throw new Error(`${splitPath} exists, and a new split is a new file: write it as ${SPLIT_NAME.replace(/\d+$/, (n) => String(Number(n) + 1))}, or move the old file to the Trash if no run has used it. The new split would change it:\n  ${problems.join("\n  ")}`);
   }
   const written = [];
   for (const [rel, text] of Object.entries(result.files)) {

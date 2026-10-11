@@ -1220,6 +1220,15 @@ export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK
 // 37. A candidate names a finding the run never sent, or a match names a
 //     candidate or golden comment that does not exist, and is dropped
 //     quietly: the reader refuses it.
+// 38. Official totals missing a field (a profile, a ratio, a count, the
+//     beta) are returned as official: every field of the shape
+//     score_profiles writes is checked, and a missing or mistyped one is
+//     refused by its path.
+// 39. A match links a candidate of one pull request to a golden comment of
+//     another, and both ids exist, so it counts: the case of the findings
+//     behind the candidate must be the golden comment's case, or the reader
+//     refuses with both ids; a candidate whose findings come from two cases
+//     is refused too.
 export const MARTIAN_LABEL = "Martian's offline board, read back. official, candidates and matches are Martian's pipeline's own (its extraction, dedup and judge, and score_profiles' totals), unchanged. ours is computed by script from those matches: golden comments found (distinct), findings behind a matched candidate (distinct), and each found golden comment's severity against the severity of the first finding in report order behind a candidate matched to it, on the scale critical, major, minor, nitpick, info (Critical critical, High major, Medium minor, Low nitpick). A board output, labelled with its judge; never an acceptance metric.";
 export const MARTIAN_VERDICTS = ["match", "no-match"];
 // What Martian's judge reads of a finding.
@@ -1249,6 +1258,29 @@ export function martianGolden(caseId, truth) {
   return truth.items.map((t) => ({ goldenId: `${caseId}#${t.id}`, caseId, truthId: t.id, severity: t.severity, rawSeverity: t.rawSeverity, category: t.category, rawCategory: t.rawCategory }));
 }
 
+// Martian's official totals as score_profiles computes them for one tool:
+// the beta of its F-beta, and per profile the ratios and the counts.
+export const MARTIAN_TOTALS = Object.freeze({ profiles: ["strict", "core", "all"], ratios: ["precision", "recall", "f1", "fbeta"], counts: ["tp", "fp", "fn", "prs"] });
+
+// Every field of the totals' shape that is missing or of the wrong kind,
+// named by its path.
+function totalsProblems(totals) {
+  if (!totals || typeof totals !== "object") return ["totals is missing"];
+  const out = [];
+  const isNumber = (v) => typeof v === "number" && Number.isFinite(v);
+  if (!isNumber(totals.beta)) out.push(`totals.beta is ${totals.beta === undefined ? "missing" : "not a number"}`);
+  for (const p of MARTIAN_TOTALS.profiles) {
+    const t = totals[p];
+    if (!t || typeof t !== "object") {
+      out.push(`totals.${p} is missing`);
+      continue;
+    }
+    for (const k of MARTIAN_TOTALS.ratios) if (!isNumber(t[k])) out.push(`totals.${p}.${k} is ${t[k] === undefined ? "missing" : "not a number"}`);
+    for (const k of MARTIAN_TOTALS.counts) if (!Number.isInteger(t[k]) || t[k] < 0) out.push(`totals.${p}.${k} is ${t[k] === undefined ? "missing" : "not a count"}`);
+  }
+  return out;
+}
+
 // An evaluation.json read back: `findings` are every finding the run sent
 // for this tool name (martianFindings, in report order), `golden` the golden
 // comments of the cases it covers (martianGolden). Returns { toolName,
@@ -1262,7 +1294,7 @@ export function readMartianEvaluation(evaluation, { findings, golden }) {
   if (typeof e.judge?.model !== "string") shape.push("it names no judge model");
   if (!Array.isArray(e.candidates)) shape.push("its candidates are not a list");
   if (!Array.isArray(e.matches)) shape.push("its matches are not a list");
-  if (!Number.isInteger(e.totals?.all?.tp)) shape.push("its totals carry no all-profile tp, as score_profiles computes it");
+  shape.push(...totalsProblems(e.totals));
   if (shape.length > 0) throw new Error(`the evaluation is not in Martian's shape (PLAN-benchmark 4.5): ${shape.join("; ")}`);
 
   const lacking = lackingLines(findings);
@@ -1286,10 +1318,18 @@ export function readMartianEvaluation(evaluation, { findings, golden }) {
     if (!c.extraction || typeof c.extraction !== "object") problems.push(`candidate ${id} has no extraction provenance`);
     byCandidate.set(id, c);
   }
+  // The case a candidate came from: the case of every finding it names.
+  const caseOfCandidate = (c) => [...new Set((Array.isArray(c.sourceFindingIds) ? c.sourceFindingIds : []).map((f) => byFinding.get(f)?.caseId).filter(Boolean))];
+  for (const c of byCandidate.values()) if (caseOfCandidate(c).length > 1) problems.push(`candidate ${c.candidateId} names findings of more than one case (${caseOfCandidate(c).join(", ")})`);
   for (const m of e.matches) {
     if (!byCandidate.has(m?.candidateId)) problems.push(`a match names candidate ${JSON.stringify(m?.candidateId)}, which is not among the candidates`);
     if (!byGolden.has(m?.goldenId)) problems.push(`a match names golden comment ${JSON.stringify(m?.goldenId)}, which is not among the golden comments given`);
     if (!MARTIAN_VERDICTS.includes(m?.verdict)) problems.push(`a match has the verdict ${JSON.stringify(m?.verdict)}, not one of ${MARTIAN_VERDICTS.join(", ")}`);
+    if (byCandidate.has(m?.candidateId) && byGolden.has(m?.goldenId)) {
+      const from = caseOfCandidate(byCandidate.get(m.candidateId));
+      const to = byGolden.get(m.goldenId).caseId;
+      if (from.length === 1 && from[0] !== to) problems.push(`a match links candidate ${m.candidateId} (findings of ${from[0]}) to golden comment ${m.goldenId} of another pull request (${to})`);
+    }
   }
   if (problems.length > 0) throw new Error(`the evaluation of ${e.toolName} does not hold together:\n  ${problems.join("\n  ")}`);
 

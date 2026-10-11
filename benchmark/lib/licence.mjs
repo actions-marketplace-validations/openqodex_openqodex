@@ -5,10 +5,17 @@
 //
 // Failure list, written before the code:
 // 1. A pull request whose repository has no licence is used: a repository
-//    with no licence file is class none, and one whose licence GitHub cannot
-//    name (NOASSERTION, or an id on none of the lists below) is class
-//    unknown; the ingest excludes both and names them in its report. No
-//    licence text is guessed by a script.
+//    with no licence file is class none, and the ingest excludes it and
+//    names it in its report. No licence text is guessed by a script.
+// 1a. A pull request whose licence nobody verified leaves the machine (Sid,
+//    2026-10-11: such cases are for private runs). One whose licence file
+//    GitHub cannot name (NOASSERTION, or an id on none of the lists below)
+//    is class unverified: usable in a private run, never published.
+//    publishRefusal names every such case of a run, and everything that
+//    sends a run out (publish-run.mjs, an outside converter, a board
+//    submission) refuses on it. A person's reading of the licence file is
+//    noted beside the class, and only for the file the person read (its
+//    sha256); the class stays unverified.
 // 2. Two ingests read the licence differently (a new day, a changed
 //    repository), so the same dataset gives two suites: the first answer is
 //    cached with the day it was read, and the cache is the only source after
@@ -39,8 +46,20 @@ export const PERMISSIVE = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", 
 const COPYLEFT = /^(A|L)?GPL-[23]\.[01](-only|-or-later|\+)?$/;
 const SOURCE_AVAILABLE = /^(Elastic-2\.0|SSPL-1\.0|BUSL-1\.1|FSL-1\.[01]-(MIT|Apache-2\.0|ALv2))$/;
 export const USE = "local review and scoring";
-// The classes a case may be used under; unknown and none exclude it.
-export const USABLE = ["permissive", "copyleft", "source-available"];
+// The classes a published run may hold, in the order an OR expression's
+// options are taken.
+export const PUBLISHABLE = ["permissive", "copyleft", "source-available"];
+// The classes a case may be used under in a private run; none excludes it.
+export const USABLE = [...PUBLISHABLE, "unverified"];
+
+// A person's reading of a licence file GitHub cannot name, by repository:
+// what the file says, who read it and when, and the file read (its path and
+// sha256 as GitHub's licence API served it). A reading is a note; the case
+// stays unverified, so a run that holds it is never published.
+export const LICENCE_READINGS = Object.freeze({
+  "getsentry/sentry": { spdx: "FSL-1.1-Apache-2.0", by: "Sid", on: "2026-10-11", file: "LICENSE.md", fileSha256: "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc" },
+  "ai-code-review-evaluation/sentry-greptile": { spdx: "FSL-1.1-Apache-2.0", by: "Sid", on: "2026-10-11", file: "LICENSE.md", fileSha256: "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc" },
+});
 
 const classOf = (id) => (PERMISSIVE.includes(id) ? "permissive" : COPYLEFT.test(id) ? "copyleft" : SOURCE_AVAILABLE.test(id) ? "source-available" : null);
 
@@ -50,11 +69,11 @@ export function classify(spdx) {
   const options = String(spdx)
     .split(/\s+OR\s+/i)
     .map((o) => o.replace(/^\(|\)$/g, "").replace(/\s+WITH\s+.*$/i, "").trim());
-  for (const wanted of USABLE) {
+  for (const wanted of PUBLISHABLE) {
     const chosen = options.find((o) => classOf(o) === wanted);
     if (chosen) return { chosen, class: wanted };
   }
-  return { chosen: null, class: "unknown" };
+  return { chosen: null, class: "unverified" };
 }
 
 export const cacheRoot = (env = process.env) => env.OPENQODEX_BENCH_CACHE || join(homedir(), ".cache", "openqodex-bench");
@@ -184,7 +203,8 @@ export function pullAnswer(repo, number, { cache = cacheRoot(), offline = false,
 export function licenceRecord(answer) {
   const l = answer?.found ? answer.licence : null;
   const spdx = l ? l.spdx : null;
-  const { chosen, class: cls } = l ? (spdx === null ? { chosen: null, class: "unknown" } : classify(spdx)) : classify(null);
+  const { chosen, class: cls } = l ? (spdx === null ? { chosen: null, class: "unverified" } : classify(spdx)) : classify(null);
+  const read = cls === "unverified" ? LICENCE_READINGS[String(answer?.asked ?? "").toLowerCase()] : undefined;
   return {
     spdx,
     chosen,
@@ -193,14 +213,31 @@ export function licenceRecord(answer) {
     fileSha256: l?.fileSha256 ?? null,
     at: `the default branch on ${answer?.readOn ?? "an unknown day"}`,
     source: "the GitHub licence API",
-    use: USE,
+    use: cls === "unverified" ? `${USE}, in private runs only` : USE,
     excerpts: cls === "permissive" ? "full" : "omit",
+    ...(read && read.fileSha256 === l?.fileSha256 ? { reading: { spdx: read.spdx, by: read.by, on: read.on } } : {}),
   };
 }
 
-// Why a case under this licence is excluded, or null when it may be used.
+// Why a case under this licence is excluded, or null when it may be used
+// (an unverified one in private runs only).
 export function licenceExclusion(record) {
   if (USABLE.includes(record.class)) return null;
   if (record.class === "none") return "licence none: the repository has no licence file, so its code is all rights reserved";
-  return `licence unknown: GitHub names ${record.spdx ?? "no single licence"} for the licence file ${record.file ?? "(none)"}, and no script guesses a licence from its text`;
+  return `licence ${record.class}: no class this benchmark uses, so the case is not used`;
+}
+
+// A licence record in one line for a report: its id and file, and a
+// person's reading when there is one.
+export const licenceNote = (l) => `${l.spdx ?? "none"}, ${l.file ?? "no file"}${l.reading ? `; read by ${l.reading.by} on ${l.reading.on} as ${l.reading.spdx}` : ""}`;
+
+// Why a run may not leave the machine because of its cases' licences, or
+// null: a case whose licence is unverified is for private runs only.
+// `cases` are { name, licence } with licence the class. publish-run.mjs, an
+// outside converter and anything that writes a board submission call this
+// before writing anything.
+export function publishRefusal(cases) {
+  const names = cases.filter((c) => c.licence === "unverified").map((c) => c.name).sort();
+  if (names.length === 0) return null;
+  return `refused: ${names.length} case${names.length === 1 ? "" : "s"} of this run hold${names.length === 1 ? "s" : ""} an unverified licence, which is for private runs only (GitHub names no licence it can classify; Sid, 2026-10-11): ${names.join(", ")}`;
 }

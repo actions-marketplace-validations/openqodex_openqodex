@@ -467,8 +467,8 @@
       "name": "ai-code-review-evaluation__sentry-greptile-1",
       "id": "martian/ai-code-review-evaluation__sentry-greptile-1@8d3cc8b8",
       "hash": "8d3cc8b816b8b84591000b5fb313ec2ddf7c9d8eb1d3e54dfec8a42a15c9bba4",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1",
       "repo": "ai-code-review-evaluation/sentry-greptile",
       "cloneUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile.git",
@@ -483,13 +483,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -505,8 +510,8 @@
       "name": "ai-code-review-evaluation__sentry-greptile-2",
       "id": "martian/ai-code-review-evaluation__sentry-greptile-2@f3210df3",
       "hash": "f3210df3410b44b0ddc6ea68bf5a182343bf2a7195c7e9b048d34f4aeb6f6966",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2",
       "repo": "ai-code-review-evaluation/sentry-greptile",
       "cloneUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile.git",
@@ -521,13 +526,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": "https://github.com/getsentry/sentry/pull/92393",
@@ -543,8 +553,8 @@
       "name": "ai-code-review-evaluation__sentry-greptile-3",
       "id": "martian/ai-code-review-evaluation__sentry-greptile-3@e43c2b26",
       "hash": "e43c2b26c3b0415435cdd43d43a38979a1750acd53398072d9251daf804638cf",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3",
       "repo": "ai-code-review-evaluation/sentry-greptile",
       "cloneUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile.git",
@@ -559,13 +569,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": "https://github.com/getsentry/sentry/pull/94376",
@@ -581,8 +596,8 @@
       "name": "ai-code-review-evaluation__sentry-greptile-5",
       "id": "martian/ai-code-review-evaluation__sentry-greptile-5@081f9851",
       "hash": "081f9851da82668103c7465f0ec481283acd97da3dea01183e6f2b26ee3e58c0",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/5",
       "repo": "ai-code-review-evaluation/sentry-greptile",
       "cloneUrl": "https://github.com/ai-code-review-evaluation/sentry-greptile.git",
@@ -597,13 +612,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -999,8 +1019,8 @@
       "name": "getsentry__sentry-67876",
       "id": "martian/getsentry__sentry-67876@9c136a04",
       "hash": "9c136a04c3a354ffe877fee41b5db0e19333616ac1de8a218ae08cb2d3a0d8d5",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/67876",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1015,13 +1035,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -1037,8 +1062,8 @@
       "name": "getsentry__sentry-77754",
       "id": "martian/getsentry__sentry-77754@dfb67b01",
       "hash": "dfb67b0183da70e21a9229e23487df0c03de0e8361ecd3b617355c33a9a4d924",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/77754",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1053,13 +1078,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -1075,8 +1105,8 @@
       "name": "getsentry__sentry-80168",
       "id": "martian/getsentry__sentry-80168@4df43d0a",
       "hash": "4df43d0ace9a8aadb8416b25a7ff17aa650ef17fad34a14e1c7d82abe444eee0",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/80168",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1091,13 +1121,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -1113,8 +1148,8 @@
       "name": "getsentry__sentry-80528",
       "id": "martian/getsentry__sentry-80528@c1d445a7",
       "hash": "c1d445a7ea357926653f01df7899cd55a37a378459029b411e9d2127bb93095c",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/80528",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1129,13 +1164,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -1151,8 +1191,8 @@
       "name": "getsentry__sentry-93824",
       "id": "martian/getsentry__sentry-93824@2b815615",
       "hash": "2b815615a77670e95d9b4ca8cab68497b475fa3ee7daa071f036e0f95e9a1ed4",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/93824",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1167,13 +1207,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
@@ -1189,8 +1234,8 @@
       "name": "getsentry__sentry-95633",
       "id": "martian/getsentry__sentry-95633@603b61a4",
       "hash": "603b61a41cc78dc7a1f3c2657a47c7574b3b9f1dd6d16c01e15665231a61a8ea",
-      "status": "excluded",
-      "excludedWhy": "licence unknown: GitHub names NOASSERTION for the licence file LICENSE.md, and no script guesses a licence from its text",
+      "status": "usable",
+      "excludedWhy": null,
       "prUrl": "https://github.com/getsentry/sentry/pull/95633",
       "repo": "getsentry/sentry",
       "cloneUrl": "https://github.com/getsentry/sentry.git",
@@ -1205,13 +1250,18 @@
       "licence": {
         "spdx": "NOASSERTION",
         "chosen": null,
-        "class": "unknown",
+        "class": "unverified",
         "file": "LICENSE.md",
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring",
-        "excerpts": "omit"
+        "use": "local review and scoring, in private runs only",
+        "excerpts": "omit",
+        "reading": {
+          "spdx": "FSL-1.1-Apache-2.0",
+          "by": "Sid",
+          "on": "2026-10-11"
+        }
       },
       "goldenFile": "offline/golden_comments/sentry.json",
       "originalUrl": null,
