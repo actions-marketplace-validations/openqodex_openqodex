@@ -2,6 +2,12 @@
 // 4.11), as loop.mjs runs them. Each stage says what it runs, how it ends
 // and what its ledger line records.
 //
+// Looks (plan clarification A2): a look is a point where a change can be
+// accepted. Stage 2 and stage 3 each take one through decide.mjs, and the
+// look counter t advances under the ledger lock. Stage 1 can only stop, so
+// it takes no look: its line records look null, and its reading of the rule
+// uses the alpha of the look that is due without spending it.
+//
 // Stage 1, the screen. The target path only, one repeat of the candidate on
 // the whole population of the parent's runs, against the parent's saved
 // runs. It may only stop a change, never accept one. It stops when:
@@ -16,9 +22,9 @@
 //   reviews);
 // - or the acceptance rule itself reads harm at this look (decide.mjs
 //   "stopped-early").
-// Exit: "stopped-early" (decided), or on to stage 2. Records: its look and
-// alpha, every cell's readings, each screen rule with whether it fired, and
-// the spend.
+// Exit: "stopped-early" (decided), or on to stage 2. Records: no look (look
+// and alpha null), every cell's readings, each screen rule with whether it
+// fired, and the spend.
 //
 // Stage 2, the decision. Every path the change runs on, three repeats of
 // every reviewer, the candidate's target run grown from one repeat to three.
@@ -86,15 +92,16 @@ export const repeatsFor = (stage, path, target) => STAGES[stage].repeats[path ==
 /**
  * Where a change stands in the ledger: its proposed record, its own stage
  * lines, its decision line (or null), and the stage due next (null once
- * decided). A stage line that took a look moves the change on; one that did
- * not (runs cut short) leaves the same stage due.
+ * decided). A stage line that completed its stage without a decision
+ * (`stageDone`, or a look taken by decide.mjs) moves the change on; one
+ * that did not (runs cut short, no evidence) leaves the same stage due.
  */
 export function changeState(lines, id) {
   const proposed = lines.find((l) => l.event === "proposed" && l.id === id) ?? null;
   const mine = lines.filter((l) => l.id === id && l.event !== "proposed");
   const decided = mine.find((l) => l.event === "decided") ?? null;
-  const looked = mine.filter((l) => l.look !== null && l.look !== undefined && l.event === "stage");
-  const last = looked.at(-1);
+  const done = mine.filter((l) => l.event === "stage" && (l.stageDone === true || (l.look !== null && l.look !== undefined)));
+  const last = done.at(-1);
   const due = decided ? null : last ? last.stage + 1 : 1;
   return { proposed, record: proposed?.record ?? null, lines: mine, decided, due };
 }
@@ -163,7 +170,7 @@ export function screen({ result, pairs, record, spent }) {
   const overCap = spent.serverUsd > usd + EPS || spent.laptopReviews > reviews + EPS;
   rules.push({ rule: "cap", fired: overCap, text: `the change has spent $${spent.serverUsd.toFixed(4)} of its $${record.capUsd} server cap and ${spent.laptopReviews} of its ${record.capReviews} laptop reviews; the screen stops at ${SCREEN.capShare * 100} percent` });
 
-  rules.push({ rule: "acceptance rule", fired: result.decision === "stopped-early", text: result.decision === "stopped-early" ? "the acceptance rule reads harm at this look" : "the acceptance rule reads no harm at this look" });
+  rules.push({ rule: "acceptance rule", fired: result.decision === "stopped-early", text: result.decision === "stopped-early" ? "the acceptance rule reads harm at the alpha of the look that is due" : "the acceptance rule reads no harm at the alpha of the look that is due" });
   return rules;
 }
 
@@ -171,6 +178,6 @@ export function screen({ result, pairs, record, spent }) {
 export function stageOutcome(stage, result, rules = []) {
   if (stage !== 1) return { event: result.event, decision: result.decision, reason: result.reason };
   const fired = rules.filter((r) => r.fired);
-  if (fired.length > 0) return { event: "decided", decision: "stopped-early", reason: `stopped-early at the stage 1 screen: ${fired.map((r) => r.text).join("; ")}. The interval rule at this look: ${result.reason}` };
-  return { event: "stage", decision: null, reason: `the stage 1 screen passed, so stage 2 runs next: ${rules.map((r) => r.text).join("; ")}. The interval rule at this look: ${result.reason}` };
+  if (fired.length > 0) return { event: "decided", decision: "stopped-early", reason: `stopped-early at the stage 1 screen: ${fired.map((r) => r.text).join("; ")}. The interval rule at the alpha of the look that is due (stage 1 takes none): ${result.reason}` };
+  return { event: "stage", decision: null, reason: `the stage 1 screen passed, so stage 2 runs next: ${rules.map((r) => r.text).join("; ")}. The interval rule at the alpha of the look that is due (stage 1 takes none): ${result.reason}` };
 }

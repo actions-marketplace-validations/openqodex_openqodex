@@ -514,7 +514,10 @@ function writeLine({ o, id, stage, record, pairs, runs, ran, started }) {
       } else {
         const rules = stage === 1 ? screen({ result, pairs: sides, record, spent: toDate }) : [];
         const outcome = stageOutcome(stage, result, rules);
-        line = { ...decisionLine(result, { pairs: sides }), event: outcome.event, decision: outcome.decision, reason: outcome.reason, ...(stage === 1 ? { screen: rules } : {}), spend: spendBlock, spendUsd: spend.serverUsd + spend.laptopUsd, laptopReviews: spend.laptopReviews, minutes };
+        // Stage 1 can only stop, so it takes no look (A2): its line records
+        // look null, and the alpha its reading used as screenAlpha.
+        const looks = stage === 1 ? { look: null, alpha: null, share: null, screenAlpha: result.alpha } : {};
+        line = { ...decisionLine(result, { pairs: sides }), ...looks, event: outcome.event, stageDone: outcome.event === "stage", decision: outcome.decision, reason: outcome.reason, ...(stage === 1 ? { screen: rules } : {}), spend: spendBlock, spendUsd: spend.serverUsd + spend.laptopUsd, laptopReviews: spend.laptopReviews, minutes };
       }
     }
     return { write: [line], result: { line } };
@@ -561,7 +564,7 @@ async function main() {
     if (o.command === "propose") return proposeCommand(o);
     if (o.command === "status") return statusCommand(o);
     const line = await step(o);
-    console.log(`${line.id} stage ${line.stage}: ${line.decision ?? (line.look === null ? "no look taken" : "goes on")}${line.look !== null ? ` at look ${line.look} (alpha ${line.alpha.toPrecision(3)})` : ""}; spent ${money(line.spend.serverUsd)} on the server and ${line.spend.laptopReviews} laptop reviews. ${line.reason}\nWritten to ${o.ledger}.`);
+    console.log(`${line.id} stage ${line.stage}: ${line.decision ?? (line.stageDone ? `passed, stage ${line.stage + 1} next` : "no decision")}${line.look !== null ? ` at look ${line.look} (alpha ${line.alpha.toPrecision(3)})` : ""}; spent ${money(line.spend.serverUsd)} on the server and ${line.spend.laptopReviews} laptop reviews. ${line.reason}\nWritten to ${o.ledger}.`);
     return 0;
   } catch (error) {
     if (error instanceof Refusal) {

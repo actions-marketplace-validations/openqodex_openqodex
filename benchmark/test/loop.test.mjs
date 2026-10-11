@@ -124,15 +124,16 @@ function copyRun(from, runId, edit = (m) => m) {
   return to;
 }
 
-// A saved score set: a run folder of six planted-style cases with one
+// A saved score set: a run folder of `n` planted-style cases with one
 // critical bug each and a clean one, written by the runner's own code
 // (executeRun) on the server path with a real reviewer's name. `found(c, r)`
-// says whether review r of case c finds its bug. Each review's cost is
-// recorded in the run's budget ledger by lib/budget.mjs.
-async function savedSet({ runId, commit = head, changeId = null, found, repeat = 3, cost = 0.01 }) {
+// says whether review r of case c finds its bug; `cleanFalse` puts a finding
+// on the clean case in every review. Each review's cost is recorded in the
+// run's budget ledger by lib/budget.mjs.
+async function savedSet({ runId, commit = head, changeId = null, found, repeat = 3, cost = 0.01, n = 6, cleanFalse = false }) {
   const out = join(root, "sets", runId);
   const specs = join(root, "sets", `${runId}-specs`);
-  const names = [...Array.from({ length: 6 }, (_, i) => `case-${String(i).padStart(2, "0")}`), "clean-00"];
+  const names = [...Array.from({ length: n }, (_, i) => `case-${String(i).padStart(2, "0")}`), "clean-00"];
   const hashes = Object.fromEntries(names.map((x) => [x, sha(x)]));
   const caseIds = Object.fromEntries(names.map((x) => [x, `planted/${x}@${hashes[x].slice(0, 8)}`]));
   for (const x of names) writeJson(join(specs, `${x}.json`), { id: x, guards: "g", language: "python", framework: "none", clean: x.startsWith("clean"), bugs: x.startsWith("clean") ? [] : [{ id: "b1", file: "app.py", lines: [10, 10], anchor: { line: 10, text: "x" }, mentions: ["flaw"], kind: ["bug"], severity: "critical", found_by: ["reasoning"], truth: "t" }] });
@@ -150,7 +151,9 @@ async function savedSet({ runId, commit = head, changeId = null, found, repeat =
     copies: names.map((x) => [join(specs, `${x}.json`), `cases/${x}.json`]),
     runJob: async (job) => {
       const c = names.indexOf(job.case);
-      const shown = !job.case.startsWith("clean") && found(c, job.repeat) ? [{ origin: "agent", severity: "critical", category: "bug", confidence: 0.9, file_path: "app.py", line_number: 10, line_end: 10, title: "A flaw here", problem: "p", consequence: "c", fix: "f", candidate: null, source: null }] : [];
+      const flaw = { origin: "agent", severity: "critical", category: "bug", confidence: 0.9, file_path: "app.py", line_number: 10, line_end: 10, title: "A flaw here", problem: "p", consequence: "c", fix: "f", candidate: null, source: null };
+      // A finding on the clean case is false: with `cleanFalse`, every review of it shows one.
+      const shown = job.case.startsWith("clean") ? (cleanFalse ? [flaw] : []) : found(c, job.repeat) ? [flaw] : [];
       const report = { findings: shown, outside_change: [], dropped: [], completion: { status: "complete", missing: [] } };
       const dir = join(out, "samples", job.case, job.config, String(job.repeat));
       writeJson(join(dir, "sample.json"), sampleRecord({ job, attempt: 1, result: { code: 0, signal: null, wallMs: 20_000 }, report, who: null, startedAt: "t", failure: null, stopped: null }));
@@ -167,8 +170,10 @@ async function savedSet({ runId, commit = head, changeId = null, found, repeat =
 const validation = () => ({ v: 1, id: "VAL-0001", at: "2026-10-11T00:00:00.000Z", event: "validation", ruleHash: ruleHash(), look: null, alpha: null, simulation: { sequences: 1000, looks: 10, accepted: 0, harm: { decision: "reverted" } }, saved: { falseAccepts: 0, missedHarms: 0 }, pass: true, reason: "test" });
 const baseline = (stop = false, id = "RC-BASE-0001") => ({ v: 1, id, at: "2026-10-11T00:00:01.000Z", event: "baseline", look: null, alpha: null, runs: [], signal: { sameIssueAgreement: stop ? 0.5 : 0.9, unresolvedShare: 0.1, toolStressShare: 0.2, stop } });
 const proposed = (id, over = {}) => ({ v: 1, id, at: "2026-10-11T00:00:02.000Z", event: "proposed", record: { lever: "brief.order-and-size", title: `change ${id}`, hypothesis: "h", branch: `b-${id}`, parent: head, commit: head, paths: ["server"], target: "server", aim: "quality", primary: { metric: "recall", better: "higher" }, acceptableLoss: { ...LOSSES }, capUsd: 40, capReviews: 240, proposedBy: "test", ...over }, runs: [], look: null, alpha: null, results: {}, strata: null, causes: {}, stage: null, decision: null, reason: null, spendUsd: 0, laptopReviews: 0, minutes: 0, pr: null });
-// A stage line a change wrote earlier: `look` taken, `spendRuns` the runs it recorded with their totals.
-const stageLine = (id, { stage, look, spendUsd = 0, spendRuns = [], at = new Date().toISOString(), event = "stage", decision = null }) => ({ v: 1, id, at, event, runs: [], look, alpha: look === null ? null : 0.05 / (look * (look + 1)), stage, decision, reason: "test", spend: { serverUsd: spendUsd, serverReviews: 0, laptopUsd: 0, laptopReviews: 0, runs: spendRuns }, spendUsd, laptopReviews: 0, minutes: 1, pr: null });
+// A stage line a change wrote earlier: `look` taken (stage 2 and 3 only),
+// `done` when the stage passed without a decision, `spendRuns` the runs it
+// recorded with their totals.
+const stageLine = (id, { stage, look = null, done = false, spendUsd = 0, spendRuns = [], at = new Date().toISOString(), event = "stage", decision = null }) => ({ v: 1, id, at, event, stageDone: done, runs: [], look, alpha: look === null ? null : 0.05 / (look * (look + 1)), stage, decision, reason: "test", spend: { serverUsd: spendUsd, serverReviews: 0, laptopUsd: 0, laptopReviews: 0, runs: spendRuns }, spendUsd, laptopReviews: 0, minutes: 1, pr: null });
 
 // The driver, run as a person runs it, on the test's checkout, results
 // folder and ledger.
@@ -212,8 +217,8 @@ describe("an iteration behind after stage 1 spends through stage 3", () => {
     const first = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent, "--candidate", candidate]);
     expect(first.status, first.stdout + first.stderr).toBe(0);
     const line = readLines(ledger).at(-1);
-    expect(line).toMatchObject({ v: 1, id: "RC-0001", event: "decided", stage: 1, decision: "stopped-early", look: 1 });
-    expect(line.alpha).toBeCloseTo(0.05 / 2, 15);
+    // Stage 1 can only stop, so it takes no look (plan clarification A2).
+    expect(line).toMatchObject({ v: 1, id: "RC-0001", event: "decided", stage: 1, decision: "stopped-early", look: null, alpha: null });
     expect(line.reason).toMatch(/recall/);
     expect(line.screen.filter((r) => r.fired).map((r) => r.rule)).toEqual(expect.arrayContaining(["primary", "critical"]));
     // What the stage-1 run cost is the step's spend.
@@ -269,14 +274,17 @@ describe("the loop reads a test-split run", () => {
 });
 
 describe("two iterations take one look number", () => {
-  it("gives two changes deciding at once looks 1 and 2, each with its alpha", async () => {
+  it("gives two changes deciding at stage 2 at once looks 1 and 2, each with its alpha", async () => {
     const ledger = join(root, "looks", "reviewer.jsonl");
     const results = join(root, "looks", "results");
-    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002")]);
-    // Each change's stage-1 run is a saved run made for it: nothing is run.
+    // Both changes passed their stage 1 screens. Each change's runs are
+    // saved runs made for it, so nothing is run; each shows a finding on
+    // the clean case in every review, a hard rule broken, so each stage 2
+    // ends in a decision and the second change may follow the first.
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stageLine("RC-0001", { stage: 1, done: true }), stageLine("RC-0002", { stage: 1, done: true })]);
     const parent = await savedSet({ runId: "looks-parent", found: (c) => c < 3 });
-    const a = await savedSet({ runId: "looks-a", changeId: "RC-0001", found: () => true, repeat: 1 });
-    const b = await savedSet({ runId: "looks-b", changeId: "RC-0002", found: () => true, repeat: 1 });
+    const a = await savedSet({ runId: "looks-a", changeId: "RC-0001", found: () => true, cleanFalse: true });
+    const b = await savedSet({ runId: "looks-b", changeId: "RC-0002", found: () => true, cleanFalse: true });
     // The ledger's own lock is held while both steps start and score their
     // runs, so both reach their decision before either may write: a step
     // that reads its look outside the lock reads the same one as the other.
@@ -288,9 +296,45 @@ describe("two iterations take one look number", () => {
     expect(x.status, x.out).toBe(0);
     expect(y.status, y.out).toBe(0);
     const looks = readLines(ledger).filter((l) => l.look !== null);
-    expect(looks.map((l) => l.id).sort()).toEqual(["RC-0001", "RC-0002"]);
+    expect(looks.map((l) => [l.id, l.stage, l.decision]).sort()).toEqual([["RC-0001", 2, "reverted"], ["RC-0002", 2, "reverted"]]);
     expect(looks.map((l) => l.look).sort()).toEqual([1, 2]);
     for (const l of looks) expect(l.alpha).toBeCloseTo(0.05 / (l.look * (l.look + 1)), 15);
+    expect(existsSync(results)).toBe(false);
+  }, 120_000);
+});
+
+describe("a stage 1 screen takes a look, or a stage 3 acceptance takes none", () => {
+  it("leaves t unchanged when a change passes its stage 1 screen", async () => {
+    const ledger = join(root, "screen-look", "reviewer.jsonl");
+    const results = join(root, "screen-look", "results");
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001")]);
+    const parent = await savedSet({ runId: "screen-parent", found: (c) => c < 3 });
+    const candidate = await savedSet({ runId: "screen-candidate", changeId: "RC-0001", found: () => true, repeat: 1 });
+    const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent, "--candidate", candidate]);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const line = readLines(ledger).at(-1);
+    expect(line).toMatchObject({ id: "RC-0001", event: "stage", stage: 1, decision: null, look: null, alpha: null });
+    expect(line.screen.some((x) => x.fired)).toBe(false);
+    const status = spawnSync(process.execPath, [LOOP, "status", "--ledger", ledger], { encoding: "utf8" });
+    expect(status.stdout).toMatch(/next look 1;/);
+    expect(status.stdout).toMatch(/RC-0001 .*stage 2 due/);
+  }, 120_000);
+
+  it("takes the next look for an acceptance at stage 3", async () => {
+    const ledger = join(root, "stage3-look", "reviewer.jsonl");
+    const results = join(root, "stage3-look", "results");
+    // Stage 1 passed (no look) and stage 2 took look 1 with only the primary
+    // open. At six repeats, twelve of fourteen cases go from missed in
+    // every review to found in every review: an exact one-sided p of
+    // 1/4096, inside look 2's share of 0.05 / 6 / 9.
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), stageLine("RC-0001", { stage: 1, done: true }), stageLine("RC-0001", { stage: 2, look: 1, done: true })]);
+    const parent = await savedSet({ runId: "stage3-parent", n: 14, found: (c) => c < 2, repeat: 6 });
+    const candidate = await savedSet({ runId: "stage3-candidate", n: 14, changeId: "RC-0001", found: () => true, repeat: 6 });
+    const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parent, "--candidate", candidate]);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    const line = readLines(ledger).at(-1);
+    expect(line).toMatchObject({ id: "RC-0001", event: "decided", stage: 3, decision: "accepted", look: 2 });
+    expect(line.alpha).toBeCloseTo(0.05 / 6, 15);
     expect(existsSync(results)).toBe(false);
   }, 120_000);
 });
@@ -303,8 +347,8 @@ describe("the daily cap is exceeded by a stage 2 decision that was forecast unde
     // are forecast at $0.003. Another change spent $59.97 on the server
     // today, leaving $0.03, which one review's $0.02 cap fits in. Each
     // review really costs $0.0135: three of them would pass the cap.
-    const stage1 = { ...stageLine("RC-0001", { stage: 1, look: 1, spendUsd: 0.001 }), spend: { serverUsd: 0.001, serverReviews: 1, laptopUsd: 0, laptopReviews: 0, runs: [] } };
-    const other = stageLine("RC-0002", { stage: 1, look: 2, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
+    const stage1 = { ...stageLine("RC-0001", { stage: 1, done: true, spendUsd: 0.001 }), spend: { serverUsd: 0.001, serverReviews: 1, laptopUsd: 0, laptopReviews: 0, runs: [] } };
+    const other = stageLine("RC-0002", { stage: 1, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stage1, other]);
 
     const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
@@ -340,8 +384,8 @@ describe("the day's room leaves out spend already on disk", () => {
     // one review's $0.02 cap.
     const candidate = join(results, `RC-0001-${basename(parentRun)}`);
     runBench(candidate, ["--repeat", "1", "--change", "RC-0001"]);
-    const stage1 = stageLine("RC-0001", { stage: 1, look: 1 });
-    const other = stageLine("RC-0002", { stage: 1, look: 2, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
+    const stage1 = stageLine("RC-0001", { stage: 1, done: true });
+    const other = stageLine("RC-0002", { stage: 1, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stage1, other]);
     const before = readFileSync(ledger, "utf8");
     const budgetBefore = readFileSync(join(candidate, "budget.jsonl"), "utf8");
@@ -364,19 +408,19 @@ describe("a second change enters stage 2 while one is there", () => {
     // Both changes passed stage 1; B's line recorded its run's whole spend,
     // so B's stage 2 spends nothing new.
     const bTotal = { runId: "one-b", role: "candidate", path: "server", usd: 21 * 0.01, reviews: 21 };
-    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stageLine("RC-0001", { stage: 1, look: 1 }), stageLine("RC-0002", { stage: 1, look: 2, spendUsd: bTotal.usd, spendRuns: [bTotal] })]);
+    writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stageLine("RC-0001", { stage: 1, done: true }), stageLine("RC-0002", { stage: 1, done: true, spendUsd: bTotal.usd, spendRuns: [bTotal] })]);
     // B's step starts with A still waiting for stage 2; while the ledger's
     // lock is held, A's stage 2 line lands.
     const held = lockLedger(ledger);
     const step = loopAsync(ledger, results, ["step", "--change", "RC-0002", "--parent", parent, "--candidate", b]);
     await wait(5000);
-    appendLine(ledger, stageLine("RC-0001", { stage: 2, look: 3 }));
+    appendLine(ledger, stageLine("RC-0001", { stage: 2, look: 1, done: true }));
     held.release();
     const r = await step;
     expect(r.status, r.out).toBe(1);
     expect(r.stderr).toMatch(/RC-0001/);
     const lines = readLines(ledger);
-    expect(lines.at(-1)).toMatchObject({ id: "RC-0001", stage: 2, look: 3 });
+    expect(lines.at(-1)).toMatchObject({ id: "RC-0001", stage: 2, look: 1 });
     expect(lines.filter((l) => l.id === "RC-0002" && l.stage === 2)).toEqual([]);
   }, 120_000);
 });
