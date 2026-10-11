@@ -1,8 +1,10 @@
 // How the graph's tests hold work to a time: CPU time, never the wall clock,
 // and the growth between two input sizes, never one absolute number. A busy
 // runner makes this process wait for a core, which adds wall time and no CPU
-// time; a step that rescans its input costs sixteen times as much at four
-// times the input on any machine, where a linear one costs about four. The
+// time, though it can still slow a reading's CPU time up to about twice
+// (expectLinearRepeated reads again for that). A step that rescans its input
+// costs sixteen times as much at four times the input on any machine, where
+// a linear one costs about four. The
 // bound is the middle of the two, as in the scanners' YAML key test. A loose
 // absolute bound beside it fails only a gross slowdown.
 // Test code only: nothing src/index.ts exports reaches this file.
@@ -116,6 +118,14 @@ export function expectLinear(what: string, small: number, large: number): void {
 // doubles until the smaller input's runs pass NOISE_MS, and both inputs are
 // run as many times, so a step inside that range (a cost per byte that
 // jumps between 256 KiB and 1 MiB) is still seen.
+// CPU time is not free of a busy runner either. On the Linux runner, one
+// input's CPU time per byte varied 2.1 times between readings while other
+// test files ran (issue #116), so a linear reader can read as eight times.
+// A look that reaches the bound is therefore followed by a second look:
+// both inputs are read again, one after the other, and compared with each
+// other. The check fails only when both looks reach the bound. A busy
+// stretch does not come back the same way; work that grows faster than its
+// input does.
 export async function expectLinearRepeated(what: string, smallAt: (repeats: number) => number | Promise<number>, largeAt: (repeats: number) => number | Promise<number>, opts: { maxRepeats?: number } = {}): Promise<void> {
   const maxRepeats = opts.maxRepeats ?? MAX_REPEATS;
   let repeats = 1;
@@ -124,10 +134,19 @@ export async function expectLinearRepeated(what: string, smallAt: (repeats: numb
     repeats *= 2;
     small = await smallAt(repeats);
   }
-  const large = await largeAt(repeats);
-  const said = `${what}: ${small.toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${large.toFixed(1)} ms for as many on four times it`;
-  expect(large / Math.max(small, NOISE_MS), said).toBeLessThan(MAX_GROWTH);
-  expect(large / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
+  type Look = { small: number; large: number };
+  const growth = (look: Look) => look.large / Math.max(look.small, NOISE_MS);
+  const told = (look: Look) => `${look.small.toFixed(1)} ms of CPU time for ${repeats} runs on the smaller input, ${look.large.toFixed(1)} ms for as many on four times it`;
+  const first: Look = { small, large: await largeAt(repeats) };
+  let best = first;
+  let said = `${what}: ${told(first)}`;
+  if (growth(first) >= MAX_GROWTH) {
+    const second: Look = { small: await smallAt(repeats), large: await largeAt(repeats) };
+    said += `; read again, ${told(second)}`;
+    if (growth(second) < growth(first)) best = second;
+  }
+  expect(growth(best), said).toBeLessThan(MAX_GROWTH);
+  expect(best.large / repeats, said).toBeLessThan(LOOSE_BOUND_MS);
 }
 
 // `run` repeated `repeats` times, as a CPU time for expectLinearRepeated.
