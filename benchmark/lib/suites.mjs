@@ -20,13 +20,19 @@
 // 5. A truth item is read with a severity, a class or matching words nobody
 //    froze: real truth has severity, class and mentions null; matchSignatures
 //    come only from the committed entry.
+// 6. A Martian case runs on the dev split: its golden comments are public,
+//    so tuning on them is contamination. A suite marked heldOutOnly lists no
+//    development cases (a request for them is refused), and a split file
+//    that places one of its cases in development is refused on every read.
+//    Martian's prose truth keeps the dataset's severity, mapped to the
+//    product's scale, beside the raw value.
 // Selecting a run's cases and the truth copy each run saves (run.mjs):
-// 6. A held-out (test split) case is run before a release: selectCases
+// 7. A held-out (test split) case is run before a release: selectCases
 //    refuses the test split and any case on it, before anything is fetched.
-// 7. A case outside the subset a run names, or one the suite excludes, is
+// 8. A case outside the subset a run names, or one the suite excludes, is
 //    run under that subset's name: every case --cases names is checked
 //    against the split and the subset, and each refusal names its reason.
-// 8. A run's truth copy lacks a comment the suite lists, or holds a
+// 9. A run's truth copy lacks a comment the suite lists, or holds a
 //    rejected one, so recall is counted over the wrong set: specCopy copies
 //    the accepted comments only and refuses a truth whose accepted comments
 //    are not exactly the ones the suite entry counts; realSpecProblems checks
@@ -48,11 +54,36 @@ export function canonicalJson(v) {
   return JSON.stringify(v === undefined ? null : v);
 }
 
-// The real suites: where each keeps its entries and its split, and the
-// board in benchmark/outside/boards.json that pins its raw files.
+// The real suites: where each keeps its entries and its split, the board in
+// benchmark/outside/boards.json that pins its raw files, the kind of case it
+// holds (PLAN-benchmark 4.2), and whether every case is held out.
 export const SUITES = {
-  aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json" },
+  aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json", origin: "real", heldOutOnly: false },
+  martian: { board: "martian", cases: "suites/martian/cases.json", split: "splits/martian-v1.json", origin: "injected", heldOutOnly: true },
 };
+
+// ---------- Martian truth ----------
+
+// Martian's golden severities and categories to the product's (PLAN-benchmark
+// 4.2). A category with no counterpart is null, with the raw value kept.
+export const MARTIAN_SEVERITY = { Critical: "critical", High: "major", Medium: "minor", Low: "nitpick" };
+export const MARTIAN_CATEGORY = { bug: "bug", security: "security", perf: "performance", style: "style" };
+
+// The truth of one pull request of Martian's golden files: its golden
+// comments (g1, g2, ...), in the file's order.
+export function martianTruth(row) {
+  return {
+    kind: "prose",
+    items: row.comments.map((g, i) => ({
+      id: `g${i + 1}`,
+      text: g.comment,
+      severity: MARTIAN_SEVERITY[g.severity] ?? null,
+      rawSeverity: g.severity ?? null,
+      category: MARTIAN_CATEGORY[g.category] ?? null,
+      rawCategory: g.category ?? null,
+    })),
+  };
+}
 
 // ---------- AACR truth ----------
 
@@ -131,11 +162,41 @@ export function readSuite(suite, { root = benchRoot } = {}) {
   const file = JSON.parse(readFileSync(path, "utf8"));
   const split = existsSync(join(root, def.split)) ? JSON.parse(readFileSync(join(root, def.split), "utf8")) : null;
   const splitBytes = split ? readFileSync(join(root, def.split)) : null;
+  const dev = split?.cases?.dev ?? [];
+  if (def.heldOutOnly && dev.length > 0) throw new Error(`${def.split} places ${dev.length} ${suite} case${dev.length === 1 ? "" : "s"} in development (${dev.join(", ")}), but every ${suite} case is held out: its truth is public, so tuning on it is contamination. Write the split with node benchmark/ingest/${suite}.mjs`);
   return { def, file, split, splitHash: splitBytes ? sha256(splitBytes) : null, byName: new Map(file.cases.map((e) => [e.name, e])) };
+}
+
+// Why `next` may not replace the split file `old`: a split file is only
+// ever extended. Every case it placed keeps its side, every subset stays as
+// it is, and its name and salt stay; a case may only be added. Empty when
+// the rewrite is an extension (or no change).
+export function splitRewriteProblems(old, next) {
+  const out = [];
+  for (const k of ["name", "suite", "salt"]) if ((old?.[k] ?? null) !== (next?.[k] ?? null)) out.push(`its ${k} would change from ${JSON.stringify(old?.[k] ?? null)} to ${JSON.stringify(next?.[k] ?? null)}`);
+  for (const side of ["dev", "test"]) {
+    for (const name of old?.cases?.[side] ?? []) {
+      const now = sideIn(next, name);
+      if (now !== side) out.push(now === null ? `${name} would no longer be listed (it was ${side})` : `${name} would move from ${side} to ${now}`);
+    }
+  }
+  for (const [subset, names] of Object.entries(old?.subsets ?? {})) {
+    if (JSON.stringify(next?.subsets?.[subset] ?? null) !== JSON.stringify(names)) out.push(`the subset ${subset} would change`);
+  }
+  return out;
 }
 
 const sideIn = (split, name) => (split?.cases?.dev?.includes(name) ? "dev" : split?.cases?.test?.includes(name) ? "test" : null);
 const subsetsOf = (split, name) => Object.entries(split?.subsets ?? {}).filter(([, names]) => names.includes(name)).map(([s]) => s).sort();
+
+// The dataset a case's truth is read from. A Martian entry names its golden
+// file, so its dataset carries that file and its pin (PLAN-benchmark 4.2);
+// an AACR entry reads the two files its suite's dataset names.
+function datasetOf(s, entry) {
+  if (!entry.goldenFile) return s.file.dataset;
+  const pin = (s.file.dataset.files ?? []).find((f) => f.path === entry.goldenFile);
+  return { ...s.file.dataset, file: entry.goldenFile, sha256: pin?.sha256 ?? null };
+}
 
 function realCase(suite, s, entry) {
   return {
@@ -146,7 +207,7 @@ function realCase(suite, s, entry) {
     split: entry.status === "usable" ? sideIn(s.split, entry.name) : null,
     splitHash: s.splitHash,
     subsets: subsetsOf(s.split, entry.name),
-    origin: "real",
+    origin: s.def.origin,
     repoGroup: entry.repoGroup,
     language: entry.language,
     framework: null,
@@ -154,9 +215,9 @@ function realCase(suite, s, entry) {
     changeLines: entry.changeLines,
     status: entry.status,
     excludedWhy: entry.excludedWhy,
-    source: { dataset: s.file.dataset, repo: entry.repo, prUrl: entry.prUrl, cloneUrl: entry.cloneUrl, licence: entry.licence },
+    source: { dataset: datasetOf(s, entry), repo: entry.repo, prUrl: entry.prUrl, cloneUrl: entry.cloneUrl, licence: entry.licence },
     materialise: { kind: "pr", cloneUrl: entry.cloneUrl, prRef: entry.prRef, baseSha: entry.baseSha, headSha: entry.headSha, mergeBaseSha: entry.mergeBaseSha },
-    prCreatedAt: null,
+    prCreatedAt: entry.prCreatedAt ?? null,
     headCommittedAt: null,
     truthHash: entry.truthHash,
     matchSignatures: entry.matchSignatures,
@@ -232,6 +293,7 @@ export function listCases({ suite, split = null, subset = null, root = benchRoot
       .map(([name, e]) => caseIdFromHash(name, e.hash))
       .sort();
   }
+  if (SUITES[suite]?.heldOutOnly && split === "dev") throw new Error(`every ${suite} case is held out, so the ${suite} suite has no development cases: its truth is public, and a run on it is a release run on the test split`);
   const s = readSuite(suite, { root });
   const out = [];
   for (const entry of s.file.cases) {
@@ -270,6 +332,15 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
   if (c.suite === "planted") return plantedTruth(c.spec ?? readPlantedSpec(c.name));
   const def = SUITES[c.suite];
   if (!def) throw new Error(`no real suite named ${c.suite}`);
+  if (c.suite === "martian") {
+    const { file, sha256: pinned } = c.source.dataset;
+    const row = readPinned(cache, def.board, { path: file, sha256: pinned }).find((r) => r.url === c.source.prUrl);
+    if (!row) throw new Error(`${c.id}: ${file} holds no pull request ${c.source.prUrl}`);
+    const truth = martianTruth(row);
+    const hash = truthHashOf(truth.items);
+    if (hash !== c.truthHash) throw new Error(`${c.id}: its truth now hashes to ${hash.slice(0, 8)}, not the frozen ${c.truthHash.slice(0, 8)}; an upstream edit never changes the truth behind a frozen id`);
+    return truth;
+  }
   const files = c.source.dataset.files;
   const positive = readPinned(cache, def.board, files.positive);
   const negative = readPinned(cache, def.board, files.negative);
@@ -290,7 +361,7 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
 
 const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
 
-// The cases of a real suite one run uses (failures 6 and 7): every usable
+// The cases of a real suite one run uses (failures 7 and 8): every usable
 // case on the split's development side, or the subset the split file names,
 // or the cases `refs` names (<suite>/<name> or a full case id), each of
 // which must be on that side and in that subset. The test split is held
@@ -335,7 +406,7 @@ export function selectCases({ suite, split = "dev", subset = null, refs = null, 
 
 // The truth copy of a real case that a run saves as cases/<name>.json and
 // scores against: the case record with its accepted comments as `bugs`
-// (failure 8). The rejected comments are left out, so recall counts over the
+// (failure 9). The rejected comments are left out, so recall counts over the
 // accepted set. The location diagnostic's knownNoise (candidates on a
 // rejected comment's lines and on no accepted one) therefore reads 0 for
 // now: lib/score.mjs lineMatches finds rejected comments only among `bugs`,
@@ -354,7 +425,7 @@ export function specCopy(c, truth) {
 }
 
 // What is wrong with a real case's saved truth copy, as cases/<name>.json
-// holds it (failure 8): a list of problems, empty when it can be scored.
+// holds it (failure 9): a list of problems, empty when it can be scored.
 // Checked on its own, then against the committed suite while the suite
 // still holds the case at the copy's hash.
 export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
