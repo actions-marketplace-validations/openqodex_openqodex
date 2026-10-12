@@ -47,11 +47,11 @@
 //    is not clean, signed by a person on review-queue/people.json
 //    (lib/rulings.mjs). A clean case is clean and has no truth.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { benchRoot, buildCase, caseIdFromHash, casesRoot, git, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
-import { materialisePr } from "./materialise.mjs";
+import { MERGE_BASE_RULE, materialisePr, mergeBasesOf } from "./materialise.mjs";
 import { readDecisions, resolveRulings } from "./rulings.mjs";
 
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -342,6 +342,36 @@ export function readCase(id, { root = benchRoot } = {}) {
   if (entryHash(entry) !== entry.hash) throw new Error(`${id}: the entry for ${p.name} in ${s.def.cases} does not hash to its own hash; an entry is written by the ingest, never by hand`);
   if (!entry.hash.startsWith(p.hash8)) throw new Error(`${id}: suite ${p.suite} now holds ${p.name} at ${entry.hash.slice(0, 8)}, and a changed case is a new case; runs of the old id compare with nothing new`);
   return realCase(p.suite, s, entry);
+}
+
+/**
+ * Freezes the merge base of a case whose base and head have more than one
+ * (docs/benchmark.md, "Two merge bases"): the first by MERGE_BASE_RULE,
+ * the newest committer date and then the smaller commit id, found on
+ * commits only in the clone cache (lib/materialise.mjs mergeBasesOf), so two
+ * machines freeze the same one. The entry gets it as mergeBaseSha and a new
+ * hash and id, written to the suite's cases.json; the split names cases by
+ * name, so no case moves, and a later ingest keeps it while the base and the
+ * head stay the same. A case with one merge base, or one already frozen, is
+ * left as it is. Returns { name, from, to, bases (in the rule's order),
+ * mergeBaseSha, frozen, rule }.
+ */
+export function freezeMergeBase(suite, name, { root = benchRoot, cache = cacheRoot(), allowFileUrl = false } = {}) {
+  const s = readSuite(suite, { root });
+  const entry = s.byName.get(name);
+  if (!entry) throw new Error(`suite ${suite} holds no case named ${name}`);
+  if (entryHash(entry) !== entry.hash) throw new Error(`the entry for ${name} in ${s.def.cases} does not hash to its own hash; an entry is written by the ingest, never by hand`);
+  const from = realCaseId(suite, name, entry.hash);
+  const rule = MERGE_BASE_RULE;
+  if (entry.mergeBaseSha) return { name, from, to: from, bases: null, mergeBaseSha: entry.mergeBaseSha, frozen: false, rule };
+  const { bases, pick } = mergeBasesOf(realCase(suite, s, entry), { cache, allowFileUrl });
+  if (bases.length === 1) return { name, from, to: from, bases, mergeBaseSha: null, frozen: false, rule };
+  const next = { ...entry, mergeBaseSha: pick };
+  next.hash = entryHash(next);
+  next.id = realCaseId(suite, name, next.hash);
+  const file = { ...s.file, cases: s.file.cases.map((e) => (e.name === name ? next : e)) };
+  writeFileSync(join(root, s.def.cases), `${JSON.stringify(file, null, 2)}\n`);
+  return { name, from, to: next.id, bases, mergeBaseSha: pick, frozen: true, rule };
 }
 
 // The truth a case is scored against. A real case's truth is rebuilt from

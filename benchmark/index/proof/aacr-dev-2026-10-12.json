@@ -1,0 +1,4286 @@
+{
+  "version": 1,
+  "purpose": "materialise-only proof",
+  "suite": "aacr",
+  "date": "2026-10-12",
+  "shape": "server",
+  "commit": "32fee13a302d368ce1d05e76207198ef52b16926",
+  "summarisedAt": "32fee13a302d368ce1d05e76207198ef52b16926",
+  "sources": {
+    "cases": "benchmark/suites/aacr/cases.json",
+    "casesSha256": "825c52fe773ecc8144604869f1c7bfbee54ecb24ebad06f3c959de91a4d5035f",
+    "split": "benchmark/splits/aacr-v1.json",
+    "splitSha256": "edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4"
+  },
+  "runs": [
+    {
+      "split": "dev",
+      "startedAt": "2026-10-12T06:53:21.951Z",
+      "proved": 157,
+      "failed": 0,
+      "heldOut": 0,
+      "access": []
+    }
+  ],
+  "counts": {
+    "cases": 157,
+    "proved": 157,
+    "failed": 0,
+    "excluded": 11,
+    "licence": {
+      "permissive": 107,
+      "copyleft": 21,
+      "unverified": 29
+    },
+    "ancestorOfHead": {
+      "yes": 157,
+      "no": 0,
+      "unknown": 0
+    },
+    "deepened": 0,
+    "commitsAdded": 0
+  },
+  "failures": [],
+  "cases": [
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-72920@db6027a8",
+      "name": "ClickHouse__ClickHouse-72920",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8a04621f436a36b35346ff474fb980469b61647d",
+      "headSha": "d67628cd7e7aeeba2a60bea273c5cfc08714120c",
+      "mergeBaseSha": "66394a7495d9ce9bb9defe27185358d402cef8d2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "66394a7495d9ce9bb9defe27185358d402cef8d2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "00e111a139a2fce54ae58efcd96f56e17e8777d0",
+        "head": "d8ab4917ebe08e287ac103ceac4b8e2d64a55702",
+        "builtBase": "00e111a139a2fce54ae58efcd96f56e17e8777d0",
+        "builtHead": "d8ab4917ebe08e287ac103ceac4b8e2d64a55702"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-73546@e71a2c97",
+      "name": "ClickHouse__ClickHouse-73546",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "83afa5c6704737ed4afc5a178f96bf49c39e5e4c",
+      "headSha": "40a4654d7b114f1d42f48680d57007ae80897cd1",
+      "mergeBaseSha": "d144f444affac79d6b43b45fc1d68c46a7766750",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d144f444affac79d6b43b45fc1d68c46a7766750"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "bf53ca6cc2f3a52bcad0e3e6971b48222c38e434",
+        "head": "9ecc45569ee59f2dfcd25bf42b6fa977a2f4cf10",
+        "builtBase": "bf53ca6cc2f3a52bcad0e3e6971b48222c38e434",
+        "builtHead": "9ecc45569ee59f2dfcd25bf42b6fa977a2f4cf10"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-74715@d0df7a87",
+      "name": "ClickHouse__ClickHouse-74715",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "cb7d649b965c4049bf97942db7125cce1154ca38",
+      "headSha": "79224f240cf020f73a9f492ce293d046fc0b7949",
+      "mergeBaseSha": "6a1676ef28d3522eb4f74ad3423ad09752c232dc",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "6a1676ef28d3522eb4f74ad3423ad09752c232dc"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "f803e7c063471264b8d88d0a38fd062b0badf63a",
+        "head": "13b3c4130c51287eff9dcc877feb1cca66759a4a",
+        "builtBase": "f803e7c063471264b8d88d0a38fd062b0badf63a",
+        "builtHead": "13b3c4130c51287eff9dcc877feb1cca66759a4a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-75218@7a965a53",
+      "name": "ClickHouse__ClickHouse-75218",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "3d6e0982755b235c6b55f377894ff1652a5c8f99",
+      "headSha": "36ea28ab28fd93258143ab4312e60e2b5e244843",
+      "mergeBaseSha": "4ff4869e3bdd97f7de69f51f994fc7089c6fd412",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "4ff4869e3bdd97f7de69f51f994fc7089c6fd412"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "289b7c12b5f81aedc88a5ea10ab6676a0638c473",
+        "head": "4f04904a9150c40817d9ebdaaa7a97bbac08c129",
+        "builtBase": "289b7c12b5f81aedc88a5ea10ab6676a0638c473",
+        "builtHead": "4f04904a9150c40817d9ebdaaa7a97bbac08c129"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-75474@8a64a961",
+      "name": "ClickHouse__ClickHouse-75474",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "1ac5c4a6a23b4742624d64db210f10ca95133b11",
+      "headSha": "3eee8866fb55acab61eaba6dc9eebd847f483913",
+      "mergeBaseSha": "280ecea7c6e906888b0cb3bd3a84fa5c23a43cb9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "280ecea7c6e906888b0cb3bd3a84fa5c23a43cb9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4aa02caa6967e40617337f81f8953c6f3d77d88e",
+        "head": "a5c7c1b728d4c63d172e7bb14fd05dde3743b140",
+        "builtBase": "4aa02caa6967e40617337f81f8953c6f3d77d88e",
+        "builtHead": "a5c7c1b728d4c63d172e7bb14fd05dde3743b140"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-80345@f95aa864",
+      "name": "ClickHouse__ClickHouse-80345",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "e29021aed71bfebb76c0305f554375061adb8bf9",
+      "headSha": "5fb6ee38d2d7d2fc6e1a67005b12d3b9aaac418f",
+      "mergeBaseSha": "fe23559f719b77a1f8395ebcaafd778ae7183b6e",
+      "mergeBaseFrom": "entry",
+      "mergeBases": [
+        "0b909b06db448e08ca7045768bf6efaa11e4fb26",
+        "fe23559f719b77a1f8395ebcaafd778ae7183b6e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3ba8755c64b608374d12021a0bb21b3ca6043e6e",
+        "head": "94a22637f01d6353e69b878ee574797e65c97c7f",
+        "builtBase": "3ba8755c64b608374d12021a0bb21b3ca6043e6e",
+        "builtHead": "94a22637f01d6353e69b878ee574797e65c97c7f"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-80391@e5d37138",
+      "name": "ClickHouse__ClickHouse-80391",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "e06542d23d77ca297014b40c7fd0f406f15fef81",
+      "headSha": "f9d51faa7cba634f38a711494003d404946b05de",
+      "mergeBaseSha": "76957a2de2b46b54f45f87d3f2e814e774d4f85a",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "76957a2de2b46b54f45f87d3f2e814e774d4f85a"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4e8625619883242ebe35402d6a8bfafde7a709f8",
+        "head": "39c37dfe6b234fa6eab85141c25c0e3121e69cab",
+        "builtBase": "4e8625619883242ebe35402d6a8bfafde7a709f8",
+        "builtHead": "39c37dfe6b234fa6eab85141c25c0e3121e69cab"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-80597@5ca9d82a",
+      "name": "ClickHouse__ClickHouse-80597",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "25f2e13a8fc3ed6e6215ee7481677e1b8523ac4c",
+      "headSha": "f9987c89a4cfaa95269385f24323dc6f44cda6e9",
+      "mergeBaseSha": "1b7dc9c25090cf8cd75eb92b951cc74033eccab0",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1b7dc9c25090cf8cd75eb92b951cc74033eccab0"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fa2be9fff287c717199cfc9e2886f5a9af6096a8",
+        "head": "e8ecf57bbd1273fcde757c632884d7199eee0400",
+        "builtBase": "fa2be9fff287c717199cfc9e2886f5a9af6096a8",
+        "builtHead": "e8ecf57bbd1273fcde757c632884d7199eee0400"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-82441@fd855704",
+      "name": "ClickHouse__ClickHouse-82441",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "1c01feef2757648e0b1b801cf1f81c59de527bb6",
+      "headSha": "314352043db0170026d11475bcaf67c7bb4fc311",
+      "mergeBaseSha": "26938d351af00dd87d23cf7778552631439b8ce2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "26938d351af00dd87d23cf7778552631439b8ce2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "1cf3a7d4db58d08b7d35e69b43756cd60c989af9",
+        "head": "f20fe5814d90ed9d255101a5a4f1c9eb48c61421",
+        "builtBase": "1cf3a7d4db58d08b7d35e69b43756cd60c989af9",
+        "builtHead": "f20fe5814d90ed9d255101a5a4f1c9eb48c61421"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ClickHouse__ClickHouse-85873@8b9964ff",
+      "name": "ClickHouse__ClickHouse-85873",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "80e66f08662739d8eaaccb40ef75c573572bb8ba",
+      "headSha": "73ecc7d809300ed1c29e1078712c531ebddcb181",
+      "mergeBaseSha": "9e13a594de549fd477e1b90be9fbd57068889548",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "9e13a594de549fd477e1b90be9fbd57068889548"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "28e51d282ac4b7aa4cbbbb51a20841e907b387fd",
+        "head": "c1522dfe45ec1e600e681900982abb38e781fed4",
+        "builtBase": "28e51d282ac4b7aa4cbbbb51a20841e907b387fd",
+        "builtHead": "c1522dfe45ec1e600e681900982abb38e781fed4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-18688@8d6aedfe",
+      "name": "FreeCAD__FreeCAD-18688",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "abb50a4daa43abee9e6b263dd82e5e876c978c6a",
+      "headSha": "a440ff7e4138c20ed2ac66977a199ebbf295e493",
+      "mergeBaseSha": "3b502359353e2a74dee8a8bcfed5750b69f32cdc",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3b502359353e2a74dee8a8bcfed5750b69f32cdc"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "42cb71320ea452dcf782ae83925014ab5839a360",
+        "head": "2b2261fcc56338b4567aac46256721e38ff552f0",
+        "builtBase": "42cb71320ea452dcf782ae83925014ab5839a360",
+        "builtHead": "2b2261fcc56338b4567aac46256721e38ff552f0"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-19411@7eca5686",
+      "name": "FreeCAD__FreeCAD-19411",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "0c65673a6fd2421be8fbe613116077120adea068",
+      "headSha": "a050e422e23ce3eaee960b75ceff236b34f369b9",
+      "mergeBaseSha": "fbb1225f909bd7de602d9cd1b540d8099ca3429a",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "fbb1225f909bd7de602d9cd1b540d8099ca3429a"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "1e2697b6f866debaaa695b491b66f878f8510a48",
+        "head": "208831cae07279024847a826ec630512f690c4a6",
+        "builtBase": "1e2697b6f866debaaa695b491b66f878f8510a48",
+        "builtHead": "208831cae07279024847a826ec630512f690c4a6"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-19426@4e6b17b0",
+      "name": "FreeCAD__FreeCAD-19426",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "f001b8a10ac2206458f7db457a45c9b2853e7bff",
+      "headSha": "e59692501d1a08e7306189fed5c31b02553f7746",
+      "mergeBaseSha": "81040d684d372f224269231de09c815fe6ca59ae",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "81040d684d372f224269231de09c815fe6ca59ae"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a3a6e65d9a86131f887bc474a7aca601868bebfa",
+        "head": "5580b592cddced721b1d4170f26c85777a6eeae9",
+        "builtBase": "a3a6e65d9a86131f887bc474a7aca601868bebfa",
+        "builtHead": "5580b592cddced721b1d4170f26c85777a6eeae9"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-19977@412844d0",
+      "name": "FreeCAD__FreeCAD-19977",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "b59cd794274c8c007b2ef16c3a06fecf30c0aef1",
+      "headSha": "39c5968bdc6c0b20d94d4a629cd43eafee1e56d0",
+      "mergeBaseSha": "855ad6c70904f911b2ce7114dd1a5bc24da98bd1",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "855ad6c70904f911b2ce7114dd1a5bc24da98bd1"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "f25b7dcba26312c114d4a188585eb808689c6cd5",
+        "head": "49336176680e801bf35ac21e749eefa7b3a351fa",
+        "builtBase": "f25b7dcba26312c114d4a188585eb808689c6cd5",
+        "builtHead": "49336176680e801bf35ac21e749eefa7b3a351fa"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-20156@42c3bcfb",
+      "name": "FreeCAD__FreeCAD-20156",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "382720b82e4c6c81f7e1cdd3a33272047d7a3642",
+      "headSha": "699b45c086f53858897aa8c688bbedaf570c644f",
+      "mergeBaseSha": "53c4c2ef50870fd7a540b9511548b97a73f399b2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "53c4c2ef50870fd7a540b9511548b97a73f399b2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "7457959d8af907c5fb82d48a4f8a3997fb9f96dd",
+        "head": "98a45d2f987ad90a11d24f5767794b8e5dabe7fb",
+        "builtBase": "7457959d8af907c5fb82d48a4f8a3997fb9f96dd",
+        "builtHead": "98a45d2f987ad90a11d24f5767794b8e5dabe7fb"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-20336@244cd19d",
+      "name": "FreeCAD__FreeCAD-20336",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "16968aa3ee1bc7f2caf4ce592d13066aa8755a80",
+      "headSha": "290bdc79d1ad92669431458a62205d694522586e",
+      "mergeBaseSha": "7bf1b5d78722549775386e50feb3894f44b40e0b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "7bf1b5d78722549775386e50feb3894f44b40e0b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "760ff8338236a3ffe583a0e9f5081930df73e93f",
+        "head": "ea082b49ba1ccce8c5c3707ddb23d081f90bd166",
+        "builtBase": "760ff8338236a3ffe583a0e9f5081930df73e93f",
+        "builtHead": "ea082b49ba1ccce8c5c3707ddb23d081f90bd166"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-20612@c0895ab8",
+      "name": "FreeCAD__FreeCAD-20612",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "79008331b30d098b2c32e59752e24e0705b350bc",
+      "headSha": "ec3da2e93e3fd8f69f113ca14abf892dfb86c11b",
+      "mergeBaseSha": "9a6a98f824436656cae242ae26b043f78411ebba",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "9a6a98f824436656cae242ae26b043f78411ebba"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "dd20f2ed59cc68f534a3db57d1cd7ff503e21109",
+        "head": "81666c8f281f9ad66b95a929f51647d73987af1f",
+        "builtBase": "dd20f2ed59cc68f534a3db57d1cd7ff503e21109",
+        "builtHead": "81666c8f281f9ad66b95a929f51647d73987af1f"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-20825@c1d460d4",
+      "name": "FreeCAD__FreeCAD-20825",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "01241245a1d92a8db69fab0db4c2053b5e1227c1",
+      "headSha": "870d7f5385af5d377994479ce6ad017465bdad3d",
+      "mergeBaseSha": "d84d9c9bd19eff174a6a5de29282be5808ff1be4",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d84d9c9bd19eff174a6a5de29282be5808ff1be4"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "60187fd5a9ecf8bb7083e504b637310d7556c9cc",
+        "head": "28f9a4fabe2fd41c088a1c8181579d20eac553fd",
+        "builtBase": "60187fd5a9ecf8bb7083e504b637310d7556c9cc",
+        "builtHead": "28f9a4fabe2fd41c088a1c8181579d20eac553fd"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-21257@dba12060",
+      "name": "FreeCAD__FreeCAD-21257",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "17e56f6570a97aa9803b502b23cf27dc8be1da70",
+      "headSha": "eb761fd69cf1fb9c674e385bb1d419814526ba5a",
+      "mergeBaseSha": "ce368cb7a0dd6a3f57e5cabc3e7745c5669683a9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ce368cb7a0dd6a3f57e5cabc3e7745c5669683a9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "096b6130b21cae87fffaa15261111e35218c43df",
+        "head": "874adb1d69226bd5fdd8c6199607b3350b41d892",
+        "builtBase": "096b6130b21cae87fffaa15261111e35218c43df",
+        "builtHead": "874adb1d69226bd5fdd8c6199607b3350b41d892"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-22235@7d76c269",
+      "name": "FreeCAD__FreeCAD-22235",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "730e07db5d2acafe7723eb89c83641375c375bc3",
+      "headSha": "f8cd64328c49510285490dfd9872253ce7a53040",
+      "mergeBaseSha": "730e07db5d2acafe7723eb89c83641375c375bc3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "730e07db5d2acafe7723eb89c83641375c375bc3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "cf30437f3a31c6524d7b7d60f4f783426b927f60",
+        "head": "ada4b96753c3f6c09f855253fe4b31ffe191ed41",
+        "builtBase": "cf30437f3a31c6524d7b7d60f4f783426b927f60",
+        "builtHead": "ada4b96753c3f6c09f855253fe4b31ffe191ed41"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/FreeCAD__FreeCAD-22744@fdfa7d11",
+      "name": "FreeCAD__FreeCAD-22744",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "LGPL-2.1"
+      },
+      "baseSha": "ab225f5672cbe45404299437d1613c308b68900b",
+      "headSha": "82fef4a22503dd3affdd39e7120b6f71e9423f86",
+      "mergeBaseSha": "f3e1e6cec065f0295e38d36a68e0390f1b977a32",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "f3e1e6cec065f0295e38d36a68e0390f1b977a32"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "de232bbe0e602ff4896f4756978454d6b045053a",
+        "head": "5946884f57e2a046ed319ba970e6fc0908d76fbc",
+        "builtBase": "de232bbe0e602ff4896f4756978454d6b045053a",
+        "builtHead": "5946884f57e2a046ed319ba970e6fc0908d76fbc"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/PowerShell__PowerShell-24910@1892c5c2",
+      "name": "PowerShell__PowerShell-24910",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "2259f56c0786574cbde8624d031e778028352372",
+      "headSha": "ec952ce3b70c87885ed756ffca2bec128f07c51b",
+      "mergeBaseSha": "311674b9a5e52091635d0e9d4bcfaec7aaa6e8f1",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "311674b9a5e52091635d0e9d4bcfaec7aaa6e8f1"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "27477f5fb3766cebccc833cf4d55fba9bb8c49de",
+        "head": "94a92c1f4c1e9d4599951699c97882fd77de1da4",
+        "builtBase": "27477f5fb3766cebccc833cf4d55fba9bb8c49de",
+        "builtHead": "94a92c1f4c1e9d4599951699c97882fd77de1da4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/PowerShell__PowerShell-25780@63e29667",
+      "name": "PowerShell__PowerShell-25780",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "ce76ae1def6d5b00fff0d855ec01575121268ef3",
+      "headSha": "ea07b93a40f64274505e3a070c1fd91684ff2959",
+      "mergeBaseSha": "ce76ae1def6d5b00fff0d855ec01575121268ef3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ce76ae1def6d5b00fff0d855ec01575121268ef3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "328190b38476860fedbd7f50d838bc7b7ecd0498",
+        "head": "783d61082ed8d7175c6d3526fefb0841e10304b0",
+        "builtBase": "328190b38476860fedbd7f50d838bc7b7ecd0498",
+        "builtHead": "783d61082ed8d7175c6d3526fefb0841e10304b0"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/alibaba__spring-ai-alibaba-869@3c6d6299",
+      "name": "alibaba__spring-ai-alibaba-869",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "76c06b58a4d9e8ee3fe3c0269a046987ad0502e5",
+      "headSha": "3555a95e7b888335d9f72e432eb4f9fb9640e8cd",
+      "mergeBaseSha": "67d55b967da90edfc8ccfdab7f914454bb908e57",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "67d55b967da90edfc8ccfdab7f914454bb908e57"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a37f87eeb9b82c253b87b70a9a2adcab857583d4",
+        "head": "2673d315cc1b0008101fc7b09b998a7857622482",
+        "builtBase": "a37f87eeb9b82c253b87b70a9a2adcab857583d4",
+        "builtHead": "2673d315cc1b0008101fc7b09b998a7857622482"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/alibaba__spring-ai-alibaba-903@1134500b",
+      "name": "alibaba__spring-ai-alibaba-903",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "71e7eeb27dfe42c5a805da413ef6e9faf84fe9d0",
+      "headSha": "4bc73055c7b33f53433d9725eab5010b85a59632",
+      "mergeBaseSha": "d81ba177cc8b3da5f18190c18f2de55b80bb5895",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d81ba177cc8b3da5f18190c18f2de55b80bb5895"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "7c10efba0054e8a2c3f797884bc8712c5c5045f8",
+        "head": "7ffab18ec1aa8e77ed0983dfeda3a6d6ab3f624e",
+        "builtBase": "7c10efba0054e8a2c3f797884bc8712c5c5045f8",
+        "builtHead": "7ffab18ec1aa8e77ed0983dfeda3a6d6ab3f624e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/bitcoin__bitcoin-31405@e4c08f8c",
+      "name": "bitcoin__bitcoin-31405",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "ae024137bda9fe189f4e7ccf26dbaffd44cbbeb6",
+      "headSha": "4ba2e480ffa0b77113953bee4ff5c9349e277e7e",
+      "mergeBaseSha": "b432e367427f1f9fe0f0a5800e31e496f00cd38d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "b432e367427f1f9fe0f0a5800e31e496f00cd38d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3481bec4801f5b670cfaabab4cb6d16e8dfa3bf9",
+        "head": "cb961fe364300917a2e3cee213f3877b624f1c22",
+        "builtBase": "3481bec4801f5b670cfaabab4cb6d16e8dfa3bf9",
+        "builtHead": "cb961fe364300917a2e3cee213f3877b624f1c22"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/bitcoin__bitcoin-31886@3fc34b63",
+      "name": "bitcoin__bitcoin-31886",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "d1b583181dcc31613cd586d63329cb4c4a586972",
+      "headSha": "724546e28a5778e1c3f5100406ed7237f76aab55",
+      "mergeBaseSha": "db36a92c02b83f2e6477a5a55fc061319f7cc6a3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "db36a92c02b83f2e6477a5a55fc061319f7cc6a3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "1752ba5bcaed11b5b03293094ec95274cf9fc89f",
+        "head": "2f85652d18178c0401ba08d4292af985d2a0a413",
+        "builtBase": "1752ba5bcaed11b5b03293094ec95274cf9fc89f",
+        "builtHead": "2f85652d18178c0401ba08d4292af985d2a0a413"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/bitcoin__bitcoin-32425@a196c7c4",
+      "name": "bitcoin__bitcoin-32425",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "663a9cabf811e2fc53102bc6da00d09fc99d1d81",
+      "headSha": "e98c51fcce9ae3f441a416cab32a5c85756c6c64",
+      "mergeBaseSha": "baa848b8d38187ce6b24a57cfadf1ea180209711",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "baa848b8d38187ce6b24a57cfadf1ea180209711"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "aeacb045b6bf0259a6663ac20753e2e4bd5c630e",
+        "head": "9627e1ba37321e5f0d1c03fb17edc663f6296638",
+        "builtBase": "aeacb045b6bf0259a6663ac20753e2e4bd5c630e",
+        "builtHead": "9627e1ba37321e5f0d1c03fb17edc663f6296638"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/browser-use__browser-use-1482@cb2104e7",
+      "name": "browser-use__browser-use-1482",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "fa461585f1fc2d4a430e68e6c115a12f4936fe73",
+      "headSha": "0b21e50ca640581ecd46990475c8b223eaa05045",
+      "mergeBaseSha": "b50bb2216721b82d81e0fda8fb50a31266e09ce4",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "b50bb2216721b82d81e0fda8fb50a31266e09ce4"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "9fd52c602b180625f89ea6076d20e04710534eba",
+        "head": "984787c296378caee59a7ee9c757398568c6df7d",
+        "builtBase": "9fd52c602b180625f89ea6076d20e04710534eba",
+        "builtHead": "984787c296378caee59a7ee9c757398568c6df7d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/browser-use__browser-use-3172@1d8c4220",
+      "name": "browser-use__browser-use-3172",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e85a547378b236c9788802d28e816f10940a7e53",
+      "headSha": "72f1585f9add5b72e829eaee3b5bff684e0b08d3",
+      "mergeBaseSha": "e85a547378b236c9788802d28e816f10940a7e53",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e85a547378b236c9788802d28e816f10940a7e53"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b6fa4323fabd79e7e9dd6f1176a4cbf261830948",
+        "head": "f98e3391de406d37046e30b204fa0bf747b51c9b",
+        "builtBase": "b6fa4323fabd79e7e9dd6f1176a4cbf261830948",
+        "builtHead": "f98e3391de406d37046e30b204fa0bf747b51c9b"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/browser-use__browser-use-857@954d0944",
+      "name": "browser-use__browser-use-857",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "515b94225aa86c40dc2c20034055ab8bcc88c6ae",
+      "headSha": "aab7b3bb54e2b15ee3b32ad7de74c91fc8b22f52",
+      "mergeBaseSha": "01abdc414b4bea9da34d10c2fb5383c870396f50",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "01abdc414b4bea9da34d10c2fb5383c870396f50"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "843db684532f1cc2e8155314383843a84b48ada1",
+        "head": "0acdf150d97a5545d87162c9f504eaa333bf9f3b",
+        "builtBase": "843db684532f1cc2e8155314383843a84b48ada1",
+        "builtHead": "0acdf150d97a5545d87162c9f504eaa333bf9f3b"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-1808@db7e35a1",
+      "name": "cline__cline-1808",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "4d8bdf29458db722a2bce1dfacc50771959b32fa",
+      "headSha": "cb4d5c90460885942cbbae0298b95f4ee5682086",
+      "mergeBaseSha": "283d7d6928755ce5f62827e25c437a7a77964549",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "283d7d6928755ce5f62827e25c437a7a77964549"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5fcc21b23b718055eea36bf7dd3e7452883abf77",
+        "head": "5306337d26ccb5b71b41ed15254a3fe8c953906c",
+        "builtBase": "5fcc21b23b718055eea36bf7dd3e7452883abf77",
+        "builtHead": "5306337d26ccb5b71b41ed15254a3fe8c953906c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-2347@314f5476",
+      "name": "cline__cline-2347",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "07d20574868b2ebb51c95c30a7a81b3793f0f07e",
+      "headSha": "7d18fb9df620c61420c6939df22fb6f7af836bb2",
+      "mergeBaseSha": "23a0d4164651f039da6c730dac07a4a47689513e",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "23a0d4164651f039da6c730dac07a4a47689513e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fcb3e83a9cce3491e7664fb21ce6e3fd235b9fce",
+        "head": "ae8a11669b3b8fdea003d9c605f2b91eaa10fe49",
+        "builtBase": "fcb3e83a9cce3491e7664fb21ce6e3fd235b9fce",
+        "builtHead": "ae8a11669b3b8fdea003d9c605f2b91eaa10fe49"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-4676@19f3fd47",
+      "name": "cline__cline-4676",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "0262e13ac48bbbc29f6c76b6b9a72e7e2ed2eb4b",
+      "headSha": "d0a8db831cbe657faf792f00c0e3325de0b75fb4",
+      "mergeBaseSha": "e84f2ff962f708a68390bc855cf9cd07228a3637",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e84f2ff962f708a68390bc855cf9cd07228a3637"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "48dbc9ce2b3a5302f39c2027e19b6ad5b803317a",
+        "head": "234766d0f8e27f68867d7cc76ece2e50af1cdd28",
+        "builtBase": "48dbc9ce2b3a5302f39c2027e19b6ad5b803317a",
+        "builtHead": "234766d0f8e27f68867d7cc76ece2e50af1cdd28"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-4786@bca0c711",
+      "name": "cline__cline-4786",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "398bc87a64800e021966868243be2f09be72e73c",
+      "headSha": "2195a689b787a963bdacc35d348f4590c30a2692",
+      "mergeBaseSha": "0ec447c9922dd928c660470842a0236a0e385073",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "0ec447c9922dd928c660470842a0236a0e385073"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "e87f10765bdcdce0a7ce19ec3c35c802d03fa575",
+        "head": "1c1df884f3dc8715fbc5c3744bda99ebb60f2d23",
+        "builtBase": "e87f10765bdcdce0a7ce19ec3c35c802d03fa575",
+        "builtHead": "1c1df884f3dc8715fbc5c3744bda99ebb60f2d23"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-5177@d56f7458",
+      "name": "cline__cline-5177",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "a1bf1f95a30ca95581d9811488636aec42dd2f80",
+      "headSha": "419534ccd4241fc11827741eb0d76ba0c9d21277",
+      "mergeBaseSha": "a1bf1f95a30ca95581d9811488636aec42dd2f80",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "a1bf1f95a30ca95581d9811488636aec42dd2f80"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "94a9a355bb8e20ac5ca514ecca72cbdc4dcad885",
+        "head": "18f23ba6ad1c9530e76f6d8aa281bb15fca980be",
+        "builtBase": "94a9a355bb8e20ac5ca514ecca72cbdc4dcad885",
+        "builtHead": "18f23ba6ad1c9530e76f6d8aa281bb15fca980be"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-5524@074e473e",
+      "name": "cline__cline-5524",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8f4c6038dd70ce02caaf7ae924dc28d5be63968e",
+      "headSha": "ca7f02b8cf8cd36d832a63e1c9ad892356c7df66",
+      "mergeBaseSha": "9dc021a881852866d3ef5c9636b929a9e1b68f22",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "9dc021a881852866d3ef5c9636b929a9e1b68f22"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "de37d8510fb301db2fbb5d44cdde9776a45e1dab",
+        "head": "520769923654e4f4d081761cfc45c726ed9beda4",
+        "builtBase": "de37d8510fb301db2fbb5d44cdde9776a45e1dab",
+        "builtHead": "520769923654e4f4d081761cfc45c726ed9beda4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/cline__cline-5955@2692dc9e",
+      "name": "cline__cline-5955",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "b3abbd886e7e693c48b31a0af8046035bf014118",
+      "headSha": "f098af0f52bf1cdb7eb561c380caef5746b58d40",
+      "mergeBaseSha": "8cdc4a936d64483f3123509ab3688f452fcd6d91",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8cdc4a936d64483f3123509ab3688f452fcd6d91"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d4bba0f7a7bb0d74653a46a5b08c16fe360b66cf",
+        "head": "f060574513c7aa1d1b724f9182853ce1c1c4d2d2",
+        "builtBase": "d4bba0f7a7bb0d74653a46a5b08c16fe360b66cf",
+        "builtHead": "f060574513c7aa1d1b724f9182853ce1c1c4d2d2"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/comfyanonymous__ComfyUI-6033@f3b27930",
+      "name": "comfyanonymous__ComfyUI-6033",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "GPL-3.0"
+      },
+      "baseSha": "6c0377f43e7b6ed58d48ae05cff9bc45b52ef5e0",
+      "headSha": "0bb60235132cc72daea81427107a40ba1ccb5ddf",
+      "mergeBaseSha": "2cddbf0821c0e9b74993b2e2b546af2b0d57aa2c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2cddbf0821c0e9b74993b2e2b546af2b0d57aa2c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a1e2e5c6c074deacf4f6ec8fffe4b421c3e4b382",
+        "head": "5b5982fbde6035bbb669b724933d418fad54a864",
+        "builtBase": "a1e2e5c6c074deacf4f6ec8fffe4b421c3e4b382",
+        "builtHead": "5b5982fbde6035bbb669b724933d418fad54a864"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/comfyanonymous__ComfyUI-6542@c3da129d",
+      "name": "comfyanonymous__ComfyUI-6542",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "GPL-3.0"
+      },
+      "baseSha": "832e3f5ca3c357e527fdf811502357bd2798425e",
+      "headSha": "b55c2247654476fbc744e572ba7a834fd9378745",
+      "mergeBaseSha": "fca304debf5a4e6c71f8def10ac41cf69519fde3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "fca304debf5a4e6c71f8def10ac41cf69519fde3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "bc8a91126718bfb9a77cda16ce6190f834774463",
+        "head": "c5165f57c5180ceef9400842d198d8cb38b52df5",
+        "builtBase": "bc8a91126718bfb9a77cda16ce6190f834774463",
+        "builtHead": "c5165f57c5180ceef9400842d198d8cb38b52df5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/comfyanonymous__ComfyUI-8446@ae54d240",
+      "name": "comfyanonymous__ComfyUI-8446",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "GPL-3.0"
+      },
+      "baseSha": "c7b25784b141a298d8ee5f0d830a29da6e8a3d54",
+      "headSha": "4dcd698e489da69294ee01de0350a9a02e3e4b41",
+      "mergeBaseSha": "c7b25784b141a298d8ee5f0d830a29da6e8a3d54",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "c7b25784b141a298d8ee5f0d830a29da6e8a3d54"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "bb8aedcf1c9eca6a05a48920f3c3dc074d61b104",
+        "head": "664237a3027da026042e49fedeb78be6480d5dd7",
+        "builtBase": "bb8aedcf1c9eca6a05a48920f3c3dc074d61b104",
+        "builtHead": "664237a3027da026042e49fedeb78be6480d5dd7"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dbeaver__dbeaver-36789@b879504c",
+      "name": "dbeaver__dbeaver-36789",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "469e4265a58af95a6d5f4069515e029fc2891374",
+      "headSha": "dc67ca7cf486ceaf45559318cdcbca193847188d",
+      "mergeBaseSha": "8627b84646d4ffa6a36c54e9cd5edec11035d945",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8627b84646d4ffa6a36c54e9cd5edec11035d945"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5e51f43d93081596023f9ec590c24df841a1f03c",
+        "head": "5bb9607e4a4b8eb6b54b7cf282d2c43930f62de3",
+        "builtBase": "5e51f43d93081596023f9ec590c24df841a1f03c",
+        "builtHead": "5bb9607e4a4b8eb6b54b7cf282d2c43930f62de3"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dbeaver__dbeaver-37564@11784336",
+      "name": "dbeaver__dbeaver-37564",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "24ad3c4030412df3d9c843c405e90a0b1e2ad5dd",
+      "headSha": "bc3ac7bb47092a934b344791d8aa3a1c41e6c8f7",
+      "mergeBaseSha": "2125ab9048023375ae49aa66f65be384f128d4a3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2125ab9048023375ae49aa66f65be384f128d4a3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3e7b65bc50eec049f59c2f64d7846458920a40d8",
+        "head": "01a381ff2b6a1255b2852433a5c91e1cbd945cb7",
+        "builtBase": "3e7b65bc50eec049f59c2f64d7846458920a40d8",
+        "builtHead": "01a381ff2b6a1255b2852433a5c91e1cbd945cb7"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dbeaver__dbeaver-38239@d703b239",
+      "name": "dbeaver__dbeaver-38239",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "1df2fe97207fe1346ca92ea9c41dd3fd13303001",
+      "headSha": "ed40132dcb3c6ab5502056b7de0e47c0858ec016",
+      "mergeBaseSha": "0f78c420bd314d078cb8d58e4fb55572d2b090aa",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "0f78c420bd314d078cb8d58e4fb55572d2b090aa"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6d701b68d4ea0a662a321fef58bab9af2b65d6ea",
+        "head": "d8d0b575295a4ecdcc9f5127c13dba53ebee7219",
+        "builtBase": "6d701b68d4ea0a662a321fef58bab9af2b65d6ea",
+        "builtHead": "d8d0b575295a4ecdcc9f5127c13dba53ebee7219"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dbeaver__dbeaver-38915@e9bf4f83",
+      "name": "dbeaver__dbeaver-38915",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8793ec7a6c71aa503b1dc492ddb4e982a8f3e9d9",
+      "headSha": "8224826969254a49e68e025cae82d3cf1574de38",
+      "mergeBaseSha": "1faab74be397e7577708fa64f0ec6bc5c6057b78",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1faab74be397e7577708fa64f0ec6bc5c6057b78"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "71d61e712c1500d36a5f35396d91e6be61d13064",
+        "head": "d6bd92e2ead142a6b2139a19d91df45ab8cde1e6",
+        "builtBase": "71d61e712c1500d36a5f35396d91e6be61d13064",
+        "builtHead": "d6bd92e2ead142a6b2139a19d91df45ab8cde1e6"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dotnet__aspnetcore-59322@1e3495e1",
+      "name": "dotnet__aspnetcore-59322",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "7ba02e8ac71eeba562476953d5ff6030b8eda765",
+      "headSha": "8ac940ff581aa344ab8f859874f6d4c0ecaec6b6",
+      "mergeBaseSha": "3fe06183a8d3ef32de0d16863d232d5652b1fe9b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3fe06183a8d3ef32de0d16863d232d5652b1fe9b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "aef20db484fa1e61d6f26d5f66d21a3bc0151d85",
+        "head": "bf77c15969e654162552b28cea47ae5ad799c236",
+        "builtBase": "aef20db484fa1e61d6f26d5f66d21a3bc0151d85",
+        "builtHead": "bf77c15969e654162552b28cea47ae5ad799c236"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dotnet__aspnetcore-61006@592befe7",
+      "name": "dotnet__aspnetcore-61006",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "f83c97fa0b91f83bd20511d1abf235dc48b596e2",
+      "headSha": "0ce67cdee87e9fee014ba95c11e8e36b8913041c",
+      "mergeBaseSha": "f83c97fa0b91f83bd20511d1abf235dc48b596e2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "f83c97fa0b91f83bd20511d1abf235dc48b596e2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0946ccd05f14ba89df856f8439af778c2be6cbb8",
+        "head": "d7305df5ded4cef08c918ce4829dd4b66fa7adce",
+        "builtBase": "0946ccd05f14ba89df856f8439af778c2be6cbb8",
+        "builtHead": "d7305df5ded4cef08c918ce4829dd4b66fa7adce"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dotnet__aspnetcore-62734@fa0ceccb",
+      "name": "dotnet__aspnetcore-62734",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "8bb2b2067815996d9a8224ee38aa80a79f797827",
+      "headSha": "742f022e92563bd6fb87d1c752f25fd14e1b2a43",
+      "mergeBaseSha": "1b5d54eb39283b0d028841bd4a73fe8ebaa4abd7",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1b5d54eb39283b0d028841bd4a73fe8ebaa4abd7"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "513fe651e73cc60ffbf57fb4f7bccf34e3b13315",
+        "head": "672d8581ed2128d3ac4161ef4f1a521dacb2a952",
+        "builtBase": "513fe651e73cc60ffbf57fb4f7bccf34e3b13315",
+        "builtHead": "672d8581ed2128d3ac4161ef4f1a521dacb2a952"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/dotnet__aspnetcore-62936@f18e4e18",
+      "name": "dotnet__aspnetcore-62936",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e7d49f52363753a4faa2a22538eace7a923382ce",
+      "headSha": "2f372e8ff137aa24114269576fc1912f12ff5402",
+      "mergeBaseSha": "e7d49f52363753a4faa2a22538eace7a923382ce",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e7d49f52363753a4faa2a22538eace7a923382ce"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "878df15bace1d7af6561e31f9a7ad455845c92ee",
+        "head": "448f50388b3465c1edf96b7c1c91dc1b785cb548",
+        "builtBase": "878df15bace1d7af6561e31f9a7ad455845c92ee",
+        "builtHead": "448f50388b3465c1edf96b7c1c91dc1b785cb548"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-118183@615a7945",
+      "name": "elastic__elasticsearch-118183",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "4b868b0e11f4a59d608523c57d1a62b870ac8e0e",
+      "headSha": "bef908cb3aaf20210b267551df1210ad881722c5",
+      "mergeBaseSha": "4f030efcd50781fe6e624dc08046b834786edb4a",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "4f030efcd50781fe6e624dc08046b834786edb4a"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "70477dabaf6ba302b9bf7925cec3b3a4ee6e4696",
+        "head": "74103bac36ac64dd8add61fa58307b4770014ead",
+        "builtBase": "70477dabaf6ba302b9bf7925cec3b3a4ee6e4696",
+        "builtHead": "74103bac36ac64dd8add61fa58307b4770014ead"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-118626@138656e7",
+      "name": "elastic__elasticsearch-118626",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "7c46556e2137a92e7d92ddf40af0ae5388c1e888",
+      "headSha": "a9973f67256e21340a8b00039531e69b724d0856",
+      "mergeBaseSha": "0cc08a9196f75b3bcd630a55331578b1fc335b74",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "0cc08a9196f75b3bcd630a55331578b1fc335b74"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "1e747df9c8f9a9298022ae9977885b6372f92b00",
+        "head": "0e2563f77cb47ab98e9723cec6eee12fcf6a9871",
+        "builtBase": "1e747df9c8f9a9298022ae9977885b6372f92b00",
+        "builtHead": "0e2563f77cb47ab98e9723cec6eee12fcf6a9871"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-118895@cce819f1",
+      "name": "elastic__elasticsearch-118895",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "cc0e53e883ee7e0b136e58a0105103c1a7ffddf9",
+      "headSha": "a6a4623f4a0216b515a8cb323110305504431459",
+      "mergeBaseSha": "d3f2956116eea89543dc4979bd3cdfc5c54d8bd7",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d3f2956116eea89543dc4979bd3cdfc5c54d8bd7"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "e200ccea7b3cf88f9fd63b71cc82de7234403982",
+        "head": "ca5c5c098107a5891ec0900f93c3d3d4de17aecc",
+        "builtBase": "e200ccea7b3cf88f9fd63b71cc82de7234403982",
+        "builtHead": "ca5c5c098107a5891ec0900f93c3d3d4de17aecc"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-118998@d111bfd6",
+      "name": "elastic__elasticsearch-118998",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "edb3818ecc0ff0c34a63dcac533f51cfee4c4443",
+      "headSha": "902352ac82dfa1d0b0a54ef7f0d86d6733691ba5",
+      "mergeBaseSha": "dbbcb09244cd65b52c13f78e500deb5fdcd3edd9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "dbbcb09244cd65b52c13f78e500deb5fdcd3edd9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fbba3a9413f9a8f562c96fd50cc2925e893fceae",
+        "head": "2a604e30c2c55334c6285f99380a3a38e0eb8e0f",
+        "builtBase": "fbba3a9413f9a8f562c96fd50cc2925e893fceae",
+        "builtHead": "2a604e30c2c55334c6285f99380a3a38e0eb8e0f"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-119759@57bcd71a",
+      "name": "elastic__elasticsearch-119759",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "4ac8d55ff7c5612413e4a45e14a2b39f3e85f3a9",
+      "headSha": "a3bac5f2d4020183019a47d8d64c08123f7ec25d",
+      "mergeBaseSha": "4ac8d55ff7c5612413e4a45e14a2b39f3e85f3a9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "4ac8d55ff7c5612413e4a45e14a2b39f3e85f3a9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "dc37b5e8103b4b9f2fccd265eec101b2d14931c9",
+        "head": "5826fe766b5cc7ecac2de6ff5bf45d851e91dc50",
+        "builtBase": "dc37b5e8103b4b9f2fccd265eec101b2d14931c9",
+        "builtHead": "5826fe766b5cc7ecac2de6ff5bf45d851e91dc50"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-120546@1d946f14",
+      "name": "elastic__elasticsearch-120546",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "26e5373de1db0a9e7d72cbf79b2a4c6bb7d17cfd",
+      "headSha": "761281a81a4002518df11ee62e5b9e34355c8778",
+      "mergeBaseSha": "1d9acc1a421e83776512b0606c6bd2bb95df750c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1d9acc1a421e83776512b0606c6bd2bb95df750c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "94cb8bbedc508b42171bb9fd3d34d3dc1c626177",
+        "head": "cb5c03c2e7e7f1a2a9da238f3cd8c73ad00e03d1",
+        "builtBase": "94cb8bbedc508b42171bb9fd3d34d3dc1c626177",
+        "builtHead": "cb5c03c2e7e7f1a2a9da238f3cd8c73ad00e03d1"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-123744@49aaceee",
+      "name": "elastic__elasticsearch-123744",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "ba5a9c83310ce6fbe27ff251aba00e37fad1d205",
+      "headSha": "4d9b96f4ac1af0cb871f1d3b77169f9f1e83d194",
+      "mergeBaseSha": "6b27e420fed187de0add194eb32bb940688af26f",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "6b27e420fed187de0add194eb32bb940688af26f"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4ca20407ef6ce7a81416fd1432a78d5a3c572b54",
+        "head": "22f988e549f0b515b18755d12654edddb6c9edd5",
+        "builtBase": "4ca20407ef6ce7a81416fd1432a78d5a3c572b54",
+        "builtHead": "22f988e549f0b515b18755d12654edddb6c9edd5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-124403@ec8b03ac",
+      "name": "elastic__elasticsearch-124403",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "fdfe63eb372a01b91a5b43eb5555c52731a69687",
+      "headSha": "e355340162f24705db5e48ea2cf0a867490ae001",
+      "mergeBaseSha": "a2b0d96778589ce5478f3a2870341e899d138545",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "a2b0d96778589ce5478f3a2870341e899d138545"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3396dccd2a2f8f0c83be06452dd67c53e787ec0e",
+        "head": "5a882feb92dc191127acbb7dc2bcf5fdd8f56b70",
+        "builtBase": "3396dccd2a2f8f0c83be06452dd67c53e787ec0e",
+        "builtHead": "5a882feb92dc191127acbb7dc2bcf5fdd8f56b70"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-125732@05215aae",
+      "name": "elastic__elasticsearch-125732",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "078f7ff9f7134a9c3011106e7b742a9fd8f04d56",
+      "headSha": "e38d20c726cffb1ef9563d3146951a5356596464",
+      "mergeBaseSha": "930b4ab9957ed4a6376bcac7ba17f7bb2e82d125",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "930b4ab9957ed4a6376bcac7ba17f7bb2e82d125"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5d21000d66b0ee7539a15b51cfdbc5ffad184d3c",
+        "head": "7d42072361478c3de84675ce3a6c723c52c19191",
+        "builtBase": "5d21000d66b0ee7539a15b51cfdbc5ffad184d3c",
+        "builtHead": "7d42072361478c3de84675ce3a6c723c52c19191"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-126376@478f3ee0",
+      "name": "elastic__elasticsearch-126376",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "47e352fda0567a682687fe926927cee3f631ea24",
+      "headSha": "10d682d9aa4b1c2976e1db769ba04cb15256da9e",
+      "mergeBaseSha": "79297438ed2b6f2fb5315508157d6584c84f1760",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "79297438ed2b6f2fb5315508157d6584c84f1760"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b394e216ce1b98d453ae914deae211500be506c1",
+        "head": "956a2f515d1c4a2f79f5edba1a752f11a6ade70e",
+        "builtBase": "b394e216ce1b98d453ae914deae211500be506c1",
+        "builtHead": "956a2f515d1c4a2f79f5edba1a752f11a6ade70e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-127697@9a3cb9eb",
+      "name": "elastic__elasticsearch-127697",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "3594ade2a9ce3dac2abda77add51cc88990ce43a",
+      "headSha": "2adcb2d510ac8667f771842572c4b2c8bcaf2992",
+      "mergeBaseSha": "b8d741765f1a38d07bb503a6129899ac13242222",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "b8d741765f1a38d07bb503a6129899ac13242222"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c4f7e6f64ddb0ca2b97b6555f203405d8f2d78ab",
+        "head": "fe29dff15bc024d7f265bc5c7d6b389884f5d5c3",
+        "builtBase": "c4f7e6f64ddb0ca2b97b6555f203405d8f2d78ab",
+        "builtHead": "fe29dff15bc024d7f265bc5c7d6b389884f5d5c3"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-132077@a6868b72",
+      "name": "elastic__elasticsearch-132077",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "fcf040857f04ef064a06d80191fca112d0ba8f04",
+      "headSha": "5e318eba16c2327289af2e96b9c099ec7469acfa",
+      "mergeBaseSha": "63258f49bfc4a9895f40fac8da7ae676a1840aeb",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "63258f49bfc4a9895f40fac8da7ae676a1840aeb"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "9d9546f1330b0f39695b29118f61a54f47518cee",
+        "head": "95ba92b384ed54388fe090ac0376c961a4536429",
+        "builtBase": "9d9546f1330b0f39695b29118f61a54f47518cee",
+        "builtHead": "95ba92b384ed54388fe090ac0376c961a4536429"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-133365@f2c66059",
+      "name": "elastic__elasticsearch-133365",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "0a5a74c5e9dad3d62a8486e52422be2ae1295e03",
+      "headSha": "5e604e492648a95f7adef067aeb2b9fc2ca4a206",
+      "mergeBaseSha": "971c87dc70b66d81faba990854d0c084fbe34823",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "971c87dc70b66d81faba990854d0c084fbe34823"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0e3f8970b5ab0fc4d2f3169d4ff6f79eb1ad0b7a",
+        "head": "ee54923c34520ea275b8b023259e558567d0b2f7",
+        "builtBase": "0e3f8970b5ab0fc4d2f3169d4ff6f79eb1ad0b7a",
+        "builtHead": "ee54923c34520ea275b8b023259e558567d0b2f7"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/elastic__elasticsearch-133945@927468d3",
+      "name": "elastic__elasticsearch-133945",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "3c264cff967750ff7cb581defa42b0d69bb31fc6",
+      "headSha": "dc8943ff2d735c9cd71adef644378ca2850db34f",
+      "mergeBaseSha": "bede881840643d36010595d19db22803824723d0",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "bede881840643d36010595d19db22803824723d0"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "30572f7b95eedd8aa8ff1f06e278e78d7bb9c148",
+        "head": "b7009926e05e5283b4c4c6ed2bf926120e24ed09",
+        "builtBase": "30572f7b95eedd8aa8ff1f06e278e78d7bb9c148",
+        "builtHead": "b7009926e05e5283b4c4c6ed2bf926120e24ed09"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/facebook__react-32499@7ab7fe2e",
+      "name": "facebook__react-32499",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "99563e91736e9de473c4865d5cb6fd9eb1a26bcb",
+      "headSha": "b045f18e378341876ee69e729fc855cab501c3cd",
+      "mergeBaseSha": "2980f27779cf37a9656b25418a3c5cfca989e244",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2980f27779cf37a9656b25418a3c5cfca989e244"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6b6e7128517ada2726e856eaf2d61912f65b2772",
+        "head": "47ef93f597c61e4c9ce37ea2e95b379c18178685",
+        "builtBase": "6b6e7128517ada2726e856eaf2d61912f65b2772",
+        "builtHead": "47ef93f597c61e4c9ce37ea2e95b379c18178685"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/facebook__react-33059@455957e7",
+      "name": "facebook__react-33059",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "88b976740467f9dfabae03c79a8eff9033c35050",
+      "headSha": "be58f26f9a6e579d8df36d901a59249d9ac1393f",
+      "mergeBaseSha": "8e9a5fc6c1a6252ca1727ab8fe0d4ee13f2568ec",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8e9a5fc6c1a6252ca1727ab8fe0d4ee13f2568ec"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "785630414d34c2525846f77ca9272ce0da624d25",
+        "head": "802539eb4addae8be86125ca63f55393edc5ebc5",
+        "builtBase": "785630414d34c2525846f77ca9272ce0da624d25",
+        "builtHead": "802539eb4addae8be86125ca63f55393edc5ebc5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/filamentphp__filament-15181@5196dc12",
+      "name": "filamentphp__filament-15181",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "753ceeac007a0d0aa4423971b01d651288720873",
+      "headSha": "77874d0c3782a257101c3fb578144a6950f3dc9c",
+      "mergeBaseSha": "753ceeac007a0d0aa4423971b01d651288720873",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "753ceeac007a0d0aa4423971b01d651288720873"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6deb591cb56d381d8d160aab607e24dfc7d1d31c",
+        "head": "9cdcedb4cc142f40a726babc002714054261a942",
+        "builtBase": "6deb591cb56d381d8d160aab607e24dfc7d1d31c",
+        "builtHead": "9cdcedb4cc142f40a726babc002714054261a942"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/filamentphp__filament-15217@3f6441c0",
+      "name": "filamentphp__filament-15217",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e4a7ecf0e65574522eb9fbe70b7339f41de0bbe2",
+      "headSha": "871ec75815e1f92da141e9aef80f287f7779dfe7",
+      "mergeBaseSha": "e4a7ecf0e65574522eb9fbe70b7339f41de0bbe2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e4a7ecf0e65574522eb9fbe70b7339f41de0bbe2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0edc1913850e6dc345432f9c9814582616c07c69",
+        "head": "9f9d091123e9bce10902c73e45ddcda125f5bd46",
+        "builtBase": "0edc1913850e6dc345432f9c9814582616c07c69",
+        "builtHead": "9f9d091123e9bce10902c73e45ddcda125f5bd46"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/filamentphp__filament-15267@379397a8",
+      "name": "filamentphp__filament-15267",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "ce4d9d08df41142ff219bb3dc44968084eaae0dc",
+      "headSha": "d47632c0583bac481d4ce7cc9b6b1711d0f8e0fc",
+      "mergeBaseSha": "ce4d9d08df41142ff219bb3dc44968084eaae0dc",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ce4d9d08df41142ff219bb3dc44968084eaae0dc"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c05a64495dae6ea1c78523eafe7fe1642d0c8c2d",
+        "head": "471420ab5b1b5ef07f160f4abac35d0dc89a8456",
+        "builtBase": "c05a64495dae6ea1c78523eafe7fe1642d0c8c2d",
+        "builtHead": "471420ab5b1b5ef07f160f4abac35d0dc89a8456"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/filamentphp__filament-15756@22098f7f",
+      "name": "filamentphp__filament-15756",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "8b44845f2bfab244f650d38e1b0ac00e733612e7",
+      "headSha": "912f080f3bf9873c1d059bcb9df485e3d8939220",
+      "mergeBaseSha": "8b44845f2bfab244f650d38e1b0ac00e733612e7",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8b44845f2bfab244f650d38e1b0ac00e733612e7"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c517917101f6ec1fdb46cf7dcddc1573eceb4d5f",
+        "head": "ee269fdcec214b5a623690964313a894ad355cd9",
+        "builtBase": "c517917101f6ec1fdb46cf7dcddc1573eceb4d5f",
+        "builtHead": "ee269fdcec214b5a623690964313a894ad355cd9"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1325@ba1b0f99",
+      "name": "gofr-dev__gofr-1325",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "7f1760b083ea23ffd95fdf83467bdfa21735df81",
+      "headSha": "b9cdcbb2b9fc78499d15d51ffbb7c861592b0efe",
+      "mergeBaseSha": "567a9ca6e318ed76523533cdfc47c6199f1e5ac6",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "567a9ca6e318ed76523533cdfc47c6199f1e5ac6"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "cb3aa3da3d141e89b16f7e9e078ec5f9cb0dce9a",
+        "head": "38e5e4f05557b43af04b81c5b9e0cf06d70f43c4",
+        "builtBase": "cb3aa3da3d141e89b16f7e9e078ec5f9cb0dce9a",
+        "builtHead": "38e5e4f05557b43af04b81c5b9e0cf06d70f43c4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1355@c580ff31",
+      "name": "gofr-dev__gofr-1355",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "44e3eeb2786ad4d333dc1f528fb104236693d060",
+      "headSha": "dc0b3e630423b72cb9b2f273fdc18a5c11d12984",
+      "mergeBaseSha": "30116f05e9b88763fabc862af0a0f3a8a83a0c5b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "30116f05e9b88763fabc862af0a0f3a8a83a0c5b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "8c2b749c593ef03fdd605df317c8dc22369f88f1",
+        "head": "6647c909ba81782d4bb289aa19fae8244e18971e",
+        "builtBase": "8c2b749c593ef03fdd605df317c8dc22369f88f1",
+        "builtHead": "6647c909ba81782d4bb289aa19fae8244e18971e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1395@c423a238",
+      "name": "gofr-dev__gofr-1395",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "c2ab1eb3308afa4f29842f0a982751bf65c059d0",
+      "headSha": "2c0c0997cad66a1ee1e47f95db6a830394157c00",
+      "mergeBaseSha": "ca741320534061d5e4550931949e27543b6c69bf",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ca741320534061d5e4550931949e27543b6c69bf"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b74a39a88afcb037ee26ea706c45c9c6682dc2ec",
+        "head": "3d2f9968be1bdb09aa7cf8742995882c09ff67f7",
+        "builtBase": "b74a39a88afcb037ee26ea706c45c9c6682dc2ec",
+        "builtHead": "3d2f9968be1bdb09aa7cf8742995882c09ff67f7"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1617@5e63149c",
+      "name": "gofr-dev__gofr-1617",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "ba0316277a22f508ed645951705f53d151552916",
+      "headSha": "49ab39432cf4892ee84569099b8065dfe45fae92",
+      "mergeBaseSha": "4d679f47e1525868cfeee249f981b18f054a1824",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "4d679f47e1525868cfeee249f981b18f054a1824"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "9fe63ec3bfb7560d249f9d905c92862fc2949119",
+        "head": "c847a6999720ab0e50e9b4a3d7474d4a193fd0bd",
+        "builtBase": "9fe63ec3bfb7560d249f9d905c92862fc2949119",
+        "builtHead": "c847a6999720ab0e50e9b4a3d7474d4a193fd0bd"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1681@1e8a77fb",
+      "name": "gofr-dev__gofr-1681",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "d0300073f685bb1154f7437f3172799d31bfddbe",
+      "headSha": "c1a26ade6db7da96622c9bdca7674ef7094c122f",
+      "mergeBaseSha": "717443dc91dbf04169789d41bd4998a6ac858a14",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "717443dc91dbf04169789d41bd4998a6ac858a14"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "2b9a61d2e91101ee22c310dfafe81ca71b74a727",
+        "head": "bfee6329009f7e8a44082af3447c5f49802c6903",
+        "builtBase": "2b9a61d2e91101ee22c310dfafe81ca71b74a727",
+        "builtHead": "bfee6329009f7e8a44082af3447c5f49802c6903"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/gofr-dev__gofr-1696@9e87bf45",
+      "name": "gofr-dev__gofr-1696",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "de79ab765d0d34d78a42ebdd50a21a6f26841b7f",
+      "headSha": "5e284aec0447be34c96a252e959067c8bcd9cd4c",
+      "mergeBaseSha": "92564a7accc4dc1e7570c3dc044b6250510e1177",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "92564a7accc4dc1e7570c3dc044b6250510e1177"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "f8dbdfd8c2acf6c5cd189b7772a35a3fd3852013",
+        "head": "04388a8823232d12ec45454dff7ea330c4138c8a",
+        "builtBase": "f8dbdfd8c2acf6c5cd189b7772a35a3fd3852013",
+        "builtHead": "04388a8823232d12ec45454dff7ea330c4138c8a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-4163@b3aebf34",
+      "name": "google-gemini__gemini-cli-4163",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "7ffe8038efaa5bf263a2a933819bcd4badd37dc2",
+      "headSha": "e7ed0a410ae510cda8b53ea20f3d758bd90a0f00",
+      "mergeBaseSha": "7ffe8038efaa5bf263a2a933819bcd4badd37dc2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "7ffe8038efaa5bf263a2a933819bcd4badd37dc2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a8f0b54a990850c98a96f48165351fa735bc9b02",
+        "head": "bc4880e564a6b5c61579a54ea960c4d19515a8bb",
+        "builtBase": "a8f0b54a990850c98a96f48165351fa735bc9b02",
+        "builtHead": "bc4880e564a6b5c61579a54ea960c4d19515a8bb"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-4828@8122ce47",
+      "name": "google-gemini__gemini-cli-4828",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "de968877895a8ae5f0edb83a43b37fa190cc8ec9",
+      "headSha": "77ea28a234023019ddda3f4a5f7a81b3514d3eb8",
+      "mergeBaseSha": "273e74c09da89492d16fc076cfbff4d043eafa4c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "273e74c09da89492d16fc076cfbff4d043eafa4c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d68076b1139ac909b43eb9ba402e62238044d8d2",
+        "head": "ae62359b3407b73b37acfabf4fc52f4f586452a9",
+        "builtBase": "d68076b1139ac909b43eb9ba402e62238044d8d2",
+        "builtHead": "ae62359b3407b73b37acfabf4fc52f4f586452a9"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-5793@8c52ef7c",
+      "name": "google-gemini__gemini-cli-5793",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "53f8617b249c9f0443f5082a293a30504a118030",
+      "headSha": "4c150ab4befb2a727b493d732d8d3d01f388e492",
+      "mergeBaseSha": "0d65baf9283138da56cdf08b00058ab3cf8cbaf9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "0d65baf9283138da56cdf08b00058ab3cf8cbaf9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b40e6d30562c780884ba4e805294fc0b8f028e95",
+        "head": "84e6791e4c9c2b20812b06adcb04055d5bd69677",
+        "builtBase": "b40e6d30562c780884ba4e805294fc0b8f028e95",
+        "builtHead": "84e6791e4c9c2b20812b06adcb04055d5bd69677"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-5819@67a6fa63",
+      "name": "google-gemini__gemini-cli-5819",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "4e49ee4c734f53a705df72efda2d076cb0acf44e",
+      "headSha": "6fd82699700fc19ea30a7b29a059f392ccfbb2cc",
+      "mergeBaseSha": "3af4913ef3f00de71744de551a568aa713a3beec",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3af4913ef3f00de71744de551a568aa713a3beec"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "ca71aae771662435a4c01400a701b48a4c5dbcf3",
+        "head": "e029d96e372d9d15a9f5581e5c55669a0ec437a0",
+        "builtBase": "ca71aae771662435a4c01400a701b48a4c5dbcf3",
+        "builtHead": "e029d96e372d9d15a9f5581e5c55669a0ec437a0"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-8154@9457d5bb",
+      "name": "google-gemini__gemini-cli-8154",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "5a05fb0dd002481343aaab7736a871904bb07c6f",
+      "headSha": "0fa1bd7ac417366f321ed2554caeaef550321959",
+      "mergeBaseSha": "bd0f085ae896e97373b451180f70ff551142fd7e",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "bd0f085ae896e97373b451180f70ff551142fd7e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "316a4bc68c098be0277f2c8efa17544cba252da2",
+        "head": "ab5d3d98b9aeb4644ba4f848c875c97910378b0b",
+        "builtBase": "316a4bc68c098be0277f2c8efa17544cba252da2",
+        "builtHead": "ab5d3d98b9aeb4644ba4f848c875c97910378b0b"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-8797@f1951ddf",
+      "name": "google-gemini__gemini-cli-8797",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "6e4236bf7681b2a2cba5630a8dd0a0d5a200a0df",
+      "headSha": "d64b61ef89f01ecdc0e095a995d47522245a0065",
+      "mergeBaseSha": "0534ca74d4e67b00ed51e9f8bf568efc3ecaf834",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "0534ca74d4e67b00ed51e9f8bf568efc3ecaf834"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "2174629a23e98e3cb6eed76d1ea95833c3f9ac5a",
+        "head": "d86c5820ec4a7bba2e271c04118a088579b6e8f5",
+        "builtBase": "2174629a23e98e3cb6eed76d1ea95833c3f9ac5a",
+        "builtHead": "d86c5820ec4a7bba2e271c04118a088579b6e8f5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/google-gemini__gemini-cli-9177@17cd6987",
+      "name": "google-gemini__gemini-cli-9177",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "809b933d8150c29154062e4d596cd916258022fc",
+      "headSha": "c6e624883852318b71baa2a060c933bb5de591ef",
+      "mergeBaseSha": "570b0086b606d2a6d55a2bdcd08b8a91c8092c8d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "570b0086b606d2a6d55a2bdcd08b8a91c8092c8d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "474beaa5e863016f60af9321e3bf3c06b2700ba8",
+        "head": "dfc6d245647fc918348c408f3cd508665fcf12a6",
+        "builtBase": "474beaa5e863016f60af9321e3bf3c06b2700ba8",
+        "builtHead": "dfc6d245647fc918348c408f3cd508665fcf12a6"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-14777@f40a0da2",
+      "name": "immich-app__immich-14777",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "10e569cc1c563ece2eb7e2581cef943829a72440",
+      "headSha": "91b3b6aebd3a02a4ac158b21ce469138df893178",
+      "mergeBaseSha": "e0fc8734bfff7a41baeeacda3790a91c3bfd93bc",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e0fc8734bfff7a41baeeacda3790a91c3bfd93bc"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c2d7698217feef1191894ea1c43d8fb85846ab0c",
+        "head": "eacff9f188de216cd9c2627570a065e7f6245e40",
+        "builtBase": "c2d7698217feef1191894ea1c43d8fb85846ab0c",
+        "builtHead": "eacff9f188de216cd9c2627570a065e7f6245e40"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-14874@4c4c9af1",
+      "name": "immich-app__immich-14874",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "4d6d5537b713ca80bb2a670fdc7be66882b12d5c",
+      "headSha": "7e2009f038cbf3f26403af6582af3cf8ba91672f",
+      "mergeBaseSha": "c3be74c450ba7d57ccfc9f6c0463478e579682a0",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "c3be74c450ba7d57ccfc9f6c0463478e579682a0"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "8d72ffe72c1e7b09e78ccd39e44a1a4c0c06570b",
+        "head": "3b06a1c943c4269d00040e34412028f33f8de18c",
+        "builtBase": "8d72ffe72c1e7b09e78ccd39e44a1a4c0c06570b",
+        "builtHead": "3b06a1c943c4269d00040e34412028f33f8de18c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-16893@29971316",
+      "name": "immich-app__immich-16893",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "c664d99a348999d16cda45a8dd57db436b8f9fba",
+      "headSha": "d38f1f55f42d600d05058e70d6ccee9679623591",
+      "mergeBaseSha": "f659ef4b7aeb20f2fe433abb7fc6f7b4d95bb0ea",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "f659ef4b7aeb20f2fe433abb7fc6f7b4d95bb0ea"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "afb323e719d5156fd0498e259dcfbafb881f483c",
+        "head": "ed680b99c1c30aaae63b3fa4a2b3e566b75a125c",
+        "builtBase": "afb323e719d5156fd0498e259dcfbafb881f483c",
+        "builtHead": "ed680b99c1c30aaae63b3fa4a2b3e566b75a125c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-17124@0934d45e",
+      "name": "immich-app__immich-17124",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "6ba94ac2f2f78c871f56874a7c2ff61b2ff4a06b",
+      "headSha": "966c3f22d034c230a14bb21b02627ef6d00eec68",
+      "mergeBaseSha": "6ba94ac2f2f78c871f56874a7c2ff61b2ff4a06b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "6ba94ac2f2f78c871f56874a7c2ff61b2ff4a06b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "908b096f6f47a44dc7638c5615e778adb1cd35ae",
+        "head": "6c5933647a7c7f29a889a922f9833a7242586e91",
+        "builtBase": "908b096f6f47a44dc7638c5615e778adb1cd35ae",
+        "builtHead": "6c5933647a7c7f29a889a922f9833a7242586e91"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-17535@72857b7c",
+      "name": "immich-app__immich-17535",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "584e5894bfd4fe356e790fa9781ccee4e5224874",
+      "headSha": "5f4759196534661bd332085514878d0efbb7ce84",
+      "mergeBaseSha": "92f0973a46acd813fd595fb6fdbf8cf143992b51",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "92f0973a46acd813fd595fb6fdbf8cf143992b51"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "28ee50d0031c397d4b42059807e5a280179fe5b2",
+        "head": "63d162a35f73626ce24a870df991d685e373e3a3",
+        "builtBase": "28ee50d0031c397d4b42059807e5a280179fe5b2",
+        "builtHead": "63d162a35f73626ce24a870df991d685e373e3a3"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-17879@12ac26cb",
+      "name": "immich-app__immich-17879",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "b845184c80295603e3a02dfad84ff2755d417aff",
+      "headSha": "b7a12558bc8e69c9c96b9a5b12f61f94689ea0e3",
+      "mergeBaseSha": "d0014bdf94feecf84b375499a8e48bb9fa47a8b3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d0014bdf94feecf84b375499a8e48bb9fa47a8b3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "132ba741054a3ac3580ab355c38972c8ecd46ec3",
+        "head": "2dc6d649f58347a6ed150a0cdfe2f5a1c043d686",
+        "builtBase": "132ba741054a3ac3580ab355c38972c8ecd46ec3",
+        "builtHead": "2dc6d649f58347a6ed150a0cdfe2f5a1c043d686"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/immich-app__immich-18043@ae73eeb5",
+      "name": "immich-app__immich-18043",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "55f4e93456ab7415082e342af9ad5cabd52562a6",
+      "headSha": "9032c7e021872a913e28de2e79bd9ab9806e7413",
+      "mergeBaseSha": "15d431ba6a9caf6ba8f4a97ea357bfcd00c7245b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "15d431ba6a9caf6ba8f4a97ea357bfcd00c7245b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "30e6ec8c6f0a3944b452de9b0db15e8c16cc63b3",
+        "head": "3d8dd81ce8e2a34b10632b072b2bfdaf7379a83e",
+        "builtBase": "30e6ec8c6f0a3944b452de9b0db15e8c16cc63b3",
+        "builtHead": "3d8dd81ce8e2a34b10632b072b2bfdaf7379a83e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/infiniflow__ragflow-5065@eb473d9b",
+      "name": "infiniflow__ragflow-5065",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "469460483665000f522b6c9a6583bb34f17a954b",
+      "headSha": "2d06022b78536bd22a0fd83f38804f39aa34cce8",
+      "mergeBaseSha": "409310aae90c12ad8a85320c4a71b2108485edc9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "409310aae90c12ad8a85320c4a71b2108485edc9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "32fda525d59df1ce10ec854b923b4a8fe69d15b8",
+        "head": "1391d3e077aca58e24f78f633379653149cf32fd",
+        "builtBase": "32fda525d59df1ce10ec854b923b4a8fe69d15b8",
+        "builtHead": "1391d3e077aca58e24f78f633379653149cf32fd"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/infiniflow__ragflow-6553@077bdfc8",
+      "name": "infiniflow__ragflow-6553",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "b1c874698469ac999d210cd8cde59425781e4da2",
+      "headSha": "705123406ec7cd5eb1f9be26f6c5c31357aeffc9",
+      "mergeBaseSha": "b271cc34b3e5fa24ca067d662b2b0ac4fb561c51",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "b271cc34b3e5fa24ca067d662b2b0ac4fb561c51"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "e5f6dc6ef191ca8adb7d076435548f9bcdde053d",
+        "head": "92c969645f4a8f205c36860d62d396e3cb1b5799",
+        "builtBase": "e5f6dc6ef191ca8adb7d076435548f9bcdde053d",
+        "builtHead": "92c969645f4a8f205c36860d62d396e3cb1b5799"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/infiniflow__ragflow-6691@4b35c7d5",
+      "name": "infiniflow__ragflow-6691",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "0a42e5777eb966b26aaf8f2a7d593ae99a4aa87a",
+      "headSha": "a63caa1087852ada98964678be26b7c4d8363af6",
+      "mergeBaseSha": "e2b66628f4728aeda0c1db5aa8e75d5d6729f3db",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e2b66628f4728aeda0c1db5aa8e75d5d6729f3db"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "2d223fd721827f4bb41bb3baac00cc7c5ca757b1",
+        "head": "666a0a3b545ca3094842bd60f23e9aeda0ebd453",
+        "builtBase": "2d223fd721827f4bb41bb3baac00cc7c5ca757b1",
+        "builtHead": "666a0a3b545ca3094842bd60f23e9aeda0ebd453"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/infiniflow__ragflow-7151@6894373c",
+      "name": "infiniflow__ragflow-7151",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8362ab405c35d260dd2328dc207aefcf30778f66",
+      "headSha": "f189316eae1c199a5891f7a8bc47d53bb1b5c818",
+      "mergeBaseSha": "487aed419e393122558770b9df0c65e18412cc88",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "487aed419e393122558770b9df0c65e18412cc88"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "7e286ce7c1c14bfb8257157205e484afab9b7b8b",
+        "head": "05a385b0f6038205264fc9ea8da1fa6ad380c507",
+        "builtBase": "7e286ce7c1c14bfb8257157205e484afab9b7b8b",
+        "builtHead": "05a385b0f6038205264fc9ea8da1fa6ad380c507"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/juspay__hyperswitch-7353@7a11b347",
+      "name": "juspay__hyperswitch-7353",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "50cbe20ee1da0392f4f590bade9f866435356b87",
+      "headSha": "59ec03ceef191dcada50380ec20cd843b80a87b6",
+      "mergeBaseSha": "9f334c1ebcf0e8ee15ae2af608fb8f27fab2a6b2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "9f334c1ebcf0e8ee15ae2af608fb8f27fab2a6b2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "08594c6166803b14a219961c5e6f820f7af64def",
+        "head": "36f335d6361a95439b49611d5c9b9f66ecb35809",
+        "builtBase": "08594c6166803b14a219961c5e6f820f7af64def",
+        "builtHead": "36f335d6361a95439b49611d5c9b9f66ecb35809"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/juspay__hyperswitch-8063@0aafdc84",
+      "name": "juspay__hyperswitch-8063",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8e9bad6457449ef2a435be03a9f97acc2dd2108a",
+      "headSha": "5e0fa17a5e9e977daa4b896e1dfc2de61f526113",
+      "mergeBaseSha": "34dd99d8050a84f0478cdb4fa0f0cc83608e52d9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "34dd99d8050a84f0478cdb4fa0f0cc83608e52d9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "52e9841616a930430642421d07195862ced1bcd7",
+        "head": "933a63dd12d870cce3aec6070593cd9387059a24",
+        "builtBase": "52e9841616a930430642421d07195862ced1bcd7",
+        "builtHead": "933a63dd12d870cce3aec6070593cd9387059a24"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/juspay__hyperswitch-9130@d6d2a251",
+      "name": "juspay__hyperswitch-9130",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "b26e845198407f3672a7f80d8eea670419858e0e",
+      "headSha": "0231de6ae6795ef7fa85e5ab87b6fe46a4955333",
+      "mergeBaseSha": "24beaa224a08301b40ee18c617cbf116049eb3d5",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "24beaa224a08301b40ee18c617cbf116049eb3d5"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "8a6fabf25c8dabd6e61cd4ecc1e1b4b7ce171b77",
+        "head": "97a32e3137ec4a123a47724a56b730abf9831660",
+        "builtBase": "8a6fabf25c8dabd6e61cd4ecc1e1b4b7ce171b77",
+        "builtHead": "97a32e3137ec4a123a47724a56b730abf9831660"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/kestra-io__kestra-6844@7745c5d1",
+      "name": "kestra-io__kestra-6844",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "01a77aff0422884ed7b18ba8d00a0495d0bab88e",
+      "headSha": "06e7c6e48e22420da5bb0bf3188bc00f73974c9a",
+      "mergeBaseSha": "e36ee1d6ba2f99402ebd4a71e356e3e071f0557c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e36ee1d6ba2f99402ebd4a71e356e3e071f0557c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b71492c5b4f0fba6f3b250c988d20e2d343427d0",
+        "head": "e2cec4d361cd66d68b07823a759c9031d97f3b1b",
+        "builtBase": "b71492c5b4f0fba6f3b250c988d20e2d343427d0",
+        "builtHead": "e2cec4d361cd66d68b07823a759c9031d97f3b1b"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/kestra-io__kestra-7191@0ef12ce1",
+      "name": "kestra-io__kestra-7191",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "bfcfb2ac16dd8f198a99fef43072cb178f9a1d8e",
+      "headSha": "0ec45f028467c99d8d1efeee6c201210d9433e6d",
+      "mergeBaseSha": "2e09777790d4a64d746175f94f8e2861844aaede",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2e09777790d4a64d746175f94f8e2861844aaede"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "10f633ee78b44df979aab0515f15c45f45e06145",
+        "head": "6fcc778b304f5dd7d4c85f69ecc7a8f5d7e78e15",
+        "builtBase": "10f633ee78b44df979aab0515f15c45f45e06145",
+        "builtHead": "6fcc778b304f5dd7d4c85f69ecc7a8f5d7e78e15"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/kestra-io__kestra-7381@2bb5548c",
+      "name": "kestra-io__kestra-7381",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "a716094a9d3c3522fb40ea988b3dab2763d7519c",
+      "headSha": "3c2a2765fcd06d7fe127e362ddc9a706d4073047",
+      "mergeBaseSha": "dc64d81dd0f1d9832df6e69883a33c95dff5398d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "dc64d81dd0f1d9832df6e69883a33c95dff5398d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a951a98f08fed4f513e282a651875a46144f317e",
+        "head": "51978697827d8a43190ecfb831721e4d6bc9c94e",
+        "builtBase": "a951a98f08fed4f513e282a651875a46144f317e",
+        "builtHead": "51978697827d8a43190ecfb831721e4d6bc9c94e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/laravel__framework-54226@3464631a",
+      "name": "laravel__framework-54226",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "2e5054a19ba55b335bf8df43a8ae7e032244f671",
+      "headSha": "180c25ff94ae2dff26d2ca5f8bf779af1e8fc8c2",
+      "mergeBaseSha": "1472088e7026f8d87d3c38dfc1bc7e023329a039",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1472088e7026f8d87d3c38dfc1bc7e023329a039"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "237bc09bc500a8a85f44c8356a4528aa2e2659bc",
+        "head": "b1cd961770b85e2ce6410228e2dc3c6c7ab8f679",
+        "builtBase": "237bc09bc500a8a85f44c8356a4528aa2e2659bc",
+        "builtHead": "b1cd961770b85e2ce6410228e2dc3c6c7ab8f679"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/laravel__framework-56591@7aafc5bf",
+      "name": "laravel__framework-56591",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "6d94b16fd5f4f72bb741f9b900b83179c8ab46c9",
+      "headSha": "0a5238acfc4ca99c363283bf3bb16e20905f2a39",
+      "mergeBaseSha": "6d94b16fd5f4f72bb741f9b900b83179c8ab46c9",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "6d94b16fd5f4f72bb741f9b900b83179c8ab46c9"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "af5bbfb4fa789fd937fc9f2e8cd9ed5d77263ffb",
+        "head": "0753d1149344faf8068280e3ea75ad8fc3e466b1",
+        "builtBase": "af5bbfb4fa789fd937fc9f2e8cd9ed5d77263ffb",
+        "builtHead": "0753d1149344faf8068280e3ea75ad8fc3e466b1"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/linera-io__linera-protocol-3075@cddea29e",
+      "name": "linera-io__linera-protocol-3075",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "c4a8ac301274ccdfc8d0fc87871d557534a8405f",
+      "headSha": "024925dfbeff5daaecdd2cd733cda2825eff1bb7",
+      "mergeBaseSha": "73816f6f8c07708c474394c610f4f32f88be0e7b",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "73816f6f8c07708c474394c610f4f32f88be0e7b"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4ba94545c73b11ca059b9d40ca828afef1200eff",
+        "head": "b82c0b95df278d2d4b41cf3183305d19ffb4a8ec",
+        "builtBase": "4ba94545c73b11ca059b9d40ca828afef1200eff",
+        "builtHead": "b82c0b95df278d2d4b41cf3183305d19ffb4a8ec"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/linera-io__linera-protocol-3151@897f852f",
+      "name": "linera-io__linera-protocol-3151",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "ad508025a9d05552a1c8ac1ba4e71a0062ebb556",
+      "headSha": "8fb32bb8a463a3b19e291426f83833027739f868",
+      "mergeBaseSha": "1468fa524c9d9cdada5334c599252212573f5154",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1468fa524c9d9cdada5334c599252212573f5154"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fdebdfc826532d5d3f0e9092c9338f2d665a541f",
+        "head": "33da660521e6c8666d000608d0c9e6e7f55a5e24",
+        "builtBase": "fdebdfc826532d5d3f0e9092c9338f2d665a541f",
+        "builtHead": "33da660521e6c8666d000608d0c9e6e7f55a5e24"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/linera-io__linera-protocol-4639@951fdbb1",
+      "name": "linera-io__linera-protocol-4639",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "c31634e52d719fdf60694f47812e2f007022ae26",
+      "headSha": "3535ddb83de7dfae5db1732a7f1535031d31380a",
+      "mergeBaseSha": "c31634e52d719fdf60694f47812e2f007022ae26",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "c31634e52d719fdf60694f47812e2f007022ae26"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "51efcc3dbb1784450cdc13684fae704f101781d4",
+        "head": "79ca79c318cc4b73ab90bfb34d808f4eb3b2af33",
+        "builtBase": "51efcc3dbb1784450cdc13684fae704f101781d4",
+        "builtHead": "79ca79c318cc4b73ab90bfb34d808f4eb3b2af33"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/lvgl__lvgl-7602@bf19799e",
+      "name": "lvgl__lvgl-7602",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "5f41926f0414c02f70547c50329969f7fe6a4b8d",
+      "headSha": "a0067e3984cc95bb3ed0dce9abb664ee6a01a199",
+      "mergeBaseSha": "3f13398673c810ce5b3f7b21a7b89753f5e9ba97",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3f13398673c810ce5b3f7b21a7b89753f5e9ba97"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "7c349490071d9609cd6c32155474992def3f5eb1",
+        "head": "10b7c8121618b0aeabf87ae1a5ee170a1674794a",
+        "builtBase": "7c349490071d9609cd6c32155474992def3f5eb1",
+        "builtHead": "10b7c8121618b0aeabf87ae1a5ee170a1674794a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/lvgl__lvgl-8129@2e0fc621",
+      "name": "lvgl__lvgl-8129",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "d2ed41dda1618049a037df2639b9d28578847195",
+      "headSha": "4a57db33476f1caf3e85726a6b1e189c68c1f36b",
+      "mergeBaseSha": "e150297232acb283717f5d22e49e39c80ebb5667",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e150297232acb283717f5d22e49e39c80ebb5667"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "049f99e3ac561e0f92fa502211d2466fdbefbe3a",
+        "head": "3584d424c7b74f87c0fbe683b1fbd2455fc2a527",
+        "builtBase": "049f99e3ac561e0f92fa502211d2466fdbefbe3a",
+        "builtHead": "3584d424c7b74f87c0fbe683b1fbd2455fc2a527"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/lvgl__lvgl-8164@db18f6bb",
+      "name": "lvgl__lvgl-8164",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "344ba9fe99b487f7f5164900679d56acf2d8bff2",
+      "headSha": "9cce37c219f95701fecc44f74595aa9c6effbdba",
+      "mergeBaseSha": "344ba9fe99b487f7f5164900679d56acf2d8bff2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "344ba9fe99b487f7f5164900679d56acf2d8bff2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "939649904268ac356cb3386fd0d4d052b42ea7d0",
+        "head": "b1740e042657ed402a35497c0988127d8030dcc2",
+        "builtBase": "939649904268ac356cb3386fd0d4d052b42ea7d0",
+        "builtHead": "b1740e042657ed402a35497c0988127d8030dcc2"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/lvgl__lvgl-8689@ca963dea",
+      "name": "lvgl__lvgl-8689",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "244b3b996e0b331468cf5967c937029535af569c",
+      "headSha": "e526b2a1faa4672eeb3610b466ecc25b1abb220b",
+      "mergeBaseSha": "2e3e1ea29406128732c97ece9a92814843a051c1",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2e3e1ea29406128732c97ece9a92814843a051c1"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "72f10ef38d629c4ba7f2effd55e614af16433045",
+        "head": "ca2c504a927b0d98562d4e97a6f8823d10d7068e",
+        "builtBase": "72f10ef38d629c4ba7f2effd55e614af16433045",
+        "builtHead": "ca2c504a927b0d98562d4e97a6f8823d10d7068e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-1000@1838712f",
+      "name": "microsoft__typescript-go-1000",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "af2ba7365ad3e2f572ddb95a439b0220eccc06b1",
+      "headSha": "45c0de96a08812aff07974b859bc2327e7fe25ed",
+      "mergeBaseSha": "a06d95b0fe0346851ada34b05d1af901b2e28ab3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "a06d95b0fe0346851ada34b05d1af901b2e28ab3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6d7d316ded2f702846e626878139a7d0580fae00",
+        "head": "ec99389a08256bcd59ed1971a9f194e99755956d",
+        "builtBase": "6d7d316ded2f702846e626878139a7d0580fae00",
+        "builtHead": "ec99389a08256bcd59ed1971a9f194e99755956d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-1354@8f9195b0",
+      "name": "microsoft__typescript-go-1354",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "15def0236938e25ec7822755444f4d58c68045be",
+      "headSha": "ae447d3b2a6db00072941e1992a09981b6096061",
+      "mergeBaseSha": "15def0236938e25ec7822755444f4d58c68045be",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "15def0236938e25ec7822755444f4d58c68045be"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4bcbff34be1df7494f91e86e9ccd7ce83cf70dbe",
+        "head": "5de90268e966ba6f6f6ac9aa1c47355f0148da4e",
+        "builtBase": "4bcbff34be1df7494f91e86e9ccd7ce83cf70dbe",
+        "builtHead": "5de90268e966ba6f6f6ac9aa1c47355f0148da4e"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-1446@1c460eeb",
+      "name": "microsoft__typescript-go-1446",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "a9efe52c52001ea5b49d2ae8d7b0fa32ec8339f3",
+      "headSha": "892b4a3f6b701352047ceb019fc0683ab1146bb3",
+      "mergeBaseSha": "5e6bd1efcfb0020fc221d06492248db780d68eb1",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "5e6bd1efcfb0020fc221d06492248db780d68eb1"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "351e068ab625a8e2d0cabaab58172b8b8b0521c0",
+        "head": "74f8c852b412164ea7b4a43ec5ec39fdbde44e11",
+        "builtBase": "351e068ab625a8e2d0cabaab58172b8b8b0521c0",
+        "builtHead": "74f8c852b412164ea7b4a43ec5ec39fdbde44e11"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-691@6376093c",
+      "name": "microsoft__typescript-go-691",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "da4e121142cd3f891785b573a194b9caaaa01d55",
+      "headSha": "1a84d8d5705df98fd1e1f81d9d3115a7a203509d",
+      "mergeBaseSha": "da4e121142cd3f891785b573a194b9caaaa01d55",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "da4e121142cd3f891785b573a194b9caaaa01d55"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "db8c765be3b16d0422af49f14bd14f5b78008cdc",
+        "head": "dce51a41ac714d60e6b8b99f517e77ed99382e4f",
+        "builtBase": "db8c765be3b16d0422af49f14bd14f5b78008cdc",
+        "builtHead": "dce51a41ac714d60e6b8b99f517e77ed99382e4f"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-698@bc54e956",
+      "name": "microsoft__typescript-go-698",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "3a3ff237cf7ad91bcdb604271f6135762aed9365",
+      "headSha": "100dbc5127e723c4108efc02a179d9aec5fce32a",
+      "mergeBaseSha": "8a218b02a52b13d0ca8264a4c897c6dbd0b2b4d5",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8a218b02a52b13d0ca8264a4c897c6dbd0b2b4d5"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "ce133fe3f8d8e8dfcf1a41013ecc175d67ae3169",
+        "head": "d9d6d0a1aadee47d0c8c07419d883c2e456cbbe4",
+        "builtBase": "ce133fe3f8d8e8dfcf1a41013ecc175d67ae3169",
+        "builtHead": "d9d6d0a1aadee47d0c8c07419d883c2e456cbbe4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__typescript-go-831@d5ba29eb",
+      "name": "microsoft__typescript-go-831",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "bc3195e0f2727d11a48ed9fc61f37a90c9b7deb4",
+      "headSha": "b970689fe86e0b6ef4f5285b18343ddf16b294eb",
+      "mergeBaseSha": "d851a61fc472fd4e50f0d23b84bd6f102bec3a6e",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "d851a61fc472fd4e50f0d23b84bd6f102bec3a6e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "85e7f310959f0d69061adae3c5a017e8405ae465",
+        "head": "f461dbf364ef7a2193fd2a7d094809c25e94fac5",
+        "builtBase": "85e7f310959f0d69061adae3c5a017e8405ae465",
+        "builtHead": "f461dbf364ef7a2193fd2a7d094809c25e94fac5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mpv-player__mpv-15828@d0dd229d",
+      "name": "mpv-player__mpv-15828",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "5809d4d1bc54c3a3a32b38c7cf8a6ed90e91f7db",
+      "headSha": "0729afe8d7067f0e4d69000309ec6f3e24ac3926",
+      "mergeBaseSha": "e4b64fba9c5c6ca97189f32c056d05c2b47cebd6",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e4b64fba9c5c6ca97189f32c056d05c2b47cebd6"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "edc1b83fb83734d4c1ce65bce019e7aa22af4975",
+        "head": "5dfaf3b103c7bba4e547ac01c42491f3afafcc74",
+        "builtBase": "edc1b83fb83734d4c1ce65bce019e7aa22af4975",
+        "builtHead": "5dfaf3b103c7bba4e547ac01c42491f3afafcc74"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mpv-player__mpv-16061@103dc26e",
+      "name": "mpv-player__mpv-16061",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+      "headSha": "0b0330fa9d5d70c78f36e1010a3b826fa7046387",
+      "mergeBaseSha": "6c4218252278c582c7a40654c66f8216aac43326",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "6c4218252278c582c7a40654c66f8216aac43326"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6504d04d0d08d44e3a90ca6b1750994ca947e434",
+        "head": "7c2f4e95b3b1d104f32a470bd16d5fba294099a2",
+        "builtBase": "6504d04d0d08d44e3a90ca6b1750994ca947e434",
+        "builtHead": "7c2f4e95b3b1d104f32a470bd16d5fba294099a2"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mpv-player__mpv-16090@139c7080",
+      "name": "mpv-player__mpv-16090",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+      "headSha": "ff45a8103e3c5ec3e786b950b4852c2750de936f",
+      "mergeBaseSha": "a55ae5d6cdba0f96968b56e91a3999db40e31e61",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "a55ae5d6cdba0f96968b56e91a3999db40e31e61"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "695fabf068a8d50ef9e977c9e7587c7ee3620f21",
+        "head": "5b9f7e3d2c32a17313bae34acdbf99bdf004555d",
+        "builtBase": "695fabf068a8d50ef9e977c9e7587c7ee3620f21",
+        "builtHead": "5b9f7e3d2c32a17313bae34acdbf99bdf004555d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mpv-player__mpv-16164@5a4f9bfc",
+      "name": "mpv-player__mpv-16164",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "30869ddb904f800ad1b858ac99c5fb81690f0cb7",
+      "headSha": "dbd327d36fd0dc80ebd6e5517c102a92e31a0836",
+      "mergeBaseSha": "5ba7ee513751dd005379a06fb627303e6fe1b3dd",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "5ba7ee513751dd005379a06fb627303e6fe1b3dd"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4521618366460ee42e30eae4be7f55b29905f399",
+        "head": "835686c43fe26075549821da85dd0cc5c63638e2",
+        "builtBase": "4521618366460ee42e30eae4be7f55b29905f399",
+        "builtHead": "835686c43fe26075549821da85dd0cc5c63638e2"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mrdoob__three.js-30076@5b9e47ca",
+      "name": "mrdoob__three.js-30076",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "1fc010cb7bd1e17d94c1a33ba8dacdf9e34193cb",
+      "headSha": "7388f600209ce8a98f7211cd0e93a170b6e98d61",
+      "mergeBaseSha": "1fc010cb7bd1e17d94c1a33ba8dacdf9e34193cb",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1fc010cb7bd1e17d94c1a33ba8dacdf9e34193cb"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "43b50d9786e370ff09371cc030f0864ee16d26b7",
+        "head": "6cd77faaa67bce76af6e4a2b5be7d3799aff983a",
+        "builtBase": "43b50d9786e370ff09371cc030f0864ee16d26b7",
+        "builtHead": "6cd77faaa67bce76af6e4a2b5be7d3799aff983a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mrdoob__three.js-30750@f8b510b7",
+      "name": "mrdoob__three.js-30750",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "bf4e6fcb64a1d6bdbaf975528595ac6873051641",
+      "headSha": "96ab0720fc65368e32ee3f2389cb192f96d8adff",
+      "mergeBaseSha": "17d0b43abd9b20c7038d161bcaae81479a58c7ce",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "17d0b43abd9b20c7038d161bcaae81479a58c7ce"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "980f61e7105cc380a7512708539bcbd9c54de3f3",
+        "head": "1e1010c1e6b9fc48df3c09adc590aa0dc0b04998",
+        "builtBase": "980f61e7105cc380a7512708539bcbd9c54de3f3",
+        "builtHead": "1e1010c1e6b9fc48df3c09adc590aa0dc0b04998"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mrdoob__three.js-31402@459b88ff",
+      "name": "mrdoob__three.js-31402",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "de413e2112ff1ae80599f145b101354a1476976c",
+      "headSha": "b55b9e97f6d0f5829e4d8fc364949e72b0d9e98c",
+      "mergeBaseSha": "de413e2112ff1ae80599f145b101354a1476976c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "de413e2112ff1ae80599f145b101354a1476976c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "dd8042ac1bcd3d52d8d38aeb51075663e8c0aec0",
+        "head": "c919eb8737b0da7a80d55f70858ca3bdf910eb86",
+        "builtBase": "dd8042ac1bcd3d52d8d38aeb51075663e8c0aec0",
+        "builtHead": "c919eb8737b0da7a80d55f70858ca3bdf910eb86"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-13323@70eaf02b",
+      "name": "n8n-io__n8n-13323",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "aae55fe7ac77594444c3405161555a517902c68b",
+      "headSha": "93216919462181f52d6994f8f20a9a478716545f",
+      "mergeBaseSha": "fa488f15619f798a0360c96492f2928ac661d9ee",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "fa488f15619f798a0360c96492f2928ac661d9ee"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "8baa2d7d461290ef222066df650ccde912f0ffa2",
+        "head": "8f47c89e940fb96ae69f08c852512f4a14a5d695",
+        "builtBase": "8baa2d7d461290ef222066df650ccde912f0ffa2",
+        "builtHead": "8f47c89e940fb96ae69f08c852512f4a14a5d695"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-15057@7eb72f90",
+      "name": "n8n-io__n8n-15057",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "14f59373d2264e97d73474bed5964a6a405d8082",
+      "headSha": "61fc500fee842539e2a5011303147fdf5df0cd96",
+      "mergeBaseSha": "cfea538f1cdb1a3db76915b485fbd315e092217c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "cfea538f1cdb1a3db76915b485fbd315e092217c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5d4300d98fab439e0c5f45421ec4dbfc2672ca70",
+        "head": "98b8a300f90a3ce7b3cb6aa73fa58ce717066e19",
+        "builtBase": "5d4300d98fab439e0c5f45421ec4dbfc2672ca70",
+        "builtHead": "98b8a300f90a3ce7b3cb6aa73fa58ce717066e19"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-15362@41f24fbf",
+      "name": "n8n-io__n8n-15362",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "3eb1c1c783a45a150fa7229d8f2590d3786f58ad",
+      "headSha": "77ece2e572096e6ad267e7f9363ebbf9f8ba46e8",
+      "mergeBaseSha": "131baabb7fc660b00470ff1c5981ca65ee58753d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "131baabb7fc660b00470ff1c5981ca65ee58753d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "047c34039ddbaec6a3d55e2958dabe87a45af7b1",
+        "head": "2240dde49412bd60716eb28f6248494fb3081323",
+        "builtBase": "047c34039ddbaec6a3d55e2958dabe87a45af7b1",
+        "builtHead": "2240dde49412bd60716eb28f6248494fb3081323"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-20188@c3a1dab3",
+      "name": "n8n-io__n8n-20188",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "ef550104cdceb8113381c24fabb63d7e0f6fa6a4",
+      "headSha": "f523897785e1a45484b31c9bb16e66e060553601",
+      "mergeBaseSha": "4c0e19f637821ac4f2a734c74f7e593ee7951694",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "4c0e19f637821ac4f2a734c74f7e593ee7951694"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "831d3ffff0cda86bca0bd9fa8c67841f16fde1d1",
+        "head": "f7a2f4d4883ee733115531f4627a1b64c91511eb",
+        "builtBase": "831d3ffff0cda86bca0bd9fa8c67841f16fde1d1",
+        "builtHead": "f7a2f4d4883ee733115531f4627a1b64c91511eb"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-20210@1d324542",
+      "name": "n8n-io__n8n-20210",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "291a39c87eb2bc228816d02c55a1f6857822006f",
+      "headSha": "ebe680fbcacd9210aa219ab01d98012ac1d6faae",
+      "mergeBaseSha": "c3fff03945869778635d270085122fb01953d3b2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "c3fff03945869778635d270085122fb01953d3b2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "bc638785ea2386ab08c595c95838c85015a6fe64",
+        "head": "e1c1e0fb7e9e351cada7c667769a23e050c966da",
+        "builtBase": "bc638785ea2386ab08c595c95838c85015a6fe64",
+        "builtHead": "e1c1e0fb7e9e351cada7c667769a23e050c966da"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/n8n-io__n8n-20344@f911d0cf",
+      "name": "n8n-io__n8n-20344",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "9627409d223cbff5d8b8a90e796c39b6124a736d",
+      "headSha": "c8d45ad42aebf937a8347aa32a84ca63416bfdd4",
+      "mergeBaseSha": "9627409d223cbff5d8b8a90e796c39b6124a736d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "9627409d223cbff5d8b8a90e796c39b6124a736d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "43b777946ac2247299975a3d1d86b13a24ae8f0d",
+        "head": "bbef77441fb4bbc13ca8deb87f12e4a5270f7d11",
+        "builtBase": "43b777946ac2247299975a3d1d86b13a24ae8f0d",
+        "builtHead": "bbef77441fb4bbc13ca8deb87f12e4a5270f7d11"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/nodejs__node-57691@9b792890",
+      "name": "nodejs__node-57691",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "18b9120435287eafb1865102c6c4dc6a7cff5ede",
+      "headSha": "e8b6c183d46c41b2992c4f5cafceb7f9c6f8710d",
+      "mergeBaseSha": "e57841f87e4cc3f4393a1c14cd8ca71dde11b99e",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e57841f87e4cc3f4393a1c14cd8ca71dde11b99e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "845b7bd58037791efbccdfc44f36cb757ef2877b",
+        "head": "061bada38f8dd7db0b5ff3a2e764e42d2a2f73fb",
+        "builtBase": "845b7bd58037791efbccdfc44f36cb757ef2877b",
+        "builtHead": "061bada38f8dd7db0b5ff3a2e764e42d2a2f73fb"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-10135@5dcee9ca",
+      "name": "ollama__ollama-10135",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "c2f5d6662ba696b94455eaaa298a797d56fdca5c",
+      "headSha": "0b52f186fb4af8fa7d4f6a71967f922eb6b69cdc",
+      "mergeBaseSha": "16fca86c4a6c43e2752062e7f82d20f00d9fd292",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "16fca86c4a6c43e2752062e7f82d20f00d9fd292"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d3d8f10b2b34608c5aca03de60feb86917f6f9c4",
+        "head": "7e76eb284ff4dd0a7c7464dccb0ae6e498325096",
+        "builtBase": "d3d8f10b2b34608c5aca03de60feb86917f6f9c4",
+        "builtHead": "7e76eb284ff4dd0a7c7464dccb0ae6e498325096"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-12185@b3aa4e08",
+      "name": "ollama__ollama-12185",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "92b96d54efd6b49322b7cf046f9a0dc16b00cd0a",
+      "headSha": "b6002f6b6c69370f8c18a9e6c1cafa8463273a6b",
+      "mergeBaseSha": "17a023f34b9ec81afd39aca36f3dcd488c4d48ea",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "17a023f34b9ec81afd39aca36f3dcd488c4d48ea"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c799e137a6d74dd989089226e1d223aef1a74502",
+        "head": "5ca1c22e97356e135e37c358fb59450eca7f63e4",
+        "builtBase": "c799e137a6d74dd989089226e1d223aef1a74502",
+        "builtHead": "5ca1c22e97356e135e37c358fb59450eca7f63e4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-8938@5ef27881",
+      "name": "ollama__ollama-8938",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "f53f4198c36d0a943de598ad91a20baa9481c5c5",
+      "headSha": "c2d08dd67a9bcf15e52a2f15b1fad888afffcd32",
+      "mergeBaseSha": "ed443a03930a10bec6182c55091f0880baa1e620",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ed443a03930a10bec6182c55091f0880baa1e620"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4f73e108d922ef0b3fa3cd8e44971ef34108e174",
+        "head": "9751d12c8dfe3ac36e8bcf8d8a736fd7547a5ad7",
+        "builtBase": "4f73e108d922ef0b3fa3cd8e44971ef34108e174",
+        "builtHead": "9751d12c8dfe3ac36e8bcf8d8a736fd7547a5ad7"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-9379@206da20c",
+      "name": "ollama__ollama-9379",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "2db96c18e72289928e45704a77f96f7bdfaee30f",
+      "headSha": "af112d6365207a5a3f65136c7057d6bb98203c35",
+      "mergeBaseSha": "2db96c18e72289928e45704a77f96f7bdfaee30f",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2db96c18e72289928e45704a77f96f7bdfaee30f"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "cc05bc097257fd7450bdea8446f7b247ad7c5c12",
+        "head": "071710353be7eea7bb493900c81ae53041a792f4",
+        "builtBase": "cc05bc097257fd7450bdea8446f7b247ad7c5c12",
+        "builtHead": "071710353be7eea7bb493900c81ae53041a792f4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-9654@56ed0571",
+      "name": "ollama__ollama-9654",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "56dc316a57f07fbed80723d1ecd589da0906018e",
+      "headSha": "498792c9be023ebfdaa1e0dbc6ac85c0ff8c75b1",
+      "mergeBaseSha": "aee28501b592e2fe98863212913ffa8fb22e1ca0",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "aee28501b592e2fe98863212913ffa8fb22e1ca0"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0ae0fec30bf6c2547112475f71dbfc59987fd3db",
+        "head": "8249f5b78c9fe19b50a3089900ce733173112229",
+        "builtBase": "0ae0fec30bf6c2547112475f71dbfc59987fd3db",
+        "builtHead": "8249f5b78c9fe19b50a3089900ce733173112229"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ollama__ollama-9746@0a08b69a",
+      "name": "ollama__ollama-9746",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "4ea4d2b18952a104a47079df00ac0bfe4706f3aa",
+      "headSha": "2ed14f2a28867c017426b41a9ff6bfc52c981a43",
+      "mergeBaseSha": "543240fb5f0eb1a5443fd2b45f857e7dd4dcbfed",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "543240fb5f0eb1a5443fd2b45f857e7dd4dcbfed"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "84713dff4d1778318decee01404b85ad70da1789",
+        "head": "3692364561f3c71c57d5564952a2f174e15215ae",
+        "builtBase": "84713dff4d1778318decee01404b85ad70da1789",
+        "builtHead": "3692364561f3c71c57d5564952a2f174e15215ae"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/openai__codex-3212@9db40c8e",
+      "name": "openai__codex-3212",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "d6182becbe155776b159270fe4a5e88d607f0c5e",
+      "headSha": "8c952af20fe791cc0c5d0a59089d3329968b4373",
+      "mergeBaseSha": "3f40fbc0a886ef54f494a1ff5963971bc42c036a",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3f40fbc0a886ef54f494a1ff5963971bc42c036a"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "2fb0e683f65f73d866d1634f566c7116ba6ddccc",
+        "head": "c5851a12be0b4ecb57fa14cf6d35c4d43e21a25d",
+        "builtBase": "2fb0e683f65f73d866d1634f566c7116ba6ddccc",
+        "builtHead": "c5851a12be0b4ecb57fa14cf6d35c4d43e21a25d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ppy__osu-31232@9de4960c",
+      "name": "ppy__osu-31232",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "605979e790eb0aabdf5e8d6c8a182974697bc3a9",
+      "headSha": "87697a72e333d1468a35d4a3fec388319cc16e2a",
+      "mergeBaseSha": "78e9463f63873c6c2b2324f29f24a934242539de",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "78e9463f63873c6c2b2324f29f24a934242539de"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5c0f136930f1c0dd0466af79a78a2909a38ee512",
+        "head": "f30baa7cc09deab981cac51b744f9937159641b4",
+        "builtBase": "5c0f136930f1c0dd0466af79a78a2909a38ee512",
+        "builtHead": "f30baa7cc09deab981cac51b744f9937159641b4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/ppy__osu-33423@8f5dbba9",
+      "name": "ppy__osu-33423",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "19e9bffc11f026ebff2dc2831668e606c701f71f",
+      "headSha": "748ab3d4863f6ea4bf6a3fffccb50e5cd616937b",
+      "mergeBaseSha": "366f2469efcddd825baef8c41e03099bab9e0acb",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "366f2469efcddd825baef8c41e03099bab9e0acb"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0ba3ce2e700d37a0ef8ea79ed48ff13a110b8b92",
+        "head": "484d5ab36073f67befa4ac19b5c4088f76c5463d",
+        "builtBase": "0ba3ce2e700d37a0ef8ea79ed48ff13a110b8b92",
+        "builtHead": "484d5ab36073f67befa4ac19b5c4088f76c5463d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/sveltejs__svelte-15250@52c8b0ef",
+      "name": "sveltejs__svelte-15250",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e4987d2a9f36b33f3934725723f9c4cc998ef278",
+      "headSha": "4bf1f915d3374721f8a1655b1a151c1c423b1a3c",
+      "mergeBaseSha": "c4d4349d0a89c9588e06c8ccc142ef2063582f55",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "c4d4349d0a89c9588e06c8ccc142ef2063582f55"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c3c0ec627450fb126c39f691cf563bf44c30f4a1",
+        "head": "41ca20eb67745af28d806a0833f8d4728db6521a",
+        "builtBase": "c3c0ec627450fb126c39f691cf563bf44c30f4a1",
+        "builtHead": "41ca20eb67745af28d806a0833f8d4728db6521a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/sveltejs__svelte-16232@00bd9054",
+      "name": "sveltejs__svelte-16232",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "2af7ba21563f1b7f011ffa9f0c08e4acb473eef3",
+      "headSha": "44bec4c8b172a47ff300f754463555bbb694bb05",
+      "mergeBaseSha": "2af7ba21563f1b7f011ffa9f0c08e4acb473eef3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "2af7ba21563f1b7f011ffa9f0c08e4acb473eef3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "66326636c29fe31b5e6f31de80371c9605e67317",
+        "head": "e1e1feb22c6e2d835b52f4525ac17680d959e688",
+        "builtBase": "66326636c29fe31b5e6f31de80371c9605e67317",
+        "builtHead": "e1e1feb22c6e2d835b52f4525ac17680d959e688"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/symfony__symfony-60342@c3c98365",
+      "name": "symfony__symfony-60342",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "0b4d21c3f91dd2cd2cc49739ab31a1457cf001ea",
+      "headSha": "2b9721f04744fb213808f754ac98cd563384b3e5",
+      "mergeBaseSha": "47745f322e3a6c36b57f6ba686dfca9db6eae7e2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "47745f322e3a6c36b57f6ba686dfca9db6eae7e2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "33294f369c216aae944303e7ceeddc1daa893ba8",
+        "head": "067e0a560bb1efe9bf7703c5e1feb16194b21e80",
+        "builtBase": "33294f369c216aae944303e7ceeddc1daa893ba8",
+        "builtHead": "067e0a560bb1efe9bf7703c5e1feb16194b21e80"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/symfony__symfony-60956@0c1d10c8",
+      "name": "symfony__symfony-60956",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e06b10c4f0088e2966c510d335531f7daed61915",
+      "headSha": "647870557cf275de666557e552e11e9a295b9d4a",
+      "mergeBaseSha": "e06b10c4f0088e2966c510d335531f7daed61915",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "e06b10c4f0088e2966c510d335531f7daed61915"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "790e5cbadf276d007da7fc7d2a65bbb3ab99bf6c",
+        "head": "74434f7ef03c7874d1c3ced03610f538904ba2da",
+        "builtBase": "790e5cbadf276d007da7fc7d2a65bbb3ab99bf6c",
+        "builtHead": "74434f7ef03c7874d1c3ced03610f538904ba2da"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/symfony__symfony-61601@934001d9",
+      "name": "symfony__symfony-61601",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "a57c946d3b8d477964da5303fa693a9b7c4e6227",
+      "headSha": "942f8fa5384d34f2b5c9bd1b73a169d8fd049fd5",
+      "mergeBaseSha": "7d2e564ffdd807d31c5e60c174adc7930ee8ddcd",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "7d2e564ffdd807d31c5e60c174adc7930ee8ddcd"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "4e6ebefc3b5bd8df9ec06cc53a06a2b54a2cb980",
+        "head": "1ad5e1b1e9134f256d7e5236223fe3ee0d04aeec",
+        "builtBase": "4e6ebefc3b5bd8df9ec06cc53a06a2b54a2cb980",
+        "builtHead": "1ad5e1b1e9134f256d7e5236223fe3ee0d04aeec"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/timescale__timescaledb-7632@a32eacb1",
+      "name": "timescale__timescaledb-7632",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "9382a90adac7a889c1df0d821a12ba1d29c8dcba",
+      "headSha": "5ab9b1295e6bdce4834005e3738074b3a844eeb4",
+      "mergeBaseSha": "8479ba738aa1d4848c3efef06c4cfc8d7a95802c",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "8479ba738aa1d4848c3efef06c4cfc8d7a95802c"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "5b00252c63070be252af336aa9b37d312c0a58cb",
+        "head": "ecd92a0137fb604c0b8b178ca466eb238d5f82d5",
+        "builtBase": "5b00252c63070be252af336aa9b37d312c0a58cb",
+        "builtHead": "ecd92a0137fb604c0b8b178ca466eb238d5f82d5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/timescale__timescaledb-7915@4004964c",
+      "name": "timescale__timescaledb-7915",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "d0fe7370082dbc57d391d5168705909809bd880f",
+      "headSha": "7148e5c7d90c9da819a8ca77b79664fac300ca60",
+      "mergeBaseSha": "7173276f09a1bda9c9f50394a4d1a65a0346e1c3",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "7173276f09a1bda9c9f50394a4d1a65a0346e1c3"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "08310fc946721acb421b9b63802818700ea9f082",
+        "head": "151906a96bd1da6ab79aff79350cc3d64e6952d1",
+        "builtBase": "08310fc946721acb421b9b63802818700ea9f082",
+        "builtHead": "151906a96bd1da6ab79aff79350cc3d64e6952d1"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/timescale__timescaledb-7935@3f04c60b",
+      "name": "timescale__timescaledb-7935",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "17fb43d888dbe3b328da6b08b310bc83d3167d39",
+      "headSha": "2568b018719e25f262255626c474a461da38fc21",
+      "mergeBaseSha": "3ff93258224b64c22911c92e69167df590d10cbb",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "3ff93258224b64c22911c92e69167df590d10cbb"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6ec4b79b29a216559a76bf3edf35592c3167816e",
+        "head": "d7b4a77b5fe37dfeca7d2b6c5ad8c11f1e06066d",
+        "builtBase": "6ec4b79b29a216559a76bf3edf35592c3167816e",
+        "builtHead": "d7b4a77b5fe37dfeca7d2b6c5ad8c11f1e06066d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/timescale__timescaledb-8138@0a9a7db9",
+      "name": "timescale__timescaledb-8138",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "unverified",
+        "spdx": "NOASSERTION"
+      },
+      "baseSha": "09513b064bc823c5525d82c242d9affe0a308e17",
+      "headSha": "f84194cb231ad14a2f03b5ead75e99d64826972f",
+      "mergeBaseSha": "709131f3d5aafb41493ab142c4fc7d8b06715391",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "709131f3d5aafb41493ab142c4fc7d8b06715391"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "ffe1b609818b46e4d533edf99790b6ecdff721ee",
+        "head": "60853dfebddcf8f060eaf85437bfbef15c86217b",
+        "builtBase": "ffe1b609818b46e4d533edf99790b6ecdff721ee",
+        "builtHead": "60853dfebddcf8f060eaf85437bfbef15c86217b"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/unionlabs__union-3414@3f7fdc45",
+      "name": "unionlabs__union-3414",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "efab2bedc6beb4e1bb01906cba9e0dabd3072f13",
+      "headSha": "d840723278f1d4cecc02ac540385725a1c54ca84",
+      "mergeBaseSha": "1d8a1fee19472dc91a17a453fe463cfe3337dd8e",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "1d8a1fee19472dc91a17a453fe463cfe3337dd8e"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d24a94537357fc55d7330bf7dd5b6e029a73eb0b",
+        "head": "28bc903490597e52741ca189ef8820ee58949b8c",
+        "builtBase": "d24a94537357fc55d7330bf7dd5b6e029a73eb0b",
+        "builtHead": "28bc903490597e52741ca189ef8820ee58949b8c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/valkey-io__valkey-1485@4d411ad4",
+      "name": "valkey-io__valkey-1485",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "7fa784a27562940d2995fc6e3d6938940d81e4b6",
+      "headSha": "8b2137d6cd7c8b898352b8bcb035402958d92707",
+      "mergeBaseSha": "980a80115908d19c97b241bb9d62ec4f4fb18b2d",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "980a80115908d19c97b241bb9d62ec4f4fb18b2d"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "67ddac2cf1d275b7a0c7c4d45b9d50f214cef6cf",
+        "head": "44f875ef0bfb73587ce573c44817987df2b155ff",
+        "builtBase": "67ddac2cf1d275b7a0c7c4d45b9d50f214cef6cf",
+        "builtHead": "44f875ef0bfb73587ce573c44817987df2b155ff"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/valkey-io__valkey-1651@a99c7718",
+      "name": "valkey-io__valkey-1651",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "78bcc0a2cfb33ec940bfb14cb12ea10efa3af93a",
+      "headSha": "ecb3abd53e891861ce996506689336b6442ec8fb",
+      "mergeBaseSha": "12ec3d59327166e112cd8e4650cbdf978adbaaf2",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "12ec3d59327166e112cd8e4650cbdf978adbaaf2"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d2d491b21238494193dcb199cd67254be0d47aed",
+        "head": "2b0294e38612f5d847051a1c787d4181c01f84f8",
+        "builtBase": "d2d491b21238494193dcb199cd67254be0d47aed",
+        "builtHead": "2b0294e38612f5d847051a1c787d4181c01f84f8"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/valkey-io__valkey-1889@0af12ea7",
+      "name": "valkey-io__valkey-1889",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "ea2e48a807e1d4a1a5a684a2a699eda1934a0c6f",
+      "headSha": "36f37c0bafa72c091a9a3725b9a026a056130892",
+      "mergeBaseSha": "06990c2e6360c90e5e0b1b5aa4e7708b13955851",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "06990c2e6360c90e5e0b1b5aa4e7708b13955851"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "a8333773ca2d8f08c7f42ad34044c4b5045af81a",
+        "head": "cf046496329e11e0d72753f0a448457b1a530a60",
+        "builtBase": "a8333773ca2d8f08c7f42ad34044c4b5045af81a",
+        "builtHead": "cf046496329e11e0d72753f0a448457b1a530a60"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/valkey-io__valkey-2059@72624f7f",
+      "name": "valkey-io__valkey-2059",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "b5c7743971df5476acbdbbbd3b378496e885e1e4",
+      "headSha": "1379171021c18b009fa02c42088e82caf0e33203",
+      "mergeBaseSha": "b5c7743971df5476acbdbbbd3b378496e885e1e4",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "b5c7743971df5476acbdbbbd3b378496e885e1e4"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fcc5a658c93efce4bc170ab63eb296023b19482a",
+        "head": "c9f7b66a5ffe1623829df26b4f998ad360a7f95c",
+        "builtBase": "fcc5a658c93efce4bc170ab63eb296023b19482a",
+        "builtHead": "c9f7b66a5ffe1623829df26b4f998ad360a7f95c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/valkey-io__valkey-2141@9d7f4179",
+      "name": "valkey-io__valkey-2141",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "23fb9f2b5162752fbf42d892c6ff311a346565b8",
+      "headSha": "866fa4a4c9635bae6f0a6b59a78954083ff5ff1a",
+      "mergeBaseSha": "374718b2a365ca69f715d542709b7d71540b1387",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "374718b2a365ca69f715d542709b7d71540b1387"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "f15053550fc9a5b0d3fd3fa9ad3e015297d7cd52",
+        "head": "91363f5f294b8f96ce1450c2b8819651ab502c1c",
+        "builtBase": "f15053550fc9a5b0d3fd3fa9ad3e015297d7cd52",
+        "builtHead": "91363f5f294b8f96ce1450c2b8819651ab502c1c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/vllm-project__vllm-12608@f45ab5ec",
+      "name": "vllm-project__vllm-12608",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "7a8987dac5f0ed0c798a73e8b4ec8f5e640bc63a",
+      "headSha": "075f1b5b8015e343f25b45d36ccff571cb39739b",
+      "mergeBaseSha": "dd66fd2b01e1195b7ccc8ffcd4b5d49ff1946a56",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "dd66fd2b01e1195b7ccc8ffcd4b5d49ff1946a56"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0b00c0fd48ddc8202eb76f433c4411a9da73ee53",
+        "head": "6eb110fde2d5644b6543fb046d6cc856ca4b6af1",
+        "builtBase": "0b00c0fd48ddc8202eb76f433c4411a9da73ee53",
+        "builtHead": "6eb110fde2d5644b6543fb046d6cc856ca4b6af1"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/vllm-project__vllm-15998@09941200",
+      "name": "vllm-project__vllm-15998",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "5e125e74d1b9739025ccb81106e28ce9b0dd4ea5",
+      "headSha": "a800045d0e2473ce173865edb83967cd210dec4c",
+      "mergeBaseSha": "5e125e74d1b9739025ccb81106e28ce9b0dd4ea5",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "5e125e74d1b9739025ccb81106e28ce9b0dd4ea5"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "efed94bc73968cba7b69f68cd4fb3ad8ef3e296b",
+        "head": "a13090da52e64ecaca5c698e29859327849b45bb",
+        "builtBase": "efed94bc73968cba7b69f68cd4fb3ad8ef3e296b",
+        "builtHead": "a13090da52e64ecaca5c698e29859327849b45bb"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/vllm-project__vllm-17425@3c512bd9",
+      "name": "vllm-project__vllm-17425",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "d8037867313eef09779b265ea4bace76d2d118ba",
+      "headSha": "134705b1474ddcfac234a0a01313874f7c8b59bc",
+      "mergeBaseSha": "7489ec0bab2904dcc4001af59a942a16756fdbbc",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "7489ec0bab2904dcc4001af59a942a16756fdbbc"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "0f624db917e3a9a98e9aa93032bbf0c9d6d6f2ce",
+        "head": "d3d51c5817eb66388fb82813995c93f5a6cefbff",
+        "builtBase": "0f624db917e3a9a98e9aa93032bbf0c9d6d6f2ce",
+        "builtHead": "d3d51c5817eb66388fb82813995c93f5a6cefbff"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/vllm-project__vllm-19756@c811bca8",
+      "name": "vllm-project__vllm-19756",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "c3bf9bad11193ee684ed6083b6692d0b5bf2bac7",
+      "headSha": "3fe18934d7f33b98812d7402463fe171c24efc77",
+      "mergeBaseSha": "ca94d7fa007d113f2daf74e2f2278c03be676e93",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "ca94d7fa007d113f2daf74e2f2278c03be676e93"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6edf4b9fafffa115b9323b51171f96906f238384",
+        "head": "56afe9f967eb0fdf5b0e9673470875773e9d4d5d",
+        "builtBase": "6edf4b9fafffa115b9323b51171f96906f238384",
+        "builtHead": "56afe9f967eb0fdf5b0e9673470875773e9d4d5d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/vllm-project__vllm-24425@006f6930",
+      "name": "vllm-project__vllm-24425",
+      "split": "dev",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "f4962a6d55a340ebb569d377c842deff7611d8f7",
+      "headSha": "6217b0c46176fa51196d862e02e1b3722eefa4de",
+      "mergeBaseSha": "f4962a6d55a340ebb569d377c842deff7611d8f7",
+      "mergeBaseFrom": "git",
+      "mergeBases": [
+        "f4962a6d55a340ebb569d377c842deff7611d8f7"
+      ],
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "627c08d296b4a5e8c17d2ad39854776132d9f7dc",
+        "head": "128b4916b06ececb2131aff75462d9075c03b0b9",
+        "builtBase": "627c08d296b4a5e8c17d2ad39854776132d9f7dc",
+        "builtHead": "128b4916b06ececb2131aff75462d9075c03b0b9"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    }
+  ]
+}

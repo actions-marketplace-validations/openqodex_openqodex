@@ -1,0 +1,83 @@
+{
+  "note": "Three saved reviews (one tool name, openqodex-library-r1) of the three pull requests golden.json describes, in report.json's finding shape. golden.json is a golden file written for this fixture in Martian's shape; no Martian pull request is in it. benchmark/test/martian-board.test.mjs converts these reviews, and benchmark_data.json beside this file is what the converter writes for them. recorded/ holds what Martian's pipeline wrote for them with a stand-in judge.",
+  "cases": {
+    "oq-fixture__shop-11": {
+      "status": "complete",
+      "findings": [
+        {
+          "file_path": "src/checkout.ts",
+          "line_number": 40,
+          "line_end": 46,
+          "severity": "major",
+          "category": "bug",
+          "confidence": 0.9,
+          "title": "Coupon can be applied twice",
+          "problem": "The cart total is read before the discount lock is taken. Also, the refund handler logs the full card number.",
+          "consequence": "Both put customers at risk.",
+          "fix": "Take the discount lock before reading the total, and mask the card number before logging."
+        },
+        {
+          "file_path": "src/checkout.ts",
+          "line_number": 41,
+          "line_end": 41,
+          "severity": "minor",
+          "category": "bug",
+          "confidence": 0.8,
+          "title": "Discount lock taken after the total is read",
+          "problem": "The cart total is read before the discount lock is taken.",
+          "consequence": "One coupon can be applied twice.",
+          "fix": "Take the lock first."
+        }
+      ],
+      "outside_change": []
+    },
+    "oq-fixture__shop-12": {
+      "status": "complete",
+      "findings": [
+        {
+          "file_path": "src/orders/page.py",
+          "line_number": 12,
+          "line_end": 12,
+          "severity": "major",
+          "category": "bug",
+          "confidence": 0.9,
+          "title": "First page of orders is skipped",
+          "problem": "The pagination offset multiplies the page number without subtracting one.",
+          "consequence": "The first page of orders is never shown.",
+          "fix": "Subtract one from the page number before multiplying."
+        },
+        {
+          "file_path": "src/orders/page.py",
+          "line_number": 3,
+          "line_end": 3,
+          "severity": "nitpick",
+          "category": "style",
+          "confidence": 0.75,
+          "title": "Vague constant name",
+          "problem": "The constant is named VALUE.",
+          "consequence": "A reader cannot tell what it holds.",
+          "fix": "Name it PAGE_SIZE."
+        }
+      ],
+      "outside_change": []
+    },
+    "oq-fixture__ledger-7": {
+      "status": "incomplete",
+      "findings": [],
+      "outside_change": [
+        {
+          "file_path": "db/migrate/archive.rb",
+          "line_number": 8,
+          "line_end": 15,
+          "severity": "major",
+          "category": "bug",
+          "confidence": 0.85,
+          "title": "Archive migration loses rows",
+          "problem": "The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty.",
+          "consequence": "Archived history is lost for good.",
+          "fix": "Move the rows in one transaction, and add a test for an empty ledger."
+        }
+      ]
+    }
+  }
+}

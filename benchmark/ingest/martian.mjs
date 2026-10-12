@@ -1,6 +1,11 @@
 // Martian's offline Code Review Bench into the martian suite and its split.
 //
 //   node benchmark/ingest/martian.mjs [--offline]
+//   node benchmark/ingest/martian.mjs --freeze-merge-base <name>
+//
+// --freeze-merge-base freezes the merge base of a case whose base and head
+// have more than one, as for AACR (benchmark/ingest/aacr.mjs,
+// docs/benchmark.md "Two merge bases").
 //
 // Reads the golden files pinned in benchmark/outside/boards.json (the cache
 // keeps them under $OPENQODEX_BENCH_CACHE/raw/martian/<path>), and only from
@@ -62,7 +67,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
 import { cacheRoot, commitAnswer, licenceExclusion, licenceNote, licenceRecord, pullAnswer, repoAnswer } from "../lib/licence.mjs";
-import { HASHED, MARTIAN_SEVERITY, SUITES, entryHash, martianTruth, realCaseId, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
+import { HASHED, MARTIAN_SEVERITY, SUITES, entryHash, freezeMergeBase, martianTruth, realCaseId, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
 import { HEAD_GONE, UnionFind, fetchPinned } from "./aacr.mjs";
 
 export const SPLIT_NAME = "martian-v1";
@@ -321,9 +326,20 @@ export function writeMartianIngest(result, { root = benchRoot } = {}) {
 }
 
 async function main(args) {
+  const usage = "usage: node benchmark/ingest/martian.mjs [--offline]\n       node benchmark/ingest/martian.mjs --freeze-merge-base <name>";
+  if (args[0] === "--freeze-merge-base") {
+    if (args.length !== 2) {
+      console.error(usage);
+      return 2;
+    }
+    const r = freezeMergeBase("martian", args[1]);
+    if (r.frozen) console.log(`${r.name}: git finds ${r.bases.length} merge bases (${r.bases.join(", ")}); froze ${r.mergeBaseSha}, the first by the rule: ${r.rule}. ${r.from} is now ${r.to}.`);
+    else console.log(`${r.name}: nothing frozen; ${r.mergeBaseSha ? `the entry already freezes ${r.mergeBaseSha}` : "git finds one merge base"}. The id stays ${r.from}.`);
+    return 0;
+  }
   const unknown = args.filter((a) => a !== "--offline");
   if (unknown.length > 0) {
-    console.error("usage: node benchmark/ingest/martian.mjs [--offline]");
+    console.error(usage);
     return 2;
   }
   const boards = JSON.parse(readFileSync(BOARDS_PATH, "utf8"));
