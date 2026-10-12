@@ -318,13 +318,13 @@ describe("a held-out case runs before a release", () => {
     expect(r.stderr).toMatch(/held out/);
   });
 
-  it("never indexes a smoke run", () => {
+  it("never indexes a smoke run", async () => {
     const runFolder = join(tempDir("oq-outside-smoke-index-"), "2026-10-11-v0.12.0-planted-review-server");
     write(join(runFolder, "manifest.json"), JSON.stringify({ version: 3, started_at: "2026-10-11T10:00:00.000Z", smoke: true, build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false }, configs: [CONFIG], repeat: 1, planned: 1, cases: ["flask-path-traversal"], ended: { how: "finished", why: null } }));
     write(join(runFolder, "cases", "flask-path-traversal.json"), readFileSync(join(casesRoot, "flask-path-traversal", "case.json"), "utf8"));
     write(join(runFolder, "score.json"), JSON.stringify({ byConfig: {} }));
     const runs = tempDir("oq-outside-smoke-runs-");
-    expect(() => publishRun(runFolder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-outside-smoke-asset-") })).toThrow(/smoke run/);
+    await expect(publishRun(runFolder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-outside-smoke-asset-") })).rejects.toThrow(/smoke run/);
     expect(readdirSync(runs)).toEqual([]);
   });
 });

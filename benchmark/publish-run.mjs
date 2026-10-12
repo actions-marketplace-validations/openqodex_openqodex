@@ -40,7 +40,8 @@
 // 4. A reviewed repository's code leaves when its licence does not allow it:
 //    a case whose licence class is not permissive has its brief and trace
 //    left out (they carry the code by design), and every other packaged file
-//    is searched for the lines of that case's repository from the cache
+//    is searched for the lines of the head and merge base trees the review
+//    read, the two commits materialised.json names in the cache
 //    ($OPENQODEX_BENCH_CACHE/cases/<case hash>.git). The search is for each
 //    line anywhere in the decoded text, whitespace normalised, so a line
 //    behind a file name and line number, after a diff marker or inside a
@@ -48,7 +49,7 @@
 //    characters, or one bare name, counts as a whole decoded line only,
 //    with a search, line-number or diff prefix removed, since inside other
 //    text it would match unrelated words). A hit, or a missing repository,
-//    refuses the publish.
+//    record or commit, refuses the publish.
 // 5. A legacy run is published from a folder that is not the committed one:
 //    every file must match the blob the recipe's commit holds.
 // 6. A legacy run is published without the scorer that wrote its numbers:
@@ -65,7 +66,10 @@
 //    machine: such a case is for private runs only (lib/licence.mjs
 //    publishRefusal), and the run is refused before anything is packaged,
 //    with every such case named.
-import { execFileSync, spawnSync } from "node:child_process";
+// 10. A large repository exhausts memory (issue 186): the run is indexed
+//    once, the two trees stream one blob at a time, and a tree line is kept
+//    only when the run holds it.
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -238,31 +242,119 @@ function modelValues(env, runId, manifest) {
   return values;
 }
 
-// The lines of a case's repository from the cache, for a case whose code may
-// not be published.
-function codeLines(c, env) {
+// Streams each line of the head and merge base trees the reviewer saw to
+// visit. materialised.json pins the cache's two commits, whose trees mirror
+// upstream. Shared blobs are read once, one blob at a time. No line is kept.
+async function codeLines(c, env, visit) {
   const cache = env.OPENQODEX_BENCH_CACHE ?? join(homedir(), ".cache", "openqodex-bench");
   const repo = join(cache, "cases", `${c.record.hash}.git`);
   if (!c.record.hash || !existsSync(repo)) throw new Error(`${c.name} is ${c.licence} and its repository is not in the cache (${join("$OPENQODEX_BENCH_CACHE", "cases", `${c.record.hash ?? "<hash>"}.git`)}), so its code cannot be looked for; materialise the case first`);
-  const objects = execFileSync("git", ["--git-dir", repo, "rev-list", "--objects", "--all"], { encoding: "utf8", maxBuffer: 1 << 30 })
-    .split("\n")
-    .map((l) => l.split(" ")[0])
-    .filter(Boolean);
-  const batch = execFileSync("git", ["--git-dir", repo, "cat-file", "--batch"], { input: `${objects.join("\n")}\n`, maxBuffer: 1 << 30 });
-  const lines = new Set();
-  let at = 0;
-  while (at < batch.length) {
-    const nl = batch.indexOf(0x0a, at);
-    const [, type, size] = batch.subarray(at, nl).toString("utf8").split(" ");
-    const body = batch.subarray(nl + 1, nl + 1 + Number(size));
-    at = nl + 1 + Number(size) + 1;
-    if (type !== "blob" || body.includes(0)) continue;
-    for (const line of body.toString("utf8").split("\n")) {
-      const t = normalise(line);
-      if (!carriesNoCode(t)) lines.add(t);
-    }
+  let record;
+  try {
+    record = readJson(join(repo, "materialised.json"));
+  } catch {
+    throw new Error(`refused: ${c.name}: its materialised record cannot be read, so its code cannot be looked for; materialise the case first`);
   }
-  return lines;
+  for (const kind of ["head", "base"]) {
+    if (typeof record?.[kind] !== "string" || !/^[a-f0-9]{40}$/.test(record[kind])) throw new Error(`refused: ${c.name}: its materialised record lacks a valid ${kind} commit, so its code cannot be looked for; materialise the case first`);
+  }
+  const start = (args) => {
+    const child = spawn("git", ["--git-dir", repo, ...args], { stdio: ["pipe", "pipe", "ignore"] });
+    const done = new Promise((resolve) => {
+      child.once("error", () => resolve(false));
+      child.once("close", (code) => resolve(code === 0));
+    });
+    // A broken batch pipe is reported by the checked process exit below.
+    child.stdin.on("error", () => {});
+    return { child, done };
+  };
+  const batch = start(["cat-file", "--batch"]);
+  const chunks = batch.child.stdout[Symbol.asyncIterator]();
+  let chunk = Buffer.alloc(0);
+  let offset = 0;
+  const refill = async () => {
+    if (offset < chunk.length) return;
+    const next = await chunks.next();
+    if (next.done) throw new Error("incomplete blob");
+    chunk = next.value;
+    offset = 0;
+  };
+  const read = async (size) => {
+    const body = Buffer.allocUnsafe(size);
+    let at = 0;
+    while (at < size) {
+      await refill();
+      const count = Math.min(size - at, chunk.length - offset);
+      chunk.copy(body, at, offset, offset + count);
+      at += count;
+      offset += count;
+    }
+    return body;
+  };
+  const header = async () => {
+    let text = "";
+    while (true) {
+      await refill();
+      const end = chunk.indexOf(10, offset);
+      if (end >= 0) {
+        text += chunk.toString("ascii", offset, end);
+        offset = end + 1;
+        return text;
+      }
+      text += chunk.toString("ascii", offset);
+      offset = chunk.length;
+      if (text.length > 100) throw new Error("invalid blob header");
+    }
+  };
+  const seen = new Set();
+  try {
+    for (const kind of ["head", "base"]) {
+      const tree = start(["ls-tree", "-r", "-z", `${record[kind]}^{commit}`]);
+      tree.child.stdin.end();
+      try {
+        let pending = "";
+        for await (const bytes of tree.child.stdout) {
+          pending += bytes.toString("utf8");
+          let end;
+          while ((end = pending.indexOf("\0")) >= 0) {
+            const entry = pending.slice(0, end);
+            pending = pending.slice(end + 1);
+            const id = /^\d+ blob ([a-f0-9]{40})\t/.exec(entry)?.[1];
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            batch.child.stdin.write(`${id}\n`);
+            const match = /^([a-f0-9]{40}) blob (\d+)$/.exec(await header());
+            if (!match || match[1] !== id) throw new Error("invalid blob header");
+            const size = Number(match[2]);
+            if (!Number.isSafeInteger(size)) throw new Error("invalid blob size");
+            const body = await read(size);
+            if ((await read(1))[0] !== 10) throw new Error("invalid blob terminator");
+            if (body.includes(0)) continue;
+            const text = body.toString("utf8");
+            let at = 0;
+            while (at <= text.length) {
+              const nl = text.indexOf("\n", at);
+              const line = normalise(text.slice(at, nl < 0 ? text.length : nl));
+              if (!carriesNoCode(line)) visit(line);
+              if (nl < 0) break;
+              at = nl + 1;
+            }
+          }
+        }
+        if (pending !== "" || !await tree.done) throw new Error("incomplete tree");
+      } catch {
+        throw new Error(`refused: ${c.name}: its cached ${kind} commit, tree or blob cannot be read, so its code cannot be looked for; materialise the case first`);
+      } finally {
+        tree.child.kill();
+        await tree.done;
+      }
+    }
+    batch.child.stdin.end();
+    if (!await batch.done) throw new Error(`refused: ${c.name}: a blob in its reviewed trees cannot be read; materialise the case first`);
+  } finally {
+    batch.child.kill();
+    await batch.done;
+  }
 }
 
 // Whitespace runs become one space, so a line matches however it was
@@ -296,6 +388,47 @@ const wholeForms = (t) => {
   const s = t.replace(/^\s+/, "");
   return [normalise(s), normalise(s.replace(LINE_PREFIX, ""))];
 };
+
+// Whether the run may hold a source line: a short or bare-name line as a
+// whole-line form, any other by the fingerprint of its first 24 characters,
+// confirmed with includes. includes ignores word edges; inspect checks them.
+// Hash UTF-16 windows modulo 2^32. Zero is the table's empty slot, so
+// the zero fingerprint shares the slot for one. Collisions only cause an
+// extra includes check, never a refusal on their own.
+const HASH_BASE = 31;
+const fingerprint = (text, at = 0) => {
+  let hash = 0;
+  for (let i = 0; i < SUBSTRING_MIN; i++) hash = (Math.imul(hash, HASH_BASE) + text.charCodeAt(at + i)) >>> 0;
+  return hash;
+};
+function runIndex(text, whole) {
+  const windows = Math.max(0, text.length - SUBSTRING_MIN + 1);
+  let size = 1;
+  while (size <= windows * 2) size *= 2;
+  const table = new Uint32Array(size);
+  const mask = size - 1;
+  const slot = (hash) => {
+    // Mix the polynomial hash before probing, including its high bits.
+    let mixed = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+    mixed = Math.imul(mixed ^ (mixed >>> 13), 0xc2b2ae35);
+    let at = (mixed ^ (mixed >>> 16)) & mask;
+    while (table[at] !== 0 && table[at] !== hash) at = (at + 1) & mask;
+    return at;
+  };
+  let power = 1;
+  for (let i = 1; i < SUBSTRING_MIN; i++) power = Math.imul(power, HASH_BASE);
+  let hash = windows > 0 ? fingerprint(text) : 0;
+  for (let at = 0; at < windows; at++) {
+    const key = hash || 1;
+    table[slot(key)] = key;
+    if (at + 1 < windows) hash = (Math.imul(hash - Math.imul(text.charCodeAt(at), power), HASH_BASE) + text.charCodeAt(at + SUBSTRING_MIN)) >>> 0;
+  }
+  return (line) => {
+    if (wholeOnly(line)) return whole.has(line);
+    const key = fingerprint(line) || 1;
+    return table[slot(key)] === key && text.includes(line);
+  };
+}
 
 const WORD = /[A-Za-z0-9_$]/;
 
@@ -381,7 +514,7 @@ const HOME_PATH = /(?:^|[^\w.~-])(?:\/Users\/[^/\s"'`<>$]+\/|\/home\/[^/\s"'`<>$
 
 // Every hit in the files to publish, as "<path>:<line>: <what>", and how
 // many values and patterns of each kind were looked for.
-export function inspect(folder, files, { cases, env = process.env, manifest = null } = {}) {
+export async function inspect(folder, files, { cases, env = process.env, manifest = null } = {}) {
   const needles = [];
   for (const c of cases.values()) {
     if (!c.planted) continue;
@@ -392,12 +525,9 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
   for (const value of modelValues(env, basename(folder), manifest)) needles.push({ value, label: "a value from the model settings file" });
   const patterns = scrubPatterns();
   patterns.push({ regex: HOME_PATH, label: "a home folder path" });
-  const code = [...cases.values()]
-    .filter((c) => c.licence !== "permissive")
-    .map((c) => {
-      const lines = [...codeLines(c, env)];
-      return { c, find: substringMatcher(lines.filter((l) => !wholeOnly(l))), whole: new Set(lines.filter(wholeOnly)) };
-    });
+  const code = [...cases.values()].filter((c) => c.licence !== "permissive");
+  const whole = new Set();
+  const runParts = [];
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
     secrets: needles.filter((n) => n.label.startsWith("the generated secret")).length,
@@ -414,12 +544,33 @@ export function inspect(folder, files, { cases, env = process.env, manifest = nu
       const texts = textsOf(line);
       for (const n of needles) if (texts.some((t) => t.includes(n.value))) hits.push(`${at}: ${n.label}`);
       for (const p of patterns) if (texts.some((t) => p.regex.test(t))) hits.push(`${at}: ${p.label}`);
-      // Anywhere in the decoded text: behind a file name and line number as
-      // a search prints it, after a diff marker, inside a sentence.
-      for (const { c, find, whole } of code) {
-        if (texts.some((t) => wholeForms(t).some((w) => whole.has(w)) || find(normalise(t)).length > 0)) hits.push(`${at}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
+      if (code.length > 0) {
+        for (const t of texts) {
+          for (const form of wholeForms(t)) if (wholeOnly(form)) whole.add(form);
+          runParts.push(normalise(t));
+        }
       }
     });
+  }
+  if (code.length > 0) {
+    const matches = runIndex(runParts.join("\n"), whole);
+    runParts.length = 0;
+    for (const c of code) {
+      // Only tree lines the run holds are kept, so this grows with the run.
+      const quoted = new Set();
+      await codeLines(c, env, (line) => {
+        if (matches(line)) quoted.add(line);
+      });
+      if (quoted.size === 0) continue;
+      // Anywhere in the decoded text: behind a file name and line number as
+      // a search prints it, after a diff marker, inside a sentence.
+      const find = substringMatcher([...quoted].filter((l) => !wholeOnly(l)));
+      for (const f of files) {
+        f.bytes.toString("utf8").split("\n").forEach((line, i) => {
+          if (textsOf(line).some((t) => wholeForms(t).some((w) => quoted.has(w) && wholeOnly(w)) || find(normalise(t)).length > 0)) hits.push(`${f.path}:${i + 1}: a line of ${c.name}'s code, whose licence class is ${c.licence}`);
+        });
+      }
+    }
   }
   return { hits: [...new Set(hits)], looked };
 }
@@ -447,7 +598,7 @@ function originalsProblems(folder, recipe) {
 
 // Packages a run into <out>/<run-id>.tar.gz after every check, and returns
 // what the index entry records about it. Throws, writing nothing, on any hit.
-export function packageRun(folder, { out, env = process.env, recipes = readRecipes() } = {}) {
+export async function packageRun(folder, { out, env = process.env, recipes = readRecipes() } = {}) {
   folder = resolve(folder);
   const runId = basename(folder);
   if (!existsSync(join(folder, "manifest.json"))) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
@@ -478,7 +629,7 @@ export function packageRun(folder, { out, env = process.env, recipes = readRecip
     }
     files.push({ path: "_archive/recipe.json", bytes: Buffer.from(`${JSON.stringify({ runId, ...recipe }, null, 2)}\n`) });
   }
-  const { hits, looked } = inspect(folder, files, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
+  const { hits, looked } = await inspect(folder, files, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
   if (hits.length > 0) throw new Error(`refused: ${hits.length} hit${hits.length === 1 ? "" : "s"} in the files to publish:\n${hits.slice(0, 40).join("\n")}`);
   const tar = tarGz(files.map((f) => ({ path: `${runId}/${f.path}`, bytes: f.bytes })));
   mkdirSync(out, { recursive: true });
@@ -519,7 +670,7 @@ function upload(tarPath, runId) {
   if (sent.status !== 0) throw new Error(`gh release upload failed: ${sent.stderr.trim()}`);
 }
 
-export function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot } = {}) {
+export async function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot } = {}) {
   folder = resolve(folder);
   const recipes = readRecipes();
   const runId = basename(folder);
@@ -531,7 +682,7 @@ export function publishRun(folder, { dryRun = false, writeIndex = false, out = n
     if (scored.status === 2) throw new Error(`scoring ${runId} failed:\n${scored.stderr.trim()}`);
   }
   const outDir = out ?? mkdtempSync(join(tmpdir(), "oq-publish-"));
-  const asset = packageRun(folder, { out: outDir, env, recipes });
+  const asset = await packageRun(folder, { out: outDir, env, recipes });
   // The package must unpack, with the system tar, to the files it was made from.
   const check = mkdtempSync(join(tmpdir(), "oq-publish-check-"));
   try {
@@ -568,7 +719,7 @@ export function publishRun(folder, { dryRun = false, writeIndex = false, out = n
   return { asset, entry, written, rebytes };
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   let dryRun = false;
   let writeIndex = false;
@@ -586,7 +737,7 @@ function main() {
   }
   let r;
   try {
-    r = publishRun(pos[0], { dryRun, writeIndex, out });
+    r = await publishRun(pos[0], { dryRun, writeIndex, out });
   } catch (error) {
     console.error(error.message);
     process.exit(error.message.startsWith("refused") ? 1 : 2);
@@ -596,7 +747,7 @@ function main() {
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist, or a non-permissive case's code): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;
-  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, this machine's and any platform's home folder paths, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns, and the code of ${l.codeCases} non-permissive cases. No hit.`);
+  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, this machine's and any platform's home folder paths, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns, and the head and base code of ${l.codeCases} non-permissive cases. No hit.`);
   console.log(dryRun ? `Dry run: nothing uploaded. The asset unpacks to the same file list.` : `Uploaded to ${entry.asset.url}`);
   if (written) {
     console.log(`Index entry written: ${written}`);
