@@ -34,8 +34,9 @@
 // 5. Result files leave the run through a symbolic link: every step that
 //    writes for the board writes in boardFolder(run), which refuses a path
 //    whose real location is not inside the run's real folder.
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { boardFolder as boardFolderFor } from "./board-files.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const AACR_BOARD = Object.freeze({ repo: BOARDS.boards.aacr.repo, commit: BOARDS.boards.aacr.commit, source: BOARDS.boards.aacr.source });
@@ -65,32 +66,7 @@ export function instanceIdOf(spec) {
  * in; a thrown refusal when it, or a folder on the way to it, is a link
  * that leads out of the run or nowhere.
  */
-export function boardFolder(folder) {
-  const run = realpathSync(folder);
-  const wanted = join(run, "outside", "aacr");
-  // The deepest part of the path that is there (a link counts, even a broken one); the rest is made inside it.
-  let head = wanted;
-  const rest = [];
-  for (;;) {
-    let there = true;
-    try {
-      lstatSync(head);
-    } catch {
-      there = false;
-    }
-    if (there) break;
-    rest.unshift(basename(head));
-    head = dirname(head);
-  }
-  let real;
-  try {
-    real = join(realpathSync(head), ...rest);
-  } catch {
-    throw new Error(`${head} is a link that leads nowhere; the board's files are written only inside the run (${run})`);
-  }
-  if (!real.startsWith(`${run}${sep}`)) throw new Error(`${wanted} leads outside the run, to ${real}; the board's files are written only inside the run's own folder`);
-  return real;
-}
+export const boardFolder = (folder) => boardFolderFor(folder, "aacr");
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const rate = (hit, of) => (of === 0 ? 0 : hit / of);
