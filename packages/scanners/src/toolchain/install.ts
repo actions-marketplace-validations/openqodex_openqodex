@@ -52,7 +52,7 @@ export function isInstalled(root: string, tool: string, recipe: Recipe): boolean
 
 // ---------- the developer's runtimes (never installed by OpenQodex) ----------
 
-type Runtime = { reason: string | null; env: Record<string, string> };
+export type Runtime = { reason: string | null; env: Record<string, string> };
 
 // Go never downloads a toolchain or a module and never sends a module path
 // anywhere: not while probing, not while scanning.
@@ -255,9 +255,11 @@ export async function missingRuntime(recipe: Recipe, probeHome?: string): Promis
 
 // The resolved tool, with the environment it needs to start from the small
 // scanner environment.
-export async function resolvedTool(root: string, tool: string, recipe: Recipe, probeHome?: string): Promise<ResolvedTool> {
+// `check` is the runtime check the caller made already, or one in the
+// default probe home.
+export async function resolvedTool(root: string, tool: string, recipe: Recipe, check?: Promise<Runtime>): Promise<ResolvedTool> {
   const dir = versionDir(root, tool, recipe);
-  const runtime = await checkRuntime(recipe, probeHome);
+  const runtime = await (check ?? checkRuntime(recipe));
   let env: Record<string, string> = {};
   if (recipe.method === "uv") {
     // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
