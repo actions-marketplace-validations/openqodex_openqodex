@@ -960,7 +960,7 @@ async function reviewInScope(
         snapshots: scope.snapshots,
         scoped: scope.scoped,
         scratchRoot: scratch,
-        resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
+        resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot, probeHome: join(scratch, "probe-home") }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         // The owners' instructions the host gave, quoted as the laptop quotes
         // its file; none read from the clone.
