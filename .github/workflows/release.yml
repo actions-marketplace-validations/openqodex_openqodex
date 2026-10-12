@@ -37,10 +37,11 @@ jobs:
     # never held. A job of its own, with no secret, no id-token and a token
     # that can only read, because it runs the published package's code and
     # every scanner on the repository; and no Actions cache, so nothing it
-    # runs can reach a cache a later job restores. Any exit but 0 fails it, and the release job then does not run: a
-    # loss refuses the publish, and so does a check that could not run,
-    # which shows nothing either way. Run the workflow again when the
-    # report says the Semgrep rule packs moved between the two runs.
+    # runs can reach a cache a later job restores. Any exit but 0 fails it,
+    # and the release job then does not run: a loss refuses the publish, and
+    # so does a check that could not run, which shows nothing either way.
+    # Run the workflow again when the report says the Semgrep rule packs
+    # moved between the two runs.
     if: github.repository == 'openqodex/openqodex'
     runs-on: ubuntu-latest
     timeout-minutes: 45
