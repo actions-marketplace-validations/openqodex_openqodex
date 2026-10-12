@@ -213,8 +213,8 @@ const NO_RECIPE = "no install recipe; this build cannot run it";
 // until they finish. `probeHome`: where the Go and Cargo runtime probes keep
 // what those tools write for themselves (Go's telemetry, rustup's settings),
 // never the developer's home folder (install.ts); by default
-// <OpenQodex home>/cache/runtime-probe. A server names one in its scratch
-// root.
+// <OpenQodex home>/cache/runtime-probe. A scanner run with a scratch root
+// names its own in each call, and that one is used.
 export type ResolverOptions = { allowInstall: boolean; installRoot?: string; installBudgetMs?: number | null; onProgress?: (line: string) => void; probeHome?: string };
 
 type Resolver = { allowInstall: boolean; root: string; home: string; installBudgetMs: number | null; onProgress?: (line: string) => void; probeHome?: string };
@@ -279,12 +279,16 @@ export function createToolResolver(opts: ResolverOptions): ResolveTool {
     );
   }
   const resolver: Resolver = { allowInstall: opts.allowInstall, root, home, installBudgetMs: opts.installBudgetMs ?? null, onProgress: opts.onProgress, probeHome: opts.probeHome };
-  const seen = new Map<BuiltinScanner, Promise<ToolResolution>>();
-  return (scanner) => {
-    let resolution = seen.get(scanner);
+  // Per scanner and probe home: a resolved tool's environment can name
+  // folders in the probe home, and a server run removes its own.
+  const seen = new Map<string, Promise<ToolResolution>>();
+  return (scanner, call) => {
+    const probeHome = call?.probeHome ?? resolver.probeHome;
+    const key = `${scanner}\0${probeHome ?? ""}`;
+    let resolution = seen.get(key);
     if (!resolution) {
-      resolution = resolveOne(scanner, resolver);
-      seen.set(scanner, resolution);
+      resolution = resolveOne(scanner, { ...resolver, probeHome });
+      seen.set(key, resolution);
     }
     return resolution;
   };

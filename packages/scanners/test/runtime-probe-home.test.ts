@@ -14,8 +14,11 @@
 // 3. A later review's probe answers point into an earlier review's probe
 //    home, which that review removed: a probe's answer is kept per probe
 //    home.
+// 4. A server run's probe writes outside its scratch root, or fails the
+//    scanner when it may not: a run with a scratch root probes there,
+//    whatever probe home its resolver would use by default.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,5 +101,40 @@ describe("a later review's probe answers point into an earlier review's removed 
     } finally {
       process.env.HOME = saved;
     }
+  }, 120_000);
+});
+
+describe("a server run's runtime probe writes outside its scratch root", () => {
+  const haveGo = spawnSync("go", ["version"], { encoding: "utf8" }).status === 0;
+
+  it.skipIf(!haveGo)("probes inside the scratch root while the temp folder, HOME and the OpenQodex home are read-only, and fails no scanner for it", async () => {
+    const { runScanners } = await import("../src/run.js");
+    const { createToolResolver } = await import("../src/toolchain/index.js");
+    const { parseConfig } = await import("@openqodex/core");
+    const repo = tempDir("oq-probe-repo-");
+    writeFileSync(join(repo, "go.mod"), "module example.com/probe\n\ngo 1.22\n");
+    writeFileSync(join(repo, "main.go"), "package main\n\nfunc main() {}\n");
+    const installRoot = tempDir("oq-probe-tools-");
+    const scratchRoot = join(tempDir("oq-probe-scratch-"), "s");
+    const watched = { TMPDIR: tempDir("oq-probe-tmp-"), HOME: tempDir("oq-probe-home-"), OPENQODEX_HOME: tempDir("oq-probe-oqhome-") };
+    const saved = Object.fromEntries(Object.keys(watched).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, watched);
+    for (const dir of Object.values(watched)) chmodSync(dir, 0o555);
+    let run;
+    try {
+      run = await runScanners({ repoDir: repo, changedPaths: ["go.mod", "main.go"], config: parseConfig("").config, resolveTool: createToolResolver({ allowInstall: false, installRoot }), only: ["golangci"], scratchRoot });
+    } finally {
+      for (const dir of Object.values(watched)) chmodSync(dir, 0o755);
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    const golangci = run.scan.scanners.find((s) => s.scanner === "golangci");
+    // Not installed here, and said so; never a probe that could not write.
+    expect(golangci?.status).toBe("not_installed");
+    expect(golangci?.reason ?? "").not.toMatch(/EACCES|permission/);
+    for (const dir of Object.values(watched)) expect(readdirSync(dir), dir).toEqual([]);
+    expect(readdirSync(join(scratchRoot, "cache"))).toContain("runtime-probe");
   }, 120_000);
 });

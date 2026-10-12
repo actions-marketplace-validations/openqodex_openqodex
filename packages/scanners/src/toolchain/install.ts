@@ -20,7 +20,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import type { ResolvedTool } from "@openqodex/core";
 import { InstallError, downloadVerified, extractArchive, isRegularFileInside, run, smallEnv, which } from "./fetch.js";
@@ -78,14 +78,15 @@ export function defaultProbeHome(): string {
   return join(openqodexHome(), "cache", "runtime-probe");
 }
 
-// The probe home, made now; one that cannot be made is replaced by a new
-// folder in the system temp folder.
-function madeProbeHome(probeHome: string): string {
+// The probe home, made now; null when it cannot be made (a read-only
+// OpenQodex home), and the probe then runs as it did before probe homes:
+// Go in the home folder, Cargo with the developer's Rust folders only.
+function madeProbeHome(probeHome: string): string | null {
   try {
     mkdirSync(probeHome, { recursive: true, mode: 0o700 });
     return probeHome;
   } catch {
-    return mkdtempSync(join(tmpdir(), "openqodex-probe-"));
+    return null;
   }
 }
 
@@ -171,9 +172,9 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
   if (runtime === "go") {
     const args = ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"];
     const home = madeProbeHome(probeHome);
-    let out = await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, { ...GO_OFFLINE, ...goHomes() }) });
+    let out = home === null ? null : await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, { ...GO_OFFLINE, ...goHomes() }) });
     // A version manager's shim found nothing in the probe home.
-    if (out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(GO_OFFLINE) });
+    if (out === null || out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(GO_OFFLINE) });
     if (out.code !== 0) return null;
     const [goversion = "", gopath = "", modcache = "", cache = ""] = out.stdout.split("\n");
     const env: Record<string, string> = { ...GO_OFFLINE, PATH: pathWith([dirname(file)]) };
@@ -189,7 +190,8 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
     // names; the real cargo and rustc read no such file. RUSTUP_AUTO_INSTALL
     // keeps the probe itself from installing one.
     const home = madeProbeHome(probeHome);
-    const rustup = smallEnv({ CARGO_HOME: join(home, ".cargo"), RUSTUP_HOME: join(home, ".rustup"), ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
+    const own: Record<string, string> = home === null ? {} : { CARGO_HOME: join(home, ".cargo"), RUSTUP_HOME: join(home, ".rustup") };
+    const rustup = smallEnv({ ...own, ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
     const version = await run(file, ["--version"], { ...opts, env: rustup });
     if (version.code !== 0) return null;
     const rustc = join(dirname(file), "rustc");
