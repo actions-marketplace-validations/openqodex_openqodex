@@ -1,5 +1,6 @@
 // Wording shared by the renderers and the brief, so the terminal, the
 // markdown report and the brief say the same thing the same way.
+import { DISABLED_REASON } from "../config.js";
 import { SEVERITIES, atOrAbove } from "../severity.js";
 import type { Candidate, Report, ReportFinding, ScannerRunSummary, Severity } from "../types.js";
 
@@ -34,12 +35,19 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-// "7 scanners ran, 4 had nothing to check, 2 not included (brakeman: needs
-// Ruby 2.7 or newer; semgrep: first run only, still installing)"
-export function coverageLine(scanners: ScannerRunSummary[]): string {
+// A scanner with nothing to check is idle; every other scanner either ran
+// or was left out.
+function scannerCoverage(scanners: ScannerRunSummary[]) {
   const ran = scanners.filter((s) => s.status === "ran").length;
   const idle = scanners.filter((s) => s.status === "no_matching_files").length;
   const out = scanners.filter((s) => s.status !== "ran" && s.status !== "no_matching_files");
+  return { ran, idle, out };
+}
+
+// "7 scanners ran, 4 had nothing to check, 2 not included (brakeman: needs
+// Ruby 2.7 or newer; semgrep: first run only, still installing)"
+export function coverageLine(scanners: ScannerRunSummary[]): string {
+  const { ran, idle, out } = scannerCoverage(scanners);
   const parts = [`${plural(ran, "scanner", "scanners")} ran`];
   if (idle > 0) parts.push(`${idle} had nothing to check`);
   if (out.length > 0) {
@@ -63,17 +71,40 @@ export function severityBreakdown(severities: Severity[]): string {
     .join(", ");
 }
 
+// Why a scanner left out of a run did not run, in the verdict's words. A
+// "disabled" entry here was not switched off in the config: the four network
+// scanners record a reason that starts "offline, " when --offline skips them,
+// and any other skip (folders held back) is "skipped".
+function gapWord(s: ScannerRunSummary): string {
+  if (s.status !== "disabled") return s.status.replace(/_/g, " ");
+  return s.reason?.startsWith("offline, ") ? "skipped offline" : "skipped";
+}
+
 export function verdictLine(report: Report): string {
   const counted = countedSeverities(report);
   const threshold = report.block_on_severity;
   const what = (n: number) => plural(n, "finding", "findings");
+  // A scanner switched off in the config is the developer's choice, not a
+  // gap: it is in neither number. The coverage line still lists it.
+  const { ran, out: left } = scannerCoverage(report.scanners);
+  const out = left.filter((s) => !(s.status === "disabled" && s.reason === DISABLED_REASON));
+  const ofSelected = plural(ran + out.length, "scanner", "scanners");
+  const clause = out.length > 0 ? `; ${out.length} of ${ofSelected} did not run` : "";
   if (report.verdict === "blocked" && threshold) {
     const over = counted.filter((s) => atOrAbove(s, threshold));
-    return `Blocked: ${what(over.length)} at or above ${threshold} (${severityBreakdown(counted)})`;
+    return `Blocked: ${what(over.length)} at or above ${threshold} (${severityBreakdown(counted)})${clause}`;
   }
-  if (counted.length === 0) return "Passed: no findings";
-  if (!threshold) return `Passed with warnings: ${what(counted.length)} (${severityBreakdown(counted)})`;
-  return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${severityBreakdown(counted)})`;
+  if (counted.length === 0) {
+    if (out.length === 0) return "Passed: no findings";
+    const reasons = ["not installed", "failed", "installing", "skipped offline", "skipped", "untrusted"]
+      .map((word) => [word, out.filter((s) => gapWord(s) === word).length] as const)
+      .filter(([, n]) => n > 0)
+      .map(([word, n]) => `${n} ${word}`)
+      .join(", ");
+    return `No findings from ${ran} of ${ofSelected}; ${out.length} did not run (${reasons})`;
+  }
+  if (!threshold) return `Passed with warnings: ${what(counted.length)} (${severityBreakdown(counted)})${clause}`;
+  return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${severityBreakdown(counted)})${clause}`;
 }
 
 // The coverage label for files the reviewer did not open. With every changed

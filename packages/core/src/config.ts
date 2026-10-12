@@ -21,6 +21,10 @@ import { OpenQodexError } from "./types.js";
 // Read first. The 0.1.0 location at the repo root is still read when this
 // one is absent.
 export const CONFIG_FILE = ".openqodex/config.yaml";
+// The reason recorded, with status "disabled", for a scanner switched off by
+// `scanners.disable`. That is the developer's choice; any other "disabled"
+// entry (an --offline skip, folders held back) is a gap the verdict counts.
+export const DISABLED_REASON = `disabled in ${CONFIG_FILE}`;
 export const LEGACY_CONFIG_FILE = ".openqodex.yaml";
 // Far above any real config, low enough that no read runs away.
 export const CONFIG_MAX_BYTES = 1024 * 1024;
