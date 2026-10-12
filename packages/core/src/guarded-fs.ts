@@ -37,7 +37,7 @@
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, renameSync, rmdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, sep } from "node:path";
 
 // Both macOS and Linux define these; a platform without them gets 0, and
 // the identity checks after each step still hold.
@@ -78,8 +78,20 @@ type Step = { name: string; id: Id };
 // `final`: the final name; `stat`: its lstat when it exists.
 type Walk = { chain: Step[]; dir: string; pending: string[]; final: string; stat: BigIntStats | null };
 
-function rootStep(): Step {
-  return { name: sep, id: idOf(lstatSync(sep, { bigint: true }))! };
+function rootStep(root: string): Step {
+  return { name: root, id: idOf(lstatSync(root, { bigint: true }))! };
+}
+
+// Windows takes either slash between names.
+const SEPS = sep === "\\" ? /[\\/]/ : "/";
+
+// The root a path starts from (`/`, `F:\`, `\\server\share\`) and the names
+// below it. Starting every path at `sep` would make the drive a name: on
+// Windows `F:\a` became the folder `\F:` and a mkdir of `F:\F:`.
+export function split(path: string, paths = { parse, sep }): { root: string; names: string[] } {
+  const root = paths.parse(path).root;
+  const separators = paths.sep === "\\" ? /[\\/]/ : "/";
+  return { root, names: path.slice(root.length).split(separators) };
 }
 
 // Walks `path` as the system does. `followLast`: a link as the last name is
@@ -89,9 +101,10 @@ function rootStep(): Step {
 // the path stands, existing or not (`final` empty).
 function walk(path: string, followLast: boolean, onLink: (chain: Step[], at: string) => void, folders = false): Walk {
   if (!isAbsolute(path)) throw new Error(`${path} is not an absolute path`);
-  let parts = path.split(sep);
-  let chain = [rootStep()];
-  let at: string = sep;
+  const start = split(path);
+  let parts = start.names;
+  let chain = [rootStep(start.root)];
+  let at = start.root;
   const pending: string[] = [];
   let links = 0;
   while (parts.length > 0) {
@@ -118,10 +131,13 @@ function walk(path: string, followLast: boolean, onLink: (chain: Step[], at: str
       onLink(chain, next);
       if (++links > MAX_LINKS) throw new Error(`more than ${MAX_LINKS} symbolic links on the way to ${path}`);
       const target = readlinkSync(next);
-      parts = [...target.split(sep), ...parts];
       if (isAbsolute(target)) {
-        chain = [rootStep()];
-        at = sep;
+        const to = split(target);
+        parts = [...to.names, ...parts];
+        chain = [rootStep(to.root)];
+        at = to.root;
+      } else {
+        parts = [...target.split(SEPS), ...parts];
       }
       continue;
     }
