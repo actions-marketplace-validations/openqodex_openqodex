@@ -43,7 +43,7 @@
 // 25. A correction message carries a secret: text from git objects or the
 //     developer's folder instead of the redacted snapshot, a secret a broken
 //     redaction left in place, a file the snapshot dropped or a binary file,
-//     or megabytes in one long line.
+//     or megabytes in one long line (packages/review/test/long-lines.test.ts).
 // 26. With no reviewer available (Codex only, Cursor only, Claude Code
 //     logged out), the developer is left with no AI review: the message does
 //     not name the fallback through the agent they are in; or the fallback
@@ -843,19 +843,17 @@ describe("25. what a correction message may carry", () => {
     expect(r.delivered).toEqual([]);
   });
 
-  it("never delivers a deletion whose removed lines the change does not hold, a dropped file, a binary file or a very long line, and promises none for a later round", () => {
+  it("never delivers a deletion whose removed lines the change does not hold, a dropped file or a binary file, and promises none for a later round", () => {
     const dir = snap();
     writeFileSync(join(dir, "bin.dat"), Buffer.from([0, 1, 2, 10, 3, 10]));
-    writeFileSync(join(dir, "long.js"), `${"a".repeat(20_000)}\n`);
     const unread = [
       { path: "gone.py", start: 1, end: 1, deletion: false },
       { path: "bin.dat", start: 1, end: 2, deletion: false },
-      { path: "long.js", start: 1, end: 1, deletion: false },
       { path: "bin.dat", start: 3, end: 4, deletion: true },
     ];
     const r = deliverRanges({ snapshotDir: dir, unread, secrets: [], change: { files: [], deletionPoints: new Map([["bin.dat", [{ after: 3, lines: 1, anchors: [3, 4] }]]]), diffs: [] } });
     expect(r.delivered).toEqual([]);
-    expect(r.left).toHaveLength(4);
+    expect(r.left).toHaveLength(3);
     expect(r.later).toBe(0);
     expect(r.text).toBe("");
   });

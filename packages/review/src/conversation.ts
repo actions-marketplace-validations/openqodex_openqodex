@@ -2,6 +2,7 @@
 // correction rounds, each answer read and checked by script. Also the two
 // things that keep secrets away from the reviewer: the snapshot's own
 // redaction, and the check on every changed range the tool sends itself.
+import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OpenQodexError, outsideSnapshot, redactSecrets, redactSecretsKeepingLines, removedRuns, secretTexts } from "@openqodex/core";
@@ -83,12 +84,18 @@ export function parseAnswer(text: string): { value: unknown } | { error: string 
 }
 
 // The most lines and bytes a correction round carries of changed ranges the
-// reviewer was not given, context included; a range holding a line longer
-// than MAX_DELIVER_LINE_CHARS is never carried.
+// reviewer was not given, context included. A source line longer than
+// MAX_DELIVER_LINE_CHARS is shown by its length and hash, not its text.
 export const DELIVER_LINES = 4000;
 const DELIVER_BYTES = 512 * 1024;
 const MAX_DELIVER_LINE_CHARS = 2000;
 const CONTEXT = 3;
+
+function deliveredLine(label: string, text: string): string {
+  if (text.length <= MAX_DELIVER_LINE_CHARS) return `${label}\t${text}`;
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 12);
+  return `line ${label === "-" ? "removed" : label}: ${text.length} characters, sha256 ${hash}`;
+}
 
 // The parts of `h` no earlier delivery covered.
 function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
@@ -113,8 +120,8 @@ function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
 // and DELIVER_BYTES bytes; a range split at the bound continues next round,
 // and a deletion goes whole or waits. Never carried, so left unread: a
 // deletion whose removed lines the change does not hold (its file was past
-// the diff cap), a file the snapshot dropped, a binary file, a range with a
-// very long line. `later`: how many of `left` may still come in a round.
+// the diff cap), a file the snapshot dropped, or a binary file. `later`:
+// how many of `left` may still come in a round.
 // The text then goes through the brief's redaction once more; if a found
 // secret is still in it, nothing is sent and `leak` is set, which makes the
 // run incomplete.
@@ -170,10 +177,10 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
       const to = Math.min(count, p.after + CONTEXT);
       const where = gone ? "with the file, which was deleted" : count === 0 ? "and the file is now empty" : p.after === 0 ? "above line 1" : p.after < count ? `between lines ${p.after} and ${p.after + 1}` : `below line ${p.after}`;
       block.push(`${h.path}: ${n} ${n === 1 ? "line" : "lines"} removed ${where}${to >= from ? ` (with context ${from} to ${to})` : ""}:`);
-      for (let i = from; i <= Math.min(p.after, to); i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+      for (let i = from; i <= Math.min(p.after, to); i++) block.push(deliveredLine(String(i), lines[i - 1] ?? ""));
       // Redacted as the brief redacts its diff: the snapshot never held these lines.
-      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) block.push(`-\t${r}`);
-      for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) block.push(deliveredLine("-", r));
+      for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(deliveredLine(String(i), lines[i - 1] ?? ""));
     }
     return block;
   };
@@ -185,15 +192,14 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
         continue;
       }
       const size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
-      const long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
-      if (!long && block.length + 1 <= room && size <= bytes) {
+      if (block.length + 1 <= room && size <= bytes) {
         out.push(...block, "");
         room -= block.length + 1;
         bytes -= size;
         delivered.push(h);
       } else {
         left.push(h);
-        if (!long && block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
+        if (block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
       }
       continue;
     }
@@ -204,7 +210,6 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     }
     for (const [first, last] of gaps(h, args.earlier ?? [])) {
       let at = first;
-      let long = false;
       while (at <= last && room > 2 * CONTEXT + 2) {
         // Halved until it fits the bytes left, so a range of wide lines is
         // sent in parts rather than promised for a round that cannot carry it.
@@ -215,13 +220,12 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
           const from = Math.max(1, at - CONTEXT);
           const to = Math.min(lines.length, at + n - 1 + CONTEXT);
           block = [`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`];
-          for (let i = from; i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+          for (let i = from; i <= to; i++) block.push(deliveredLine(String(i), lines[i - 1] ?? ""));
           size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
-          long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
-          if (long || size <= bytes || n === 1) break;
+          if (size <= bytes || n === 1) break;
           n = Math.ceil(n / 2);
         }
-        if (long || size > bytes) break;
+        if (size > bytes) break;
         out.push(...block, "");
         room -= block.length + 1;
         bytes -= size;
@@ -230,7 +234,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
       }
       if (at <= last) {
         left.push({ ...h, start: at, end: last });
-        if (!long) later++;
+        later++;
       }
     }
   }
