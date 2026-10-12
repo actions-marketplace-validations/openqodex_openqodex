@@ -1,0 +1,95 @@
+{
+  "note": "Saved findings of one tool name (openqodex-library-r1) on two Martian-shaped cases, in report.json's finding shape. evaluation.json beside this file names them by findingId.",
+  "cases": [
+    {
+      "caseId": "martian/alpha__app-1@0a1b2c3d",
+      "prUrl": "https://github.com/alpha/app/pull/1",
+      "report": {
+        "findings": [
+          {
+            "file_path": "src/cache.ts",
+            "line_number": 40,
+            "line_end": 46,
+            "severity": "major",
+            "category": "bug",
+            "confidence": 0.9,
+            "title": "Cache read races with the writer",
+            "problem": "The entry is read after the lock is released.",
+            "consequence": "Two writers can both miss and both insert, so one write is lost.",
+            "fix": "Read and insert under the same lock."
+          },
+          {
+            "file_path": "src/query.ts",
+            "line_number": 12,
+            "line_end": 12,
+            "severity": "critical",
+            "category": "security",
+            "confidence": 0.95,
+            "title": "Widget id reaches the SQL string",
+            "problem": "The id from the request is joined into the query text.",
+            "consequence": "A crafted id runs any SQL the attacker writes.",
+            "fix": "Pass the id as a bound parameter."
+          },
+          {
+            "file_path": "src/cache.ts",
+            "line_number": 52,
+            "line_end": 52,
+            "severity": "minor",
+            "category": "bug",
+            "confidence": 0.7,
+            "title": "Eviction skips the newest entry",
+            "problem": "The loop stops one entry early.",
+            "consequence": "The newest entry is never evicted.",
+            "fix": "Loop to the last index inclusive."
+          },
+          {
+            "file_path": "src/flags.ts",
+            "line_number": 3,
+            "line_end": 3,
+            "severity": "nitpick",
+            "category": "style",
+            "confidence": 0.75,
+            "title": "Constant name is vague",
+            "problem": "The constant is named VALUE.",
+            "consequence": "A reader cannot tell what it holds.",
+            "fix": "Name it CACHE_TTL_SECONDS."
+          }
+        ],
+        "outside_change": []
+      }
+    },
+    {
+      "caseId": "martian/eval-org__alpha-copy-1@4e5f6a7b",
+      "prUrl": "https://github.com/eval-org/alpha-copy/pull/1",
+      "report": {
+        "findings": [
+          {
+            "file_path": "lib/retry.rb",
+            "line_number": 20,
+            "line_end": 24,
+            "severity": "minor",
+            "category": "bug",
+            "confidence": 0.8,
+            "title": "Retry counter shared without a lock, and the endpoint answers 200",
+            "problem": "Workers increment one counter with no lock, and the handler returns 200 with an empty body for a missing delivery.",
+            "consequence": "Retries are counted wrong, and clients that wait for 404 never stop polling.",
+            "fix": "Guard the counter with the worker mutex and answer 404 for a missing delivery."
+          },
+          {
+            "file_path": "lib/retry.rb",
+            "line_number": 30,
+            "line_end": 30,
+            "severity": "info",
+            "category": "maintainability",
+            "confidence": 0.72,
+            "title": "Counter lock is missing",
+            "problem": "The counter has no lock.",
+            "consequence": "Concurrent workers race on it.",
+            "fix": "Take the worker mutex around the increment."
+          }
+        ],
+        "outside_change": []
+      }
+    }
+  ]
+}

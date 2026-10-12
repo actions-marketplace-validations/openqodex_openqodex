@@ -1,5 +1,5 @@
 // A run leaves the machine as one asset on the benchmark-data pre-release,
-// and its committed index entry is the only record of it in the tree. Two
+// and its committed index entry is the only record of it in the tree. Three
 // failures are guarded here, each on a run folder of the shape run.mjs
 // writes, built in a temp folder:
 // 1. A published run cannot be fetched back to the same files: the asset
@@ -11,6 +11,9 @@
 //    third-party code is published: each one in any exported file, a
 //    transcript line included, refuses the publish, and the refusal never
 //    prints the key.
+// 3. A run that holds a case whose licence nobody verified (GitHub names
+//    none it can classify) is published: such a case is for private runs
+//    only, and the publish is refused with every such case named.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -264,5 +267,20 @@ describe("nothing private or third-party leaves in an asset", () => {
   it("refuses a copyleft case whose repository is not in the cache, since its code cannot be looked for", () => {
     const { run } = realCaseRun(tempDir("oq-bench-cache-"));
     expect(refused(run, { OPENQODEX_BENCH_CACHE: tempDir("oq-bench-cache-empty-") })).toMatch(/acme__ledger-42 is copyleft and its repository is not in the cache/);
+  });
+});
+
+describe("a run that holds a case whose licence nobody verified is published", () => {
+  // A licence GitHub cannot name (NOASSERTION) makes a case usable for
+  // private runs only; publishing is where it is refused.
+  it("refuses the run before anything is packaged, naming every such case", () => {
+    const run = plantedRun();
+    for (const [name, repo] of [["getsentry__sentry-67876", "getsentry/sentry"], ["elastic__elasticsearch-1", "elastic/elasticsearch"]]) {
+      write(join(run, "cases", `${name}.json`), JSON.stringify({ id: `aacr/${name}@cccccccc`, suite: "aacr", name, hash: "c".repeat(64), source: { repo, licence: { spdx: "NOASSERTION", chosen: null, class: "unverified" } } }));
+      addSample(run, name, "model-gpt-6.1-sol");
+    }
+    const out = tempDir("oq-publish-out-");
+    expect(() => packageRun(run, { out, env: { OPENQODEX_BENCH_CACHE: tempDir("oq-bench-cache-") } })).toThrow(/refused: [^\n]*unverified licence[^\n]*elastic__elasticsearch-1[^\n]*getsentry__sentry-67876/);
+    expect(readdirSync(out)).toEqual([]);
   });
 });
