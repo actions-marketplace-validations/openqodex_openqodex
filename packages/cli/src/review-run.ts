@@ -292,6 +292,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
 
     write({
       ...files,
+      "usage.json": `${JSON.stringify(redactStored(result.usage, secrets), null, 2)}\n`,
       "submission.json": `${JSON.stringify(redactStored(result.submission, secrets), null, 2)}\n`,
       "trace.json": `${JSON.stringify(redactStored(result.trace, secrets), null, 2)}\n`,
     });

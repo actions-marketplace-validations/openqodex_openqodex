@@ -178,7 +178,7 @@
 // 13. Parallel reviews slow each other, which reads as a slower build: the
 //    manifest records the concurrency, and the default is one at a time.
 // 14. A model is recorded that the reviewer never used: Claude Code's model
-//    is read from its own answer and must equal a requested one; Codex's is
+//    is read from each review's usage record and must equal a requested one; Codex's is
 //    read from the header Codex prints, or recorded as unknown.
 // 15. A requested model is passed in a way the reviewer ignores: --model
 //    reaches Claude Code through ANTHROPIC_MODEL, which its driver passes
@@ -301,7 +301,7 @@ import { heldOutAccessPath } from "./lib/index.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
+import { attemptDir, claudeRunModels, savedSampleRows, CLAUDE_MODEL_FROM, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
@@ -1192,11 +1192,12 @@ async function main() {
       console.error(`The ${name} reviewer cannot run: ${p.text}`);
       leave(2);
     }
+    // The probe is no review's model, but a probe served by another model stops the run before anything is spent.
     if (o.model && name === "claude" && p.model !== o.model) {
       console.error(`Asked for the model ${o.model}, but Claude Code answered with ${JSON.stringify(p.model)}; nothing runs.`);
       leave(2);
     }
-    reviewers[name] = { name, version: p.version, model: p.model, modelFrom: name === "claude" ? "the model Claude Code names in its answer" : "the model line of the header Codex prints" };
+    reviewers[name] = { name, version: p.version, model: name === "claude" ? null : p.model, ...(name === "claude" ? { requestedModel: o.model } : {}), modelFrom: name === "claude" ? CLAUDE_MODEL_FROM : "the model line of the header Codex prints" };
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
   }
 
@@ -1383,7 +1384,7 @@ async function main() {
     const who = readJson(join(reportDir, "reviewer.json"));
     const stoppedHere = stop;
     const failure = stoppedHere !== null && !report ? { cause: `stopped by the run: ${stoppedHere}`, infra: false, unavailable: false } : failureOf(result, report);
-    const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere });
+    const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere, usageRecord: readJson(join(reportDir, "usage.json")) });
     writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
     appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
     const tokens = Number.isInteger(rec.usage?.input_tokens) && Number.isInteger(rec.usage?.output_tokens) ? rec.usage.input_tokens + rec.usage.output_tokens : null;
@@ -1449,7 +1450,13 @@ async function main() {
       stopReason: () => stop,
       haltOf: () => haltRecord,
       // The models the provider named as answering, per configuration, over every saved attempt.
-      ...(server ? { finish: () => ({ servedModels: servedByConfig(out) }) } : {}),
+      finish: () => {
+        if (server) return { servedModels: servedByConfig(out) };
+        if (!reviewers.claude) return {};
+        const observed = claudeRunModels(savedSampleRows(out), o.model);
+        const actual = { ...reviewers, claude: { ...reviewers.claude, model: observed.model, models: observed.models } };
+        return { reviewers: actual, reviewer: o.reviewers.length === 1 ? actual[o.reviewers[0]] : null, modelRefusal: observed.why };
+      },
       budget,
       addRepeats: o.addRepeats !== null ? { repeat: o.repeat, at: new Date().toISOString() } : null,
       resumeNote: { budget: settings.budget },

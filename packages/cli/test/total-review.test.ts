@@ -653,7 +653,7 @@ describe("what leaves the process", () => {
     expect(await review(dir, fake([good]))).toBe(0);
     const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
     const files = readdirSync(run);
-    expect(files).toEqual(expect.arrayContaining(["brief.md", "scan.json", "submission.json", "trace.json", "report.md"]));
+    expect(files).toEqual(expect.arrayContaining(["brief.md", "scan.json", "submission.json", "trace.json", "report.md", "usage.json"]));
     for (const name of files) expect((statSync(join(run, name)).mode & 0o777).toString(8), name).toBe("600");
   });
   it("17. stderr never echoes the reviewer's raw answer", async () => {
@@ -1082,7 +1082,7 @@ describe("the Action's review flags", () => {
     writeFileSync(join(planted, "report.md"), "# PLANTED\n");
     const folder = join(tempDir("oq-report-dir-"), "review");
     expect(await withOptions(dir, fake([good]), { reportDir: folder })).toBe(0);
-    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "rounds.json", "scan.json", "submission.json", "trace.json"]);
+    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "rounds.json", "scan.json", "submission.json", "trace.json", "usage.json"]);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report).toEqual(JSON.parse(out) as Report);

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "../lib/cases.mjs";
-import { attemptDir, codexModelFrom, executeRun, failureOf, lockRun, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, takeOverStale, treeState } from "../lib/runner.mjs";
+import { attemptDir, codexModelFrom, executeRun, failureOf, lockRun, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, claudeModels, claudeRunModels, takeOverStale, treeState } from "../lib/runner.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -281,5 +281,41 @@ describe("two runners share one run folder, or a restart replaces a crashed run'
     expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
     release();
     expect(readdirSync(out)).toEqual([]);
+  });
+});
+
+// Failure list for issue 182, before the code:
+// A served model is replaced by the requested model; mixed reviews look like
+// one model; missing usage looks known; reviewer text supplies a model; a
+// review Claude Code never answered makes a finished run unknown.
+describe("Claude Code models from usage", () => {
+  // A resume with mixed evidence leaves a finished manifest acceptable.
+  it("marks the manifest stopped when a resume finds mixed models", async () => {
+    const { out, jobs, manifest, copies } = runInputs();
+    await executeRun({ out, manifest, jobs, copies, runJob: async (job, attempt) => saveAttempt(out, job, attempt, hitReport) });
+    const why = "Claude Code samples have mixed models: one, two";
+    await executeRun({ out, manifest: null, jobs, resume: true, runJob: async () => {}, finish: () => ({ reviewers: { claude: { model: null } }, modelRefusal: why }) });
+    expect(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")).ended).toMatchObject({ how: "stopped", why });
+  });
+  const usage = (...models) => ({ calls: models.map((model) => ({ model, purpose: "brief", outcome: "ok" })) });
+  it("records the served model rather than the requested model or reviewer text", () => {
+    const rec = sampleRecord({ job, attempt: 1, result: {}, report: null, who: { model: "claimed" }, usageRecord: usage("served"), startedAt: "t" });
+    expect(rec).toMatchObject({ model: "served", modelFrom: "the usage record Claude Code returned for this review" });
+    expect(claudeRunModels([rec], "requested").why).toMatch(/requested.*served/);
+  });
+  it("keeps every model within a review and refuses two models across reviews", () => {
+    expect(claudeModels(usage("one, two", "one"))).toMatchObject({ model: ["one", "two"], modelStatus: "mixed" });
+    expect(claudeRunModels([{ reviewer: "claude", ...claudeModels(usage("one")) }, { reviewer: "claude", ...claudeModels(usage("two")) }]).why).toMatch(/mixed.*one, two/);
+  });
+  it("keeps missing usage unknown even when reviewer text names a model", () => {
+    expect(claudeModels({ calls: [{ model: null, outcome: "ok" }] })).toMatchObject({ model: null, modelStatus: "unknown" });
+    expect(claudeRunModels([{ reviewer: "claude", ...claudeModels(null) }]).why).toMatch(/unknown/);
+    expect(claudeRunModels([{ reviewer: "claude", reviewerUsed: { model: "claimed" } }]).why).toMatch(/unknown/);
+  });
+  it("leaves out a review Claude Code never answered", () => {
+    const timedOut = claudeModels({ calls: [{ model: null, outcome: "failed" }] });
+    expect(timedOut).toMatchObject({ model: null, modelStatus: "none" });
+    const rows = [{ reviewer: "claude", ...claudeModels(usage("one")) }, { reviewer: "claude", ...timedOut }, { reviewer: "claude", ...claudeModels(null) }];
+    expect(claudeRunModels(rows, "one")).toMatchObject({ model: "one", why: null });
   });
 });
