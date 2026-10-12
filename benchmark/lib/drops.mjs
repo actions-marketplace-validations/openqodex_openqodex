@@ -53,7 +53,8 @@
 //    classed a duplicate: the candidate's own rule is read first.
 // 5. A framework the project does use is called a mismatch: the tag needs
 //    a framework the scan can detect and found in no project. A framework
-//    the scan cannot detect (Flask, SQLAlchemy), and an older scan that
+//    the scan cannot detect (SQLAlchemy), Flask (detected only by newer
+//    scans, and never tagged: NEVER_TAGGED), and an older scan that
 //    recorded no projects, give no tag rather than a guess.
 // 6. A framework rule dropped as a repeat hides that it fired on the wrong
 //    framework: the tag is read from the reason whatever the class.
@@ -122,8 +123,9 @@ const LOW_VALUE_WORDS = /\bstyle\b|\bnitpicks?\b|\bpreferences?\b|\bsize\b|\benl
 // The frameworks the scan can detect (the Framework type in
 // packages/scanners/src/detect.ts), each with how a reason writes it. Only
 // these can be missing from scan.projects: a framework the scan cannot
-// detect, such as Flask, is never known to be absent. Names that are also
-// everyday words are matched only as capitalised names.
+// detect, such as SQLAlchemy, is never known to be absent. Names that are
+// also everyday words are matched only as capitalised names. Flask is
+// detected but never tagged (NEVER_TAGGED).
 const FRAMEWORKS = [
   ["django", /\bdjango\b/i],
   ["fastapi", /\bfastapi\b/i],
@@ -134,6 +136,11 @@ const FRAMEWORKS = [
   ["rails", /\bRails\b/],
 ];
 export const DETECTED_FRAMEWORKS = Object.freeze(FRAMEWORKS.map(([slug]) => slug));
+// Frameworks the scan detects that a tag never names: scans saved before
+// Flask was detected record a Flask project with no framework, and nothing in
+// a scan tells those apart from newer ones, so Flask's absence from
+// scan.projects says nothing.
+export const NEVER_TAGGED = Object.freeze(["flask"]);
 
 // Paths a reason quotes: any token with a slash, and a bare file name that
 // starts in lower case with a known extension (a capitalised name such as

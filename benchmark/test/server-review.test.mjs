@@ -29,6 +29,10 @@
 //    another model.
 // 7. A resume reaches another endpoint than the run's, because the settings
 //    file now names another base URL for the same deployment.
+// From issue 142:
+// 8. A model review scores with no cost and no tokens, because the scorer
+//    reads only the laptop's completion record, so the score, the index and
+//    the forecast never see what a server run spent.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,7 +46,7 @@ import { executeRun, planJobs, resumeProblems, runManifest } from "../lib/runner
 import { materialise } from "../lib/suites.mjs";
 import { createModelReviewer, LEAK_REFUSED, recordServed, resolveModelReviewer, serverAttempt } from "../lib/server-review.mjs";
 import { createScriptedReviewer, SCRIPTED_PRICES } from "../lib/scripted-model.mjs";
-import { loadRun, scoreRun } from "../score.mjs";
+import { loadRun, renderV3, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -76,9 +80,10 @@ function tree(dir) {
 const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort() : []);
 
 // One server review of the flask case as run.mjs runs it: a run folder with
-// its manifest, the spec copy and the budget ledger, and one job whose
-// attempt is the driver's. Returns the run folder and the job's sample.
-async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PRICES }, appearsIn = null } = {}) {
+// its manifest, the spec copy and the budget ledger, and one job per repeat
+// whose attempt is the driver's. Returns the run folder, the first job's
+// sample and every job's sample.
+async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PRICES }, appearsIn = null, repeat = 1 } = {}) {
   const out = join(root, "run");
   const repo = serverRepo(root);
   const workRoot = join(root, "w");
@@ -86,9 +91,9 @@ async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PR
   const installRoot = join(root, "tools");
   mkdirSync(installRoot);
   const name = "model:scripted";
-  const { configs, jobs } = planJobs({ cases: [CASE], caseIds: { [CASE]: CASE_ID }, reviewers: [name], graph: ["on"], repeat: 1 });
-  const settings = { runId: "server-test", mode: "review", path: "server", suite: "planted", split: "dev", reviewers: { [name]: { name, kind: "model", model: reviewer.model } }, cases: [CASE], caseIds: [CASE_ID], configs: configs.map((c) => c.id), repeat: 1, concurrency: 1 };
-  let saved = null;
+  const { configs, jobs } = planJobs({ cases: [CASE], caseIds: { [CASE]: CASE_ID }, reviewers: [name], graph: ["on"], repeat });
+  const settings = { runId: "server-test", mode: "review", path: "server", suite: "planted", split: "dev", reviewers: { [name]: { name, kind: "model", model: reviewer.model } }, cases: [CASE], caseIds: [CASE_ID], configs: configs.map((c) => c.id), repeat, concurrency: 1 };
+  const saved = [];
   await executeRun({
     out,
     manifest: runManifest({ startedAt: new Date().toISOString(), settings, jobs }),
@@ -96,10 +101,10 @@ async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PR
     jobs,
     budget: runBudget({ dir: out, caps: CAPS, path: "server", prices }),
     runJob: async (job, k, meter) => {
-      saved = await serverAttempt({ reviewChange, job, attempt: k, out, repo, reviewer, meter, deadlineMs: 120_000, workRoot, installRoot, appearsIn });
+      saved.push(await serverAttempt({ reviewChange, job, attempt: k, out, repo, reviewer, meter, deadlineMs: 120_000, workRoot, installRoot, appearsIn }));
     },
   });
-  return { out, repo, workRoot, sample: saved, job: jobs[0] };
+  return { out, repo, workRoot, sample: saved[0] ?? null, samples: saved, job: jobs[0] };
 }
 
 describe("a server review writes outside its workDir", () => {
@@ -232,6 +237,38 @@ describe("the model recorded is not the one that answered", () => {
     expect(sample.record.status).toBe("complete");
     expect(sample.record.servedModel).toBeNull();
     expect(sample.record.servedModels).toEqual([]);
+  });
+});
+
+describe("a model review scores with no cost and no tokens (issue 142)", () => {
+  it("scores a saved scripted-model run with the cost, the tokens and the served model its samples record, summed per configuration", { timeout: 300_000 }, async () => {
+    const root = tempDir("oq-server-usage-");
+    // Prices that make every call cost something, well inside the review's cap.
+    const prices = { input: 1, cachedInput: 0.1, output: 4 };
+    const { out, samples } = await oneRun(root, createScriptedReviewer(script({ prices, served: "scripted-usage-3" })), { prices: { scripted: prices }, repeat: 2 });
+    expect(samples.map((s) => s.record.status)).toEqual(["complete", "complete"]);
+    // What each sample saved: the library's totals over every model call, and the model that answered them.
+    const config = "model-scripted-graph-on";
+    const rows = [1, 2].map((r) => JSON.parse(readFileSync(join(out, "samples", CASE, config, String(r), "sample.json"), "utf8")));
+    for (const row of rows) {
+      expect(row.usage.cost_usd).toBeGreaterThan(0);
+      expect(row.usage.input_tokens).toBeGreaterThan(0);
+      expect(row.usage.output_tokens).toBeGreaterThan(0);
+      expect(row.servedModels).toEqual(["scripted-usage-3"]);
+    }
+    const sum = (k) => rows.reduce((a, row) => a + row.usage[k], 0);
+    const { score } = scoreRun(loadRun(out));
+    const c = score.byConfig[config];
+    expect(c.costUsd.n).toBe(2);
+    expect(c.costUsd.total).toBeCloseTo(sum("cost_usd"), 12);
+    expect(c.inputTokens).toMatchObject({ n: 2, total: sum("input_tokens") });
+    expect(c.outputTokens).toMatchObject({ n: 2, total: sum("output_tokens") });
+    expect(c.servedModels).toEqual(["scripted-usage-3"]);
+    // The table says what the reviews cost and which model served them, never n/a.
+    const text = renderV3(score);
+    expect(text).toMatch(/\| Cost per review, mean \| \$\d+\.\d{2} \|/);
+    expect(text).toMatch(/\| Tokens in \/ out per review, mean \| \d+k \/ \d+k \|/);
+    expect(text).toMatch(/\| Models that served the reviews \| scripted-usage-3 \|/);
   });
 });
 

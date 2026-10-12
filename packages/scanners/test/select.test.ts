@@ -57,6 +57,10 @@
 //      that names those words only nested, in a string or in a comment is.
 //  21. A hostile JSON or YAML file of 1 MB makes the CloudFormation check
 //      take more than linear time.
+// Added with Flask (P2-12):
+//  22. A Flask project (flask in requirements, pyproject or Pipfile) is not
+//      told from its manifest, so the scan records no Flask; or a Flask
+//      extension alone (flask-login) counts as Flask.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -294,6 +298,24 @@ describe("manifests are data, read within limits", () => {
     const facts = repoFacts(dir);
     expect(facts.project("a/x.py")).toMatchObject({ frameworks: ["airflow"] });
     expect(facts.project("b/x.py")).toMatchObject({ frameworks: ["django"] });
+  });
+
+  it("tells a Flask project from its requirements, pyproject or Pipfile (22)", () => {
+    const dir = repo({
+      "a/requirements.txt": "Flask[async]==3.1.3\n",
+      "a/app.py": "x = 1\n",
+      "b/pyproject.toml": '[project]\nname = "b"\ndependencies = ["flask>=3"]\n',
+      "b/app.py": "x = 1\n",
+      "c/Pipfile": '[packages]\nflask = "*"\n',
+      "c/app.py": "x = 1\n",
+      "d/requirements.txt": "flask-login==0.6\n",
+      "d/app.py": "x = 1\n",
+    });
+    const facts = repoFacts(dir);
+    for (const p of ["a", "b", "c"]) expect(facts.project(`${p}/app.py`), p).toMatchObject({ frameworks: ["flask"] });
+    expect(facts.project("a/app.py")?.evidence).toEqual({ flask: "flask in requirements.txt" });
+    // An extension is not the framework.
+    expect(facts.project("d/app.py")).toMatchObject({ frameworks: [] });
   });
 });
 

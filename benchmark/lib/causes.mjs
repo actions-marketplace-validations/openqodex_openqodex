@@ -11,7 +11,8 @@
 //   incomplete          the review did not complete (incomplete, failed, or
 //                       never started).
 //   spec-disputed       a person ruled the truth item wrong (a bug ruling,
-//                       lib/rulings.mjs).
+//                       lib/rulings.mjs) in the spec version the job is
+//                       scored against.
 //   not-in-brief        no line of the item, at any of its places, was in
 //                       the brief's diff, a correction round or a read.
 //   not-read            the item's proof outside the change (its evidence)
@@ -86,7 +87,7 @@
 //    known to be left out; and a miss whose lines, proof, final answer or
 //    rounds are not on record is unresolved, never judged wrong.
 import { classifyReportDrops } from "./drops.mjs";
-import { bugRuling, matchRuling } from "./rulings.mjs";
+import { bugRuling, matchRuling, specHashOf } from "./rulings.mjs";
 import { classify, locatedBy, names, normPath, normText, scannerPlaces, shownFindings } from "./score.mjs";
 
 // Bump on any change to a rule below: a score records it beside the causes.
@@ -196,9 +197,9 @@ const findingKey = (f) => `${normPath(f?.file_path)}\0${f?.line_number}\0${normT
 const findingsOf = (answer) => (Array.isArray(answer?.findings) ? answer.findings.filter((f) => f && typeof f === "object") : []);
 
 // The cause of one missed truth item, as { cause, why, drops? }.
-function missCause({ bug, job, attempt, spec, rulings, sees, known, testOnly }) {
+function missCause({ bug, job, attempt, spec, specHash, rulings, sees, known, testOnly }) {
   if (job.status !== "complete") return { cause: "incomplete", why: job.status === "unstarted" ? "the planned review never started" : `the review is ${job.status}` };
-  if (bugRuling(job.caseId, bug.id, rulings) === "disputed") return { cause: "spec-disputed", why: "a person ruled this truth item wrong" };
+  if (bugRuling(job.caseId, bug.id, specHash, rulings) === "disputed") return { cause: "spec-disputed", why: "a person ruled this truth item wrong in this spec version" };
   const places = placesOf(bug);
   const seen = places.map(sees);
   if (seen.every((s) => s === false)) return { cause: "not-in-brief", why: `no brief hunk, delivered range or read covered ${places.map(where).join(", ")}` };
@@ -239,7 +240,7 @@ function missCause({ bug, job, attempt, spec, rulings, sees, known, testOnly }) 
   // Only the item's own words count there: a word another truth item of the case lists too (admin) names neither.
   const shared = new Set((spec.bugs ?? []).filter((b) => b.id !== bug.id).flatMap((b) => b.mentions ?? []).map((w) => w.toLowerCase()));
   const own = (bug.mentions ?? []).filter((w) => !shared.has(w.toLowerCase()));
-  const namesIt = open.find((f) => files.has(f.file) && (bug.kind ?? []).includes(f.category) && names(own, textOf(shown[f.index])) && matchRuling(f.findingId, bug.id, rulings)?.status !== "different-issue");
+  const namesIt = open.find((f) => files.has(f.file) && (bug.kind ?? []).includes(f.category) && names(own, textOf(shown[f.index])) && matchRuling(f.findingId, bug.id, specHash, rulings)?.status !== "different-issue");
   if (namesIt) return { cause: "unresolved", why: `"${namesIt.title}" at ${namesIt.file}:${namesIt.line} names it at a place the spec does not list, and no person has ruled whether it is this issue` };
 
   // The scanner candidates the reviewer dropped that located it.
@@ -284,8 +285,10 @@ export function jobCauses({ job, attempt, spec, rulings }) {
   const sees = sightings(attempt, known);
   const truth = new Map((spec.bugs ?? []).map((b) => [b.id, b]));
   const testOnly = job.origin === "planted";
+  // A ruling on a truth item speaks for the spec version it judged only.
+  const specHash = specHashOf(spec);
   const bugs = {};
-  for (const b of job.bugs) bugs[b.id] = b.found ? null : missCause({ bug: truth.get(b.id), job, attempt, spec, rulings, sees, known, testOnly });
+  for (const b of job.bugs) bugs[b.id] = b.found ? null : missCause({ bug: truth.get(b.id), job, attempt, spec, specHash, rulings, sees, known, testOnly });
   return { bugs, findings: job.findings.map(findingCause) };
 }
 

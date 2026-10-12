@@ -450,8 +450,15 @@ function proseErrors(at: string, text: string, banned: ReturnType<typeof scanner
   return errors;
 }
 
-// `required`: the candidates that need a disposition (those no disabled rule
-// covers); `disposed`: how many of them have exactly one.
+// The scanner candidates a reviewer must raise or drop: those no disabled
+// rule covers. The brief's check counts them, and a review that stops before
+// an answer passes lists them as not reviewed.
+export function requiredCandidates(scan: ScanResult, config: Config): Candidate[] {
+  return scan.candidates.filter((c) => !disabled(c.token, config));
+}
+
+// `required`: the candidates that need a disposition (requiredCandidates);
+// `disposed`: how many of them have exactly one.
 export type SubmissionCheck = { ok: true; report: Report; required: number; disposed: number } | { ok: false; errors: string[]; required: number; disposed: number };
 
 // Checks a version 2 submission with no model and returns every rejection at
@@ -474,7 +481,7 @@ export function checkSubmission(args: {
   const { change, scan, manifest, config } = args;
   const clean = (text: string) => redactByFingerprint(text, scan.secretFingerprints);
   const errors: string[] = [];
-  const live = scan.candidates.filter((c) => !disabled(c.token, config));
+  const live = requiredCandidates(scan, config);
   const done = (disposed: number): SubmissionCheck => ({ ok: false, errors: errors.map((e, i) => `${i + 1}. ${clean(e)}`), required: live.length, disposed });
 
   const parsed = submissionV2Schema.safeParse(args.submission);

@@ -4,7 +4,7 @@
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
 import type { ModelCompletionRecord, Report, ReportFinding, ReviewerRecord } from "../types.js";
-import { candidateLocation, coverageLine, display, escapeMarkdown, location, notOpenedLabel, orderFindings, severityBreakdown, verdictLine } from "./common.js";
+import { candidateLocation, coverageLine, display, escapeMarkdown, firstLine, location, notOpenedLabel, orderFindings, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 type Line =
@@ -16,6 +16,8 @@ type Line =
 
 export const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
 const INCOMPLETE = "Review incomplete: this is not a review of the change";
+// The scanner candidates of an incomplete review that no reviewer checked.
+const UNCHECKED = "Unchecked scanner candidates, not a review";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -74,6 +76,17 @@ function droppedLines(d: Report["dropped"][number]): Line[] {
   ];
 }
 
+// A scanner candidate no reviewer checked: where, the rule, the scanner,
+// its severity and its message.
+function uncheckedLines(c: Report["not_reviewed"][number]): Line[] {
+  return [
+    { kind: "item", text: `${c.id} at ${candidateLocation(c)}: ${c.ruleId}` },
+    { kind: "field", label: "Scanner", text: c.source },
+    { kind: "field", label: "Severity", text: c.reviewSeverity },
+    { kind: "field", label: "Message", text: c.message },
+  ];
+}
+
 function lines(report: Report): Line[] {
   const c = report.completion;
   const out: Line[] = [];
@@ -101,6 +114,12 @@ function lines(report: Report): Line[] {
     if (ordered.length === 0) out.push({ kind: "text", text: "No findings on the changed lines." });
   }
   ordered.forEach((f, i) => out.push(...findingLines(f, i + 1)));
+  // Only an incomplete review has them: what the scanners found, unchecked.
+  if (!complete && report.not_reviewed.length > 0) {
+    out.push({ kind: "heading", text: `${UNCHECKED} (${report.not_reviewed.length})` });
+    out.push({ kind: "text", text: "The scanners found these. No reviewer checked them, so each may be a real problem or a false alarm." });
+    for (const cand of report.not_reviewed) out.push(...uncheckedLines(cand));
+  }
 
   if (report.dropped.length > 0) {
     out.push({ kind: "heading", text: `Dropped scanner candidates (${report.dropped.length})` });
@@ -178,7 +197,11 @@ export function renderReceipt(report: Report, opts: { html: string; md: string; 
     out.push("No findings on the changed lines.");
   }
   ordered.forEach((f, i) => out.push(display(`${findingLabel(f, i + 1)} (${location(f)})`)));
-  if (report.not_reviewed.length > 0) {
+  if (!complete && report.not_reviewed.length > 0) {
+    // One line each: the developer sees what the scanners found, unchecked.
+    out.push(`${UNCHECKED} (${report.not_reviewed.length}):`);
+    for (const cand of report.not_reviewed) out.push(display(`${cand.id} at ${candidateLocation(cand)}: ${cand.source} ${cand.ruleId} (${cand.reviewSeverity}): ${firstLine(cand.message)}`));
+  } else if (report.not_reviewed.length > 0) {
     out.push(`${plural(report.not_reviewed.length, "scanner candidate was", "scanner candidates were")} not checked by the reviewer and count toward the verdict; the report lists them.`);
   }
   out.push(`Report: ${opts.html}`, `Markdown: ${opts.md}`);

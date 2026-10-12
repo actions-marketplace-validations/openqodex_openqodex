@@ -222,8 +222,10 @@ function leaves(v, at = "", out = new Map()) {
 // moved. `worse` lowers the score, `better` raises it, and `other` is a
 // change of anything else the score holds (a case only one run scanned, a
 // second candidate on a found bug). Each run is an index entry, or a run
-// folder's entry built the same way.
-export function compareScan(accepted, candidate, config) {
+// folder's entry built the same way. `words` names the two runs in the
+// lines: `was` the first, `now` the second, and `before` the first
+// after a count (the release check names a base and a candidate).
+export function compareScan(accepted, candidate, config, { was = "the accepted run", now = "now", before = "before" } = {}) {
   const worse = [];
   const better = [];
   const other = [];
@@ -233,7 +235,7 @@ export function compareScan(accepted, candidate, config) {
   const bugsNow = candidate.perBug?.[config] ?? {};
   for (const id of [...new Set([...Object.keys(casesBefore), ...Object.keys(casesNow)])].sort()) {
     if (!casesBefore[id] || !casesNow[id]) {
-      other.push(`${id}: ${casesBefore[id] ? "scanned by the accepted run only" : "not scanned by the accepted run"}`);
+      other.push(`${id}: ${casesBefore[id] ? `scanned by ${was} only` : `not scanned by ${was}`}`);
       continue;
     }
     const bb = bugsBefore[id] ?? {};
@@ -245,27 +247,27 @@ export function compareScan(accepted, candidate, config) {
       for (let r = 0; r < n; r++) {
         const at = `${id} ${bug}${n > 1 ? ` (scan ${r + 1})` : ""}`;
         const severity = (bb[bug] ?? bn[bug])?.severity;
-        if (fb[r] === true && fn[r] !== true) worse.push(`${at}${severity ? `, ${severity}` : ""}: found by the accepted run, missed now`);
-        else if (fb[r] !== true && fn[r] === true) better.push(`${at}${severity ? `, ${severity}` : ""}: missed by the accepted run, found now`);
+        if (fb[r] === true && fn[r] !== true) worse.push(`${at}${severity ? `, ${severity}` : ""}: found by ${was}, missed ${now}`);
+        else if (fb[r] !== true && fn[r] === true) better.push(`${at}${severity ? `, ${severity}` : ""}: missed by ${was}, found ${now}`);
       }
     }
     const a = scanCounts(casesBefore[id]);
     const b = scanCounts(casesNow[id]);
     const count = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
-    if (b.unresolved !== a.unresolved) (b.unresolved > a.unresolved ? worse : better).push(`${id}: ${count(b.unresolved, "unresolved candidate")} (no frozen evidence), ${a.unresolved} before`);
-    if (b.false !== a.false) (b.false > a.false ? worse : better).push(`${id}: ${count(b.false, "false candidate")}, ${a.false} before`);
-    if (b.controls.hit !== a.controls.hit) (b.controls.hit < a.controls.hit ? worse : better).push(`${id}: the clean change passes its control (no candidate) in ${b.controls.hit} of ${b.controls.of} scans, ${a.controls.hit} of ${a.controls.of} before`);
+    if (b.unresolved !== a.unresolved) (b.unresolved > a.unresolved ? worse : better).push(`${id}: ${count(b.unresolved, "unresolved candidate")} (no frozen evidence), ${a.unresolved} ${before}`);
+    if (b.false !== a.false) (b.false > a.false ? worse : better).push(`${id}: ${count(b.false, "false candidate")}, ${a.false} ${before}`);
+    if (b.controls.hit !== a.controls.hit) (b.controls.hit < a.controls.hit ? worse : better).push(`${id}: the clean change passes its control (no candidate) in ${b.controls.hit} of ${b.controls.of} scans, ${a.controls.hit} of ${a.controls.of} ${before}`);
   }
   const sb = accepted.scores?.[config]?.population ?? {};
   const sn = candidate.scores?.[config]?.population ?? {};
   const lostScans = (sn.failed ?? 0) + (sn.unstarted ?? 0) - ((sb.failed ?? 0) + (sb.unstarted ?? 0));
-  if (lostScans > 0) worse.push(`${lostScans} more ${lostScans === 1 ? "scan" : "scans"} saved no scan.json (failed or never started) than in the accepted run`);
+  if (lostScans > 0) worse.push(`${lostScans} more ${lostScans === 1 ? "scan" : "scans"} saved no scan.json (failed or never started) than in ${was}`);
   // What the per-case lines do not show, such as a second candidate on a found bug.
   if (worse.length === 0 && better.length === 0 && other.length === 0) {
     const lb = leaves(accepted.scores?.[config] ?? null);
     const ln = leaves(candidate.scores?.[config] ?? null);
     for (const path of [...new Set([...lb.keys(), ...ln.keys()])].sort()) {
-      if (canonical(lb.get(path) ?? null) !== canonical(ln.get(path) ?? null)) other.push(`${path}: ${JSON.stringify(lb.get(path) ?? null)} in the accepted run, ${JSON.stringify(ln.get(path) ?? null)} now`);
+      if (canonical(lb.get(path) ?? null) !== canonical(ln.get(path) ?? null)) other.push(`${path}: ${JSON.stringify(lb.get(path) ?? null)} in ${was}, ${JSON.stringify(ln.get(path) ?? null)} ${now}`);
     }
   }
   return { config, worse, better, other, same: worse.length === 0 && better.length === 0 && other.length === 0 };

@@ -5,14 +5,18 @@
 // queue.mjs reads it to know which questions are still open.
 //
 // One line per ruling, appended, never edited:
-//   { v: 1, caseId, specsFrom? (legacy runs only), fromSheet, target, status,
+//   { v: 1, caseId, specsFrom? (the --specs folder the spec came from, for a
+//     reader), fromSheet, target, status,
 //     by, at, note, evidence: { text, lines, sha256 } | null }
 // The target and the statuses it takes:
-//   { kind: "bug", id }                    confirmed | disputed
-//   { kind: "finding", findingId }         true | false
-//   { kind: "issue", issueId, members }    consolidate | true | false
-//   { kind: "match", findingId, truthId }  same-issue | different-issue
-//   { kind: "case" }                       clean | not-clean
+//   { kind: "bug", id, specHash }                    confirmed | disputed
+//   { kind: "finding", findingId }                   true | false
+//   { kind: "issue", issueId, members }              consolidate | true | false
+//   { kind: "match", findingId, truthId, specHash }  same-issue | different-issue
+//   { kind: "case" }                                 clean | not-clean
+// A ruling on a truth item (bug and match) names the version of the spec it
+// judged: specHash is the sha256 of that spec (specHashOf), the spec the
+// run was scored against when the person ruled.
 // On a finding or an issue, spec-candidate-accepted and
 // spec-candidate-rejected (the reviewer part's names for a spec candidate)
 // are true and false.
@@ -40,6 +44,13 @@
 // 5. A malformed line (not JSON, a status its target cannot take, a finding
 //    id that is not a sha256, an issue id of another case) is read as a
 //    ruling: it is ignored and reported.
+// 6. A ruling on a truth item reaches another version of its case's spec
+//    (issue 163: permit-all was wrong in one version and right in the
+//    next): a bug or match ruling applies only where the spec a run is
+//    scored against has the specHash it names. A legacy run's case id names
+//    no version, and a run scored with --specs reads other truth than its
+//    own, so the case id alone cannot tell. A line that names no specHash
+//    applies to no version: it is ignored and reported.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -69,6 +80,18 @@ export function isPersonName(by, people = []) {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+
+// JSON with the keys of every object in sorted order, so a spec's version
+// does not depend on how its file orders them.
+function sortedJson(v) {
+  if (Array.isArray(v)) return `[${v.map(sortedJson).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${sortedJson(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+
+// The version of a spec a ruling on one of its truth items names: the
+// sha256 of its JSON, keys sorted.
+export const specHashOf = (spec) => createHash("sha256").update(sortedJson(spec)).digest("hex");
 const isText = (s) => typeof s === "string" && s.trim() !== "";
 
 // What keeps one line from being a ruling, as reasons; empty when it is one.
@@ -85,6 +108,7 @@ export function rulingProblems(l, people = []) {
   if (t.kind === "bug" && !isText(t.id)) p.push("a bug ruling names the truth item's id");
   if ((t.kind === "finding" || t.kind === "match") && !HEX64.test(String(t.findingId))) p.push("findingId must be a sha256");
   if (t.kind === "match" && !isText(t.truthId)) p.push("a match ruling names the truth item's id");
+  if ((t.kind === "bug" || t.kind === "match") && !HEX64.test(String(t.specHash))) p.push(`a ${t.kind} ruling names the spec version it judged as target.specHash, the sha256 of that spec, so it never reaches another version; record it again with queue.mjs decide`);
   if (t.kind === "issue") {
     const prefix = `${l.caseId}#I`;
     if (typeof t.issueId !== "string" || !t.issueId.startsWith(prefix) || !/^[1-9]\d*$/.test(t.issueId.slice(prefix.length))) p.push("issueId must be <caseId>#I<n>, of this line's case");
@@ -100,7 +124,8 @@ export function rulingProblems(l, people = []) {
 // or null for a line that is not JSON) and the names in people.json: the
 // latest ruling per target, the issue each finding belongs to, and every
 // ignored line with its reason. A finding or issue ruling is kept as true
-// or false, whichever name it was written under.
+// or false, whichever name it was written under. A bug or match ruling is
+// kept under the spec version it names.
 export function resolveRulings(lines = [], people = []) {
   const R = { read: 0, ignored: [], people: [...people], findings: new Map(), issues: new Map(), members: new Map(), grouped: new Set(), matches: new Map(), bugs: new Map(), cases: new Map() };
   for (const [i, l] of lines.entries()) {
@@ -116,8 +141,8 @@ export function resolveRulings(lines = [], people = []) {
     if (t.kind === "finding") R.findings.set(t.findingId, at);
     else if (t.kind === "match") {
       if (!R.matches.has(t.findingId)) R.matches.set(t.findingId, new Map());
-      R.matches.get(t.findingId).set(t.truthId, at);
-    } else if (t.kind === "bug") R.bugs.set(`${l.caseId}\0${t.id}`, at);
+      R.matches.get(t.findingId).set(`${t.specHash}\0${t.truthId}`, { ...at, truthId: t.truthId, specHash: t.specHash });
+    } else if (t.kind === "bug") R.bugs.set(`${l.caseId}\0${t.specHash}\0${t.id}`, at);
     else if (t.kind === "case") R.cases.set(l.caseId, at);
     else if (l.status === "consolidate") {
       for (const [f, issue] of R.members) if (issue === t.issueId) R.members.delete(f);
@@ -142,19 +167,22 @@ export function realRuling(findingId, R) {
   return own.n > viaIssue.n ? own : viaIssue;
 }
 
-// The person's ruling on whether a finding is a given truth item, or null.
-export const matchRuling = (findingId, truthId, R) => R.matches.get(findingId)?.get(truthId) ?? null;
+// The person's ruling on whether a finding is a given truth item of the
+// spec version `specHash`, or null.
+export const matchRuling = (findingId, truthId, specHash, R) => R.matches.get(findingId)?.get(`${specHash}\0${truthId}`) ?? null;
 
-// The truth item, among `ids` (its case's), that a person ruled a finding
-// to be ({ truthId, n }, the latest standing same-issue ruling), or null.
-export function sameIssueAs(findingId, ids, R) {
+// The truth item, among `ids` (its case's, in the spec version
+// `specHash`), that a person ruled a finding to be ({ truthId, n }, the
+// latest standing same-issue ruling on that version), or null.
+export function sameIssueAs(findingId, ids, specHash, R) {
   let best = null;
-  for (const [truthId, at] of R.matches.get(findingId) ?? []) if (at.status === "same-issue" && ids.includes(truthId) && (best === null || at.n > best.n)) best = { truthId, n: at.n };
+  for (const at of R.matches.get(findingId)?.values() ?? []) if (at.status === "same-issue" && at.specHash === specHash && ids.includes(at.truthId) && (best === null || at.n > best.n)) best = { truthId: at.truthId, n: at.n };
   return best;
 }
 
-// A person's ruling on a truth item of a case (confirmed or disputed), or null.
-export const bugRuling = (caseId, bugId, R) => R.bugs.get(`${caseId}\0${bugId}`)?.status ?? null;
+// A person's ruling on a truth item of a case in the spec version
+// `specHash` (confirmed or disputed), or null.
+export const bugRuling = (caseId, bugId, specHash, R) => R.bugs.get(`${caseId}\0${specHash}\0${bugId}`)?.status ?? null;
 
 // The names in the people.json of a folder: { v: 1, people: [names] }.
 // None when the file is missing or not that shape, so no ruling counts.
@@ -184,4 +212,40 @@ export function readDecisions(path) {
     }
   };
   return { hash: createHash("sha256").update(bytes).digest("hex"), lines: raw.map(parse), people };
+}
+
+// A person's standing ruling on a scanner candidate (the review queue's
+// candidate items, keyed on lib/scan-score.mjs candidateIdOf) in the spec
+// version `specHash` (specHashOf), from the file's lines in order and the
+// people who may rule. A candidate's truth depends on the spec it is
+// scored against: a revised spec may list an issue on its lines. queue.mjs
+// decide writes a candidate's ruling as a finding or match ruling whose
+// target also says candidate: true and names that version (specHash). So
+// only a finding or match ruling on the candidate itself that names that
+// version (target.specHash) counts; one naming another version, or none, is
+// refused, with its line and the reason. Returns { status, truthId,
+// answered, refused }: status "true" or "false" on whether it is a real
+// issue, "same-issue" (truthId the item) when a person ruled it the truth
+// item it sits on, the later of the two when both stand, or null (a
+// different-issue ruling alone says only what the candidate is not);
+// answered, the truth items a match ruling on this version answers.
+export function candidateRuling(candidateId, specHash, { lines = [], people = [] } = {}) {
+  let real = null;
+  const matches = new Map();
+  const refused = [];
+  for (const [i, l] of lines.entries()) {
+    const t = l?.target;
+    if (!t || t.findingId !== candidateId || (t.kind !== "finding" && t.kind !== "match") || rulingProblems(l, people).length > 0) continue;
+    if (t.specHash !== specHash) {
+      refused.push({ line: i + 1, why: `it names ${HEX64.test(String(t.specHash)) ? `another version of the case's spec (${t.specHash.slice(0, 12)}, the run's is ${String(specHash).slice(0, 12)})` : "no version of the case's spec"}, so a person rules it again on the sheet` });
+      continue;
+    }
+    if (t.kind === "finding") real = { status: REAL[l.status], n: i + 1 };
+    else matches.set(t.truthId, { status: l.status, n: i + 1 });
+  }
+  let same = null;
+  for (const [truthId, at] of matches) if (at.status === "same-issue" && (same === null || at.n > same.n)) same = { truthId, n: at.n };
+  const answered = [...matches.keys()];
+  if (same !== null && (real === null || same.n > real.n)) return { status: "same-issue", truthId: same.truthId, answered, refused };
+  return { status: real?.status ?? null, truthId: null, answered, refused };
 }

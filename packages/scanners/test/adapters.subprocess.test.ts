@@ -166,6 +166,46 @@ describe("builtin scanner subprocesses", () => {
     expect(JSON.stringify(result.scan)).not.toContain(generatedSecret);
   }, 300_000);
 
+  // The scan records each project of the change with the frameworks its
+  // manifests list, Flask among them. semgrep's registry packs carry a rule
+  // family per web framework whose request rules fire on other frameworks'
+  // apps; leaving a family out by framework was measured and rejected
+  // (benchmark/index/ledger/scanner.jsonl, SC-0002), so both families still
+  // reach the review. Ways it could fail, written before the code:
+  //  1. A Flask project is recorded with no framework.
+  //  2. A project that lists Django and Flask, or Django or FastAPI alone,
+  //     is recorded with another set.
+  //  3. A rule family is left out by framework: semgrep's django rules stop
+  //     reaching the review from a Flask app.
+  it("a scan records Flask for a Flask project, and semgrep's django rules still reach the review from it", async () => {
+    if (process.env.OPENQODEX_E2E_OFFLINE === "1") return;
+    const SEARCH = (request: string) => `    q = ${request}.get("q", "")\n`;
+    const flaskApp = `import sqlite3\n\nfrom flask import Flask, request\n\napp = Flask(__name__)\n\n\n@app.get("/search")\ndef search():\n${SEARCH("request.args")}    conn = sqlite3.connect("items.db")\n    cur = conn.cursor()\n    cur.execute(f"SELECT id FROM items WHERE name = '{q}'")\n    return str(cur.fetchall())\n`;
+    const files = {
+      "flask/requirements.txt": "flask==3.1.3\n",
+      "flask/app.py": flaskApp,
+      "both/requirements.txt": 'flask==3.1.3\nDjango==5.0 ; sys_platform == "linux"\n',
+      "both/app.py": flaskApp,
+      "django/requirements.txt": "Django==5.0\n",
+      "django/views.py": `from django.db import connection\nfrom django.http import HttpResponse\n\n\ndef search(request):\n${SEARCH("request.GET")}    with connection.cursor() as cur:\n        cur.execute(f"SELECT id FROM items WHERE name = '{q}'")\n        return HttpResponse(str(cur.fetchall()))\n`,
+      "fastapi/requirements.txt": "fastapi==0.115.0\n",
+      "fastapi/app.py": `from fastapi import FastAPI, Request\nfrom fastapi.responses import HTMLResponse\n\napp = FastAPI()\n\n\n@app.get("/hello", response_class=HTMLResponse)\ndef hello(request: Request):\n    name = request.query_params.get("name", "")\n    return "<p>Hello " + name + "</p>"\n`,
+    };
+    const result = await scan({ scanner: "semgrep", rule: "", files, anchor: "" });
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    // 1, 2.
+    expect(result.scan.projects).toEqual([
+      { root: "both", frameworks: ["django", "flask"] },
+      { root: "django", frameworks: ["django"] },
+      { root: "fastapi", frameworks: ["fastapi"] },
+      { root: "flask", frameworks: ["flask"] },
+    ]);
+    // 3.
+    const rules = (file: string, family: string) => result.scan.candidates.filter((c) => c.filePath === file && c.ruleId.startsWith(family)).map((c) => c.ruleId);
+    expect(rules("flask/app.py", "python.django.")).toContain("python.django.security.injection.tainted-sql-string.tainted-sql-string");
+    expect(rules("flask/app.py", "python.flask.")).toContain("python.flask.security.injection.tainted-sql-string.tainted-sql-string");
+  }, 300_000);
+
   // The fixture filter drops the finding, so only the trail keeps its file,
   // and that file's name is the secret.
   it("a secret gitleaks finds in a fixture file named after it never reaches the scan's trail", async () => {
