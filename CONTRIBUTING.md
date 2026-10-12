@@ -25,7 +25,7 @@ node packages/cli/dist/bin.js review
 pnpm gate
 ```
 
-The gate builds, typechecks, lints and runs the unit and end-to-end tests. It then validates the skill and the plugin manifests and scans for private material. It stops at the first failure. CI runs the same steps on Linux and macOS with Node 22. Run it before you push.
+The gate builds, typechecks, lints and runs the unit and end-to-end tests. It then validates the skill and the plugin manifests and scans for private material. It stops at the first failure. CI runs the same steps with Node 22: on Linux for a pull request, and on Linux and macOS in the merge queue and on main. Run it before you push.
 
 The end-to-end tests run the real CLI on the demo repository with the real scanners. The first run downloads them.
 
@@ -81,6 +81,14 @@ Signed-off-by: Your Name <you@example.com>
 - The gate is green.
 - The pull request carries its test, its docs change and its changeset.
 - Security problems are never reported in a pull request or an issue. See `SECURITY.md`.
+
+## CI and the merge queue
+
+- A pull request runs one check: the gate on Linux. The macOS gate and the scanner-only benchmark show as skipped.
+- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue. Then it runs the full gate on that result: the gate on Linux, the gate on macOS and the scanner-only benchmark.
+- When the full gate passes, the queue merges the pull request into main. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
+- To run the full gate before the queue, for example on a scanner or installer change, a maintainer adds the label `full-ci` to the pull request.
+- Each push to main runs the full gate again, and the release workflow.
 
 ## Adding a built-in scanner
 
