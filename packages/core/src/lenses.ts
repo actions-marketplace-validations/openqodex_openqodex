@@ -38,9 +38,10 @@ const DEFAULT_CONFIDENCE_FLOOR = 0.7;
 const MAX_LENSES = 4;
 
 // Parse one lens file: YAML frontmatter between the first two `---` lines,
-// the body after. Throws on a missing field so a broken lens fails loudly.
+// the body after. A file saved with Windows line ends (\r\n) parses the
+// same. Throws on a missing field so a broken lens fails loudly.
 export function parseLens(text: string): Lens {
-  const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
   if (!match) {
     throw new Error("lens file is missing YAML frontmatter delimited by `---` lines");
   }

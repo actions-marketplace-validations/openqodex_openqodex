@@ -11,6 +11,7 @@
 // 7. A lens a scanner rule covers is still handed to the reviewer though the
 //    rule ran on every changed file the lens matches; or it stands down when
 //    the rule ran on only some of them, or not at all.
+// 8. CRLF frontmatter fences reject a valid lens with mixed line endings.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -35,6 +36,13 @@ const FILE_DIFF = [
 ].join("\n");
 
 describe("parseLens", () => {
+  it("accepts CRLF fences with mixed line endings", () => {
+    const lens = parseLens("---\r\nname: x\ndescription: y\r\n---\r\nbody\r\n");
+    expect(lens.name).toBe("x");
+    expect(lens.description).toBe("y");
+    expect(lens.body).toBe("body");
+  });
+
   it("throws when name or description is missing", () => {
     expect(() => parseLens(`---\ndescription: x\n---\nbody`)).toThrow(/name/);
     expect(() => parseLens(`---\nname: x\n---\nbody`)).toThrow(/description/);

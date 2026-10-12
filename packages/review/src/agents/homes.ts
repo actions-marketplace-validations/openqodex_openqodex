@@ -9,12 +9,17 @@
 // hand: the system resolves `..` after the links before it, and so does the
 // check every write passes (real-path.ts). Folding it here would point init
 // at another folder than the agent reads.
-import { join, sep } from "node:path";
+import { isAbsolute, join, parse, sep } from "node:path";
 
-function fromEnv(value: string | undefined): string | null {
+// Trailing slashes go, but never into the root (`/`, `F:\`): `F:` alone
+// names the current folder on that drive. The first character always stays:
+// `\` on Linux and macOS names a folder. isAbsolute, not a leading `/`,
+// since a Windows path starts with its drive.
+export function fromEnv(value: string | undefined, paths = { parse, sep, isAbsolute }): string | null {
   if (value === undefined || value === "") return null;
-  const trimmed = value.length > 1 ? value.replace(/[\\/]+$/, "") : value;
-  return trimmed.startsWith(sep) ? trimmed : `${process.cwd()}${sep}${trimmed}`;
+  const keep = Math.max(1, paths.parse(value).root.length);
+  const trimmed = value.slice(0, keep) + value.slice(keep).replace(/[\\/]+$/, "");
+  return paths.isAbsolute(trimmed) ? trimmed : `${process.cwd()}${paths.sep}${trimmed}`;
 }
 
 export function claudeHome(home: string, env: NodeJS.ProcessEnv = process.env): string {
