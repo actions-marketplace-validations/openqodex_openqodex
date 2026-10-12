@@ -354,8 +354,8 @@ use_claude_code() {
 
 # This run's own review folder, one field per line:
 #   report    complete, incomplete, unreadable, or none without report.json
-#   blocking  1 when a finding (or a candidate nobody checked) meets the
-#             block severity
+#   blocking  1 when a finding (or, in a complete review, a candidate
+#             nobody checked) meets the block severity
 #   reviewer  the reviewer and its version, from the report, else from
 #             reviewer.json
 #   missing   what the review is missing
@@ -374,10 +374,13 @@ const s = read("reviewer.json");
 const c = (r && r.completion) || {};
 const order = ["info", "nitpick", "minor", "major", "critical"];
 const at = r ? order.indexOf(r.block_on_severity) : -1;
-const severities = r ? (r.findings || []).map((f) => f.severity).concat((r.not_reviewed || []).map((n) => n.reviewSeverity)) : [];
+const complete = Boolean(r) && c.status === "complete" && r.verdict !== "incomplete";
+// An incomplete review lists every scanner candidate it never checked; the
+// scan that runs after it judges those, so only its findings count here.
+const severities = r ? (r.findings || []).map((f) => f.severity).concat(complete ? (r.not_reviewed || []).map((n) => n.reviewSeverity) : []) : [];
 const blocking = Boolean(r) && (r.verdict === "blocked" || (at >= 0 && severities.some((x) => order.indexOf(x) >= at)));
 const line = (x) => String(x).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
-const report = r === null ? "none" : r === undefined ? "unreadable" : c.status === "complete" && r.verdict !== "incomplete" ? "complete" : "incomplete";
+const report = r === null ? "none" : r === undefined ? "unreadable" : complete ? "complete" : "incomplete";
 const who = c.reviewer ? `${c.reviewer.driver} ${c.reviewer.version}` : s && s.driver ? `${s.driver} ${s.version}` : "";
 const started = s ? (s.started === true ? "true" : "false") : "";
 const reasons = s && Array.isArray(s.reasons) ? s.reasons.join("; ") : "";

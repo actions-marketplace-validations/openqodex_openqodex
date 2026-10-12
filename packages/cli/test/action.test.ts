@@ -616,4 +616,28 @@ describe("the review mode, without a reviewer", () => {
     expect(fields({ ...partial, block_on_severity: null })[1]).toBe("0");
     expect(fields({ verdict: "passed", block_on_severity: null, findings: [], completion: { status: "complete", missing: [], reviewer: null } }).slice(0, 3)).toEqual(["complete", "0", ""]);
   });
+
+  it("R22. an incomplete report that lists its unchecked scanner candidates reads exactly as the same report without them: the scan after it judges them", () => {
+    // Before issue 147 an incomplete report listed none, so the review's
+    // part of the result came from its findings alone. A changed scanner
+    // settings file is a major candidate in the review and a minor finding
+    // in the scan: listing it must not make the job block.
+    const fn = /read_run\(\) \{[\s\S]*?\n\}/.exec(SCRIPT)?.[0];
+    expect(fn).toBeDefined();
+    const dir = tempDir("oq-report-");
+    const fields = (report: unknown) => {
+      writeFileSync(join(dir, "report.json"), JSON.stringify(report));
+      return spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", `node_bin='${process.execPath}'\n${fn}\nread_run "$1"`, "x", dir], { encoding: "utf8" }).stdout.split("\n");
+    };
+    const unchecked = [{ reviewSeverity: "major" }, { reviewSeverity: "critical" }];
+    const partial = { verdict: "incomplete", block_on_severity: "major", findings: [], not_reviewed: [], completion: { status: "incomplete", missing: ["the reviewer timed out"], reviewer: null } };
+    for (const findings of [[], [{ severity: "minor" }], [{ severity: "major" }]]) {
+      const before = fields({ ...partial, findings });
+      expect(fields({ ...partial, findings, not_reviewed: unchecked })).toEqual(before);
+    }
+    expect(fields({ ...partial, not_reviewed: unchecked }).slice(0, 2)).toEqual(["incomplete", "0"]);
+    expect(fields({ ...partial, findings: [{ severity: "major" }], not_reviewed: unchecked })[1]).toBe("1");
+    // A complete review's unchecked candidates still count.
+    expect(fields({ ...partial, verdict: "passed", completion: { status: "complete", missing: [], reviewer: null }, not_reviewed: unchecked }).slice(0, 2)).toEqual(["complete", "1"]);
+  });
 });
