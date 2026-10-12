@@ -1,116 +1,129 @@
-// Ways this could fail, written before the fix:
-// 1. A 4,000-character changed line left out of the brief stays unread.
-// 2. Long context or removed lines prevent a range from being delivered.
-// 3. The boundary measures the row label instead of the source line.
-// 4. A summary hashes a secret in clear instead of the redacted text.
-// 5. A line shown only by its hash completes the review, and no output says
-//    the reviewer never read it.
+// Ways this could fail, written before the replacement:
+// 1. A 4,000-character line is omitted or a chunk is missing but coverage completes.
+// 2. Splitting a removed line before redaction leaks a secret across chunks.
+// 3. Two removed lines lose their separate old-file line numbers.
+// 4. A line over the byte budget is counted as supplied instead of named as missing.
+// 5. Chunk labels cannot be used to cite a finding on the changed line.
+// 6. A correction round uses a different delivery policy from the brief.
+// 7. A long line in the brief loses its diff marker, so an added line reads as context.
+// 8. A context line over the byte budget keeps a short changed line beside it unsent.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import type { Change, Hunk } from "@openqodex/core";
-import { deliverRanges, redactSnapshot } from "../src/conversation.js";
+import { cacheFolder, removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
+import { deliverRanges } from "../src/conversation.js";
 import { git } from "./repos.js";
-import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
-const hash = (line: string) => createHash("sha256").update(line).digest("hex").slice(0, 12);
-const hunk: Hunk = { path: "b.txt", start: 1, end: 1, deletion: false };
-const change: Change = { files: [{ path: "b.txt", status: "added", binary: false }], coverage: new Map([["b.txt", new Set([1])]]), deletionPoints: new Map() } as Change;
+const gitleaks = [process.env.OPENQODEX_E2E_HOME ?? cacheFolder("openqodex-e2e-home"), join(homedir(), ".openqodex")]
+  .map((h) => join(h, "tools/gitleaks")).find((p) => existsSync(p));
 
-// One review through the built CLI and the golden suite's scripted Codex
-// provider, its answer bound to this change: a 4,000-character line in a file
-// whose diff the brief leaves out. Run once, read by the two tests below.
-let longReview: { status: number | null; stdout: string; stderr: string; run: string; context: string } | undefined;
-function reviewLongLine() {
-  if (longReview) return longReview;
+function review(opts: { before?: string; after: string; secret?: string; correction?: boolean; finding?: boolean }) {
   const dir = tempDir("oq-long-cli-");
   const home = tempDir("oq-long-home-");
   const provider = tempDir("oq-long-provider-");
   git(dir, "init", "-q", "-b", "main");
+  mkdirSync(join(dir, "app"));
   writeFileSync(join(dir, "README.txt"), "Base\n");
+  if (opts.before) writeFileSync(join(dir, "app/server.py"), opts.before);
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "Base");
-  writeFileSync(join(dir, "a.txt"), ("x".repeat(202) + "\n").repeat(1000));
-  mkdirSync(join(dir, "app"));
-  writeFileSync(join(dir, "app/server.py"), "x".repeat(4000) + "\n");
+  writeFileSync(join(dir, "app/server.py"), opts.after);
+  if (opts.correction) writeFileSync(join(dir, "a.txt"), ("x".repeat(202) + "\n").repeat(1000));
+  if (opts.secret) {
+    mkdirSync(join(home, "tools"));
+    cpSync(gitleaks!, join(home, "tools/gitleaks"), { recursive: true });
+    writeFileSync(join(dir, "key.txt"), `STRIPE_KEY = "${opts.secret}"\n`);
+  }
   let source = readFileSync(resolve("tests/golden/stand-ins/codex.cjs"), "utf8");
   source = source.replace('const answer = readFileSync(join(folder, "submission.json"), "utf8").trim();', 'let input = ""; process.stdin.on("data", (part) => { input += part; });');
-  source = source.replace('process.stdin.on("end", () => {', 'process.stdin.on("end", () => { writeFileSync(join(folder, "context"), input); const answer = JSON.stringify({ version: 2, change_id: /`change_id`: `([0-9a-f]{12})`/.exec(input)?.[1], summary: "Adds generated text.", findings: [], dropped: [] });');
+  source = source.replace('process.stdin.on("end", () => {', `process.stdin.on("end", () => {
+    const briefPath = join(folder, "first-input");
+    if (!existsSync(briefPath)) writeFileSync(briefPath, input);
+    const brief = readFileSync(briefPath, "utf8");
+    const transcript = join(folder, "context");
+    writeFileSync(transcript, (existsSync(transcript) ? readFileSync(transcript, "utf8") : "") + input);
+    const dropped = [...brief.matchAll(/^- (c\\d+) \\[[^\\]]+\\] ([^:]+):(\\d+) /gm)].map((m) => ({ candidate: m[1], reason: "The key is a test fixture.", file_path: m[2], line_number: Number(m[3]) }));
+    const findings = ${opts.finding ? 'JSON.parse(readFileSync(join(folder, "finding.json"), "utf8"))' : '[]'};
+    const answer = JSON.stringify({ version: 2, change_id: /\x60change_id\x60: \x60([0-9a-f]{12})\x60/.exec(brief)?.[1], summary: "Adds generated text.", findings, dropped });`);
+  if (opts.finding) {
+    mkdirSync(join(dir, ".openqodex"));
+    writeFileSync(join(dir, ".openqodex/config.yaml"), "review:\n  block_on_severity: critical\n");
+  }
+  if (opts.finding) writeFileSync(join(provider, "finding.json"), JSON.stringify([{
+    severity: "critical", category: "bug", confidence: 0.9, file_path: "app/server.py", line_number: 6,
+    title: "Invalid generated value", problem: "The generated value exceeds the parser limit.",
+    consequence: "The parser rejects the file.", fix: "Shorten the generated value.", source: null, candidate: null, suggested_change: null,
+  }]));
   const executable = join(provider, "codex");
   writeFileSync(executable, `#!${process.execPath}\n${source}`);
   chmodSync(executable, 0o755);
   const env = { ...process.env, PATH: provider + delimiter + process.env.PATH, OPENQODEX_HOME: home, OPENQODEX_AUTO_UPDATE: "0" };
   for (const key of ["CODEX_SANDBOX", "CODEX_THREAD_ID", "CLAUDECODE", "OPENQODEX_REVIEW_DEPTH"]) delete env[key as keyof typeof env];
-  const out = spawnSync(process.execPath, [resolve("packages/cli/dist/bin.js"), "review", "--reviewer", "codex", "--offline", "--no-color"], { cwd: dir, env, encoding: "utf8", timeout: 120_000 });
+  const out = spawnSync(process.execPath, [resolve("packages/cli/dist/bin.js"), "review", "--reviewer", "codex", "--offline", "--no-color", ...(opts.secret ? ["--only", "gitleaks"] : [])], { cwd: dir, env, encoding: "utf8", timeout: 120_000 });
   const runs = join(dir, ".openqodex/reviews");
-  longReview = { status: out.status, stdout: out.stdout, stderr: out.stderr, run: join(runs, readdirSync(runs)[0]!), context: readFileSync(join(provider, "context"), "utf8") };
-  return longReview;
+  const run = join(runs, readdirSync(runs)[0]!);
+  return { ...out, context: readFileSync(join(provider, "context"), "utf8"), brief: readFileSync(join(run, "brief.md"), "utf8"), report: JSON.parse(readFileSync(join(run, "report.json"), "utf8")), rounds: readFileSync(join(run, "rounds.json"), "utf8") };
 }
 
-it("a 4,000-character line left out of the brief completes through the scripted Codex provider", () => {
-  const r = reviewLongLine();
-  const report = JSON.parse(readFileSync(join(r.run, "report.json"), "utf8"));
+function parts(text: string, label: string): string[] {
+  return text.split("\n").filter((row) => row.replace(/^[+ -]/, "").startsWith(`${label}, part `)).map((row) => row.slice(row.indexOf("\t") + 1));
+}
+
+it.each([false, true])("a 4,000-character line counts only with every part delivered, correction %s", (correction) => {
+  const line = "x".repeat(2000) + "y".repeat(2000);
+  const r = review({ after: line + "\n", correction });
   expect(r.status, r.stderr).toBe(0);
-  expect(report.completion.status).toBe("complete");
-  expect(report.completion.coverage.unread).toEqual([]);
-  expect(readFileSync(join(r.run, "rounds.json"), "utf8")).toContain("app/server.py");
-  expect(r.context).toContain(`line 1: 4000 characters, sha256 ${hash("x".repeat(4000))}`);
+  expect(r.report.completion.status).toBe("complete");
+  expect(parts(correction ? r.context : r.brief, "app/server.py: line 1").join("")).toBe(line);
+  if (correction) expect(r.rounds).toContain("app/server.py");
+  else expect(r.brief).toContain("+app/server.py: line 1, part 1 of 2\t");
 }, 120_000);
 
-it("the receipt, report.md, report.html and report.json name the 4,000-character line as not read", () => {
-  const r = reviewLongLine();
-  const line = "1 changed line was shown to the reviewer only by its length and hash: app/server.py:1";
-  const md = readFileSync(join(r.run, "report.md"), "utf8");
-  const html = readFileSync(join(r.run, "report.html"), "utf8");
-  expect(r.stdout).toContain(`Not read: ${line}`);
-  expect(md).toContain(line);
-  expect(html).toContain(line);
-  expect(JSON.parse(readFileSync(join(r.run, "report.json"), "utf8")).completion.coverage.hashed).toEqual([{ path: "app/server.py", start: 1, end: 1, deletion: false }]);
-  for (const text of [r.stdout, md, html]) expect(text).not.toContain("their changed lines were in the brief");
+it.skipIf(!gitleaks).each([false, true])("a secret crossing a removed line chunk boundary is redacted in every part, correction %s", (correction) => {
+  const secret = ["sk", "live", "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQR"].join("_");
+  const line = "z".repeat(1995) + secret + "y".repeat(2100);
+  const r = review({ before: "keep\n" + line + "\nend\n", after: "keep\nend\n", secret, correction });
+  expect(r.status, r.stderr).toBe(0);
+  expect(r.context).not.toContain(secret);
+  expect(parts(correction ? r.context : r.brief, "app/server.py: old line 2").join("")).toBe(line.replace(secret, "[redacted]"));
 }, 120_000);
 
-it("long context and removed lines are summarized without blocking delivery", () => {
+it.each([false, true])("two long removed lines keep separate old-file line numbers, correction %s", (correction) => {
+  const first = "a".repeat(4000);
+  const second = "b".repeat(4000);
+  const r = review({ before: `keep\n${first}\n${second}\nend\n`, after: "keep\nend\n", correction });
+  expect(r.status, r.stderr).toBe(0);
+  expect(parts(correction ? r.context : r.brief, "app/server.py: old line 2").join("")).toBe(first);
+  expect(parts(correction ? r.context : r.brief, "app/server.py: old line 3").join("")).toBe(second);
+}, 120_000);
+
+it("lines too large for the brief budget stay incomplete and the receipt names them", () => {
+  const r = review({ after: "x".repeat(220_000) + "\n" + "y".repeat(220_000) + "\n" });
+  expect(r.status, r.stderr).toBe(2);
+  expect(r.report.completion.status).toBe("incomplete");
+  expect(r.stdout).toContain("not given to the reviewer: app/server.py:1-2");
+  expect(r.report.completion.coverage.unread).toEqual([{ path: "app/server.py", start: 1, end: 2, deletion: false }]);
+}, 120_000);
+
+it("chunk line numbers let the reviewer cite a finding on the changed line", () => {
+  const r = review({ after: "short\n".repeat(5) + "x".repeat(4000) + "\n", finding: true });
+  expect(r.status, r.stderr).toBe(1);
+  expect(r.brief).toContain("app/server.py: line 6, part 2 of 2");
+  expect(r.report.findings[0].line_number).toBe(6);
+  expect(r.report.completion.status).toBe("complete");
+}, 120_000);
+
+it("a context line over the byte budget is marked as not shown and the changed lines beside it still go", () => {
   const snapshotDir = tempDir("oq-long-context-");
-  writeFileSync(join(snapshotDir, "b.txt"), "x".repeat(4000) + "\nshort\n");
-  const removed = "y".repeat(4000);
-  const deletion = { ...hunk, deletion: true };
-  const given = deliverRanges({ snapshotDir, unread: [{ ...hunk, start: 2, end: 2 }, deletion], secrets: [], change: { ...change, deletionPoints: new Map([["b.txt", [{ after: 0, lines: 1, anchors: [1] }]]]), diffs: [{ path: "b.txt", text: `diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +0,0 @@\n-${removed}\n` }] } });
-  expect(given.delivered).toHaveLength(2);
-  expect(given.left).toEqual([]);
-  expect(given.text).toContain(`4000 characters, sha256 ${hash(removed)}`);
-  // The long context line is not a changed line; the long removed line is.
-  expect(given.hashed).toEqual([deletion]);
-});
-
-it("the 2,000-character limit is measured on the source line, not the numbered row", () => {
-  const snapshotDir = tempDir("oq-long-boundary-");
-  const at = "x".repeat(2000);
-  const over = "y".repeat(2001);
-  writeFileSync(join(snapshotDir, "b.txt"), `${at}\n${over}\n`);
-  const given = deliverRanges({ snapshotDir, unread: [{ ...hunk, end: 2 }], secrets: [] });
-  expect(given.text).toContain(`1\t${at}`);
-  expect(given.text).toContain(`line 2: 2001 characters, sha256 ${hash(over)}`);
-  expect(given.left).toEqual([]);
-});
-
-it("a secret in a long changed or removed line is hashed only after redaction", () => {
-  const snapshotDir = tempDir("oq-long-secret-");
-  const secret = "hidden-secret";
-  const kept = "z".repeat(2001) + secret;
-  const removed = "y".repeat(2001) + secret;
-  writeFileSync(join(snapshotDir, "b.txt"), `${kept}\nshort\n`);
-  redactSnapshot(snapshotDir, [secret]);
-  const deletion = { ...hunk, end: 2, deletion: true };
-  const diff = `diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1,3 +1,2 @@\n z\n-${removed}\n short\n`;
-  const given = deliverRanges({ snapshotDir, unread: [hunk, deletion], secrets: [secret], change: { ...change, deletionPoints: new Map([["b.txt", [{ after: 1, lines: 1, anchors: [1, 2] }]]]), diffs: [{ path: "b.txt", text: diff }] } });
-  expect(given.leak).toBe(false);
-  expect(given.delivered).toHaveLength(2);
-  expect(given.text).toContain(`line 1: 2011 characters, sha256 ${hash("z".repeat(2001) + "[redacted]")}`);
-  expect(given.text).toContain(`line removed: 2011 characters, sha256 ${hash("y".repeat(2001) + "[redacted]")}`);
-  expect(given.text).not.toContain(secret);
-  expect(given.text).not.toContain(hash(kept));
-  expect(given.text).not.toContain(hash(removed));
+  writeFileSync(join(snapshotDir, "app.js"), `${"a".repeat(220_000)}\nchanged\nkept\n`);
+  const deletion = { path: "app.js", start: 1, end: 2, deletion: true };
+  const change = { files: [{ path: "app.js", status: "modified" as const, oldPath: null, binary: false }], deletionPoints: new Map([["app.js", [{ after: 1, lines: 1, anchors: [1, 2] }]]]), diffs: [{ path: "app.js", text: "diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -2,2 +2,1 @@\n-gone\n changed\n" }] };
+  const r = deliverRanges({ snapshotDir, unread: [{ path: "app.js", start: 2, end: 2, deletion: false }, deletion], secrets: [], change });
+  expect(r.delivered).toEqual([{ path: "app.js", start: 2, end: 2, deletion: false }, deletion]);
+  expect(r.text).toContain("1\t(not shown: a context line over 200 KB)");
+  expect(r.text).toContain("2\tchanged");
+  expect(r.text).not.toContain("a".repeat(2001));
 });

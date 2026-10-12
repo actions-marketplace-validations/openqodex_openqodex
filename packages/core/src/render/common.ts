@@ -77,20 +77,10 @@ export function verdictLine(report: Report): string {
 }
 
 // The coverage label for files the reviewer did not open. With every changed
-// range given to the reviewer in full, their changed lines were in front of
-// it without opening them, which "not read" would hide.
-export function notOpenedLabel(cov: { covered: number; hunks: number; hashed?: unknown[] }): string {
-  return cov.covered === cov.hunks && (cov.hashed ?? []).length === 0 ? "Files not opened (their changed lines were in the brief)" : "Files not opened";
-}
-
-// The changed lines the reviewer was shown only by length and hash, as one
-// sentence for every report, or null when there are none.
-export function notReadLine(cov: { hashed?: { path: string; start: number; end: number; deletion: boolean }[] } | undefined): string | null {
-  const hashed = cov?.hashed ?? [];
-  if (hashed.length === 0) return null;
-  const at = hashed.slice(0, 10).map((h) => (h.deletion ? `${h.path}, removed next to ${h.end > h.start ? `lines ${h.start}-${h.end}` : `line ${h.start}`}` : `${h.path}:${h.start}`));
-  const more = hashed.length > 10 ? ` and ${hashed.length - 10} more` : "";
-  return `${hashed.length} changed ${hashed.length === 1 ? "line was" : "lines were"} shown to the reviewer only by its length and hash: ${at.join("; ")}${more}`;
+// range given to the reviewer, their changed lines were in front of it
+// without opening them, which "not read" would hide.
+export function notOpenedLabel(cov: { covered: number; hunks: number }): string {
+  return cov.covered === cov.hunks ? "Files not opened (their changed lines were in the brief)" : "Files not opened";
 }
 
 export function location(f: { file_path: string; line_number: number; line_end: number }): string {

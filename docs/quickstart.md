@@ -81,7 +81,7 @@ The agent shows you the receipt as OpenQodex printed it: the verdict, the review
 
 Open `report.html` in a browser. It shows each changed file as a diff with each finding under its line: the problem, why it matters, the fix and its source. Below are the coverage, the scanners and the blast radius. The page runs no script and loads nothing. Then answer the agent by number, such as "fix 1 and 3", or say "fix all". The agent fixes only the findings you name, runs the review again and shows you the new receipt.
 
-A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named. The report names a line over 2,000 characters as not read: the reviewer got only its length and hash. It does not mean nothing was missed. The report is in `.openqodex/reviews/<time>-<id>/` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
+A complete review means every stage ran, every scanner finding was checked and every changed line was put in front of the reviewer; anything not covered is named. It does not mean nothing was missed. The report is in `.openqodex/reviews/<time>-<id>/` in your repo. `.openqodex/.gitignore` keeps the reports out of git; `git status` shows only the two files above and that `.gitignore`, the first time.
 
 The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_severity` and a finding meets it. With no config, OpenQodex warns and never blocks.
 

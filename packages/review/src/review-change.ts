@@ -645,7 +645,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
-    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], hashed: [], startedAt: now, endedAt: now } : await converse({
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,
@@ -687,7 +687,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       rounds: talk.rounds,
       usage: talk.usage,
     };
-    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? talk.trace : [], lineCount, delivered: talk.delivered, hashed: talk.hashed.flat() });
+    const coverage = readCoverage({ change, briefFiles: brief.diffFiles, trace: traced ? talk.trace : [], lineCount, delivered: talk.delivered });
     // Redacted like the report: a path or a tool input may hold a secret.
     const completion = redactStored(completionRecord({
       change,

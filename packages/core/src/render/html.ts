@@ -19,7 +19,6 @@
 import { createHash } from "node:crypto";
 import type { Candidate, ImpactEdge, ImpactSummary, Report, ReportFinding } from "../types.js";
 import type { Display, DisplayFile, DisplayHunk } from "./display.js";
-import { notOpenedLabel, notReadLine } from "./common.js";
 import { REPORT_CSS } from "./html-style.js";
 import { modelReviewerLine, product } from "./review.js";
 
@@ -477,8 +476,6 @@ function masthead(report: Report, complete: boolean, impactText: string | null):
     verdict = "Review incomplete: this is not a review of the change";
   }
   const missing = complete ? "" : `<div class="missing"><h2>Missing</h2><ul>${(report.completion?.missing ?? ["no completion record"]).map((m) => `<li>${text(m)}</li>`).join("")}</ul></div>`;
-  const unread = notReadLine(report.completion?.coverage);
-  const notRead = unread ? `<div class="missing"><h2>Not read</h2><ul><li>${text(unread)}</li></ul></div>` : "";
   const meta: [string, string][] = [
     ["Change", `<code>${shortId(report.change_id)}</code> against <code>${text(base.ref)}</code> <code>${shortId(base.sha)}</code>`],
     ["Size", `${plural(stats.files ?? 0, "file")}, <span class="added">+${num(stats.additions ?? 0)}</span> <span class="removed">-${num(stats.deletions ?? 0)}</span>`],
@@ -494,7 +491,7 @@ function masthead(report: Report, complete: boolean, impactText: string | null):
 <span class="masthead-kind">${complete ? "review complete" : "review incomplete"}</span>
 </div>
 <h1 class="verdict ${verdictCls}">${verdict}</h1>
-${missing}${notRead}
+${missing}
 <dl class="meta">${items}</dl>
 </header>`;
 }
@@ -550,7 +547,8 @@ function coverage(report: Report): string {
     } else {
       read = cov.files_read.length > 0 ? cov.files_read.map((p) => text(p)).join(", ") : "none";
       if (cov.files_not_read.length > 0) {
-        notOpened = [notOpenedLabel(cov), cov.files_not_read.map((p) => text(p)).join(", ")];
+        const label = cov.covered === cov.hunks ? "Files not opened (their changed lines were in the brief)" : "Files not opened";
+        notOpened = [label, cov.files_not_read.map((p) => text(p)).join(", ")];
       }
     }
   } else {

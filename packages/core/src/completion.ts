@@ -75,10 +75,8 @@ function covers(ranges: [number, number][], start: number, end: number): boolean
 // line count it can never be shown read.
 // `delivered`: ranges the tool itself put in front of the reviewer in a
 // correction round; a line range counts like a read, a deletion when the
-// same deletion was delivered. `hashed`: the delivered changed lines shown
-// only by length and hash; kept in the coverage unless the brief or a read
-// also showed them, so every report names them as not read.
-export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null; delivered?: Hunk[]; hashed?: Hunk[] }): Coverage {
+// same deletion was delivered.
+export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<string>; trace: TraceEntry[]; lineCount?: (path: string) => number | null; delivered?: Hunk[] }): Coverage {
   const reads = new Map<string, [number, number][]>();
   for (const t of args.trace) {
     if (t.tool !== "Read" || !t.ok || t.inside !== true || t.path === null || t.range === null) continue;
@@ -99,14 +97,12 @@ export function readCoverage(args: { change: Change; briefFiles: ReadonlySet<str
     return !covers([...(reads.get(h.path) ?? []), ...(given.get(h.path) ?? [])], h.start, h.end);
   });
   const readable = args.change.files.filter((f) => f.status !== "deleted" && !f.binary).map((f) => f.path);
-  const hashed = (args.hashed ?? []).filter((h) => !args.briefFiles.has(h.path) && (h.deletion || !covers(reads.get(h.path) ?? [], h.start, h.end)));
   return {
     hunks: hunks.length,
     covered: hunks.length - unread.length,
     unread,
     files_read: [...reads.keys()].sort(),
     files_not_read: readable.filter((p) => !reads.has(p)).sort(),
-    ...(hashed.length > 0 ? { hashed } : {}),
   };
 }
 
@@ -206,13 +202,12 @@ export function modelCoverage(args: {
   briefFiles: ReadonlySet<string>;
   toolLog: ModelToolEntry[];
   delivered?: Hunk[];
-  hashed?: Hunk[];
   lineCount?: (path: string) => number | null;
 }): Coverage {
   const reads: TraceEntry[] = args.toolLog
     .filter((t) => t.tool === MODEL_READ_TOOL && t.delivered && t.in_scope !== false)
     .map((t) => ({ tool: "Read", path: t.path, inside: t.inside, range: t.range, ok: t.ok }));
-  return readCoverage({ change: args.change, briefFiles: args.briefSent ? args.briefFiles : new Set(), trace: reads, lineCount: args.lineCount, delivered: args.delivered, hashed: args.hashed });
+  return readCoverage({ change: args.change, briefFiles: args.briefSent ? args.briefFiles : new Set(), trace: reads, lineCount: args.lineCount, delivered: args.delivered });
 }
 
 export function modelCompletionRecord(args: {
