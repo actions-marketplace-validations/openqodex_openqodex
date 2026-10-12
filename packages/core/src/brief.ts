@@ -3,15 +3,17 @@
 // the diff, the finding shape and the command that finalizes the review.
 // The whole text passes through redactSecrets before it is returned, so no
 // matched secret ever reaches the brief.
+import { DELIVERY_ROW_BYTES, deliveryRow } from "./delivery.js";
+import { unquoteDiffPath } from "./diff.js";
 import { GLOBAL_CONFIDENCE_FLOOR } from "./finalize.js";
 import { computeMissingTestSignal } from "./missing-tests.js";
-import { redactSecrets } from "./redact.js";
+import { redactSecrets, redactSecretsKeepingLines } from "./redact.js";
 import { coverageLine } from "./render/common.js";
 import { severityRank } from "./severity.js";
 import type { Change, Config, ContextItem, ContextKind, RunTarget, ScanResult, SelectedLens } from "./types.js";
 
 const MAX_CANDIDATES_SHOWN = 50;
-const MAX_DIFF_BYTES = 200 * 1024;
+const MAX_DIFF_BYTES = DELIVERY_ROW_BYTES;
 
 function fenceFor(text: string): string {
   const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
@@ -595,9 +597,41 @@ function lineRanges(set: Set<number>): string {
   return out.join(", ");
 }
 
+// Redaction precedes row formatting, so a secret spanning a chunk boundary
+// is replaced before any part is sent. The original diff stays unchanged.
+function deliveryDiff(diff: string, secrets: string[]): string | null {
+  let path = "";
+  let oldPath = "";
+  let old = 0;
+  let next = 0;
+  let inHunk = false;
+  const rows: string[] = [];
+  for (const row of redactSecretsKeepingLines(diff, secrets).split("\n")) {
+    if (row.startsWith("diff --git ")) inHunk = false;
+    if (!inHunk && row.startsWith("--- ")) oldPath = unquoteDiffPath(row.slice(4).replace(/\t$/, "")).replace(/^a\//, "");
+    if (!inHunk && row.startsWith("+++ ")) path = unquoteDiffPath(row.slice(4).replace(/\t$/, "")).replace(/^b\//, "");
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(row);
+    if (h) {
+      old = Number(h[1]);
+      next = Number(h[2]);
+      inHunk = true;
+    } else if (inHunk && /^[+ -]/.test(row)) {
+      const removed = row[0] === "-";
+      const parts = deliveryRow(removed ? oldPath : path, removed ? old : next, row.slice(1), row[0]!, removed, row[0]!);
+      if (parts === null) return null;
+      rows.push(...parts);
+      if (row[0] !== "+") old++;
+      if (!removed) next++;
+      continue;
+    }
+    rows.push(row);
+  }
+  return rows.join("\n");
+}
+
 // The diff, file by file, as many whole files as fit in the brief. Returns
 // the files whose diff it carries: the reviewer must read the others.
-function diffBlockV2(change: Change): { text: string; files: Set<string> } {
+function diffBlockV2(change: Change, secrets: string[]): { text: string; files: Set<string> } {
   // A Change built without its per-file split carries one block for every file in it.
   const all = change.files.filter((f) => !change.notReviewed.includes(f.path)).map((f) => f.path);
   const parts = change.diffs?.map((d) => ({ paths: [d.path], text: d.text })) ?? (change.diff.trim() === "" ? [] : [{ paths: all, text: change.diff }]);
@@ -606,13 +640,14 @@ function diffBlockV2(change: Change): { text: string; files: Set<string> } {
   const left: string[] = [];
   let bytes = 0;
   for (const p of parts) {
-    const size = Buffer.byteLength(p.text, "utf8");
-    if (bytes + size > MAX_DIFF_BYTES) {
+    const text = deliveryDiff(p.text, secrets);
+    const size = text === null ? Infinity : Buffer.byteLength(text, "utf8");
+    if (text === null || bytes + size > MAX_DIFF_BYTES) {
       left.push(...p.paths);
       continue;
     }
     bytes += size;
-    shown.push(p.text);
+    shown.push(text);
     for (const path of p.paths) files.add(path);
   }
   const lines = ["## Diff", ""];
@@ -757,7 +792,7 @@ export function buildReviewerBrief(args: {
     ];
     return { text: redactSecrets(`${blocks.filter((b) => b !== "").join("\n\n")}\n`, args.secrets), diffFiles: new Set() };
   }
-  const diff = diffBlockV2(change);
+  const diff = diffBlockV2(change, args.secrets);
   const blocks = [
     header(change, scan, config, args.target),
     REVIEWER_ROLE,

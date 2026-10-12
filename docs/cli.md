@@ -94,6 +94,10 @@ The receipt holds the verdict, the change, the reviewer's summary, one line per 
 
 A finding counts toward the verdict only on a line the change added or modified. A change that only deletes lines, such as a removed check, has no such line, so the lines next to each deletion count too: the line just above and the line just below it in the new file. The brief lists each deletion point ("2 lines deleted after line 14 of app/auth.py") and tells the reviewer to cite one of those lines and say what was removed. Any other line the change did not touch stays under "Outside the changed lines".
 
+### Very long lines
+
+A correction round carries at most 4,000 rows and 512 KB, context included. The brief carries at most 200 KB of diff text. A line longer than 2,000 characters is given to the reviewer in parts, each with its file, line number and part number. Every part must fit before the line counts as given. A changed line the 200 KB budget cannot carry keeps the review incomplete and is named in the receipt. A context line that large is left out and marked as not shown.
+
 ### Reviewing a branch or a pull request
 
 `review <branch>` reviews a branch that is not your current work, and `review '#42'` or `review https://github.com/<owner>/<repo>/pull/42` a pull request. Quote `#42` in a shell, where `#` starts a comment. A bare number is a branch name. The branch may be local, `origin/<name>`, or a branch on the remote that is fetched on demand.

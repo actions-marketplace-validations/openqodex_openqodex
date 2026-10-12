@@ -146,12 +146,13 @@ export function createCoverageParser(): {
 // it for the deletion point; `lines` is the removed text without its `-`.
 // Read from the diff the change already holds (Change.diffs), the text the
 // brief carries, so a deletion can be shown where the brief had no room.
-export function removedRuns(fileDiff: string): { after: number; lines: string[] }[] {
-  const runs: { after: number; lines: string[] }[] = [];
+export function removedRuns(fileDiff: string): { after: number; oldStart: number; lines: string[] }[] {
+  const runs: { after: number; oldStart: number; lines: string[] }[] = [];
   let inHunk = false;
   // The new side's next line number.
   let next = 0;
-  let run: { after: number; lines: string[] } | null = null;
+  let old = 0;
+  let run: { after: number; oldStart: number; lines: string[] } | null = null;
   let added = false;
   const close = (): void => {
     if (run !== null && !added) runs.push(run);
@@ -161,15 +162,19 @@ export function removedRuns(fileDiff: string): { after: number; lines: string[] 
   for (const line of fileDiff.split("\n")) {
     if (line.startsWith("@@")) {
       close();
-      const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
       inHunk = m !== null;
       // An empty new side names the line before it, as in the parser above.
-      if (m) next = m[2] === "0" ? Number(m[1]) + 1 : Number(m[1]);
+      if (m) {
+        old = Number(m[1]);
+        next = m[3] === "0" ? Number(m[2]) + 1 : Number(m[2]);
+      }
     } else if (!inHunk || line.startsWith("\\")) {
       // A header, or the "\ No newline at end of file" sentinel.
     } else if (line.startsWith("-")) {
-      run ??= { after: next - 1, lines: [] };
+      run ??= { after: next - 1, oldStart: old, lines: [] };
       run.lines.push(line.slice(1));
+      old++;
     } else if (line.startsWith("+")) {
       // Lines replaced, not only removed: no deletion point.
       added = true;
@@ -177,6 +182,7 @@ export function removedRuns(fileDiff: string): { after: number; lines: string[] 
     } else if (line.startsWith(" ")) {
       close();
       next++;
+      old++;
     } else {
       // The next block's "diff --git" line, or the end.
       close();
