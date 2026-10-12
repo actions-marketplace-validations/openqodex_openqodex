@@ -27,7 +27,9 @@
 // --against <baseline> judges the run as a change against the baseline: it
 // refuses (exit 2) when either run is from the test split, the runs differ
 // in suite, mode or split, their Semgrep rule packs or scanner toolchain
-// differ beyond the one input --input-change names (or are not recorded), a
+// differ beyond the one input --input-change names (or are not recorded; a
+// pin bump is checked entry by entry against the toolchain table and lock
+// files of each run's build commit, read with git), a
 // scanner did not run where truth lies or may lie in its remit, or a
 // planned scan is missing; else it applies K1: no truth item the baseline
 // found with issue-level evidence is lost. K2 to K4 are the acceptance
@@ -37,14 +39,15 @@
 //
 // Exit codes: 0 printed (and with --against, K1 holds); 1 K1 fails; 2
 // refused, or a run cannot be read.
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildCase, caseHash, casesRoot, diffOf, parseCaseId, readCase } from "./lib/cases.mjs";
+import { buildCase, caseHash, casesRoot, diffOf, parseCaseId, readCase, repoRoot } from "./lib/cases.mjs";
 import { DROP_CLASSES, POINTS_AT } from "./lib/drops.mjs";
 import { resultsRoot } from "./lib/index.mjs";
-import { ACCEPTANCE_RULE, GAP, INPUT_CHANGES, RULE_OFF, SCANNERS_VERSION, analyseRun, judgeAgainst, runRefusals, scannerReport } from "./lib/scanners.mjs";
+import { ACCEPTANCE_RULE, GAP, INPUT_CHANGES, RULE_OFF, SCANNERS_VERSION, analyseRun, judgeAgainst, runRefusals, scannerReport, toolchainRecord } from "./lib/scanners.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 import { legacyFolderOf, loadRun } from "./score.mjs";
 
@@ -126,12 +129,42 @@ function changedLinesOf(manifest) {
   return { changedOf, cleanup: () => temps.forEach((t) => rmSync(t, { recursive: true, force: true })) };
 }
 
-function analyse({ run, specs }) {
+// The scanner toolchain record of a commit (lib/scanners.mjs
+// toolchainRecord): its pinned table and lock files, read with git from
+// this repository, the bytes toolchainHash() hashes. { error } when they
+// cannot be read.
+export function toolchainRecordAt(commit, root = repoRoot) {
+  const git = (...args) => execFileSync("git", args, { cwd: root, maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "pipe"] });
+  let table;
+  try {
+    table = git("show", `${commit}:packages/scanners/toolchain.json`);
+  } catch (e) {
+    return { error: `the toolchain of ${commit} cannot be read from git here: ${String(e.stderr ?? e.message).trim().split("\n")[0]}` };
+  }
+  let names = [];
+  try {
+    names = git("ls-tree", "--name-only", `${commit}:packages/scanners/locks`).toString().split("\n").filter((f) => f.endsWith(".txt"));
+  } catch {
+    // A commit before the lock files: the hash covers the table alone.
+  }
+  return toolchainRecord({ table, locks: names.map((name) => ({ name, bytes: git("show", `${commit}:packages/scanners/locks/${name}`) })) });
+}
+
+// A run's build toolchain record, for a pin bump: from its build commit,
+// unless the build is not that commit's tree.
+function buildToolchain(manifest) {
+  if (!manifest.external?.toolchainHash) return null;
+  if (!manifest.build?.commit) return { error: "the run records no build commit" };
+  if (manifest.build.dirty) return { error: "it was built from a tree its commit does not hold" };
+  return toolchainRecordAt(manifest.build.commit);
+}
+
+function analyse({ run, specs }, { toolchain = false } = {}) {
   const folder = folderOf(run);
   const loaded = loadRun(folder, { specsDir: specsOf(folder, specs) });
   const { changedOf, cleanup } = changedLinesOf(loaded.manifest);
   try {
-    const analysed = analyseRun({ name: basename(folder), manifest: loaded.manifest, attempts: loaded.attempts, specs: withClasses(loaded.manifest.suite ?? "planted", loaded.specs), changedOf });
+    const analysed = analyseRun({ name: basename(folder), manifest: loaded.manifest, attempts: loaded.attempts, specs: withClasses(loaded.manifest.suite ?? "planted", loaded.specs), changedOf, toolchain: toolchain ? buildToolchain(loaded.manifest) : null });
     return { folder, analysed, specsFrom: loaded.specsFrom ?? "the run's own cases/" };
   } finally {
     cleanup();
@@ -183,6 +216,7 @@ export function render(r, { specsFrom }) {
     return [n, String(s.found), String(s.unique), String(s.located), pct(s.precision), pct(s.locationPrecision), pct(s.raisedPrecision), pct(s.remit), String(s.remit.unknown), s.infraMisses === null ? `unknown (${s.infraUnknown} items)` : String(s.infraMisses)];
   })));
   out.push("", `Remit: ${r.classRemit}.`);
+  if (r.mergedAtCandidateLines > 0) out.push(`${r.mergedAtCandidateLines} merged findings are placed at the lines of the candidate they went into, since the trail did not record their own (a scan before the trail, or a trail past its cap); found, unique and leave one out read them there.`);
   if (r.misses.length > 0) {
     out.push("", `Misses (in the remit, the scanner ran, and did not find it), ${r.misses.length}:`);
     for (const m of r.misses) out.push(`- ${m.scanner}: ${m.caseId} ${m.truth} (${m.class ?? "unclassed"}, ${m.file}) in ${m.sample}`);
@@ -264,8 +298,8 @@ function main() {
     o = parseArgs(process.argv.slice(2));
     if (o.inputChange !== null && o.against === null) throw new Error("--input-change names the change a comparison allows; it needs --against");
     if (o.inputChange !== null && !/^pin-bump:.+$/.test(o.inputChange) && o.inputChange !== "semgrep-packs") throw new Error(`--input-change takes ${INPUT_CHANGES}`);
-    run = analyse(o.run);
-    if (o.against) base = analyse(o.against);
+    run = analyse(o.run, { toolchain: o.against !== null });
+    if (o.against) base = analyse(o.against, { toolchain: true });
   } catch (e) {
     process.stderr.write(`scanners: ${e.message}\n`);
     return 2;

@@ -139,6 +139,27 @@ describe("builtin scanner subprocesses", () => {
     expect(readdirSync(developerTmp)).toEqual([]);
   }, 300_000);
 
+  // A test checks its results with assert, so bandit's B101 raised one
+  // security candidate per check in a test file, and the reviewer dropped
+  // every one. B101 still guards application code, where python -O removes
+  // the assert, and bandit's other rules still read the test file.
+  it("an assert in a test file is not raised as a security candidate", async () => {
+    const tests = ["tests/test_money.py", "app/money_test.py", "test_cli.py"];
+    const testBody = "import subprocess\n\n\ndef test_total(name):\n    assert total([1, 2]) == 3\n    subprocess.call('ls ' + name, shell=True)\n";
+    const spec: Case = {
+      scanner: "bandit",
+      rule: "B101",
+      files: { "app/money.py": "def total(xs):\n    assert xs is not None\n    return sum(xs)\n", ...Object.fromEntries(tests.map((t) => [t, testBody])) },
+      anchor: "app/money.py",
+    };
+    const result = await scan(spec);
+    expect(result.scan.scanners[0]!.status).toBe("ran");
+    const asserts = result.scan.candidates.filter((c) => c.source === "bandit" && c.ruleId === "B101").map((c) => c.filePath);
+    expect(asserts).toEqual(["app/money.py"]);
+    const shell = result.scan.candidates.filter((c) => c.source === "bandit" && c.ruleId === "B602").map((c) => c.filePath);
+    expect(shell.sort()).toEqual([...tests].sort());
+  }, 300_000);
+
   it("gitleaks finds a secret and never puts its value in the scan result", async () => {
     const result = await scan(cases[0]!);
     expect(result.scan.candidates.some((c) => c.ruleId === "stripe-access-token")).toBe(true);

@@ -14,7 +14,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { caseHash, readCase } from "../lib/cases.mjs";
-import { analyseRun, judgeAgainst, runRefusals, scannerReport } from "../lib/scanners.mjs";
+import { analyseRun, judgeAgainst, runRefusals, scannerReport, toolchainRecord } from "../lib/scanners.mjs";
+import { toolchainRecordAt } from "../scanners.mjs";
+import { toolchainHash } from "../../packages/scanners/dist/index.js";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -46,8 +48,12 @@ const manifestOf = (names, { split = "dev", mode = "scan", external = EXTERNAL, 
 });
 const attempt = (name, scan, { report = null, config = "scan", repeat = 1, row = {} } = {}) => ({ case: name, config, repeat, attempt: 1, row: { wallMs: 1000, ...row }, report, scan });
 // A run as the command reads it: the manifest, each first attempt and the specs, with the lines each case's change touched.
-const runOf = (names, attempts, { changed = {}, ...m } = {}) =>
-  analyseRun({ name: "t", manifest: manifestOf(names, m), attempts, specs: Object.fromEntries(names.map((n) => [n, readCase(n)])), changedOf: (name) => changed[name] ?? null });
+const runOf = (names, attempts, { changed = {}, toolchain = null, ...m } = {}) =>
+  analyseRun({ name: "t", manifest: manifestOf(names, m), attempts, specs: Object.fromEntries(names.map((n) => [n, readCase(n)])), changedOf: (name) => changed[name] ?? null, toolchain });
+
+const TOOLS = { semgrep: { version: "1.94.0", sha256: "s1" }, trivy: { version: "0.56.2", sha256: "t1" }, hadolint: { version: "2.15.1", sha256: "h1" } };
+// A toolchain record built from a table and lock files, as the command builds one from a run's build commit.
+const recordOf = (tools, locks = []) => toolchainRecord({ table: JSON.stringify({ schema: 1, tools }), locks: locks.map(([name, text]) => ({ name, bytes: text })) });
 
 const RAILS = "rails-controller-model";
 const RAILS_FILES = ["app/controllers/users_controller.rb", "app/models/user.rb"];
@@ -90,6 +96,20 @@ describe("a not-run scanner counted as a miss", () => {
   });
 });
 
+describe("a scanner missing from a scan that recorded no selection is judged as having looked", () => {
+  const name = "demo-polyglot";
+  const latest = cand("c1", "hadolint:DL3007", "Dockerfile", 1, 1, "Using latest is prone to errors if the image will ever update.");
+
+  it("refuses to judge when the candidate scan names no status for hadolint and recorded no selection", () => {
+    const before = runOf([name], [attempt(name, scanOf([latest], [ran("semgrep"), ran("hadolint", 1), ran("trivy")]))]);
+    const after = runOf([name], [attempt(name, scanOf([], [ran("semgrep"), ran("trivy")]))]);
+    const j = judgeAgainst(before, after);
+    expect(j.exit).toBe(2);
+    expect(j.k1).toBeNull();
+    expect(j.refusals.join("\n")).toMatch(/hadolint has no status in 1 sample of t .*no selection/);
+  });
+});
+
 describe("a merged entry lost", () => {
   const name = "demo-polyglot";
   const stripe = cand("c1", "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key", "app/config.py", 2, 2, "Stripe API Key detected", { alsoReportedBy: ["gitleaks:stripe-access-token"] });
@@ -110,6 +130,31 @@ describe("a merged entry lost", () => {
     // Without semgrep, gitleaks's finding comes back as a candidate: the secret keeps a finder and no candidate is saved.
     expect(r.scanners.semgrep.leaveOneOut).toEqual({ lost: [], candidatesSaved: 0 });
     expect(r.scanners.gitleaks.leaveOneOut).toEqual({ lost: [], candidatesSaved: 0 });
+  });
+});
+
+describe("a merged finding is placed at the lines of the candidate it went into", () => {
+  const name = "demo-polyglot";
+  // gitleaks's finding sat on line 9; dedup folded it into semgrep's candidate on line 2, where the secret is.
+  const stripe = cand("c1", "semgrep:generic.secrets.security.detected-stripe-api-key.detected-stripe-api-key", "app/config.py", 2, 2, "Stripe API Key detected", { alsoReportedBy: ["gitleaks:stripe-access-token"] });
+  const trail = [
+    { token: stripe.token, file: "app/config.py", lineStart: 2, lineEnd: 2, severity: "high", stage: "kept", id: "c1" },
+    { token: "gitleaks:stripe-access-token", file: "app/config.py", lineStart: 9, lineEnd: 9, severity: "high", stage: "merged", into: "c1" },
+  ];
+  const scanners = [ran("semgrep", 1), { ...ran("gitleaks"), rawCount: 1 }];
+
+  it("credits the merged finding only at the lines the trail recorded for it, so semgrep alone found the secret", () => {
+    const r = scannerReport(runOf([name], [attempt(name, scanOf([stripe], scanners, { trail }))]));
+    expect(r.scanners.gitleaks).toMatchObject({ found: 0, located: 0 });
+    expect(r.scanners.semgrep.unique).toBe(1);
+    expect(r.scanners.semgrep.leaveOneOut.lost).toEqual([{ caseId: idOf(name), truth: "secret", samples: 1 }]);
+    expect(r.mergedAtCandidateLines).toBe(0);
+  });
+
+  it("falls back to the candidate's lines only where the scan saved no trail, and counts each such finding", () => {
+    const r = scannerReport(runOf([name], [attempt(name, scanOf([stripe], scanners))]));
+    expect(r.scanners.gitleaks.found).toBe(1);
+    expect(r.mergedAtCandidateLines).toBe(1);
   });
 });
 
@@ -185,12 +230,55 @@ describe("a comparison across rules hashes", () => {
   });
 
   it("refuses a toolchain that differs beyond the one pin bump the change names", () => {
-    const bumped = { ...EXTERNAL, toolchainHash: "u".repeat(64), scannerVersions: { ...EXTERNAL.scannerVersions, trivy: "0.57.0" } };
-    expect(judgeAgainst(runWith(EXTERNAL), runWith(bumped)).exit).toBe(2);
-    expect(judgeAgainst(runWith(EXTERNAL), runWith(bumped), { inputChange: "pin-bump:trivy" }).exit).toBe(0);
-    expect(judgeAgainst(runWith(EXTERNAL), runWith(bumped), { inputChange: "pin-bump:hadolint" }).exit).toBe(2);
-    const two = { ...bumped, scannerVersions: { ...bumped.scannerVersions, hadolint: "2.16.0" } };
-    expect(judgeAgainst(runWith(EXTERNAL), runWith(two), { inputChange: "pin-bump:trivy" }).exit).toBe(2);
+    const base = recordOf(TOOLS);
+    const bumpedRecord = recordOf({ ...TOOLS, trivy: { version: "0.57.0", sha256: "t2" } });
+    const runAt = (record, versions) => runOf([name], [attempt(name, scan)], { changed, external: { ...EXTERNAL, toolchainHash: record.hash, scannerVersions: versions }, toolchain: record });
+    const before = runAt(base, EXTERNAL.scannerVersions);
+    const bumped = runAt(bumpedRecord, { ...EXTERNAL.scannerVersions, trivy: "0.57.0" });
+    expect(judgeAgainst(before, bumped).exit).toBe(2);
+    expect(judgeAgainst(before, bumped, { inputChange: "pin-bump:trivy" }).exit).toBe(0);
+    expect(judgeAgainst(before, bumped, { inputChange: "pin-bump:hadolint" }).exit).toBe(2);
+    const twoRecord = recordOf({ ...TOOLS, trivy: { version: "0.57.0", sha256: "t2" }, hadolint: { version: "2.16.0", sha256: "h2" } });
+    const two = runAt(twoRecord, { ...EXTERNAL.scannerVersions, trivy: "0.57.0", hadolint: "2.16.0" });
+    expect(judgeAgainst(before, two, { inputChange: "pin-bump:trivy" }).exit).toBe(2);
+  });
+});
+
+describe("a pin bump carries another scanner's toolchain change", () => {
+  const name = "flask-path-traversal";
+  const debug = cand("c1", "bandit:B201", "files/app.py", 24, 24, "B201: A Flask app appears to be run with debug=True.");
+  const sel = (scanner) => ({ scanner, wanted: true, paths: ["files/app.py"], projects: [""], skip: null });
+  const scan = scanOf([debug], [ran("bandit", 1), ran("semgrep")], { selection: [sel("bandit"), sel("semgrep")], trail: [] });
+  const changed = { [name]: new Map([["files/app.py", new Set([16, 17, 18, 19, 20, 24])]]) };
+  const versions = (trivy) => ({ ...EXTERNAL.scannerVersions, trivy });
+  const runAt = (record, v, hash = record?.hash) => runOf([name], [attempt(name, scan)], { changed, external: { ...EXTERNAL, toolchainHash: hash, scannerVersions: v }, toolchain: record });
+  const before = runAt(recordOf(TOOLS, [["hadolint-darwin-arm64.txt", "h"]]), versions("0.56.2"));
+  const bump = { ...TOOLS, trivy: { version: "0.57.0", sha256: "t2" } };
+
+  it("refuses a pin bump of trivy when hadolint's entry or lock file changed beside it, at the same version", () => {
+    const checksum = runAt(recordOf({ ...bump, hadolint: { version: "2.15.1", sha256: "h-other" } }, [["hadolint-darwin-arm64.txt", "h"]]), versions("0.57.0"));
+    const j = judgeAgainst(before, checksum, { inputChange: "pin-bump:trivy" });
+    expect(j.exit).toBe(2);
+    expect(j.refusals.join("\n")).toMatch(/beyond the pin bump of trivy.*hadolint/);
+    const lock = runAt(recordOf(bump, [["hadolint-darwin-arm64.txt", "h-other"]]), versions("0.57.0"));
+    expect(judgeAgainst(before, lock, { inputChange: "pin-bump:trivy" }).refusals.join("\n")).toMatch(/beyond the pin bump of trivy.*hadolint/);
+    const alone = runAt(recordOf(bump, [["hadolint-darwin-arm64.txt", "h"]]), versions("0.57.0"));
+    expect(judgeAgainst(before, alone, { inputChange: "pin-bump:trivy" }).exit).toBe(0);
+  });
+
+  it("refuses a pin bump it cannot check entry by entry: no record, or a record that is not the one the run hashed", () => {
+    const noRecord = runAt(null, versions("0.57.0"), recordOf(bump, [["hadolint-darwin-arm64.txt", "h"]]).hash);
+    expect(judgeAgainst(before, noRecord, { inputChange: "pin-bump:trivy" }).refusals.join("\n")).toMatch(/cannot be checked entry by entry/);
+    const other = runAt(recordOf(bump, [["hadolint-darwin-arm64.txt", "h"]]), versions("0.57.0"), "f".repeat(64));
+    expect(judgeAgainst(before, other, { inputChange: "pin-bump:trivy" }).exit).toBe(2);
+  });
+
+  it("reads a run's toolchain record from its build commit, the same bytes the toolchain hash covers", () => {
+    const record = toolchainRecordAt("HEAD");
+    expect(record.error).toBeUndefined();
+    expect(record.hash).toBe(toolchainHash());
+    expect(Object.keys(record.tools)).toContain("semgrep");
+    expect(toolchainRecordAt("0".repeat(40)).error).toMatch(/cannot be read/);
   });
 });
 
@@ -219,8 +307,10 @@ describe("a location match on the same lines counts as preserved coverage of a d
   const long = cand("c1", "ruff:E501", "app/search.py", 14, 14, "Line too long (121 > 88)");
 
   it("fails K1 when the only candidate left on the lost bug's lines is about something else", () => {
-    const before = runOf([name], [attempt(name, scanOf([sql], [ran("semgrep", 1), ran("ruff")]))]);
-    const after = runOf([name], [attempt(name, scanOf([long], [ran("semgrep"), ran("ruff", 1)]))]);
+    const selection = ["semgrep", "ruff", "trivy", "hadolint"].map((scanner) => ({ scanner, wanted: true, paths: scanner === "semgrep" || scanner === "ruff" ? ["app/search.py"] : [], projects: [""], skip: null }));
+    const statuses = (semgrep, ruff) => [ran("semgrep", semgrep), ran("ruff", ruff), { ...ran("trivy"), status: "no_matching_files" }, { ...ran("hadolint"), status: "no_matching_files" }];
+    const before = runOf([name], [attempt(name, scanOf([sql], statuses(1, 0), { selection, trail: [] }))]);
+    const after = runOf([name], [attempt(name, scanOf([long], statuses(0, 1), { selection, trail: [] }))]);
     expect(scannerReport(after).scanners.ruff).toMatchObject({ found: 0, located: 1 });
     const j = judgeAgainst(before, after);
     expect(j.exit).toBe(1);

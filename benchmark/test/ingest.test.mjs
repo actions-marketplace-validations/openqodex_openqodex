@@ -3,7 +3,7 @@
 // Every test runs the real ingest on a small dataset written here, in
 // AACR-Bench's own row shape, with the pinned files and GitHub's answers
 // placed in a temp cache, so nothing reaches the network but the one test
-// that serves a file over a local HTTP server. Six failures are guarded:
+// that serves a file over a local HTTP server. Seven failures are guarded:
 //
 // 1. An upstream edit to the dataset changes the truth under a frozen id.
 // 2. A pull request with no licence is used.
@@ -13,12 +13,15 @@
 // 5. The laptop sample is the smallest changes.
 // 6. A pull request whose head the host no longer serves (pushed over after
 //    the dataset was made) is offered to a run, which then cannot fetch it.
+// 7. A run's truth files are fetched by an ingest that also rewrites the
+//    committed suite and asks GitHub about every repository (the weekly CI
+//    job needs the two pinned data files and nothing else).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { ingestAacr, writeIngest } from "../ingest/aacr.mjs";
+import { fetchData, ingestAacr, writeIngest } from "../ingest/aacr.mjs";
 import { classify, saveCommitAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { listCases, readCase, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -225,28 +228,29 @@ describe("an upstream edit to the dataset changes the truth under a frozen id", 
 });
 
 describe("a pull request with no licence is used", () => {
-  it("excludes a repository with no licence file or a licence GitHub cannot name, and reports both with counts", async () => {
+  it("excludes a repository with no licence file, keeps one whose licence GitHub cannot name for private runs as unverified, and reports both with counts", async () => {
     const { root, cases, split, report } = await ingestInto(setup());
     const byName = Object.fromEntries(cases.cases.map((e) => [e.name, e]));
     expect(byName["nolicence__none-1"]).toMatchObject({ status: "excluded", licence: { class: "none" } });
     expect(byName["nolicence__none-1"].excludedWhy).toMatch(/no licence/);
-    expect(byName["fuzzy__assert-1"]).toMatchObject({ status: "excluded", licence: { class: "unknown", spdx: "NOASSERTION" } });
+    expect(byName["fuzzy__assert-1"]).toMatchObject({ status: "usable", excludedWhy: null, licence: { class: "unverified", spdx: "NOASSERTION", excerpts: "omit" } });
     const usable = listCases({ suite: "aacr", root });
-    for (const id of usable) expect(id).not.toMatch(/nolicence__none|fuzzy__assert/);
-    for (const name of [...split.cases.dev, ...split.cases.test]) expect(name).not.toMatch(/nolicence__none|fuzzy__assert/);
+    for (const id of usable) expect(id).not.toMatch(/nolicence__none/);
+    expect(usable.filter((id) => /fuzzy__assert/.test(id))).toHaveLength(2);
+    for (const name of [...split.cases.dev, ...split.cases.test]) expect(name).not.toMatch(/nolicence__none/);
     expect(report).toMatch(/licence none[^\n]*: 2 pull requests/);
-    expect(report).toMatch(/licence unknown[^\n]*: 2 pull requests/);
     expect(report).toMatch(/nolicence\/none 2/);
-    expect(report).toMatch(/fuzzy\/assert 2/);
+    expect(report).toMatch(/unverified licence[^\n]*: 2 pull requests[^\n]*fuzzy\/assert 2 \(NOASSERTION/);
+    expect(report).not.toMatch(/licence unknown/);
   });
 
   it("gives every usable case a licence class, a repository group and a split", async () => {
     const { root } = await ingestInto(setup());
     const ids = listCases({ suite: "aacr", root });
-    expect(ids.length).toBe(86);
+    expect(ids.length).toBe(88);
     for (const id of ids) {
       const c = readCase(id, { root });
-      expect(["permissive", "copyleft", "source-available"]).toContain(c.source.licence.class);
+      expect(["permissive", "copyleft", "source-available", "unverified"]).toContain(c.source.licence.class);
       expect(c.repoGroup).toMatch(/\//);
       expect(["dev", "test"]).toContain(c.split);
       expect(c.origin).toBe("real");
@@ -259,8 +263,8 @@ describe("a pull request with no licence is used", () => {
     expect(classify("AGPL-3.0")).toEqual({ chosen: "AGPL-3.0", class: "copyleft" });
     expect(classify("Elastic-2.0")).toEqual({ chosen: "Elastic-2.0", class: "source-available" });
     expect(classify("SSPL-1.0 OR Elastic-2.0 OR AGPL-3.0-only")).toEqual({ chosen: "AGPL-3.0-only", class: "copyleft" });
-    expect(classify("NOASSERTION")).toEqual({ chosen: null, class: "unknown" });
-    expect(classify("WTFPL")).toEqual({ chosen: null, class: "unknown" });
+    expect(classify("NOASSERTION")).toEqual({ chosen: null, class: "unverified" });
+    expect(classify("WTFPL")).toEqual({ chosen: null, class: "unverified" });
     expect(classify(null)).toEqual({ chosen: null, class: "none" });
   });
 });
@@ -288,6 +292,44 @@ describe("a pull request whose head the host no longer serves is offered to a ru
     const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(r.githubPrUrl)[1];
     renameSync(join(ctx.cache, "github", "commits", repo.toLowerCase().replace("/", "__"), `${r.target_commit}.json`), join(ctx.cache, "moved-away.json"));
     await expect(ingestAacr({ boards: ctx.boards, cache: ctx.cache, offline: true })).rejects.toThrow(/no cached GitHub answer for acme\/alpha commit/);
+  });
+});
+
+describe("a pull request that becomes usable moves a case the split already placed, or changes an id", () => {
+  // fuzzy/assert first answers with no licence file, then with a licence
+  // GitHub cannot name, which is usable for private runs.
+  const answer = (ctx, licence) => saveRepoAnswer(ctx.cache, { asked: "fuzzy/assert", readOn: "2026-10-11", found: true, fullName: "fuzzy/assert", fork: false, source: null, licence });
+
+  it("places only the newly usable pull requests, by the same group rule, and keeps every id, side and subset", async () => {
+    const ctx = setup();
+    answer(ctx, null);
+    const first = await ingestInto(ctx);
+    expect(first.cases.cases.filter((e) => e.repo === "fuzzy/assert").map((e) => e.status)).toEqual(["excluded", "excluded"]);
+    answer(ctx, { spdx: "NOASSERTION", key: "other", file: "LICENSE", fileSha256: sha256("licence of fuzzy/assert") });
+    const result = await ingestAacr({ boards: ctx.boards, cache: ctx.cache, offline: true, previous: first.cases, previousSplit: first.split });
+    writeIngest(result, { root: first.root });
+    const split = JSON.parse(readFileSync(join(first.root, "splits/aacr-v1.json"), "utf8"));
+    for (const side of ["dev", "test"]) for (const name of first.split.cases[side]) expect(sideOf(split, name), name).toBe(side);
+    expect(split.subsets).toEqual(first.split.subsets);
+    for (const e of first.cases.cases) expect(result.suite.cases.find((x) => x.name === e.name).id).toBe(e.id);
+    const placed = ["fuzzy__assert-1", "fuzzy__assert-2"];
+    const group = split.groups.find((g) => g.members.includes("fuzzy/assert"));
+    for (const name of placed) expect(sideOf(split, name), name).toBe(group.split);
+    expect(split.cases.dev.length + split.cases.test.length).toBe(first.split.cases.dev.length + first.split.cases.test.length + 2);
+    expect(result.report).toMatch(new RegExp(`newly placed by the same rule: 2 pull requests, ${group.split === "dev" ? 2 : 0} development and ${group.split === "test" ? 2 : 0} held-out; no case the earlier split placed moved`));
+  });
+
+  it("refuses a split that moves a case an earlier split placed, naming it, and a reservation that reaches a group placed in development", async () => {
+    const ctx = setup();
+    const first = await ingestInto(ctx);
+    const result = await ingestAacr({ boards: ctx.boards, cache: ctx.cache, offline: true, previous: first.cases, previousSplit: first.split });
+    const moved = first.split.cases.dev[0];
+    const edited = JSON.parse(result.files["splits/aacr-v1.json"]);
+    edited.cases = { dev: edited.cases.dev.filter((n) => n !== moved), test: [...edited.cases.test, moved].sort() };
+    expect(() => writeIngest({ ...result, files: { ...result.files, "splits/aacr-v1.json": `${JSON.stringify(edited, null, 2)}\n` } }, { root: first.root })).toThrow(new RegExp(`a new split is a new file[\\s\\S]*${moved}`));
+
+    ctx.boards.boards.reviewbench.reservedPrUrls = [...REVIEWBENCH, "https://github.com/py/one/pull/77"];
+    await expect(ingestAacr({ boards: ctx.boards, cache: ctx.cache, offline: true, previous: first.cases, previousSplit: first.split })).rejects.toThrow(/py\/one[^\n]*development[^\n]*a new split is a new file/);
   });
 });
 
@@ -358,5 +400,52 @@ describe("the laptop sample is the smallest changes", () => {
     const smoke = split.subsets["dev-smoke"];
     expect(smoke).toHaveLength(5);
     for (const name of smoke) expect(split.cases.dev).toContain(name);
+  });
+});
+
+describe("a run's truth files are fetched by an ingest that also rewrites the committed suite and asks GitHub", () => {
+  // Serves the two pinned files, counting the requests.
+  async function serve(files) {
+    const hits = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url);
+      const body = files[req.url.slice(1)];
+      res.statusCode = body ? 200 : 404;
+      res.end(body ?? "not found");
+    });
+    await new Promise((done) => server.listen(0, "127.0.0.1", done));
+    return { hits, port: server.address().port, close: () => new Promise((done) => server.close(done)) };
+  }
+  const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name).slice(dir.length + 1)).sort() : []);
+  const boardsFor = (pins) => ({ version: 1, boards: { aacr: { repo: "alibaba/aacr-bench", commit: COMMIT, licence: "Apache-2.0", data: pins, reservedPrUrls: [] } } });
+
+  it("puts exactly the two pinned AACR files in the cache, asks nothing else, and downloads nothing on a second call", async () => {
+    const { positive, negative } = dataset();
+    const bytes = { [POSITIVE]: encode(positive), [NEGATIVE]: encode(negative) };
+    const http = await serve(bytes);
+    try {
+      const cache = tempDir("oq-ingest-data-");
+      const boards = boardsFor(Object.entries(bytes).map(([path, b]) => ({ path, url: `http://127.0.0.1:${http.port}/${path}`, sha256: sha256(b) })));
+      expect(await fetchData({ boards, cache })).toEqual([{ path: POSITIVE, downloaded: true }, { path: NEGATIVE, downloaded: true }]);
+      expect(filesUnder(cache)).toEqual([join("raw", "aacr", NEGATIVE), join("raw", "aacr", POSITIVE)]);
+      expect([...http.hits].sort()).toEqual([`/${NEGATIVE}`, `/${POSITIVE}`]);
+      expect(await fetchData({ boards, cache })).toEqual([{ path: POSITIVE, downloaded: false }, { path: NEGATIVE, downloaded: false }]);
+      expect(http.hits).toHaveLength(2);
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("refuses a served file that differs from its pin and keeps nothing of it", async () => {
+    const { positive, negative } = dataset();
+    const http = await serve({ [POSITIVE]: encode([...positive].reverse()), [NEGATIVE]: encode(negative) });
+    try {
+      const cache = tempDir("oq-ingest-data-");
+      const boards = boardsFor([POSITIVE, NEGATIVE].map((path) => ({ path, url: `http://127.0.0.1:${http.port}/${path}`, sha256: sha256(encode(path === POSITIVE ? positive : negative)) })));
+      await expect(fetchData({ boards, cache })).rejects.toThrow(/positive_samples\.json.*sha256.*pinned/s);
+      expect(filesUnder(cache)).toEqual([]);
+    } finally {
+      await http.close();
+    }
   });
 });

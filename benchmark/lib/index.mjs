@@ -39,7 +39,12 @@
 // 9. A run stopped by its budget, or one that lacked a scanner its cases
 //    need, is marked accepted and becomes a baseline: an accepted entry must
 //    have ended finished with scannersComplete true.
-// 10. Two runs of one suite and configuration that differ only in their
+// 10. A replay changes a saved run, uses checks unlike the product's or
+//     counts one bug twice across repeats: replays use checkSubmission and
+//     mergeFindings from the built product, refuse output into run folders
+//     and count each planted bug once in the union. A union without both
+//     repeats reports insufficient repeats.
+// 11. Two runs of one suite and configuration that differ only in their
 //    subset (dev-smoke, dev-laptop) share one trend group and one accepted
 //    pointer, so each overwrites the other's baseline: an entry carries the
 //    subset its run named, and the group key ends with it. A run with no
@@ -208,7 +213,7 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     suite: manifest.suite ?? "planted",
     split,
     splitHash: manifest.splitHash ?? null,
-    // Only when the run named one, so an entry without a subset is the one it was (failure 10).
+    // Only when the run named one, so an entry without a subset is the one it was (failure 11).
     ...(manifest.subset && manifest.subset !== "all" ? { subset: manifest.subset } : {}),
     mode: manifest.mode ?? "review",
     path: manifest.path ?? "laptop",
@@ -402,7 +407,7 @@ export function groupKeys(e) {
     const scan = e.mode === "scan";
     const reviewer = scan ? "none" : reviewerOf(config);
     const model = scan ? "none" : (e.reviewers?.[reviewer]?.model ?? "unknown");
-    // A subset ends the key only when the run named one (failure 10).
+    // A subset ends the key only when the run named one (failure 11).
     const key = [e.suite, e.split, e.splitHash ?? "none", e.mode, e.path, reviewer, model, config, e.rulesVersion ?? "legacy", ...(e.subset ? [e.subset] : [])].join("|");
     return { key, config, reviewer, model };
   });
