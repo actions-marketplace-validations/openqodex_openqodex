@@ -407,6 +407,7 @@ class ReviewMeter {
     this.calls = new Map();
     this.refusals = [];
     this.closed = false;
+    this.spentUsd = null;
     this.opened = Date.now();
     this.authorize = async (call) => {
       const rates = ratesOf(this.prices ?? (this.prices = loadPrices()), call.model);
@@ -479,7 +480,7 @@ class ReviewMeter {
     };
   }
 
-  /** Ends the review: an unsent call gives its reservation back, a call still out keeps it whole, and the envelope's unspent part is released. */
+  /** Ends the review: an unsent call gives its reservation back, a call still out keeps it whole, and the envelope's unspent part is released. `spentUsd` is then what the review itself spent. */
   close() {
     if (this.closed) return;
     this.closed = true;
@@ -487,6 +488,7 @@ class ReviewMeter {
     this.ledger.step((fold, emit) => {
       const env = fold.open.get(this.id);
       if (!env) return;
+      this.spentUsd = dollars(env.spentWithin);
       emit({ op: "close", id: this.id });
       emit({ op: "review", jobId: this.jobId, usd: dollars(env.spentWithin), tokens: env.tokens, wallMs: Date.now() - this.opened });
     });

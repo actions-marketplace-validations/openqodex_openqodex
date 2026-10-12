@@ -1,5 +1,6 @@
 # OpenQodex docs
 
+- [OpenQodex for AI agents](for-agents.md)
 - [Agents](agents.md)
 - [The review benchmark](benchmark.md)
 - [Code review in Claude Code](claude-code-review.md)

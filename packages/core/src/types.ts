@@ -200,7 +200,9 @@ export type ToolResolution =
   | { ok: false; status: "not_installed" | "installing" | "failed"; reason: string };
 
 // The runner calls this only for a scanner whose file gate matched the change.
-export type ResolveTool = (scanner: BuiltinScanner) => Promise<ToolResolution>;
+// A run with a scratch root names `probeHome` there: where the runtime
+// probes keep what Go and rustup write for themselves.
+export type ResolveTool = (scanner: BuiltinScanner, call?: { probeHome?: string }) => Promise<ToolResolution>;
 
 // ---------- change ----------
 
