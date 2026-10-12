@@ -1,0 +1,27 @@
+{
+  "calls": [
+    {
+      "callId": "codex-1",
+      "reviewer": "primary",
+      "purpose": "brief",
+      "attempt": 1,
+      "model": null,
+      "inputTokens": 1000,
+      "outputTokens": 500,
+      "costUsd": null,
+      "outcome": "ok",
+      "durationMs": "<DURATION_MS>"
+    }
+  ],
+  "totals": {
+    "attempts": 1,
+    "invoked": 1,
+    "failed": 0,
+    "refused": 0,
+    "inputTokens": 1000,
+    "outputTokens": 500,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "costUsd": null
+  }
+}
