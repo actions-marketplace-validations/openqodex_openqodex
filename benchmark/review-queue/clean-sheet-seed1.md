@@ -1,978 +1,822 @@
 # Clean controls: candidates to rule
 
-Sheet clean@1: 65 pull requests in a shuffled order (seed 1). A script found each merged, reviewed with no request for changes, and with no later fix, revert, fix-up or bug report it can see touching it; the evidence it read is under each. No reviewer has seen these changes. Read the change itself (the Files tab of its link) and rule whether it is free of any issue a reviewer should raise. Record each ruling under your own name:
+Sheet clean@1@862d9f412fa1: 49 pull requests in a shuffled order (seed 1). A script found each merged, reviewed with no request for changes, and with no later fix, revert, fix-up or bug report it can see touching it; the evidence it read is under each. No reviewer has seen these changes. Read the change itself (the Files tab of its link) and rule whether it is free of any issue a reviewer should raise. Record each ruling under your own name:
 
 ```
-node benchmark/queue.mjs decide clean <case id> --by <your name> --sheet clean@1
-node benchmark/queue.mjs decide not-clean <case id> --by <your name> --sheet clean@1 --note "<the issue>"
+node benchmark/queue.mjs decide clean <case id> --by <your name> --sheet clean@1@862d9f412fa1
+node benchmark/queue.mjs decide not-clean <case id> --by <your name> --sheet clean@1@862d9f412fa1 --note "<the issue>"
 node benchmark/ingest/clean.mjs admit
 ```
 
-## 1. Accept changes solely due to _jsxFileName
+A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to each candidate's evidence: if node benchmark/ingest/clean.mjs list writes them again with any change, admit refuses the ruling, and the sheet is printed and ruled again.
 
-- Case: clean/microsoft__typescript-go-3186@3d538b77
-- Change: https://github.com/microsoft/typescript-go/pull/3186/files (20 changed lines in 17 files, Go)
-- Commits: base a4325da30f285ff85b7b55afe1c65d74f54794af, head 00b71c32a05c83e584e071b148854e28fd67f8c3; merged 2026-03-24T20:35:22Z as https://github.com/microsoft/typescript-go/commit/35a210b62187cec05270cb2641cece25ca9ac7b5
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-22T20:35:22Z (read 2026-10-12): 51 later commits on its files, 11 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on testdata/submoduleAccepted.txt: 51, 40 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-16T22:32:19Z https://github.com/microsoft/typescript-go/commit/f4dee45136dca89562ca05d2e82423a588753bf5 "Fix export default dts widening (#3352)": its changes miss the pull request's lines, which sit at 213 to 231 of its parent
-  - 2026-04-23T17:25:42Z https://github.com/microsoft/typescript-go/commit/911ba0b2c6be4d7389ed798314f26d17ca963546 "Fix error propagation through non-iterable unions (#3496)": its changes miss the pull request's lines, which sit at 193 to 211 of its parent
-  - 2026-04-23T17:58:17Z https://github.com/microsoft/typescript-go/commit/fd9bbdb53aeca0b6f18afbc9fdaf9755a736b18f "Fix `maybeMappedType` function (#3529)": its changes miss the pull request's lines, which sit at 193 to 211 of its parent
-  - 2026-04-30T21:43:21Z https://github.com/microsoft/typescript-go/commit/25963e42b8a5d7da694c6ee555fed3cc93de1e71 "Fix checks for disallowed property/accessor duplicate declarations (#3672)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-05-08T20:40:51Z https://github.com/microsoft/typescript-go/commit/e1f8f977a8f7c5284fb9bba22efdeaf620151a13 "Fix package index fallback edge case, accept self-name resolution errors under ambiguous project root (#3776)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-05-12T00:15:34Z https://github.com/microsoft/typescript-go/commit/adb2ab4ed7d7849bb222eb27c41437d5520335a9 "Fix declaration emit renaming a method's shadowed type parameter to the outer generic (#3761)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-05-12T21:04:51Z https://github.com/microsoft/typescript-go/commit/3e909a10cafce78d1d201e17107006d5f46809de "Add fixed copy of self name declaration emit test, accept baselines otherwise (#3820)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-05-15T18:22:32Z https://github.com/microsoft/typescript-go/commit/3d2b68080edbdd170b715c66b313a7875726071b "feat(2280): Port implement interface quick fix (#3499)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-05-26T22:28:55Z https://github.com/microsoft/typescript-go/commit/c54ff7cc5528734fd303461719b54b70115f5445 "fix(4048): fix declaration emit for new keyword used as property names (#4052)": its changes miss the pull request's lines, which sit at 193 to 194, 198 to 214 of its parent
-  - 2026-06-10T18:28:25Z https://github.com/microsoft/typescript-go/commit/7fc57c0050639e01409766f41a77a10d03106297 "Fix a slew of UTF-8/UTF-16 related issues (#4181)": its changes miss the pull request's lines, which sit at 192 to 193, 197 to 213 of its parent
-  - 2026-06-15T17:19:58Z https://github.com/microsoft/typescript-go/commit/b8e44908979c85b2c5a31eff6aa5bac38f4f2f4b "Fixed CJS class expression exports emit anonymous constructor types (#3850)": its changes miss the pull request's lines, which sit at 198 to 199, 203 to 219 of its parent
-- Ruling: 
+## 1. input: fix leaking tablet tool key name
 
-## 2. fix double count result rows
-
-- Case: clean/ClickHouse__ClickHouse-101226@b13a682a
-- Change: https://github.com/ClickHouse/ClickHouse/pull/101226/files (87 changed lines in 4 files, C++)
-- Commits: base b0843fd08e610a0d296075df0b184288f9249dd3, head ce64063d127f0d730a5a72493ad29e3a7619b53a; merged 2026-03-31T08:37:08Z as https://github.com/ClickHouse/ClickHouse/commit/5d45309b32c52f1b8fb52d6bd3df504006ec9533
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-29T08:37:08Z (read 2026-10-12): 3 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/Processors/Sources/WaitForAsyncInsertSource.h: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits naming it (quoting its title, or with no fix word): https://github.com/ClickHouse/ClickHouse/commit/651b9194d76ca0b2c5e4132985b8bfb061375700 "Backport #101226 to 26.2: fix double count result rows"; https://github.com/ClickHouse/ClickHouse/commit/d87b024170deeddee4e58cedfd15d8e645dbf5d2 "Backport #101226 to 26.3: fix double count result rows"; https://github.com/ClickHouse/ClickHouse/commit/cd9080200058458498f5398cb7437a9884984c9f "Merge pull request #101339 from ClickHouse/backport/26.2/101226"; https://github.com/ClickHouse/ClickHouse/commit/b94b45543608df3be80c43c91a0e027c7449ff56 "Merge pull request #101341 from ClickHouse/backport/26.3/101226"
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/ClickHouse/ClickHouse/pull/101338 "Cherry pick #101226 to 26.2: fix double count result rows"; https://github.com/ClickHouse/ClickHouse/pull/101339 "Backport #101226 to 26.2: fix double count result rows"; https://github.com/ClickHouse/ClickHouse/pull/101340 "Cherry pick #101226 to 26.3: fix double count result rows"; https://github.com/ClickHouse/ClickHouse/pull/101341 "Backport #101226 to 26.3: fix double count result rows"
-- Ruling: 
-
-## 3. [frontport] Add Prometheus counter for validator notification subscription errors (#5641)
-
-- Case: clean/linera-io__linera-protocol-5834@3bcfd126
-- Change: https://github.com/linera-io/linera-protocol/pull/5834/files (23 changed lines in 1 file, Rust)
-- Commits: base 5c58f960b3e62665d91e374a7b0f8e3ebf916006, head a5ec1b7b479d0194545bcbb326117a16e7d5209d; merged 2026-03-30T18:19:30Z as https://github.com/linera-io/linera-protocol/commit/8ff219c913a555fae091f4d417a68f9db4a59b63
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-28T18:19:30Z (read 2026-10-12): 11 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on linera-rpc/src/grpc/client.rs: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/linera-io/linera-protocol/pull/5889 "[frontport] Circuit breaker for validator notification streams (#5717)"
-- Ruling: 
-
-## 4. [ROCm][CI] Fix AITER state leak in shared_fused_moe_routed_transform test
-
-- Case: clean/vllm-project__vllm-38137@fdf5dce0
-- Change: https://github.com/vllm-project/vllm/pull/38137/files (24 changed lines in 3 files, Python)
-- Commits: base bf5eec638d7571f0b88ea48a3d13709322b19a0c, head 05a4561825155d9a33dbec66e7e6cf0d962591e0; merged 2026-03-26T16:26:47Z as https://github.com/vllm-project/vllm/commit/bdc1719eb9b27ef4a30c1f753b406bf05c8edd3a
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-24T16:26:47Z (read 2026-10-12): 14 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on tests/kernels/moe/test_shared_fused_moe_routed_transform.py: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on vllm/distributed/parallel_state.py: 11, 10 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-20T09:21:12Z https://github.com/vllm-project/vllm/commit/2aab9acf48b5f10a4ee0b29f152fc497a46c956d "[CPU][BugFix] Fix inter-node pipeline parallel (#40150)": its changes miss the pull request's lines, which sit at 1905 to 1915 of its parent
-- Ruling: 
-
-## 5. [API Nodes] made Reve node price badges more precise
-
-- Case: clean/Comfy-Org__ComfyUI-13154@b2ed02b9
-- Change: https://github.com/Comfy-Org/ComfyUI/pull/13154/files (43 changed lines in 1 file, Python)
-- Commits: base b53b10ea61ef7fc54fbde7c1e7b7c36565bacf82, head f291cec5d28730f62e9c584b4734e0189ab743a4; merged 2026-03-25T18:05:50Z as https://github.com/Comfy-Org/ComfyUI/commit/a55835f10c29c1acdc9158bf9e092656ae1a2188
-- Licence: GPL-3.0, LICENSE
-- Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-23T18:05:50Z (read 2026-10-12): 2 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on comfy_api_nodes/nodes_reve.py: 2, 1 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-02T04:24:46Z https://github.com/Comfy-Org/ComfyUI/commit/e88a81d316205bf3c3f9293778b78f5949e82e97 "Revert partner nodes category (#14229)": its changes miss the pull request's lines, which sit at 148 to 161, 241, 245, 247 to 255, 351, 355, 357 to 365 of its parent
-- Ruling: 
-
-## 6. Rename search hits
-
-- Case: clean/elastic__elasticsearch-145252@a2c9e075
-- Change: https://github.com/elastic/elasticsearch/pull/145252/files (4 changed lines in 1 file, Java)
-- Commits: base 8d0f31d7ffd44514a8bb4367bc2aafee8c3bdd09, head 7f1cc1b0320bb3c071befa5ac24942898bd18d3e; merged 2026-03-31T17:51:18Z as https://github.com/elastic/elasticsearch/commit/7ec12824b2ec23d2942f874048682ee9fc6ce823
-- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-29T17:51:18Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 7. various: fix `Wdiscarded-qualifiers` warnings
-
-- Case: clean/mpv-player__mpv-17582@7d43f4ea
-- Change: https://github.com/mpv-player/mpv/pull/17582/files (56 changed lines in 12 files, C)
-- Commits: base afef9126ce5a2c3fdb733318a754b3210f71fca9, head 0a9b451080b8c9e916f3fcb1756a8ff5bdf46f74; merged 2026-03-15T13:49:00Z as https://github.com/mpv-player/mpv/commit/8ace278cbea63f74863d242a991474e12fab3730
+- Case: clean/mpv-player__mpv-17610@d31234ab (evidence 391f9db4fb66)
+- Change: https://github.com/mpv-player/mpv/pull/17610/files (13 changed lines in 1 file, C)
+- Commits: base 5f9e1bc7bd2f48744c57c9055f50b7bf24f32356, head 884acb7b2e7bd559f36df6d7163f6ed50480cef5; merged 2026-03-19T19:45:55Z as https://github.com/mpv-player/mpv/commit/7b1ee864b83e6fe89f936f13b1c5ae34048432b9
 - Licence: NOASSERTION, LICENSE.GPL (unverified: private runs only)
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-13T13:49:00Z (read 2026-10-12): 46 later commits on its files, 5 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on options/m_property.c: 6, 6 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on options/m_property.h: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on player/command.c: 26, 22 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-01T22:05:27Z https://github.com/mpv-player/mpv/commit/4e6196e1a627c5becd3d1e831bd3d3aa6541e972 "player/command: fix update-clipboard text-primary": its changes miss the pull request's lines, which sit at 1317, 1387, 2150, 2288, 3533, 3537, 3902, 4185 of its parent
-  - 2026-04-06T16:28:04Z https://github.com/mpv-player/mpv/commit/e0fe1a45d2685cd2ec3d30c00064d51ac9d35225 "command: fix race in reading pad_buttons_pressed": its changes miss the pull request's lines, which sit at 1310, 1380, 2157, 2295, 3548, 3552, 3925, 4208 of its parent
-  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/85bdf63a484360e4d53a2c719f4c82553352cb0d "player/command: simplify and fix new-line handling": its changes miss the pull request's lines, which sit at 1310, 1380, 2157, 2295, 3548, 3552, 3925, 4208 of its parent
-  - 2026-04-18T19:13:46Z https://github.com/mpv-player/mpv/commit/bceb1eeaf49eb98d208a97e1308804f91ef7a6f1 "Revert "player/command: don't send mouse move event on mouse leave request"": its changes miss the pull request's lines, which sit at 1321, 1395, 2172, 2327, 3585, 3589, 3962, 4245 of its parent
-- Later commits on player/configfiles.c: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on player/screenshot.c: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-06T16:30:10Z https://github.com/mpv-player/mpv/commit/dfef53f94b8c80d81d15e3920f18433b8cd3b284 "player/screenshot: fix null dereference when failing to get time": its changes miss the pull request's lines, which sit at 171 of its parent
-- Later commits on player/scripting.c: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on stream/stream.c: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on stream/stream.h: 1, 1 with no fix word (listed in suites/clean/candidates.json)
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-17T19:45:55Z (read 2026-10-12): 8 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on input/input.c:
+  - 2026-04-06T16:28:04Z https://github.com/mpv-player/mpv/commit/b67a5b4cd84e7259abd3049620efb947abadda39 "input: fix out of bound read/write in pad_buttons_pressed": its changes miss the pull request's lines, which sit at 1137 to 1144 of its parent
+  - 2026-04-06T16:28:04Z https://github.com/mpv-player/mpv/commit/e0fe1a45d2685cd2ec3d30c00064d51ac9d35225 "command: fix race in reading pad_buttons_pressed": its changes miss the pull request's lines, which sit at 1137 to 1144 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/5e0932e785c6e304ba762154b5f0d6a963df133b "input: rename mp_event_drop_files to mp_input_drop_files": its changes miss the pull request's lines, which sit at 1136 to 1143 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/544a56a14823b523c6c59d743ad2a81c2a2e3474 "input: rename notify_touch_update to notify_event_update": its changes miss the pull request's lines, which sit at 1138 to 1145 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/e12ab8457171f8c9da64bb57dfa2be2225a375b4 "input: add --input-builtin-drag-and-drop option": its changes miss the pull request's lines, which sit at 1138 to 1145 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/87ccb6022ca49a92663c09cbe5a682a555681bd7 "command: add dropped-file property": its changes miss the pull request's lines, which sit at 1141 to 1148 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/81611b4a4e267999618fa762eacd8614f36cea6b "input/dnd: move built-in drag and drop handling to mpv client": its changes miss the pull request's lines, which sit at 1147 to 1154 of its parent
+  - 2026-06-09T09:52:29Z https://github.com/mpv-player/mpv/commit/a7d0ebaf7647542885ec39276bc99f23116bf862 "input: remove unused mp_input_src_feed_cmd_text()": its changes miss the pull request's lines, which sit at 1144 to 1151 of its parent
 - Ruling: 
 
-## 8. test: update WPT for WebCryptoAPI to 2cb332d710
+## 2. Update README.
 
-- Case: clean/nodejs__node-62483@9b57252c
-- Change: https://github.com/nodejs/node/pull/62483/files (76 changed lines in 3 files, JavaScript)
-- Commits: base cc967413c9b32e4d34d74a3b758ca71bee7a7746, head 7f4ee5f9c7f39c5b89f632ca51bc737c8ac6ff5e; merged 2026-03-31T00:57:06Z as https://github.com/nodejs/node/commit/404c3f9620e1cdf36df5d9d62f6fe77c63c1b683
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
-- Reviews by others: 4 (approved 4); none requested changes
-- Checked up to 2026-06-29T00:57:06Z (read 2026-10-12): 29 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on test/fixtures/wpt/README.md: 15, 15 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on test/fixtures/wpt/versions.json: 14, 14 with no fix word (listed in suites/clean/candidates.json)
-- Later commits naming it (quoting its title, or with no fix word): https://github.com/nodejs/node/commit/3796a73719b507a3d3d9f00ae8c3ef17ed6cc190 "test: update WPT for WebCryptoAPI to 2cb332d710"; https://github.com/nodejs/node/commit/cfd843d65f3bdb984456b4cca8dfc3f78821df85 "test: update WPT for WebCryptoAPI to 2cb332d710"; https://github.com/nodejs/node/commit/5ed5474437e1ade1bc0c3042634ed85dc61d88a7 "test: update WPT for WebCryptoAPI to 2cb332d710"
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/nodejs/node/pull/62522 "2026-04-01, Version 25.9.0 (Current)"; https://github.com/nodejs/node/pull/62681 "2026-04-15, Version 24.15.0 'Krypton' (LTS)"
-- Ruling: 
-
-## 9. ci: migrate dependency-submission.yml from GH check to GH CI
-
-- Case: clean/kestra-io__kestra-15139@da313bf5
-- Change: https://github.com/kestra-io/kestra/pull/15139/files (22 changed lines in 1 file, Java)
-- Commits: base 99617827ef127c379b47a1a0038d03829f41c755, head 4fafc5a0a4d0a4b250debe2d0b42b4c5e5ff6521; merged 2026-03-18T12:56:09Z as https://github.com/kestra-io/kestra/commit/7a4d741059b93306636ed9b33cc667cb2cfbb367
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-16T12:56:09Z (read 2026-10-12): 3 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .github/workflows/dependency-submission.yml: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 10. [Fix] handle PaddleOCR-VL image processor max_pixels across Transformers v4/v5
-
-- Case: clean/vllm-project__vllm-38629@4c174ead
-- Change: https://github.com/vllm-project/vllm/pull/38629/files (8 changed lines in 1 file, Python)
-- Commits: base 719735d6c5f5dae14948c2150e6858351994b0b9, head 5fb284979680b983472bafe07481bda7ca01c8c8; merged 2026-03-31T15:50:41Z as https://github.com/vllm-project/vllm/commit/b6e636c12c28c9ae83e22c65b4fca64a5571483b
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 5 (approved 1, commented 4); none requested changes
-- Checked up to 2026-06-29T15:50:41Z (read 2026-10-12): 3 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on vllm/model_executor/models/paddleocr_vl.py: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-05-11T09:04:06Z https://github.com/vllm-project/vllm/commit/9efdddca283cc0eb7c37fa49c4a9d1c9bf59ec4e "[Model] Fix missing `maybe_prefix` (#42280)": its changes miss the pull request's lines, which sit at 203 to 209 of its parent
-- Ruling: 
-
-## 11. Update README.
-
-- Case: clean/Comfy-Org__ComfyUI-12931@de258265
+- Case: clean/Comfy-Org__ComfyUI-12931@de258265 (evidence 85e73b3471bd)
 - Change: https://github.com/Comfy-Org/ComfyUI/pull/12931/files (11 changed lines in 1 file, Python)
 - Commits: base 7810f49702eac6e617eb7f2c30b00a8939ef1404, head 0f405efcc3d9267cfb9380c72de65abca9a8f736; merged 2026-03-14T02:33:28Z as https://github.com/Comfy-Org/ComfyUI/commit/16cd8d8a8f5f16ce7e5f929fdba9f783990254ea
 - Licence: GPL-3.0, LICENSE
 - Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-12T02:33:28Z (read 2026-10-12): 13 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on README.md: 13, 12 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-06-12T02:33:28Z (read 2026-10-12): 15 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on README.md:
+  - 2026-03-30T02:07:38Z https://github.com/Comfy-Org/ComfyUI/commit/537c10d231cf691ada070fa98978a2ddadb064fc "Update README.md with latest AMD Linux pytorch. (#13228)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-03-31T03:11:02Z https://github.com/Comfy-Org/ComfyUI/commit/076639fed99742f43ffbf0b0df34bb8fd105b8e9 "Update README with note on model support (#13235)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-04-04T23:02:47Z https://github.com/Comfy-Org/ComfyUI/commit/13917b388028aee922efce6b4714db96e8cfea36 "Nightly Nvidia pytorch is now cu132 (#13288)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-04-05T23:37:27Z https://github.com/Comfy-Org/ComfyUI/commit/4b1444fc7a7d1dc542020f509dab2e2b90a4f16a "Update README.md with new frontend release cycle. (#13301)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-04-20T00:26:12Z https://github.com/Comfy-Org/ComfyUI/commit/fc5f4a996b9c752a716badbbc11bacc396281466 "Add link to Intel portable to Readme. (#13477)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-05-02T00:19:32Z https://github.com/Comfy-Org/ComfyUI/commit/67f6cb35273d00278d2b1ef2a8c3efe21238f22d "List all the portable downloads in the README section. (#13666)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-05-03T04:20:17Z https://github.com/Comfy-Org/ComfyUI/commit/f6d5068ac0163e7f626c9cec2e7c663cf6fa64a8 "Update README (#13679)": its changes miss the pull request's lines, which sit at 41 to 42, 54 to 60 of its parent
+  - 2026-05-03T10:48:58Z https://github.com/Comfy-Org/ComfyUI/commit/d0f0b15cf5d1fbff67390c8d90ec8654c2582f7a "Update ComfyUI screenshot in README (#13683)": its changes miss the pull request's lines, which sit at 46 to 47, 59 to 65 of its parent
+  - 2026-05-05T03:45:48Z https://github.com/Comfy-Org/ComfyUI/commit/9aef025fb0c67c9982e6ea52e7a866fd23625c5e "Document core release frequency is now ~2 weeks. (#13710)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
+  - 2026-05-14T17:32:40Z https://github.com/Comfy-Org/ComfyUI/commit/3f9bdc70ee39f07894a2353abdb0926d9f31ce40 "Add careers link to README and startup log (#13897)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
+  - 2026-05-17T03:55:43Z https://github.com/Comfy-Org/ComfyUI/commit/7c4d95d1bc2ef178937d203aa81070db0b172a92 "Enhance README with application and cloud links (#13936)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
+  - 2026-05-22T02:52:38Z https://github.com/Comfy-Org/ComfyUI/commit/965057037818bc3ee24e034308c8a716f6654a65 "Update Discord invite link in README.md (#14045)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
   - 2026-05-24T02:48:31Z https://github.com/Comfy-Org/ComfyUI/commit/32a7092c52d2cee053fded50a6e12c7e275b195e "fix: correct description of where compiled FE files live (#14013)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
+  - 2026-06-11T03:27:08Z https://github.com/Comfy-Org/ComfyUI/commit/33e6ebd0d92b270e9bd79ea74e967f7e23e7d7e8 "I don't think this actually works anymore. (#14403)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
+  - 2026-06-11T22:45:22Z https://github.com/Comfy-Org/ComfyUI/commit/befc321438bd170b647ea1b4179b00b616858c9c "Make --enable-manager-legacy-ui imply --enable-manager (#14421)": its changes miss the pull request's lines, which sit at 47 to 48, 60 to 66 of its parent
 - Ruling: 
 
-## 12. fix(span): prevent false ellipsis when text fits within container width
+## 3. ci(gdb): fix yaml syntax and ci check failed
 
-- Case: clean/lvgl__lvgl-9833@7af22eca
-- Change: https://github.com/lvgl/lvgl/pull/9833/files (92 changed lines in 6 files, C)
-- Commits: base 2c888ecd32375fe493b90d68161339a0e61c7b5b, head 2c05ee14b210b98133b116be04cf48716f1cd31e; merged 2026-03-11T09:32:33Z as https://github.com/lvgl/lvgl/commit/f23f2806f83f724ebfe1f4ff5fa69bdcad11236f
+- Case: clean/lvgl__lvgl-9823@2041d240 (evidence d3760c77d45a)
+- Change: https://github.com/lvgl/lvgl/pull/9823/files (6 changed lines in 2 files, C)
+- Commits: base 8cbb234174a6432a31c3c0113daed28c17ae5874, head 71fce30863d2d381a217a75975283ff8eefde9ad; merged 2026-03-09T08:59:09Z as https://github.com/lvgl/lvgl/commit/2c888ecd32375fe493b90d68161339a0e61c7b5b
 - Licence: MIT, LICENCE.txt
 - Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-09T09:32:33Z (read 2026-10-12): 3 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/widgets/span/lv_span.c: 3, 3 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-06-07T08:59:09Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Ruling: 
 
-## 13. Update azure/msal-browser
+## 4. [Fix] handle PaddleOCR-VL image processor max_pixels across Transformers v4/v5
 
-- Case: clean/dotnet__aspnetcore-66055@d797025b
-- Change: https://github.com/dotnet/aspnetcore/pull/66055/files (25 changed lines in 3 files, C#)
-- Commits: base 6b10dacaefce56e6bf9b54c6eb06fa0b50f5b0c7, head 0a9b270acd140a1c17466b42c34969b068b2c389; merged 2026-03-31T03:20:25Z as https://github.com/dotnet/aspnetcore/commit/c1a3e7b0f3a45cf91064f4fa4ebf1801f5efd58f
-- Licence: MIT, LICENSE.txt
-- Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-29T03:20:25Z (read 2026-10-12): 4 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on package-lock.json: 4, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-08T21:54:26Z https://github.com/dotnet/aspnetcore/commit/840e41c70b04d2e311cd7ad537bbab096a47109e "Fix lodash CVE by adding npm override for >=4.18.0 (#66222)": its changes miss the pull request's lines, which sit at 42 to 44, 47, 54 to 56, 18758 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/dotnet/dotnet/pull/5821 "[main] Source code updates from dotnet/aspnetcore"; https://github.com/dotnet/aspnetcore/pull/66094 "[release/10.0] Update azure/msal-browser"; https://github.com/dotnet/aspnetcore/pull/66234 "[release/9.0] Update azure/msal-browser"
-- Ruling: 
-
-## 14. fix(core): sort and filter ForEachItem merge outputs for consistent ordering
-
-- Case: clean/kestra-io__kestra-15204@ca18eaa0
-- Change: https://github.com/kestra-io/kestra/pull/15204/files (5 changed lines in 1 file, Java)
-- Commits: base 72818bba99ecc25df8bc59895c436c329617f268, head 9c770ce607b15593093a7942c728c68e584fa89a; merged 2026-03-24T12:57:11Z as https://github.com/kestra-io/kestra/commit/bcd261857c4502be806875de266e26c198e54832
+- Case: clean/vllm-project__vllm-38629@4c174ead (evidence 35bd258a1910)
+- Change: https://github.com/vllm-project/vllm/pull/38629/files (8 changed lines in 1 file, Python)
+- Commits: base 719735d6c5f5dae14948c2150e6858351994b0b9, head 5fb284979680b983472bafe07481bda7ca01c8c8; merged 2026-03-31T15:50:41Z as https://github.com/vllm-project/vllm/commit/b6e636c12c28c9ae83e22c65b4fca64a5571483b
 - Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-22T12:57:11Z (read 2026-10-12): 4 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on core/src/main/java/io/kestra/plugin/core/flow/ForEachItem.java: 4, 4 with no fix word (listed in suites/clean/candidates.json)
+- Reviews by others: 5 (approved 1, commented 4); none requested changes
+- Checked up to 2026-06-29T15:50:41Z (read 2026-10-12): 3 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on vllm/model_executor/models/paddleocr_vl.py:
+  - 2026-04-16T13:14:00Z https://github.com/vllm-project/vllm/commit/4269b794091c057491b2ee5ac855d5a268959cb7 "[Model] Use mm_features to compute mrope positions for PaddleOCR-VL (#39888)": its changes miss the pull request's lines, which sit at 203 to 209 of its parent
+  - 2026-05-11T09:04:06Z https://github.com/vllm-project/vllm/commit/9efdddca283cc0eb7c37fa49c4a9d1c9bf59ec4e "[Model] Fix missing `maybe_prefix` (#42280)": its changes miss the pull request's lines, which sit at 203 to 209 of its parent
+  - 2026-06-05T12:19:04Z https://github.com/vllm-project/vllm/commit/62215e72c6ff4979009c27aa95f7449213007f8f "Remove KV cache scale boilerplate from model weight loading methods (#43167)": its changes miss the pull request's lines, which sit at 203 to 209 of its parent
 - Ruling: 
 
-## 15. fix(cli): show helpful guidance when no skills are available
+## 5. [CI] Fix SPLADE pooler test broken by #38139
 
-- Case: clean/google-gemini__gemini-cli-23785@af58ed3a
-- Change: https://github.com/google-gemini/gemini-cli/pull/23785/files (19 changed lines in 3 files, TypeScript)
-- Commits: base 3ada29fb519d984b197bc597f0e45b739dd43e37, head 53c57d012891a981bd0d5634a33897a28ce9055f; merged 2026-03-25T22:21:51Z as https://github.com/google-gemini/gemini-cli/commit/8595b07f6da433f04f75fc2f8616c45b89e63899
+- Case: clean/vllm-project__vllm-38495@143f0776 (evidence da33b2b0d414)
+- Change: https://github.com/vllm-project/vllm/pull/38495/files (12 changed lines in 1 file, Python)
+- Commits: base 63babd17f1b110e267e1ad801a9b9d4ccf5bbe7d, head 332c7831eebdbad0d22a37133f36fa9055b7b692; merged 2026-03-30T07:48:34Z as https://github.com/vllm-project/vllm/commit/a08b7733fd3c07ad7b28e15a3fd3e75a503989ec
 - Licence: Apache-2.0, LICENSE
-- Reviews by others: 4 (approved 1, commented 3); none requested changes
-- Checked up to 2026-06-23T22:21:51Z (read 2026-10-12): 2 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/cli/src/ui/constants.ts: 2, 1 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-01T16:09:30Z https://github.com/google-gemini/gemini-cli/commit/7d1848d578b644c274fcd1f6d03685aafc19e8ed "fix(cli): cap shell output at 10 MB to prevent RangeError crash (#24168)": its changes miss the pull request's lines, which sit at 61 to 64 of its parent
+- Reviews by others: 3 (approved 1, commented 2); none requested changes
+- Checked up to 2026-06-28T07:48:34Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits naming it (quoting its title, or with no fix word): https://github.com/vllm-project/vllm/commit/b92312dfd75c754ed78604add44e5634998dc053 "[CI] Fix SPLADE pooler test broken by #38139 (#38495)"
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/vllm-project/vllm/issues/38582 "[CI Failure]: tests/models/language/pooling/test_splade_sparse_pooler.py"
 - Ruling: 
 
-## 16. [4.x] Feat: add new tailwindcss colors
+## 6. [4.x] Feat: add new tailwindcss colors
 
-- Case: clean/filamentphp__filament-19304@4e85e247
+- Case: clean/filamentphp__filament-19304@4e85e247 (evidence 79187c3474ea)
 - Change: https://github.com/filamentphp/filament/pull/19304/files (62 changed lines in 1 file, PHP)
 - Commits: base cdcf753675f0675c239c76c018e44b9f61d2a46e, head 7a48ed0ea16167238758214161cf82afc8dd5f9b; merged 2026-02-28T18:14:20Z as https://github.com/filamentphp/filament/commit/4a1246512e552cec69f545118e4e35b87a5a6813
 - Licence: MIT, LICENSE.md
 - Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-05-29T18:14:20Z (read 2026-10-12): 2 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/support/src/Colors/Color.php: 2, 1 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-05-29T18:14:20Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on packages/support/src/Colors/Color.php:
   - 2026-04-13T09:03:18Z https://github.com/filamentphp/filament/commit/aa82febcd584e02024a8fc3b053f71f58360d48a "Fix avatar background color of ui-avatars provider (#19664)": its changes miss the pull request's lines, which sit at 77 to 132, 445, 610 to 613 of its parent
+  - 2026-05-01T09:28:09Z https://github.com/filamentphp/filament/commit/926db5727cc79eac162f0f7d4a7b95363ecba40f "task: Refactor color contrast resolution (#19774)": its changes miss the pull request's lines, which sit at 79 to 134, 447, 625 to 628 of its parent
 - Ruling: 
 
-## 17. Set synthesized array literal's parent in malformed JSON files
+## 7. Bayer node: fix web worker usage
 
-- Case: clean/microsoft__typescript-go-3166@80c9f8be
-- Change: https://github.com/microsoft/typescript-go/pull/3166/files (66 changed lines in 6 files, Go)
-- Commits: base 3ec52c7052f9cb8b62d8ee62c98f4d6f47010168, head 2a6479e865e6c0f9ab4560a15590eee76dbbf1e1; merged 2026-03-19T20:42:36Z as https://github.com/microsoft/typescript-go/commit/acdd67ef35f63cac4d2eeb837d4e18a5b8ffc2d3
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-17T20:42:36Z (read 2026-10-12): 16 later commits on its files, 6 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on internal/parser/parser.go: 16, 10 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-31T17:23:43Z https://github.com/microsoft/typescript-go/commit/235ae15b957ff4e6821ae4e83cd6041e56708d03 "Fix JSX parsing failures in ternary expressions with nested JSX attributes (#2937)": its changes miss the pull request's lines, which sit at 202 of its parent
-  - 2026-05-15T18:59:05Z https://github.com/microsoft/typescript-go/commit/e5a356e25b3d96c3acdcb5a70b848ce5fe464f32 "Fix `using` followed by newline ignoring [no LineTerminator here] grammar restriction (#3869)": its changes miss the pull request's lines, which sit at 210 of its parent
-  - 2026-05-18T05:05:08Z https://github.com/microsoft/typescript-go/commit/ce98adbc09fb3a08c360ade2452adaaa64473633 "Fix reparseTopLevelAwait diagnostic slicing bug (#3937)": its changes miss the pull request's lines, which sit at 210 of its parent
-  - 2026-05-21T18:54:04Z https://github.com/microsoft/typescript-go/commit/d99f6b2a5ff82ab5ca80cb679d59600c90bc8f05 "fix(4016): skip unknown pragmas (#4020)": its changes miss the pull request's lines, which sit at 210 of its parent
-  - 2026-06-03T19:29:30Z https://github.com/microsoft/typescript-go/commit/5ac05f485cbf1060effc0664b4de0f3386e8796b "Fix `.await` member access mis-parsed as top-level await in JS modules with JSDoc (#4169)": its changes miss the pull request's lines, which sit at 210 of its parent
-  - 2026-06-09T22:11:26Z https://github.com/microsoft/typescript-go/commit/45ae27057224ba8bf421659eee56952a4ce219b2 "Fix top-level await reparsing with following `@typedef` (#4256)": its changes miss the pull request's lines, which sit at 212 of its parent
-- Ruling: 
-
-## 18. ESQL: DS: Add inference/RERANK tests
-
-- Case: clean/elastic__elasticsearch-145229@619a409f
-- Change: https://github.com/elastic/elasticsearch/pull/145229/files (69 changed lines in 15 files, Java)
-- Commits: base ea3f1d17f94a532b1496000e2c573770803abfd4, head 89d0faf63cdeccaae56bfa778aad3369caba68e1; merged 2026-03-31T12:48:53Z as https://github.com/elastic/elasticsearch/commit/b1bfa5b9ae26d7bb11e48142a841d463421e8ff3
-- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-29T12:48:53Z (read 2026-10-12): 138 later commits on its files, 23 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on x-pack/plugin/esql-datasource-csv/qa/build.gradle: 9, 7 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-05-06T09:47:27Z https://github.com/elastic/elasticsearch/commit/8b43bf658035eb71761a7db8dea98d2341823543 "ESQL:DS: TSV: fix schema detection and extend testing (#148353)": its changes miss the pull request's lines, which sit at 36 of its parent
-  - 2026-05-18T17:29:50Z https://github.com/elastic/elasticsearch/commit/85a9915260ef6433abf76e7e78026de3a34c1d07 "ESQL:DS: CSV: fix attributes' nullability (#149298)": its changes miss the pull request's lines, which sit at 36 of its parent
-- Later commits on x-pack/plugin/esql-datasource-csv/qa/src/javaRestTest/java/org/elasticsearch/xpack/esql/qa/csv/Clusters.java: 4, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 31 of its parent
-- Later commits on x-pack/plugin/esql-datasource-iceberg/qa/build.gradle: 5, 5 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on x-pack/plugin/esql-datasource-ndjson/qa/build.gradle: 6, 5 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-16T17:29:55Z https://github.com/elastic/elasticsearch/commit/550b347a8442c93bc6e6300dcf72e716f1058a21 "ESQL:DS: NDJSON plugin fixes (#146491)": its changes miss the pull request's lines, which sit at 36 of its parent
-- Later commits on x-pack/plugin/esql-datasource-ndjson/qa/src/javaRestTest/java/org/elasticsearch/xpack/esql/qa/ndjson/Clusters.java: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 31 of its parent
-- Later commits on x-pack/plugin/esql-datasource-orc/qa/build.gradle: 7, 7 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on x-pack/plugin/esql-datasource-orc/qa/src/javaRestTest/java/org/elasticsearch/xpack/esql/qa/orc/Clusters.java: 1
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 32 of its parent
-- Later commits on x-pack/plugin/esql-datasource-parquet/qa/build.gradle: 14, 13 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-05-13T11:58:38Z https://github.com/elastic/elasticsearch/commit/08b037144f1fca5a719aa9e6c055cbac41fd64ae "ESQL:DS: Parquet: fix bit allignment issue. Add IT (#148958)": its changes miss the pull request's lines, which sit at 42 to 43 of its parent
-- Later commits on x-pack/plugin/esql-datasource-parquet/qa/src/javaRestTest/java/org/elasticsearch/xpack/esql/qa/parquet/Clusters.java: 5, 4 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 31 of its parent
-- Later commits on x-pack/plugin/esql/qa/server/multi-node/src/javaRestTest/java/org/elasticsearch/xpack/esql/qa/multi_node/ExternalDistributedClusters.java: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 31 of its parent
-- Later commits on x-pack/plugin/esql/qa/server/src/main/java/org/elasticsearch/xpack/esql/qa/rest/AbstractExternalSourceSpecTestCase.java: 13, 8 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T09:46:20Z https://github.com/elastic/elasticsearch/commit/11abbf0331be43ce0884f7241c1e2a58f5e7bd0f "ESQL: DS: Fix datasource QA `path.repo` fallbacks (#145442)": its changes miss the pull request's lines, which sit at 13, 404 to 410 of its parent
-  - 2026-05-04T15:11:54Z https://github.com/elastic/elasticsearch/commit/ab1fce783ea9d38d921e9246c298663673139f37 "ESQL: DS: Fix Azure URI handling (#148206)": its changes miss the pull request's lines, which sit at 13, 407 to 413 of its parent
-  - 2026-05-06T09:47:27Z https://github.com/elastic/elasticsearch/commit/8b43bf658035eb71761a7db8dea98d2341823543 "ESQL:DS: TSV: fix schema detection and extend testing (#148353)": its changes miss the pull request's lines, which sit at 13, 421 to 427 of its parent
-  - 2026-05-13T11:58:38Z https://github.com/elastic/elasticsearch/commit/08b037144f1fca5a719aa9e6c055cbac41fd64ae "ESQL:DS: Parquet: fix bit allignment issue. Add IT (#148958)": its changes miss the pull request's lines, which sit at 13, 494 to 500 of its parent
-  - 2026-05-20T12:19:09Z https://github.com/elastic/elasticsearch/commit/875ec02515b73a551cb34872bf85c2adf8812d57 "[ESQL] Fix Windows glob path resolution in spec tests (#149469)": its changes miss the pull request's lines, which sit at 13, 521 to 527 of its parent
-- Later commits on x-pack/plugin/esql/qa/server/src/main/java/org/elasticsearch/xpack/esql/qa/rest/EsqlSpecTestCase.java: 16, 15 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-25T18:52:19Z https://github.com/elastic/elasticsearch/commit/8ac231dbb552edc1c5b255eb51b4df9d26d6f6b5 "ESQL: Fix BWC tests against super old versions (#152197)": its changes miss the pull request's lines, which sit at 185, 336 to 345 of its parent
-- Later commits on x-pack/plugin/esql/qa/testFixtures/src/main/java/org/elasticsearch/xpack/esql/CsvTestsDataLoader.java: 43, 37 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T11:09:45Z https://github.com/elastic/elasticsearch/commit/1684270707ce7e89d30b14b3122b78cf27ee699d "Fix deduplication of data with views (#145091)": its changes miss the pull request's lines, which sit at 46, 647 to 656 of its parent
-  - 2026-05-23T03:56:28Z https://github.com/elastic/elasticsearch/commit/298ff430500ad1901c3da33ed827bae0cae4d467 "ESQL: Fix data type of partial folded CASE (#149752)": its changes miss the pull request's lines, which sit at 46, 690 to 699 of its parent
-  - 2026-05-25T08:23:12Z https://github.com/elastic/elasticsearch/commit/c7d0e420c9712850375bf57ba9a5ae285ed57ff0 "Merge branch 'patch/serverless-fix'": its changes miss the pull request's lines, which sit at 46, 702 to 711 of its parent
-  - 2026-06-03T01:59:10Z https://github.com/elastic/elasticsearch/commit/c26863d79e8ca8f8906f3262b0ddc7b062f3b348 "ESQL: fix unmapped_fields=load with LOOKUP JOIN (#148805)": its changes miss the pull request's lines, which sit at 46, 715 to 724 of its parent
-  - 2026-06-19T15:03:44Z https://github.com/elastic/elasticsearch/commit/3e20f162994f3fd5af4f48f9e311cdbb126ef789 "[ES|QL] Fix union type class cast exception  (#151632)": its changes miss the pull request's lines, which sit at 46, 758 to 767 of its parent
-  - 2026-06-22T18:30:39Z https://github.com/elastic/elasticsearch/commit/25b19d6a969c71b9527811d38ad8ac0a428cd4f5 "Bugfix: `TimeSeriesMetadataFieldBlockLoader` ignores passthrough fields (#151804)": its changes miss the pull request's lines, which sit at 46, 763 to 772 of its parent
-- Later commits on x-pack/plugin/esql/qa/testFixtures/src/main/resources/external-basic.csv-spec: 9, 7 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-01T13:21:05Z https://github.com/elastic/elasticsearch/commit/12db0aa2fbd4191a1fe684c4008644a812f17c7c "[ESQL] Fix release tests (#145391)": its changes miss the pull request's lines, which sit at 779 to 790, 792 to 797 of its parent
-  - 2026-06-26T13:53:45Z https://github.com/elastic/elasticsearch/commit/6912a3d3ce622bec7750facb9303ad26d55ce35e "ES|QL|DS Fix missing references error in planning (#152029)": its changes miss the pull request's lines, which sit at 689 of its parent
-- Ruling: 
-
-## 19. [frontport] Add WASM bytecode size panels to Execution dashboard (#5765)
-
-- Case: clean/linera-io__linera-protocol-5856@427b9982
-- Change: https://github.com/linera-io/linera-protocol/pull/5856/files (332 changed lines in 1 file, Rust)
-- Commits: base 8ff219c913a555fae091f4d417a68f9db4a59b63, head 5985f5004cb181a50eda52977a54e143968db1ea; merged 2026-03-30T18:59:26Z as https://github.com/linera-io/linera-protocol/commit/47202ebba5a53349bd21634f9bd7a777e5366f71
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-28T18:59:26Z (read 2026-10-12): 6 later commits on its files, 3 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on kubernetes/linera-validator/grafana-dashboards/linera/execution.json: 6, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-06T15:28:22Z https://github.com/linera-io/linera-protocol/commit/4a196a2836b7a4631a8f8e5a35df87712c109671 "Fix unit label on State Hash Computation Latency dashboard panel (#5923)": its changes miss the pull request's lines, which sit at 6064 to 6395 of its parent
-  - 2026-04-08T12:17:02Z https://github.com/linera-io/linera-protocol/commit/d20332a8fda4450c422c2bbbf341f46d7ac163fa "Fix dashboard restart annotations to detect actual pod restarts (#5941)": its changes miss the pull request's lines, which sit at 6064 to 6395 of its parent
-  - 2026-05-15T13:42:51Z https://github.com/linera-io/linera-protocol/commit/914211863a9d1775e1ecbf9c4b1b9e7da57f6f84 "dashboard: sync bundled JSONs — multi-select validator var + Loki perf fixes (#6310)": its changes miss the pull request's lines, which sit at 6064 to 6395 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/linera-io/linera-protocol/pull/5889 "[frontport] Circuit breaker for validator notification streams (#5717)"
-- Ruling: 
-
-## 20. Fix editor not updating titlebar with new difficulty name after rename
-
-- Case: clean/ppy__osu-36908@97de402f
-- Change: https://github.com/ppy/osu/pull/36908/files (16 changed lines in 1 file, C#)
-- Commits: base 321e6989061246275f30ef80030fe560109291fd, head ec66e93d5f7336fdb2aa5e5e9a5eeb2003136042; merged 2026-03-10T08:57:26Z as https://github.com/ppy/osu/commit/9105fc15b244a0c3a4d59241d7529de7562500cb
-- Licence: MIT, LICENCE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-08T08:57:26Z (read 2026-10-12): 6 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on osu.Game/Screens/Edit/Editor.cs: 6, 5 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-23T08:26:34Z https://github.com/ppy/osu/commit/95648a3d27a0c9c4e544c445f9baba4a8c5b8948 "Fix editor background taking too long to load with certain storyboards (#37038)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 606 to 608 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/LumpBloom7/hishigata/pull/317 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/Rudicito/gitaroo/pull/77 "Bump ppy.osu.Game from 2026.119.0 to 2026.315.0"; https://github.com/goodtrailer/soyokaze/pull/250 "Bump ppy.osu.Game from 2026.102.0 to 2026.315.0"; https://github.com/LumpBloom7/sentakki/pull/823 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/Beamographic/rush/pull/428 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/GooGuTeam/osu-performance-server/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/581 "Bump ppy.osu.Game from 2026.303.0 to 2026.317.0"; https://github.com/GooGuTeam/custom-rulesets/pull/32 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/318 "Bump ppy.osu.Game from 2026.303.0 to 2026.317.0"; https://github.com/Rudicito/gitaroo/pull/78 "Bump ppy.osu.Game from 2026.119.0 to 2026.317.0"; https://github.com/goodtrailer/soyokaze/pull/251 "Bump ppy.osu.Game from 2026.102.0 to 2026.317.0"; https://github.com/LumpBloom7/sentakki/pull/825 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/sentakki/pull/835 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/35 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/custom-rulesets/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/320 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/Rudicito/gitaroo/pull/80 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/goodtrailer/soyokaze/pull/252 "Bump ppy.osu.Game from 2026.317.0 to 2026.406.0"; https://github.com/taulazer/tau/pull/584 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/goodtrailer/soyokaze/pull/253 "Bump ppy.osu.Game from 2026.317.0 to 2026.408.0"; https://github.com/LumpBloom7/sentakki/pull/837 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/36 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/585 "Bump ppy.osu.Game from 2026.303.0 to 2026.408.0"; https://github.com/GooGuTeam/custom-rulesets/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/322 "Bump ppy.osu.Game from 2026.303.0 to 2026.408.0"; https://github.com/Game4all/gamebosu/pull/287 "Bump ppy.osu.Game from 2025.816.0 to 2026.408.0"; https://github.com/goodtrailer/soyokaze/pull/254 "Bump ppy.osu.Game from 2026.317.0 to 2026.429.0"; https://github.com/GooGuTeam/osu-performance-server/pull/38 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/587 "Bump ppy.osu.Game from 2026.303.0 to 2026.429.0"; https://github.com/GooGuTeam/custom-rulesets/pull/39 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/289 "Bump ppy.osu.Game from 2025.816.0 to 2026.429.0"; https://github.com/goodtrailer/soyokaze/pull/255 "Bump ppy.osu.Game from 2026.317.0 to 2026.505.0"; https://github.com/GooGuTeam/osu-performance-server/pull/39 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/589 "Bump ppy.osu.Game from 2026.303.0 to 2026.505.0"; https://github.com/GooGuTeam/custom-rulesets/pull/40 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/291 "Bump ppy.osu.Game from 2025.816.0 to 2026.505.0"; https://github.com/goodtrailer/soyokaze/pull/256 "Bump ppy.osu.Game from 2026.317.0 to 2026.518.0"; https://github.com/GooGuTeam/osu-performance-server/pull/41 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/590 "Bump ppy.osu.Game from 2026.303.0 to 2026.518.0"; https://github.com/GooGuTeam/custom-rulesets/pull/41 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/592 "Bump ppy.osu.Game from 2026.303.0 to 2026.522.0"; https://github.com/GooGuTeam/custom-rulesets/pull/42 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/257 "Bump ppy.osu.Game from 2026.317.0 to 2026.522.0"; https://github.com/GooGuTeam/osu-performance-server/pull/42 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/osu-performance-server/pull/43 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/594 "Bump ppy.osu.Game from 2026.303.0 to 2026.527.0"; https://github.com/GooGuTeam/custom-rulesets/pull/43 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/258 "Bump ppy.osu.Game from 2026.317.0 to 2026.527.0"; https://github.com/goodtrailer/soyokaze/pull/259 "Bump ppy.osu.Game from 2026.317.0 to 2026.601.0"; https://github.com/taulazer/tau/pull/595 "Bump ppy.osu.Game from 2026.303.0 to 2026.601.0"; https://github.com/GooGuTeam/custom-rulesets/pull/44 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/260 "Bump ppy.osu.Game from 2026.317.0 to 2026.605.0"; https://github.com/taulazer/tau/pull/596 "Bump ppy.osu.Game from 2026.303.0 to 2026.605.0"; https://github.com/GooGuTeam/custom-rulesets/pull/45 "Bump ppy.osu.Game and 4 others"
-- Ruling: 
-
-## 21. fix(graph): class bug in serialization
-
-- Case: clean/alibaba__spring-ai-alibaba-3969@38476032
-- Change: https://github.com/alibaba/spring-ai-alibaba/pull/3969/files (736 changed lines in 6 files, Java)
-- Commits: base 7a73cb0d437d44b363767eb3a0b5ea8adbfe1ae3, head 643de4ca4ea1eb7fffd700b5a003449ba6876af7; merged 2026-01-08T03:19:15Z as https://github.com/alibaba/spring-ai-alibaba/commit/4186368f3dfdf058f1142f377732c40ad2d41eec
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-04-08T03:19:15Z (read 2026-10-12): 1 later commit on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on spring-ai-alibaba-graph-core/src/main/java/com/alibaba/cloud/ai/graph/serializer/plain_text/jackson/JacksonDeserializer.java: 1
-  - 2026-01-22T09:08:19Z https://github.com/alibaba/spring-ai-alibaba/commit/13b1e22d18a7c16ffbe31e34cd9b7a49750b6000 "fix(graph): java.lang Serialization failed (#4111)": its changes miss the pull request's lines, which sit at 100 to 104, 322 to 326, 471 to 475 of its parent
-- Ruling: 
-
-## 22. perf(server): optimize people page query
-
-- Case: clean/immich-app__immich-27346@3fd9fbbd
-- Change: https://github.com/immich-app/immich/pull/27346/files (4 changed lines in 2 files, TypeScript)
-- Commits: base eb20b715e4bb6c6668890f3b79fff6f541987d93, head 7434d1c2cdf77a77c213d497abdd2ee3323ed591; merged 2026-03-28T21:33:05Z as https://github.com/immich-app/immich/commit/b09ebb11e9cf49eb236f5fdabfe897302cf39c31
-- Licence: AGPL-3.0, LICENSE
-- Reviews by others: 4 (approved 2, commented 2); none requested changes
-- Checked up to 2026-06-26T21:33:05Z (read 2026-10-12): 9 later commits on its files, 6 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on server/src/queries/person.repository.sql: 4, 1 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-01T12:19:38Z https://github.com/immich-app/immich/commit/c29493e3a0bd0a629648fe6cd7c72887d264b931 "fix: withFilePath select edited or unedited file (#27328)": its changes miss the pull request's lines, which sit at 230 to 231, 236 of its parent
-  - 2026-04-01T13:31:54Z https://github.com/immich-app/immich/commit/d1e2e8ab4e9b01951ecc38c664a392cb0d51a7b5 "fix(server): use substring matching for person name search (#26903)": its changes miss the pull request's lines, which sit at 230 to 231, 236 of its parent
-  - 2026-04-09T00:56:07Z https://github.com/immich-app/immich/commit/8d67c1f820aaec8d52ce8c1eb04a15ff0c4d81d9 "fix(server): people search not showing for 3 or less characters (#27629)": its changes miss the pull request's lines, which sit at 227 to 228, 233 of its parent
-- Later commits on server/src/repositories/person.repository.ts: 5, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-01T12:19:38Z https://github.com/immich-app/immich/commit/c29493e3a0bd0a629648fe6cd7c72887d264b931 "fix: withFilePath select edited or unedited file (#27328)": its changes miss the pull request's lines, which sit at 354 to 355, 361 of its parent
-  - 2026-04-01T13:31:54Z https://github.com/immich-app/immich/commit/d1e2e8ab4e9b01951ecc38c664a392cb0d51a7b5 "fix(server): use substring matching for person name search (#26903)": its changes miss the pull request's lines, which sit at 346 to 347, 353 of its parent
-  - 2026-04-09T00:56:07Z https://github.com/immich-app/immich/commit/8d67c1f820aaec8d52ce8c1eb04a15ff0c4d81d9 "fix(server): people search not showing for 3 or less characters (#27629)": its changes miss the pull request's lines, which sit at 340 to 341, 347 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/claytono/infra/pull/2048 "Update immich monorepo to v2.7.5"
-- Ruling: 
-
-## 23. Add missing Slovak chart filter action translations
-
-- Case: clean/filamentphp__filament-19318@d64ad624
-- Change: https://github.com/filamentphp/filament/pull/19318/files (16 changed lines in 1 file, PHP)
-- Commits: base be9a8da37577cf2d73fe19a3ef93caaea0478099, head ebf7b147a4c538ef414f87a89dcd85c30aa65ff5; merged 2026-02-23T08:24:19Z as https://github.com/filamentphp/filament/commit/ada995d009434685500d674d24e0abb5680d4780
-- Licence: MIT, LICENSE.md
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-05-24T08:24:19Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 24. Fix crash on invalid `format_regexp` in `Regexp` format
-
-- Case: clean/ClickHouse__ClickHouse-101074@efd27989
-- Change: https://github.com/ClickHouse/ClickHouse/pull/101074/files (9 changed lines in 3 files, C++)
-- Commits: base cef81be62ebc151aed7b98e9e11059ca2250518c, head 90f373b0f63e9274a8a003c4a8ed783d0b780cc5; merged 2026-03-29T19:24:00Z as https://github.com/ClickHouse/ClickHouse/commit/c037aa07f83814496fbfc5ad61d14b265fdfe9d6
-- Licence: Apache-2.0, LICENSE
+- Case: clean/mrdoob__three.js-33279@695e9c4b (evidence aadf28806094)
+- Change: https://github.com/mrdoob/three.js/pull/33279/files (15 changed lines in 1 file, JavaScript)
+- Commits: base 2baf31e360d060220548713b3c577a92054bed25, head 1221ce88ac3f19482ff70655cc710cd648fa9239; merged 2026-03-30T09:08:41Z as https://github.com/mrdoob/three.js/commit/e13523a796b5cd4e4bcbb1fac9db96c410f05fd4
+- Licence: MIT, LICENSE
 - Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-27T19:24:00Z (read 2026-10-12): 2 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/Processors/Formats/Impl/RegexpRowInputFormat.cpp: 2, 1 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-29T23:20:54Z https://github.com/ClickHouse/ClickHouse/commit/371e0b496d41773dfa7d268ebb4bed47f1c48664 "Merge remote-tracking branch 'origin/master' into fix-compiler-warnings": a merge into another branch: its first parent does not hold the pull request
+- Checked up to 2026-06-28T09:08:41Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Ruling: 
 
-## 25. Create LTS pkg and non-LTS pkg for macOS for LTS releases
+## 8. middleware: enable local tool model for web search
 
-- Case: clean/PowerShell__PowerShell-27039@d7b9ca6b
-- Change: https://github.com/PowerShell/PowerShell/pull/27039/files (13 changed lines in 1 file, C#)
-- Commits: base 1f8bbe1e5332bb8fe1b39c81c366ddadbf9dd1a2, head b0f291545353eaa900dcd37c887758762dda3596; merged 2026-03-16T19:40:27Z as https://github.com/PowerShell/PowerShell/commit/8c9c9e11872c8d98c2e7d7a1ed991fc7e1d07354
-- Licence: MIT, LICENSE.txt
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-14T19:40:27Z (read 2026-10-12): 3 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .pipelines/templates/mac-package-build.yml: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-05-05T19:47:42Z https://github.com/PowerShell/PowerShell/commit/3d13188032c3784ecbf7a9cb6111aefe6bf7ba61 "Fix executable permissions for pwsh and createdump": its changes miss the pull request's lines, which sit at 113 to 116, 135, 142 to 147 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/PowerShell/PowerShell/pull/27040 "[release/v7.6] Create LTS pkg and non-LTS pkg for macOS for LTS releases"; https://github.com/PowerShell/PowerShell/pull/27162 "[release/v7.5.6] Create LTS pkg and non-LTS pkg for macOS for LTS releases"
-- Ruling: 
-
-## 26. [DevTools] Ignore new production renderers if we already use "worse" versions of React on a page
-
-- Case: clean/react__react-35994@4c43106e
-- Change: https://github.com/react/react/pull/35994/files (104 changed lines in 6 files, JavaScript)
-- Commits: base 014138df87869b174956f90a33fd6cf66e160114, head 209a41cdcffefcc3364f606e645dd9c0a756acf1; merged 2026-03-11T09:26:36Z as https://github.com/react/react/commit/7b5b561bd2dda205ed8f397864379003b707d4ae
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-09T09:26:36Z (read 2026-10-12): 2 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/react-devtools-shared/src/hook.js: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/vercel/next.js/pull/91272 "Upgrade React from `46103596-20260305` to `5e9eedb5-20260312`"
-- Ruling: 
-
-## 27. validation: refactor: remove ConnectTrace
-
-- Case: clean/bitcoin__bitcoin-34708@892f8aab
-- Change: https://github.com/bitcoin/bitcoin/pull/34708/files (66 changed lines in 2 files, C++)
-- Commits: base 083242aac81d02b6547ca37e0b4e6f37e0e89d87, head 2f8f2e900118c98699db91075bd1b72e6460c6b1; merged 2026-03-12T10:09:05Z as https://github.com/bitcoin/bitcoin/commit/ab642773757cb9035d348f41fcd13103f5a4734f
-- Licence: MIT, COPYING
-- Reviews by others: 10 (approved 1, commented 9); none requested changes
-- Checked up to 2026-06-10T10:09:05Z (read 2026-10-12): 34 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/validation.cpp: 30, 29 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-05-26T11:36:57Z https://github.com/bitcoin/bitcoin/commit/ac9424fdc6339abb72e5f9db5a46f84703802429 "Merge bitcoin/bitcoin#35145: validation: fix misleading VerifyDB summary log": its changes miss the pull request's lines, which sit at 2992 to 2995, 3001, 3007, 3104, 3352, 3360 of its parent
-- Later commits on src/validation.h: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 28. [13.x] Update brick/math constraint and rounding mode constant
-
-- Case: clean/laravel__framework-59107@ed99ecdd
-- Change: https://github.com/laravel/framework/pull/59107/files (8 changed lines in 4 files, PHP)
-- Commits: base 297c6bb97df31df21b241d284c2360095176aa05, head 7a97bd823db0ca88cd2c3c69e7420c5452f2cbbf; merged 2026-03-05T19:21:41Z as https://github.com/laravel/framework/commit/63c8c8f377b502cb50ffaffc841aaba3e811c45e
-- Licence: MIT, LICENSE.md
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-03T19:21:41Z (read 2026-10-12): 26 later commits on its files, 5 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on composer.json: 14, 12 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-10T20:04:12Z https://github.com/laravel/framework/commit/6b0638a6c0e3e1ce5d6b0150c27797da46e393ba "fix conflicts": its changes miss the pull request's lines, which sit at 30 of its parent
-  - 2026-03-17T13:09:53Z https://github.com/laravel/framework/commit/89338e9ecc379a879001b38a649185db6eb5283c "Fix failing phpstan (#59245)": every line of the pull request in the file was already rewritten before this commit
-- Later commits on src/Illuminate/Database/Eloquent/Concerns/HasAttributes.php: 5, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-27T17:21:20Z https://github.com/laravel/framework/commit/45b8782cd563b8bbaa22ad3ab332d7ec52d9381b "[13.x] Fix trait initializer collision with Attribute parsing (#59404)": its changes miss the pull request's lines, which sit at 1541 of its parent
-  - 2026-04-01T15:19:04Z https://github.com/laravel/framework/commit/8843a5e3f931e005e7f3c9046bc83f6e664c53f5 "fix: allow returning Stringable objects in casts()-method (#59479)": its changes miss the pull request's lines, which sit at 1539 of its parent
-  - 2026-05-14T17:30:07Z https://github.com/laravel/framework/commit/1906399903ddeb68b0cd6381f3050fc2e170c578 "Fix typo in mergeAttributeFromCachedCasts() PHPDoc comment (#60112)": its changes miss the pull request's lines, which sit at 1539 of its parent
-- Later commits on src/Illuminate/Database/composer.json: 5, 5 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on src/Illuminate/Validation/composer.json: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 29. fix: use matrix.target instead of matrix.os for actions/cache build action
-
-- Case: clean/openai__codex-15933@93787e80
-- Change: https://github.com/openai/codex/pull/15933/files (6 changed lines in 1 file, Rust)
-- Commits: base 81fa04783a551d7e2fc5cfdfc91921aaec3e64bb, head eb3dbd0a5f123e13c02184b4c1fbabb0ae8ba585; merged 2026-03-27T01:32:14Z as https://github.com/openai/codex/commit/d838c23867f6fe2e3e43a0c82d25c17cb3730b1d
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-25T01:32:14Z (read 2026-10-12): 40 later commits on its files, 6 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .github/workflows/bazel.yml: 40, 34 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-14T01:45:41Z https://github.com/openai/codex/commit/d9a385ac8c2ff91b3180cddd3c973095eafb2d88 "fix: pin inputs (#17471)": its changes miss the pull request's lines, which sit at 71, 73, 231 of its parent
-  - 2026-04-15T21:43:30Z https://github.com/openai/codex/commit/17d94bd1e32f8f75676a0927ca297031f4b7d7ae "[docs] Revert extra changes from PR 17848 (#18003)": its changes miss the pull request's lines, which sit at 120, 279 of its parent
-  - 2026-04-25T17:03:01Z https://github.com/openai/codex/commit/88f300d74d93bfee6750100ee5d3056672cad3ad "fix: increase Bazel timeout to 45 minutes (#19578)": every line of the pull request in the file was already rewritten before this commit
-  - 2026-04-25T23:34:06Z https://github.com/openai/codex/commit/9881dc7306dbfe22b34157e6e47de2b1ae45d527 "fix: restore 30-minute timeout for Bazel builds (#19609)": every line of the pull request in the file was already rewritten before this commit
-  - 2026-06-02T18:06:01Z https://github.com/openai/codex/commit/9e3d5f29e2b6e2bcad3b0384e35e1faaa13e8272 "[codex] Revert shared BuildBuddy Bazel wrapper (#25909)": every line of the pull request in the file was already rewritten before this commit
-  - 2026-06-02T23:22:32Z https://github.com/openai/codex/commit/6471f8b31aba50c87d5616cc0a203160a80b5322 "[codex] Fix Windows BuildBuddy Bazel wrapper execution (#25915)": every line of the pull request in the file was already rewritten before this commit
-- Ruling: 
-
-## 30. chore(deps): consolidate dependabot updates 2026-03-24
-
-- Case: clean/gofr-dev__gofr-3206@ad4db8a3
-- Change: https://github.com/gofr-dev/gofr/pull/3206/files (468 changed lines in 17 files, Go)
-- Commits: base 841f3820eb1b8d63af5430285124d7dc86024c91, head f0b80c55a726c3b84253845e8101264006a220e9; merged 2026-03-24T06:08:07Z as https://github.com/gofr-dev/gofr/commit/ccfd5c7710cd0a696f1827923dc2e81d918bf425
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-22T06:08:07Z (read 2026-10-12): 128 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on go.mod: 12, 12 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on go.sum: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on go.work.sum: 8, 8 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/couchbase/go.mod: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/couchbase/go.sum: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/file/gcs/go.mod: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/file/gcs/go.sum: 10, 10 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/file/s3/go.mod: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/file/s3/go.sum: 10, 10 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/influxdb/go.mod: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/influxdb/go.sum: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/kv-store/dynamodb/go.mod: 8, 8 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/kv-store/dynamodb/go.sum: 7, 7 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/pubsub/sqs/go.mod: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/pubsub/sqs/go.sum: 10, 10 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/surrealdb/go.mod: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on pkg/gofr/datasource/surrealdb/go.sum: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 31. test: add missing unit tests for HTTP request (HostName, PathParam, body, Bind)
-
-- Case: clean/gofr-dev__gofr-3221@2fce3575
-- Change: https://github.com/gofr-dev/gofr/pull/3221/files (84 changed lines in 1 file, Go)
-- Commits: base 20a401d52df6f90647ac309c06b53d2bb29ea977, head fc6859edf13ba9907a8ede02409caca815302aa7; merged 2026-03-30T18:31:41Z as https://github.com/gofr-dev/gofr/commit/8ec5abf83bedd3b650422c008282aa9f41ec52a7
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-28T18:31:41Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 32. chore: Collect telemetry on state update message sizes
-
-- Case: clean/cline__cline-9626@7b80e48f
-- Change: https://github.com/cline/cline/pull/9626/files (91 changed lines in 3 files, TypeScript)
-- Commits: base fd8cecddd51653a906708c3a7694fb9f7b7c098f, head a1978498c1c0dbbb8cddc7690d1ef5978863c912; merged 2026-03-03T05:53:30Z as https://github.com/cline/cline/commit/fb04a9bd1532e3a8edfa7a2b5434fef365589f44
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-01T05:53:30Z (read 2026-10-12): 15 later commits on its files, 3 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/core/controller/state/subscribeToState.ts: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on src/services/telemetry/TelemetryService.ts: 10, 8 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-09T22:55:23Z https://github.com/cline/cline/commit/ffa4785f431893afcf7f8b51c2e9ac5fe009409a "fix(telemetry): restore cache token and cost metrics in captureTokenUsage (#9741)": its changes miss the pull request's lines, which sit at 179 to 181, 2306 to 2334 of its parent
-  - 2026-04-30T16:41:52Z https://github.com/cline/cline/commit/beb3ad78dc5c638eaae8be54d0502cdc812633b8 "Revert "Remove foreground terminal from Cline VSCode extension (#10196)" (#10477)": its changes miss the pull request's lines, which sit at 192 to 194, 2355 to 2383 of its parent
-- Later commits on src/services/telemetry/__tests__/TelemetryService.metrics.test.ts: 4, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-09T22:55:23Z https://github.com/cline/cline/commit/ffa4785f431893afcf7f8b51c2e9ac5fe009409a "fix(telemetry): restore cache token and cost metrics in captureTokenUsage (#9741)": its changes miss the pull request's lines, which sit at 238 to 276 of its parent
-- Ruling: 
-
-## 33. [DevTools] Don't capture durations for disconnected subtrees when profiling
-
-- Case: clean/react__react-35718@52edac83
-- Change: https://github.com/react/react/pull/35718/files (79 changed lines in 2 files, JavaScript)
-- Commits: base 65db1000b944c8a07b5947c06b38eb8364dce4f2, head a1c0c6d100a02840f7e78a60f0803849fa236631; merged 2026-02-09T22:18:17Z as https://github.com/react/react/commit/c6bb26bf833c5d91760daf28fa2750b81067ac30
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-05-10T22:18:17Z (read 2026-10-12): 10 later commits on its files, 2 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/react-devtools-shared/src/__tests__/profilingCommitTreeBuilder-test.js: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on packages/react-devtools-shared/src/backend/fiber/renderer.js: 9, 7 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-02-10T12:09:23Z https://github.com/react/react/commit/f23aa1d9f5034e7cfbd3e6015ce102bb72a005a0 "[DevTools] Fix memory leak when unmounting hoistables (#35741)": its changes miss the pull request's lines, which sit at 5584 to 5589 of its parent
-  - 2026-03-10T17:05:48Z https://github.com/react/react/commit/014138df87869b174956f90a33fd6cf66e160114 "[DevTools] Fix a crash when rendering a new class Component when simulating errored state (#35985)": its changes miss the pull request's lines, which sit at 5267 to 5272 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/vercel/next.js/pull/89923 "Upgrade React from `272441a9-20260209` to `6066c782-20260212`"
-- Ruling: 
-
-## 34. quic: remove CryptoKey support from session keys option
-
-- Case: clean/nodejs__node-62335@24bde697
-- Change: https://github.com/nodejs/node/pull/62335/files (20 changed lines in 3 files, JavaScript)
-- Commits: base 56aba88702b3a7da4a44688664ff22d8afebb267, head e4d41d4c923f0933bcd07ba750ba26de5dd9ccca; merged 2026-03-28T09:00:58Z as https://github.com/nodejs/node/commit/cf2b05cab867568f344ed58829f656162685454c
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
-- Reviews by others: 3 (approved 3); none requested changes
-- Checked up to 2026-06-26T09:00:58Z (read 2026-10-12): 65 later commits on its files, 4 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on doc/api/quic.md: 33, 31 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-31T12:34:32Z https://github.com/nodejs/node/commit/60f19bc0894eb20f9e525c27b561ef322039382a "doc: fix 'transfered' typo in quic.md": its changes miss the pull request's lines, which sit at 1200 to 1203, 1206 of its parent
-  - 2026-05-05T16:14:46Z https://github.com/nodejs/node/commit/a641226c9187c9748a3100d18c3a511462dfafae "doc: fix lint-md": its changes miss the pull request's lines, which sit at 1251, 1256 to 1257, 1260 of its parent
-- Later commits on lib/internal/quic/quic.js: 26, 24 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-31T16:19:44Z https://github.com/nodejs/node/commit/57186e58277b7b0235d5e439356c3e2ab811d3e0 "quic: fix a handful of bugs and missing functionality": its changes miss the pull request's lines, which sit at 100 to 101, 144 to 145, 187 to 188, 260, 2170 to 2172 of its parent
-  - 2026-05-15T13:39:30Z https://github.com/nodejs/node/commit/e9c49ea46f5303c9f3f0860286f08a25caa54851 "quic: fixup quic stream variable chunk len": its changes miss the pull request's lines, which sit at 148 to 149, 206, 276 to 277 of its parent
-- Later commits on lib/internal/quic/symbols.js: 6, 6 with no fix word (listed in suites/clean/candidates.json)
-- Later commits naming it (quoting its title, or with no fix word): https://github.com/nodejs/node/commit/510ec81fbe6423ddcc0171b61b7786b239e03f00 "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/aa26015b8be9e79b1c0135a8d636a430d5838968 "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/6fb5c6ac627f5fdb5a491ef25147e80ade8ee926 "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/4272a97d4c578f95143eb11d8cf43f6daa0e39b8 "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/9d3087c6041ebf38e7f96d1fc5b71d915c50f1db "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/962fc2d0a710ef19143d20479646fb54ad2ecd72 "quic: remove CryptoKey support from session keys option"; https://github.com/nodejs/node/commit/4c206ecb31f232535edd591a90fdf301191ad523 "quic: remove CryptoKey support from session keys option"
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/nodejs/node/pull/62522 "2026-04-01, Version 25.9.0 (Current)"; https://github.com/nodejs/node/pull/62681 "2026-04-15, Version 24.15.0 'Krypton' (LTS)"
-- Ruling: 
-
-## 35. Add Claude PR review capability
-
-- Case: clean/timescale__timescaledb-9408@58b20f80
-- Change: https://github.com/timescale/timescaledb/pull/9408/files (41 changed lines in 1 file, C)
-- Commits: base a30f9b4dbdc44e78ede28004b8650ade947d53b5, head 7fa3155b9b5c89db81f811982b8c09bad1d2454a; merged 2026-03-17T13:55:50Z as https://github.com/timescale/timescaledb/commit/e027c16a2bd8a050642d4ac22fc7ca9c9fcf9378
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
-- Reviews by others: 2 (approved 2); none requested changes
-- Checked up to 2026-06-15T13:55:50Z (read 2026-10-12): 12 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .github/workflows/claude-code-review.yaml: 12, 12 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 36. feat(a2a): support multi-agent registration in single application
-
-- Case: clean/alibaba__spring-ai-alibaba-4419@f0686e50
-- Change: https://github.com/alibaba/spring-ai-alibaba/pull/4419/files (885 changed lines in 14 files, Java)
-- Commits: base f62f943c6c579b7c38ab088ffada54ec4dab72de, head ad86b2f69b5d0644ee7990647fb03e149275ca73; merged 2026-03-14T09:02:30Z as https://github.com/alibaba/spring-ai-alibaba/commit/99c8d3fcc1270f5d44104659d03d149af8eb8bbb
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-12T09:02:30Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 37. Add comprehensive array and dictionary tests for ConvertTo-Json
-
-- Case: clean/PowerShell__PowerShell-26742@70c743b8
-- Change: https://github.com/PowerShell/PowerShell/pull/26742/files (457 changed lines in 1 file, C#)
-- Commits: base dd4f2fecfaf2e9dc1fbb8831fa47c8b0907c03a3, head 1ce7708b455b4a1b67fb914f5ddd29b5e61f0365; merged 2026-02-06T17:41:03Z as https://github.com/PowerShell/PowerShell/commit/438254412760ff24cdfebeed09bfeb3a24882866
-- Licence: MIT, LICENSE.txt
-- Reviews by others: 5 (approved 2, commented 3); none requested changes
-- Checked up to 2026-05-07T17:41:03Z (read 2026-10-12): 3 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on test/powershell/Modules/Microsoft.PowerShell.Utility/ConvertTo-Json.Tests.ps1: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 38. Fix segfault in Vectorized Aggregation
-
-- Case: clean/timescale__timescaledb-9426@e64b5725
-- Change: https://github.com/timescale/timescaledb/pull/9426/files (146 changed lines in 6 files, C)
-- Commits: base bed7bdd81b0ec32ff1d4bedcf87e08b9ce70b8a1, head b81b29c1eef1e5427f13ad6a10d8e72da37b01f9; merged 2026-03-23T19:27:10Z as https://github.com/timescale/timescaledb/commit/baeb5eaaeead6a1ee2584f16f65a954709763d0c
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
-- Reviews by others: 4 (approved 3, commented 1); none requested changes
-- Checked up to 2026-06-21T19:27:10Z (read 2026-10-12): 9 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on tsl/src/nodes/vector_agg/plan.c: 4, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-01T13:24:03Z https://github.com/timescale/timescaledb/commit/217fe4c1599a31dbaa3c81edd42ea317733e4458 "Fix wrong grouping in VectorAgg and ColumnarIndexScan": its changes miss the pull request's lines, which sit at 15, 692 to 708, 710, 712 to 728, 735, 782 of its parent
-- Later commits on tsl/test/expected/vector_agg_planning-15.out: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on tsl/test/expected/vector_agg_planning-16.out: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on tsl/test/expected/vector_agg_planning-17.out: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on tsl/test/expected/vector_agg_planning-18.out: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/timescale/timescaledb/pull/9429 "Backport to 2.26.x: #9426: Fix segfault in Vectorized Aggregation"
-- Ruling: 
-
-## 39. Update milestones for May
-
-- Case: clean/dotnet__aspnetcore-65976@4ffef909
-- Change: https://github.com/dotnet/aspnetcore/pull/65976/files (6 changed lines in 1 file, C#)
-- Commits: base 53559ddd9f193ffe004f27ec6ccc1c88a8529033, head 453faa3a667f8d3fd560abbfa68b92d9cfb5e848; merged 2026-03-25T16:42:14Z as https://github.com/dotnet/aspnetcore/commit/9d746bd1fa42178150bf480cf7c86a7e6e0c5ea2
-- Licence: MIT, LICENSE.txt
-- Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-23T16:42:14Z (read 2026-10-12): 11 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .github/policies/resourceManagement.yml: 11, 11 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/dotnet/dotnet/pull/5713 "[main] Source code updates from dotnet/aspnetcore"; https://github.com/dotnet/aspnetcore/pull/66432 "Update resourceManagement for 10.0.8 milestone"
-- Ruling: 
-
-## 40. fix tunnel process kill and daemon spawn on windows
-
-- Case: clean/browser-use__browser-use-4530@8e204eb1
-- Change: https://github.com/browser-use/browser-use/pull/4530/files (58 changed lines in 1 file, Python)
-- Commits: base 86d33635c592e5dea6f8513e76cf932d4e4120fb, head 4950c3baa1638acc7efccadda1ea87eec77eb338; merged 2026-03-25T23:34:17Z as https://github.com/browser-use/browser-use/commit/6ce58afbc3f10d2184c34c2fc221f06592b46136
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-23T23:34:17Z (read 2026-10-12): 1 later commit on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on browser_use/skill_cli/tunnel.py: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 41. ci: fix windows cgo compiler error
-
-- Case: clean/ollama__ollama-15046@e8fa2087
-- Change: https://github.com/ollama/ollama/pull/15046/files (20 changed lines in 2 files, Go)
-- Commits: base c9b5da6b0c862ccf6c92f89a26aad27442d4c59b, head 0342cde7976220ff925ca9bfe161e0222ba3359b; merged 2026-03-24T23:45:36Z as https://github.com/ollama/ollama/commit/4fda69809a3fecf73d0f71657ef50f8f7e8f43f7
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-22T23:45:36Z (read 2026-10-12): 7 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on .github/workflows/test.yaml: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on x/imagegen/mlx/CMakeLists.txt: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 42. fix(editor): Fix `/diff` route loading in demo mode
-
-- Case: clean/n8n-io__n8n-27610@5d021fdd
-- Change: https://github.com/n8n-io/n8n/pull/27610/files (6 changed lines in 1 file, TypeScript)
-- Commits: base d3e45bc126258c86dfcf81282b0e28bc1088bf54, head 7a617e72ad4a46e45ba1b7aa01c72a183d1b8d77; merged 2026-03-26T13:04:26Z as https://github.com/n8n-io/n8n/commit/197a4314b39dc873c6e13fd9cd8164971d53023a
-- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
-- Reviews by others: 3 (approved 1, commented 1, dismissed 1); none requested changes
-- Checked up to 2026-06-24T13:04:26Z (read 2026-10-12): 15 later commits on its files, 3 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/frontend/editor-ui/src/app/composables/useWorkflowInitialization.ts: 15, 12 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-14T11:03:50Z https://github.com/n8n-io/n8n/commit/c9cab112f99a5da2742012773450bf7721484c28 "fix(editor): Show relevant node in workflow activation errors (#26691)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
-  - 2026-05-06T11:42:12Z https://github.com/n8n-io/n8n/commit/bec74aeb4fda198853b3ea82ed135a1db3ba4988 "fix(core): Add workflow structure validation (#29699)": its changes miss the pull request's lines, which sit at 2, 62 to 63, 97 of its parent
-  - 2026-05-19T07:51:37Z https://github.com/n8n-io/n8n/commit/21a309015248587edc84fae8c230db0940b05bca "fix(editor): Restore workflow name in window tab title (#29826)": its changes miss the pull request's lines, which sit at 2, 63 to 64, 98 of its parent
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/n8n-io/n8n/pull/27765 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27771 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27772 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27778 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27781 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27786 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27787 ":rocket: Release 2.15.0"; https://github.com/ATHEO-Ingenierie/n8n-helm/pull/32 "Update n8n appVersion to 2.15.0"
-- Ruling: 
-
-## 43. fix(core): Add format validation to source control branch name
-
-- Case: clean/n8n-io__n8n-27518@be2e1eb8
-- Change: https://github.com/n8n-io/n8n/pull/27518/files (25 changed lines in 2 files, TypeScript)
-- Commits: base fc0f0712d8ee07cc259c9757cde44df8da2efe26, head 4f8dd78c8b69a0cba02bdd5b2b73bbccb358b80d; merged 2026-03-25T08:24:38Z as https://github.com/n8n-io/n8n/commit/fb7788d6c286f99126371a33b648c6def9541143
-- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-23T08:24:38Z (read 2026-10-12): 1 later commit on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on packages/cli/src/modules/source-control.ee/__tests__/source-control-preferences.service.ee.test.ts: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/n8n-io/n8n/pull/27765 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27771 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27772 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27778 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27781 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27786 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27787 ":rocket: Release 2.15.0"; https://github.com/ATHEO-Ingenierie/n8n-helm/pull/32 "Update n8n appVersion to 2.15.0"
-- Ruling: 
-
-## 44. feat(platform): add processor_merchant_id and created_by to payouts and authentication
-
-- Case: clean/juspay__hyperswitch-11480@8c3676ed
-- Change: https://github.com/juspay/hyperswitch/pull/11480/files (176 changed lines in 26 files, Rust)
-- Commits: base 7c7c001cd37ba2471931d6cd7c69bd4a803b792a, head 42da838e41af846c38707988f0982df31ed40509; merged 2026-03-13T12:07:24Z as https://github.com/juspay/hyperswitch/commit/19b8f61017eb3bbc62a1cea2483ee9ca1544fc0a
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 6 (approved 3, commented 3); none requested changes
-- Checked up to 2026-06-11T12:07:24Z (read 2026-10-12): 183 later commits on its files, 19 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on crates/diesel_models/src/payout_attempt.rs: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on crates/diesel_models/src/schema.rs: 23, 22 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-26T19:32:15Z https://github.com/juspay/hyperswitch/commit/8c96aa513a2223d9a38535fc00df25c59230d923 "fix(payment_methods): resolve PSP tokenization issue in modular payment methods (#11588)": its changes miss the pull request's lines, which sit at 180 to 183, 1432 to 1435, 1482 to 1485 of its parent
-- Later commits on crates/diesel_models/src/schema_v2.rs: 27, 26 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-26T19:32:15Z https://github.com/juspay/hyperswitch/commit/8c96aa513a2223d9a38535fc00df25c59230d923 "fix(payment_methods): resolve PSP tokenization issue in modular payment methods (#11588)": its changes miss the pull request's lines, which sit at 180 to 183, 1377 to 1380, 1427 to 1430 of its parent
-- Later commits on crates/hyperswitch_domain_models/src/authentication.rs: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on crates/hyperswitch_domain_models/src/payouts/payout_attempt.rs: 3, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-10T06:20:16Z https://github.com/juspay/hyperswitch/commit/dcf9f166aaebc205625186c25293746cc3d84602 "fix(kv): add payout_id to payout_attempt lookup for correct KV partition key resolution (#12613)": its changes miss the pull request's lines, which sit at 5, 103 to 104, 158 to 159 of its parent
-- Later commits on crates/hyperswitch_domain_models/src/payouts/payouts.rs: 1
-  - 2026-05-12T07:45:58Z https://github.com/juspay/hyperswitch/commit/43c075dfd45818b495ebbfff58c7e0ce2206c5bd "fix(payouts): populate total_count in payout list and filter responses (#11907)": its changes miss the pull request's lines, which sit at 129 to 130, 160 to 161 of its parent
-- Later commits on crates/router/src/core/authentication.rs: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on crates/router/src/core/payments.rs: 48, 42 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-26T19:32:15Z https://github.com/juspay/hyperswitch/commit/8c96aa513a2223d9a38535fc00df25c59230d923 "fix(payment_methods): resolve PSP tokenization issue in modular payment methods (#11588)": its changes miss the pull request's lines, which sit at 908 of its parent
-  - 2026-04-02T12:38:47Z https://github.com/juspay/hyperswitch/commit/42509f79db159f9816a5e26f974757986a707b64 "fix(router): Rename payment_session to client_session (#11692)": its changes miss the pull request's lines, which sit at 909 of its parent
-  - 2026-04-10T11:01:29Z https://github.com/juspay/hyperswitch/commit/9475f642a6b2ff8a958758b43377e0f20da4f230 "fix(core): 3DS Setup Mandate Webhook Trigger Fix (#11771)": its changes miss the pull request's lines, which sit at 920 of its parent
-  - 2026-04-13T10:49:42Z https://github.com/juspay/hyperswitch/commit/96a32e23778b3ef21b0124b37025729863613736 "fix(core): Fetch Customer Document Details at Intent (#11211)": its changes miss the pull request's lines, which sit at 920 of its parent
-  - 2026-04-14T13:41:04Z https://github.com/juspay/hyperswitch/commit/c7842e0ea040364dee0e58bf38bce5ac631c53bc "fix(payment-methods): fix external sdk token flow (#11779)": its changes miss the pull request's lines, which sit at 922 of its parent
-  - 2026-05-05T17:09:00Z https://github.com/juspay/hyperswitch/commit/ef73fade19f26ff246ef026ffbf9417984af3d8c "fix(connector): [Finix] Avs , Err msg , Fraud Session Id (#12077)": its changes miss the pull request's lines, which sit at 919 of its parent
-- Later commits on crates/router/src/core/payments/operations.rs: 13, 12 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-13T10:49:42Z https://github.com/juspay/hyperswitch/commit/96a32e23778b3ef21b0124b37025729863613736 "fix(core): Fetch Customer Document Details at Intent (#11211)": its changes miss the pull request's lines, which sit at 419 of its parent
-- Later commits on crates/router/src/core/payments/operations/payment_confirm.rs: 32, 30 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T12:38:47Z https://github.com/juspay/hyperswitch/commit/42509f79db159f9816a5e26f974757986a707b64 "fix(router): Rename payment_session to client_session (#11692)": its changes miss the pull request's lines, which sit at 1366, 1400, 1806 to 1807, 1859 to 1860 of its parent
-  - 2026-04-13T10:49:42Z https://github.com/juspay/hyperswitch/commit/96a32e23778b3ef21b0124b37025729863613736 "fix(core): Fetch Customer Document Details at Intent (#11211)": its changes miss the pull request's lines, which sit at 1430, 1464, 1870 to 1871, 1923 to 1924 of its parent
-- Later commits on crates/router/src/core/payouts.rs: 15, 12 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-15T10:36:24Z https://github.com/juspay/hyperswitch/commit/7864ee21e80dbee00bd6bea37349e9a8d88f1d1d "fix(core/payouts): Fix payouts void logic and response handling for wallets (#10630)": its changes miss the pull request's lines, which sit at 3065 to 3068, 3132 to 3135 of its parent
-  - 2026-05-12T07:45:58Z https://github.com/juspay/hyperswitch/commit/43c075dfd45818b495ebbfff58c7e0ce2206c5bd "fix(payouts): populate total_count in payout list and filter responses (#11907)": its changes miss the pull request's lines, which sit at 3122 to 3125, 3203 to 3206 of its parent
-  - 2026-06-10T06:20:16Z https://github.com/juspay/hyperswitch/commit/dcf9f166aaebc205625186c25293746cc3d84602 "fix(kv): add payout_id to payout_attempt lookup for correct KV partition key resolution (#12613)": its changes miss the pull request's lines, which sit at 3166 to 3169, 3247 to 3250 of its parent
-- Later commits on crates/router/src/core/payouts/retry.rs: 7, 7 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on crates/router/src/core/unified_authentication_service.rs: 6, 6 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on crates/storage_impl/src/payouts/payout_attempt.rs: 4, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-09T05:04:38Z https://github.com/juspay/hyperswitch/commit/26d91c1f5956a94f5aeb46d5e57b4ebc81cc7ef3 "fix(kv): change partition key for PayoutAttempts (#12564)": its changes miss the pull request's lines, which sit at 94 to 95, 616 to 617, 649 to 652, 687 to 688, 720 to 723 of its parent
-  - 2026-06-10T06:20:16Z https://github.com/juspay/hyperswitch/commit/dcf9f166aaebc205625186c25293746cc3d84602 "fix(kv): add payout_id to payout_attempt lookup for correct KV partition key resolution (#12613)": its changes miss the pull request's lines, which sit at 94 to 95, 616 to 617, 649 to 652, 687 to 688, 720 to 723 of its parent
-- Later commits on crates/storage_impl/src/payouts/payouts.rs: 1
-  - 2026-05-12T07:45:58Z https://github.com/juspay/hyperswitch/commit/43c075dfd45818b495ebbfff58c7e0ce2206c5bd "fix(payouts): populate total_count in payout list and filter responses (#11907)": its changes miss the pull request's lines, which sit at 110 to 111, 986 to 987, 1018 to 1021, 1055 to 1056, 1087 to 1090 of its parent
-- Ruling: 
-
-## 45. chore(connector): add warning comment about dtd validation to redsys soap api
-
-- Case: clean/juspay__hyperswitch-11384@f5d74230
-- Change: https://github.com/juspay/hyperswitch/pull/11384/files (8 changed lines in 1 file, Rust)
-- Commits: base 1e7eff50bb83f7462c79c7f2d8505a4457aab553, head 9c8ca148c03db6a8b19d26aaf7782aab5f6de35d; merged 2026-02-27T08:18:01Z as https://github.com/juspay/hyperswitch/commit/03f2f05fdb69fc6324455c5c3e492e6296a09195
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 2); none requested changes
-- Checked up to 2026-05-28T08:18:01Z (read 2026-10-12): 4 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on crates/hyperswitch_connectors/src/connectors/redsys/transformers.rs: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits naming it (quoting its title, or with no fix word): https://github.com/juspay/hyperswitch/commit/5c8fab1232d01ba1ffd051772d9bfcd851c171f4 "chore(connector): add warning comment about dtd validation to redsys soap api (#11384)"; https://github.com/juspay/hyperswitch/commit/490ed42e3633658e79d31f0806937ebc854adfac "chore(connector): add warning comment about dtd validation to redsys soap api (#11384)"
-- Ruling: 
-
-## 46. Dbeaver/pro#8396 fix delete column in record mode
-
-- Case: clean/dbeaver__dbeaver-40497@361209fd
-- Change: https://github.com/dbeaver/dbeaver/pull/40497/files (6 changed lines in 2 files, Java)
-- Commits: base 0f43c2ea7d30c66343ce92ba15f7ecaa568992c1, head 1869da30350098b2661e809a21610d9066421ed4; merged 2026-03-12T10:54:56Z as https://github.com/dbeaver/dbeaver/commit/21c452c51e41d91a12f25a4a3e72f0dba6b0aa0d
-- Licence: Apache-2.0, LICENSE.md
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-10T10:54:56Z (read 2026-10-12): 9 later commits on its files, 3 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on plugins/org.jkiss.dbeaver.ui.editors.data/src/org/jkiss/dbeaver/ui/controls/resultset/ResultSetPersister.java: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on plugins/org.jkiss.dbeaver.ui.editors.data/src/org/jkiss/dbeaver/ui/controls/resultset/ResultSetViewer.java: 8, 5 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-28T13:12:34Z https://github.com/dbeaver/dbeaver/commit/aa70ac7dcbc5b52fad66b19f80c588ce1eefa373 "dbeaver/pro#8775 Fix record mode for composites and arrays (#40923)": its changes miss the pull request's lines, which sit at 125 to 127, 4905 of its parent
-  - 2026-04-28T13:54:56Z https://github.com/dbeaver/dbeaver/commit/e601e91ac7c8f751d9a48969d928ef4383e8622a "dbeaver/pro#3295 Fix referenced column filter update in the References panel (#40930)": its changes miss the pull request's lines, which sit at 125 to 127, 4908 of its parent
-  - 2026-05-21T14:34:20Z https://github.com/dbeaver/dbeaver/commit/1f8ad0bedef1cc98c029f0de7f84d42044d68f3c "dbeaver/pro#9354 Fix array size hint in record mode (#41129)": its changes miss the pull request's lines, which sit at 127 to 128, 4916 of its parent
-- Ruling: 
-
-## 47. Support Codex CLI stdin piping for `codex exec`
-
-- Case: clean/openai__codex-15917@b980f8c2
-- Change: https://github.com/openai/codex/pull/15917/files (311 changed lines in 5 files, Rust)
-- Commits: base 44d28f500f7f21fa13f0e9eea87544a6269efde7, head 2b2d4b2a39d2dc8651b16cede5715ac295a5bdc1; merged 2026-03-28T02:21:23Z as https://github.com/openai/codex/commit/71923f43a7ef8ed02531a885228257e9c5b87c7b
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-26T02:21:23Z (read 2026-10-12): 106 later commits on its files, 9 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on codex-rs/README.md: 8, 6 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-25T06:31:47Z https://github.com/openai/codex/commit/a2db6f97fb9353edfbcb82ea4fbb89c8346d1222 "Fix codex-rs README grammar (#19514)": its changes miss the pull request's lines, which sit at 53 of its parent
-  - 2026-05-05T17:34:44Z https://github.com/openai/codex/commit/13be504063ed94a494267eefb7a24cc452c58c83 "revert legacy notify deprecation (#21152)": its changes miss the pull request's lines, which sit at 53 of its parent
-- Later commits on codex-rs/exec/src/cli.rs: 9, 7 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-06T05:09:19Z https://github.com/openai/codex/commit/d9b899309dbba0921350bb7f8d947dbf3efec48d "Fix misleading codex exec help usage (#16881)": its changes miss the pull request's lines, which sit at 108 to 109 of its parent
-  - 2026-04-20T23:12:17Z https://github.com/openai/codex/commit/0f1c9b896308d8a8b45ba957f6bbe9f8f50c7b80 "Fix exec inheritance of root shared flags (#18630)": its changes miss the pull request's lines, which sit at 119 to 120 of its parent
-- Later commits on codex-rs/exec/src/lib.rs: 85, 80 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-06T15:45:58Z https://github.com/openai/codex/commit/fb41a79f3769381a14a5cf1d4b4ec75352bf7856 "[regression] Fix ephemeral turn backfill in exec (#16795)": its changes miss the pull request's lines, which sit at 123 to 134, 630, 1546 to 1547, 1549 to 1564, 1566 to 1570, 1572 to 1584, 1587 to 1591, 1593 to 1612, 1614 to 1617, 1619 to 1628 of its parent
-  - 2026-04-11T00:00:58Z https://github.com/openai/codex/commit/b114781495f97aa11d2831f81f27f2634842ab24 "fix(permissions): fix symlinked writable roots in sandbox permissions (#15981)": its changes miss the pull request's lines, which sit at 159 to 170, 1622 to 1623, 1625 to 1640, 1642 to 1646, 1648 to 1660, 1663 to 1667, 1669 to 1688, 1690 to 1693, 1695 to 1704 of its parent
-  - 2026-04-11T06:08:02Z https://github.com/openai/codex/commit/e9e7ef3d366fdb95c24d24fea734b0fa47d79fc4 "Fix thread/list cwd filtering for Windows verbatim paths (#17414)": its changes miss the pull request's lines, which sit at 160 to 171, 1625 to 1626, 1628 to 1643, 1645 to 1649, 1651 to 1663, 1666 to 1670, 1672 to 1691, 1693 to 1696, 1698 to 1707 of its parent
-  - 2026-04-15T19:25:53Z https://github.com/openai/codex/commit/7e7b35b4d296cd19280b5468814323db0d68c1a7 "fix: propagate log db (#17953)": its changes miss the pull request's lines, which sit at 161 to 172, 1628 to 1629, 1631 to 1646, 1648 to 1652, 1654 to 1666, 1669 to 1673, 1675 to 1694, 1696 to 1699, 1701 to 1710 of its parent
-  - 2026-04-20T23:12:17Z https://github.com/openai/codex/commit/0f1c9b896308d8a8b45ba957f6bbe9f8f50c7b80 "Fix exec inheritance of root shared flags (#18630)": its changes miss the pull request's lines, which sit at 161 to 172, 1641 to 1642, 1644 to 1659, 1661 to 1665, 1667 to 1679, 1682 to 1686, 1688 to 1707, 1709 to 1712, 1714 to 1723 of its parent
-- Later commits on codex-rs/exec/tests/suite/mod.rs: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on codex-rs/exec/tests/suite/prompt_stdin.rs: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 48. docs(vector): add basic docs about vector drawing
-
-- Case: clean/lvgl__lvgl-9888@2f9ccc14
-- Change: https://github.com/lvgl/lvgl/pull/9888/files (60 changed lines in 3 files, C)
-- Commits: base 556bd623c3280aad360b7e52ce09a9f6be056dd0, head ac5d4811e830fa0e3980ee4af7948b1eaba69bd2; merged 2026-03-24T21:44:30Z as https://github.com/lvgl/lvgl/commit/af113e2f1e6dd1ecd867513e8a3b5497effa7124
-- Licence: MIT, LICENCE.txt
-- Reviews by others: 3 (approved 1, commented 2); none requested changes
-- Checked up to 2026-06-22T21:44:30Z (read 2026-10-12): 4 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on docs/src/main-modules/draw/draw_descriptors.rst: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on src/draw/lv_draw_vector.h: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on src/widgets/chart/lv_chart.c: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 49. Examples: Add SSGI Ball Pool demo.
-
-- Case: clean/mrdoob__three.js-33258@487fa360
-- Change: https://github.com/mrdoob/three.js/pull/33258/files (515 changed lines in 5 files, JavaScript)
-- Commits: base 61184846352941d0684167aa343467c9c2a384a2, head 403b00cd38a42f7734a39bb5e601ff1cd71d48d1; merged 2026-03-29T08:43:21Z as https://github.com/mrdoob/three.js/commit/82b371fb82bf9b39bc15818d4f66a430c19d5ac1
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-27T08:43:21Z (read 2026-10-12): 51 later commits on its files, 4 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on examples/files.json: 22, 21 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-06-21T21:15:44Z https://github.com/mrdoob/three.js/commit/78b7608226b43d81a3c0523de2783b2534de676c "GLTFExporter: Fix export of normal maps. (#33837)": its changes miss the pull request's lines, which sit at 447 of its parent
-- Later commits on examples/tags.json: 7, 7 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on examples/webgpu_postprocessing_ssgi_ballpool.html: 5, 5 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on test/e2e/puppeteer.js: 17, 14 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-20T10:58:09Z https://github.com/mrdoob/three.js/commit/36599a7a3ac44404e0ebd79feb3c5ffee306222a "NodeMaterialObserver: Fix default version value of textures. (#33422)": its changes miss the pull request's lines, which sit at 28 of its parent
-  - 2026-05-27T00:52:16Z https://github.com/mrdoob/three.js/commit/d5efabcfe68f5a98d04aaa74f94ea1ae98233181 "E2E: Fix WebGPU Device Lost errors (#33650)": its changes miss the pull request's lines, which sit at 28 of its parent
-  - 2026-06-22T12:55:30Z https://github.com/mrdoob/three.js/commit/e4fd65b763656c7bcdaf5c45b8b459358079f27a "RenderObject: Fix handling of `side`. (#33860)": its changes miss the pull request's lines, which sit at 28 of its parent
-- Ruling: 
-
-## 50. Fix ZDIFF algorithm 2 memory leak on early exit
-
-- Case: clean/valkey-io__valkey-3342@29993a20
-- Change: https://github.com/valkey-io/valkey/pull/3342/files (13 changed lines in 2 files, C)
-- Commits: base 5deebd0f131826124b3ab6231fafb5f9b188523b, head daa115a760d9cbb00bfac57b1ab3bd0af436e7d1; merged 2026-03-11T02:34:15Z as https://github.com/valkey-io/valkey/commit/6b384e9a5b6cd4e4f8198f5df22a74feb1b70e0f
-- Licence: BSD-3-Clause, COPYING
-- Reviews by others: 3 (approved 3); none requested changes
-- Checked up to 2026-06-09T02:34:15Z (read 2026-10-12): 3 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/t_zset.c: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits naming it (quoting its title, or with no fix word): https://github.com/valkey-io/valkey/commit/27dd874834fd181f3517d0874cf2406da977ad60 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/6fd227f7a3306ac264a0aac427ab18cdf6ba7a17 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/614351040cab1b77532aec9fbf913f28ddda17f9 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/830d1fecb54d758869ef3f48efd3ff9e325ba2dc "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/4a3714ba93dd2dde3d6364ee6368672e04244518 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/7c33dca93ba13038ff10868ed5ba223b4ef09d54 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/e77aa946c4fe89bd17aee9b36be8576f890183c5 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/sarthakaggarwal97/valkey/pull/117 "[backport] Weekly backport sweep for 8.1"; https://github.com/sarthakaggarwal97/valkey/pull/234 "[backport] Weekly backport sweep for 7.2"; https://github.com/sarthakaggarwal97/valkey/pull/235 "[backport] Weekly backport sweep for 8.0"; https://github.com/valkey-io/valkey/pull/3735 "[backport][validation failed] Backport sweep for 9.0"; https://github.com/valkey-io/valkey/pull/3737 "[backport] Backport sweep for 8.1"; https://github.com/valkey-io/valkey/pull/3736 "[backport] Backport sweep for 8.0"; https://github.com/valkey-io/valkey/pull/3738 "[backport] Backport sweep for 7.2"; https://github.com/valkey-io/valkey/pull/3879 "[backport] Backport sweep for 9.0"; https://github.com/sarthakaggarwal97/valkey/pull/286 "[backport] Backport sweep for 7.2"
-- Ruling: 
-
-## 51. Various song select class cleanup
-
-- Case: clean/ppy__osu-36745@dc460c58
-- Change: https://github.com/ppy/osu/pull/36745/files (775 changed lines in 10 files, C#)
-- Commits: base e2cbfb970ee24ef04a716f83fb3d22798146a983, head fabce18552a63745b6ae2839c0ebfa136e5af0ce; merged 2026-02-24T12:24:18Z as https://github.com/ppy/osu/commit/5602281bd9e75685f660272e249ee703234d8a55
-- Licence: MIT, LICENCE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-05-25T12:24:18Z (read 2026-10-12): 18 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on osu.Game.Tests/Visual/Multiplayer/TestSceneMultiplayer.cs: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on osu.Game.Tests/Visual/Playlists/TestScenePlaylistsRoomSubScreen.cs: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on osu.Game/Screens/OnlinePlay/Multiplayer/MultiplayerMatchSongSelect.cs: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on osu.Game/Screens/OnlinePlay/Multiplayer/MultiplayerMatchSubScreen.cs: 5, 5 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on osu.Game/Screens/OnlinePlay/OnlinePlayFreestyleSelect.cs: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on osu.Game/Screens/OnlinePlay/Playlists/PlaylistsRoomSubScreen.cs: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/LumpBloom7/sentakki/pull/780 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/GooGuTeam/osu-performance-server/pull/31 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/564 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/GooGuTeam/custom-rulesets/pull/31 "Bump the osu-game group with 5 updates"; https://github.com/Rudicito/gitaroo/pull/76 "Bump ppy.osu.Game from 2026.119.0 to 2026.303.0"; https://github.com/goodtrailer/soyokaze/pull/249 "Bump ppy.osu.Game from 2026.102.0 to 2026.303.0"; https://github.com/taulazer/tau/pull/571 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/LumpBloom7/hishigata/pull/315 "Bump ppy.osu.Game from 2025.1029.0 to 2026.303.0"; https://github.com/Rudicito/gitaroo/pull/77 "Bump ppy.osu.Game from 2026.119.0 to 2026.315.0"; https://github.com/goodtrailer/soyokaze/pull/250 "Bump ppy.osu.Game from 2026.102.0 to 2026.315.0"; https://github.com/GooGuTeam/osu-performance-server/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/custom-rulesets/pull/32 "Bump the osu-game group with 5 updates"; https://github.com/Rudicito/gitaroo/pull/78 "Bump ppy.osu.Game from 2026.119.0 to 2026.317.0"; https://github.com/goodtrailer/soyokaze/pull/251 "Bump ppy.osu.Game from 2026.102.0 to 2026.317.0"; https://github.com/GooGuTeam/osu-performance-server/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/287 "Bump ppy.osu.Game from 2025.816.0 to 2026.408.0"; https://github.com/Game4all/gamebosu/pull/289 "Bump ppy.osu.Game from 2025.816.0 to 2026.429.0"; https://github.com/Game4all/gamebosu/pull/291 "Bump ppy.osu.Game from 2025.816.0 to 2026.505.0"
-- Ruling: 
-
-## 52. doc: clarify confusing `git range-diff` add/delete output
-
-- Case: clean/bitcoin__bitcoin-34656@107d85ce
-- Change: https://github.com/bitcoin/bitcoin/pull/34656/files (13 changed lines in 1 file, C++)
-- Commits: base ab8a7af74209e5d58203af14d9133d14de6a5776, head 45133c589a970390bc10e4db4f7d9921dbaa0832; merged 2026-02-27T10:21:45Z as https://github.com/bitcoin/bitcoin/commit/3c7b0f97e0f6384824ec387861a2e88dc4cd737a
-- Licence: MIT, COPYING
-- Reviews by others: 2 (approved 2); none requested changes
-- Checked up to 2026-05-28T10:21:45Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 53. Deflake Restart target replica during migration (without save) causes success test
-
-- Case: clean/valkey-io__valkey-3226@a1cd5c3b
-- Change: https://github.com/valkey-io/valkey/pull/3226/files (20 changed lines in 1 file, C)
-- Commits: base 4dee322edeb9c96029d89cfaf1600abad2afead0, head feeb16034cd1cf93533083f879506e45e5c914b3; merged 2026-02-27T02:42:50Z as https://github.com/valkey-io/valkey/commit/75fb0e6cbb7ce7e6762951b6b97083c433e5b4c1
-- Licence: BSD-3-Clause, COPYING
-- Reviews by others: 7 (approved 6, commented 1); none requested changes
-- Checked up to 2026-05-28T02:42:50Z (read 2026-10-12): 2 later commits on its files, 1 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on tests/unit/cluster/cluster-migrateslots.tcl: 2, 1 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-08T08:26:29Z https://github.com/valkey-io/valkey/commit/dba128f13b7486322fe3b52a8358bd9188ec613a "Fix slot-migration-max-failover-repl-bytes unable to accept -1 (#3443)": its changes miss the pull request's lines, which sit at 2095 to 2099, 2108 to 2112, 2120 to 2125 of its parent
-- Ruling: 
-
-## 54. Changelog for v0.35.3
-
-- Case: clean/google-gemini__gemini-cli-24083@4d345603
-- Change: https://github.com/google-gemini/gemini-cli/pull/24083/files (9 changed lines in 1 file, TypeScript)
-- Commits: base 07ab16dbbee77faabf38b5ecf05ae4ef9d8e9fa1, head 643623f51c3b11fcee2a4ea8c0f9ae8a5f022685; merged 2026-03-31T06:53:19Z as https://github.com/google-gemini/gemini-cli/commit/e293424bb4973fc2a281f67c43594222263b240a
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-29T06:53:19Z (read 2026-10-12): 14 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on docs/changelogs/latest.md: 14, 14 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 55. feat(cli): add rotating feature tips during thinking/acting phases
-
-- Case: clean/cline__cline-9874@9cf28e41
-- Change: https://github.com/cline/cline/pull/9874/files (124 changed lines in 2 files, TypeScript)
-- Commits: base f3a3f30db5bd616cb055ba029d78e5f9fcefb451, head d9bdb9a820c2647203c8d54ca0059f7426d1d50e; merged 2026-03-25T00:57:35Z as https://github.com/cline/cline/commit/e807b520e0cf3e0a5ff01091ea5d86a421e4d749
-- Licence: Apache-2.0, LICENSE
-- Reviews by others: 2 (approved 1, commented 1); none requested changes
-- Checked up to 2026-06-23T00:57:35Z (read 2026-10-12): 5 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on cli/src/components/FeatureTip.tsx: 3, 3 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on cli/src/components/ThinkingIndicator.tsx: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 56. fix(mobile): mismatch between system and app color when using low-chroma system color scheme
-
-- Case: clean/immich-app__immich-27282@3e94b6c2
-- Change: https://github.com/immich-app/immich/pull/27282/files (12 changed lines in 1 file, TypeScript)
-- Commits: base e2d26ebdea86c8157017602b64fc4019fb24c842, head 51ce41f373f41d6bce0eb9aa8d53e0eae33d9a82; merged 2026-03-27T14:21:44Z as https://github.com/immich-app/immich/commit/be0fc403d807bca0556e46d18193ca5e7e72de39
-- Licence: AGPL-3.0, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-25T14:21:44Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Ruling: 
-
-## 57. vo_gpu_next: add scRGB support
-
-- Case: clean/mpv-player__mpv-17505@c0be1221
-- Change: https://github.com/mpv-player/mpv/pull/17505/files (58 changed lines in 6 files, C)
-- Commits: base a9ac97a5b04868472b8fed4d80bd8d92fef8d617, head 0fe2d243f77667dc19391ee0f46a868213fa8d0d; merged 2026-03-06T15:17:58Z as https://github.com/mpv-player/mpv/commit/f9190e57f9d29a7a387b2b9f49671ebf19ea09bd
-- Licence: NOASSERTION, LICENSE.GPL (unverified: private runs only)
-- Reviews by others: 2 (commented 2); none requested changes
-- Checked up to 2026-06-04T15:17:58Z (read 2026-10-12): 64 later commits on its files, 6 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on DOCS/man/options.rst: 40, 36 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-16T15:18:42Z https://github.com/mpv-player/mpv/commit/a9e1ce9c0da2a67ba28cd98b1676cb950805518f "DOCS/man/options: fix description for testing with all hwdec methods": its changes miss the pull request's lines, which sit at 6288 to 6289, 7304 to 7309 of its parent
-  - 2026-04-17T17:44:15Z https://github.com/mpv-player/mpv/commit/7f81e1ec8cb1fbb572078b7ce90979e567ea808e "vo_gpu_next: fix image subtitle hdr peak": its changes miss the pull request's lines, which sit at 6288 to 6289, 7304 to 7309 of its parent
-  - 2026-05-16T03:26:02Z https://github.com/mpv-player/mpv/commit/779378c248495ee10bcb2fa805e1e47e12bd8bef "docs/comments: fix doubled-word typos": its changes miss the pull request's lines, which sit at 6320 to 6321, 7380 to 7385 of its parent
-  - 2026-05-18T14:47:14Z https://github.com/mpv-player/mpv/commit/35ae76daad738ac31621c8c7f56300d7e99d1c43 "docs/comments: fix more doubled-word typos": its changes miss the pull request's lines, which sit at 6389 to 6390, 7449 to 7454 of its parent
-- Later commits on video/csputils.c: 4, 4 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on video/out/gpu/d3d11_helpers.c: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Later commits on video/out/vo_gpu_next.c: 19, 17 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-17T17:44:15Z https://github.com/mpv-player/mpv/commit/7f81e1ec8cb1fbb572078b7ce90979e567ea808e "vo_gpu_next: fix image subtitle hdr peak": its changes miss the pull request's lines, which sit at 947, 1212, 1284 to 1292 of its parent
-  - 2026-05-03T06:47:34Z https://github.com/mpv-player/mpv/commit/7c25b3e47cce3daf86b22dec95231ab3869e1273 "vo_gpu_next: fix upload synchronization": its changes miss the pull request's lines, which sit at 952, 1227, 1299 to 1307 of its parent
-- Ruling: 
-
-## 58. GLSLDecoder: Replace deprecated `substr()` with `slice()`.
-
-- Case: clean/mrdoob__three.js-33260@89866e8c
-- Change: https://github.com/mrdoob/three.js/pull/33260/files (4 changed lines in 1 file, JavaScript)
-- Commits: base 02de89f05a72761a06adb4ccc78200b8f8208ac8, head e78b92bf148af75c918773c2622afaa74e5eefd4; merged 2026-03-28T08:33:00Z as https://github.com/mrdoob/three.js/commit/f0a65ef67e50d3c6ee158d2198b8fe6910484479
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-26T08:33:00Z (read 2026-10-12): 1 later commit on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on examples/jsm/transpiler/GLSLDecoder.js: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 59. middleware: enable local tool model for web search
-
-- Case: clean/ollama__ollama-14787@99e6582b
+- Case: clean/ollama__ollama-14787@99e6582b (evidence 417934138fa9)
 - Change: https://github.com/ollama/ollama/pull/14787/files (62 changed lines in 2 files, Go)
 - Commits: base c222735c02a3fda18cdbd05ccae2d5dc1a290b42, head a85b62db0a0a822faa9871a0b5cd1cc4a8f7fdf7; merged 2026-03-11T21:51:39Z as https://github.com/ollama/ollama/commit/8f45236d09332949aa91774dc9eb46caf2abbbc1
 - Licence: MIT, LICENSE
 - Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-09T21:51:39Z (read 2026-10-12): 3 later commits on its files, 2 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on middleware/anthropic.go: 2, 1 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-06-09T21:51:39Z (read 2026-10-12): 3 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on middleware/anthropic.go:
+  - 2026-03-13T21:50:49Z https://github.com/ollama/ollama/commit/abf8e8e9c81c00270876c250ad886dfc4a20c8b2 "middleware: handle non-JSON error responses gracefully (#14828)": its changes miss the pull request's lines, which sit at 242 to 243 of its parent
   - 2026-03-27T21:30:16Z https://github.com/ollama/ollama/commit/ac83ac20c444656f0f7d5bbad5b62da389395439 "anthropic: fix KV cache reuse degraded by tool call argument reordering": its changes miss the pull request's lines, which sit at 243 to 244 of its parent
-- Later commits on middleware/anthropic_test.go: 1
+- Later commits on middleware/anthropic_test.go:
   - 2026-03-27T21:30:16Z https://github.com/ollama/ollama/commit/ac83ac20c444656f0f7d5bbad5b62da389395439 "anthropic: fix KV cache reuse degraded by tool call argument reordering": its changes miss the pull request's lines, which sit at 1647 to 1675, 1716 to 1726, 1728 to 1729, 1731 to 1732 of its parent
 - Ruling: 
 
-## 60. fix linux profile detection for chromium users
+## 9. Introduce the `save_and_drop` for `RootView`.
 
-- Case: clean/browser-use__browser-use-4512@67cff2e8
-- Change: https://github.com/browser-use/browser-use/pull/4512/files (8 changed lines in 2 files, Python)
-- Commits: base 872ef3982dfbb8888588cddedecd341fbad34ead, head e44ce7ce732b9da9dd1c7e0916d8a4af7e0df6ba; merged 2026-03-24T22:28:34Z as https://github.com/browser-use/browser-use/commit/c8779d242db8394372ffd7e51f3f7ede7ca83ac1
-- Licence: MIT, LICENSE
-- Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-22T22:28:34Z (read 2026-10-12): 15 later commits on its files, 10 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on browser_use/browser/session.py: 8, 3 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-03-25T23:34:25Z https://github.com/browser-use/browser-use/commit/4c883feb7c6f9d71600818b94e0f4a5359651362 "Merge branch 'main' into fix/cloud-session-stop-cdp-reconnect": a merge into another branch: its first parent does not hold the pull request
-  - 2026-03-31T18:19:43Z https://github.com/browser-use/browser-use/commit/5e644981e82cc1276aca768b27df54155d9ddc3c "fix: close CloudBrowserClient httpx pool on session stop to prevent memory leak": its changes miss the pull request's lines, which sit at 412 of its parent
-  - 2026-04-12T21:45:44Z https://github.com/browser-use/browser-use/commit/76604913ad0ca43cc4797da338a395a3e5ea9bb4 "Merge branch 'main' into fix/browser-session-close": its changes miss the pull request's lines, which sit at 412 of its parent
-  - 2026-04-21T00:40:32Z https://github.com/browser-use/browser-use/commit/9a09c4d7dc634a26bc9cf8a4e6d5695682d6f426 "fix(cdp): timeout-wrap CDPClient.send_raw to break silent WebSocket hangs": its changes miss the pull request's lines, which sit at 412 of its parent
-  - 2026-05-18T18:23:41Z https://github.com/browser-use/browser-use/commit/9a6510a85cf1df93e0dd1f6555fac12688d33e37 "fix: respect proxy_country_code=None to disable proxy in cloud mode": its changes miss the pull request's lines, which sit at 413 of its parent
-- Later commits on browser_use/skill_cli/utils.py: 7, 2 with no fix word (listed in suites/clean/candidates.json)
-  - 2026-04-02T01:24:41Z https://github.com/browser-use/browser-use/commit/b92c7486bfe65bb5d14c2d2ab1edfaa8be141429 "fix: remove 9229 from Chrome CDP port probing (Node.js debugger port, not Chrome)": its changes miss the pull request's lines, which sit at 128 to 132 of its parent
-  - 2026-04-03T00:41:15Z https://github.com/browser-use/browser-use/commit/a05a053da63498bb5a6865422f0e7cbe88175b71 "fix: add per-session auth token to daemon socket to prevent unauthorized code execution": its changes miss the pull request's lines, which sit at 128 to 132 of its parent
-  - 2026-04-14T18:23:50Z https://github.com/browser-use/browser-use/commit/d0fbf4c5807a2904e19ac2c1468d2639189a8f26 "improve connect failure UX: fix chrome://inspect link and add fallback guidance": its changes miss the pull request's lines, which sit at 133 to 137 of its parent
-  - 2026-04-15T17:07:51Z https://github.com/browser-use/browser-use/commit/4c2d136de9d22af9ab53e807f3064341b75d7687 "fix: add utf-8 encoding to Local State file read in list_chrome_profiles": every line of the pull request in the file was already rewritten before this commit
-  - 2026-04-15T20:06:56Z https://github.com/browser-use/browser-use/commit/9c314e626ecf6f24c36903ceb3c161ae919e75f1 "Merge branch 'main' into fix/local-state-utf8-encoding": a merge into another branch: its first parent does not hold the pull request
-- Ruling: 
-
-## 61. Starknet loopback client
-
-- Case: clean/unionlabs__union-5384@a78ba723
-- Change: https://github.com/unionlabs/union/pull/5384/files (552 changed lines in 9 files, Rust)
-- Commits: base df020f8061bce193f651089c0ec776141a1a1e83, head 86cc328fe48bdbc6d76f430e06b006296cc34a42; merged 2026-01-15T09:16:36Z as https://github.com/unionlabs/union/commit/892e9f565c8f1a0c4638235518b0e3907e974b20
-- Licence: Apache-2.0, LICENSE-APACHE
-- Reviews by others: 2 (approved 2); none requested changes
-- Checked up to 2026-04-15T09:16:36Z (read 2026-10-12): 1 later commit on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on Scarb.toml: 1, 1 with no fix word (listed in suites/clean/candidates.json)
-- Ruling: 
-
-## 62. fix(voyager): fix race condition with multiple voyagers updating the same client
-
-- Case: clean/unionlabs__union-5396@6a346443
-- Change: https://github.com/unionlabs/union/pull/5396/files (10 changed lines in 1 file, Rust)
-- Commits: base 6cbbb4f8ae3334e66f1d45ccf6be5a6aa258731f, head 5fbfd93cb30623e450fbf901c64dfda0f0af3c11; merged 2026-01-20T12:04:08Z as https://github.com/unionlabs/union/commit/00ccdd10156f985d700a8fbebd93c648e67c8a0f
-- Licence: Apache-2.0, LICENSE-APACHE
+- Case: clean/linera-io__linera-protocol-5668@96d3beea (evidence b6beb6eddde2)
+- Change: https://github.com/linera-io/linera-protocol/pull/5668/files (457 changed lines in 37 files, Rust)
+- Commits: base b42b55403c7947251f852c9c15adb6ad49d6ee0f, head f67b26eaa6500eee88be5cd6b6d91bedabc2632c; merged 2026-03-12T09:31:44Z as https://github.com/linera-io/linera-protocol/commit/d2f11c3804ccf567f21726932226f966dc6224d8
+- Licence: Apache-2.0, LICENSE
 - Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-04-20T12:04:08Z (read 2026-10-12): 1 later commit on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on voyager/plugins/transaction-batch/src/callback.rs: 1, 1 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-06-10T09:31:44Z (read 2026-10-12): 11 later commits on its files, each read line by line (4 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on examples/controller/src/contract.rs:
+  - 2026-05-08T18:05:21Z https://github.com/linera-io/linera-protocol/commit/c57ff5dbabedbd404a3f68764b465896c85399fc "[Frontport] Implement application introspection (#6264)": its changes miss the pull request's lines, which sit at 330 to 334 of its parent
+- Later commits on examples/ethereum-tracker/src/contract.rs:
+  - 2026-04-27T12:55:08Z https://github.com/linera-io/linera-protocol/commit/3a3b31cbb32a96806c71ef2b95859c3664a6d381 "Main clippy synchronization (#6134)": its changes miss the pull request's lines, which sit at 73 to 77 of its parent
+- Later commits on examples/fungible/src/contract.rs:
+  - 2026-03-20T20:43:10Z https://github.com/linera-io/linera-protocol/commit/103a7ce89b8c7c212330c2657d2bf906f5b20d0f "Backport Linera<>EVM bridge to main (#5670)": its changes miss the pull request's lines, which sit at 155 to 159 of its parent
+- Later commits on examples/hex-game/src/contract.rs:
+  - 2026-05-08T18:05:21Z https://github.com/linera-io/linera-protocol/commit/c57ff5dbabedbd404a3f68764b465896c85399fc "[Frontport] Implement application introspection (#6264)": its changes miss the pull request's lines, which sit at 100 to 104 of its parent
+- Later commits on examples/social/src/contract.rs:
+  - 2026-05-08T18:05:21Z https://github.com/linera-io/linera-protocol/commit/c57ff5dbabedbd404a3f68764b465896c85399fc "[Frontport] Implement application introspection (#6264)": its changes miss the pull request's lines, which sit at 106 to 110 of its parent
+- Later commits on linera-sdk/tests/fixtures/create-and-call/src/contract.rs:
+  - 2026-04-27T12:55:08Z https://github.com/linera-io/linera-protocol/commit/3a3b31cbb32a96806c71ef2b95859c3664a6d381 "Main clippy synchronization (#6134)": its changes miss the pull request's lines, which sit at 91 to 95 of its parent
+  - 2026-05-08T18:05:21Z https://github.com/linera-io/linera-protocol/commit/c57ff5dbabedbd404a3f68764b465896c85399fc "[Frontport] Implement application introspection (#6264)": its changes miss the pull request's lines, which sit at 91 to 95 of its parent
+- Later commits on linera-views-derive/src/lib.rs:
+  - 2026-03-18T15:23:26Z https://github.com/linera-io/linera-protocol/commit/c6bffe64a7d0a9f261423495175b22193d236724 "Step 4 of clippy corrections (#5727)": its changes miss the pull request's lines, which sit at 300 to 308 of its parent
+  - 2026-05-13T15:29:28Z https://github.com/linera-io/linera-protocol/commit/fe328ea4f3fbc6db38e7e6f0cac61be2ba44a761 "Deny `cast_*` lints; better handle overflows/underflows. (#6293)": its changes miss the pull request's lines, which sit at 299 to 307 of its parent
+  - 2026-05-28T05:22:52Z https://github.com/linera-io/linera-protocol/commit/ff76007c3822818458e65f20003307fa6b528ba7 "Require docs on 6 more library crates with #![deny(missing_docs)] (#6402)": its changes miss the pull request's lines, which sit at 301 to 309 of its parent
+- Later commits on linera-views/src/views/mod.rs:
+  - 2026-04-15T08:20:24Z https://github.com/linera-io/linera-protocol/commit/a59eb56dde701e759359f01884d073dd655d0a22 "Introduce the `LazyRegisterView` and make it work with `description`, `application_permissions` and `ownership`. (#5996)": its changes miss the pull request's lines, which sit at 179 to 181 of its parent
 - Ruling: 
 
-## 63. BIM: baseless ArchComponent should not lose shape
+## 10. BIM: baseless ArchComponent should not lose shape
 
-- Case: clean/FreeCAD__FreeCAD-28742@ff452fa9
+- Case: clean/FreeCAD__FreeCAD-28742@ff452fa9 (evidence ecfd64f4b22a)
 - Change: https://github.com/FreeCAD/FreeCAD/pull/28742/files (45 changed lines in 2 files, C++)
 - Commits: base ffb07e2f1a51029697aaac024214e26c6112b48e, head e56c8fb831fe53757972637488b65aeb6f3f3cfc; merged 2026-03-30T16:37:27Z as https://github.com/FreeCAD/FreeCAD/commit/c1668389ed1eeec3525df5e1a263b7071b7581fb
 - Licence: LGPL-2.1, LICENSE
 - Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-28T16:37:27Z (read 2026-10-12): 6 later commits on its files, 2 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on src/Mod/BIM/ArchComponent.py: 5, 3 with no fix word (listed in suites/clean/candidates.json)
+- Checked up to 2026-06-28T16:37:27Z (read 2026-10-12): 6 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on src/Mod/BIM/ArchComponent.py:
   - 2026-04-12T18:52:41Z https://github.com/FreeCAD/FreeCAD/commit/77125665398810c8e23d1ecadff8ec7a3fdadaf8 "BIM: fix Material property pulling into Part container (#28358) (#29262)": its changes miss the pull request's lines, which sit at 378 to 379, 382 to 383, 400 of its parent
+  - 2026-05-15T01:04:05Z https://github.com/FreeCAD/FreeCAD/commit/0f9e316e1bb4d5cd469594b1c14d94c4373390e9 "BIM: skip element maps for horizontal area geometry": its changes miss the pull request's lines, which sit at 390 to 391, 394 to 395, 412 of its parent
+  - 2026-05-26T17:25:08Z https://github.com/FreeCAD/FreeCAD/commit/26ca5b4bda657d359a783e9de99d7ae0a07fc513 "BIM: add MoveBase handling to getMovableChildren": its changes miss the pull request's lines, which sit at 402 to 403, 406 to 407, 424 of its parent
+  - 2026-05-27T14:41:58Z https://github.com/FreeCAD/FreeCAD/commit/dee977f98f8a8542c8db0be2ecc529a771931d01 "Clean up missed strings acc. to FEP007": its changes miss the pull request's lines, which sit at 402 to 403, 406 to 407, 424 of its parent
   - 2026-05-31T07:18:28Z https://github.com/FreeCAD/FreeCAD/commit/dda08980055fa9e1a0dcc30da7e8757c47fc73f8 "BIM: fix faulty Presets paths (#29913)": its changes miss the pull request's lines, which sit at 402 to 403, 406 to 407, 424 of its parent
-- Later commits on src/Mod/BIM/bimtests/TestArchComponent.py: 1, 1 with no fix word (listed in suites/clean/candidates.json)
+- Later commits on src/Mod/BIM/bimtests/TestArchComponent.py:
+  - 2026-05-15T01:04:05Z https://github.com/FreeCAD/FreeCAD/commit/0f9e316e1bb4d5cd469594b1c14d94c4373390e9 "BIM: skip element maps for horizontal area geometry": its changes miss the pull request's lines, which sit at 704 to 706, 708 to 709, 711 to 712, 714 to 716, 718, 721 to 732 of its parent
 - Later commits naming it (quoting its title, or with no fix word): https://github.com/FreeCAD/FreeCAD/commit/8ebeb55ec11ccf71ac8c2d3a2f07ef1956c5db51 "[Backport releases/FreeCAD-1-1] BIM: baseless ArchComponent should not lose shape (#28895)"
 - Later issues and pull requests linking it (no bug label or fix word): https://github.com/FreeCAD/FreeCAD/pull/28895 "[Backport releases/FreeCAD-1-1] BIM: baseless ArchComponent should not lose shape"
 - Ruling: 
 
-## 64. Build:Remove self-signing code and certs
+## 11. Fix race in snapshotFSBuilder.FileExists()
 
-- Case: clean/FreeCAD__FreeCAD-28717@b34ee5e4
-- Change: https://github.com/FreeCAD/FreeCAD/pull/28717/files (5 changed lines in 4 files, C++)
-- Commits: base bd3ab8dbd3143348e8ab7a4a16a8d3e6dc452d43, head c0b398e0573c393370d6b8f82af0805798fe0849; merged 2026-03-27T09:43:48Z as https://github.com/FreeCAD/FreeCAD/commit/57847b86200708f6739e8ff683e15708e3be2103
-- Licence: LGPL-2.1, LICENSE
-- Reviews by others: 1 (approved 1); none requested changes
-- Checked up to 2026-06-25T09:43:48Z (read 2026-10-12): 2 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
-- Later commits on package/WindowsInstaller/FreeCAD-installer.nsi: 2, 2 with no fix word (listed in suites/clean/candidates.json)
-- Later issues and pull requests linking it (no bug label or fix word): https://github.com/FreeCAD/FreeCAD/pull/28738 "[Backport releases/FreeCAD-1-1] Build:Remove self-signing code and certs"
+- Case: clean/microsoft__typescript-go-3153@83f3e0e2 (evidence b78fffed1380)
+- Change: https://github.com/microsoft/typescript-go/pull/3153/files (7 changed lines in 1 file, Go)
+- Commits: base 4e4915cc56e954e4e1bf8d14c66cd81104153b73, head c5719aafc73f4b0944f3abb2a44d51469247a38a; merged 2026-03-18T22:27:24Z as https://github.com/microsoft/typescript-go/commit/d7a2186582eeeb4554e6b0dc56987dfbdba041b3
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-16T22:27:24Z (read 2026-10-12): 4 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on internal/project/snapshotfs.go:
+  - 2026-04-14T21:19:25Z https://github.com/microsoft/typescript-go/commit/e63879fd9d6d807e140641c4115170c92ed72a08 "Fix watching files outside the workspace and realpaths symlinked into programs (#3395)": its changes miss the pull request's lines, which sit at 253, 256 of its parent
+  - 2026-04-21T22:37:29Z https://github.com/microsoft/typescript-go/commit/21b262e07ea53836f63b3b78254949a5bcb49b83 "Mark file as changed when didOpen content differs from disk content (#3483)": its changes miss the pull request's lines, which sit at 307, 310 of its parent
+  - 2026-04-24T20:43:33Z https://github.com/microsoft/typescript-go/commit/7abf963545d634598f1a047d820f34215620b8de "adds tracing (--generateTrace) (#2914)": its changes miss the pull request's lines, which sit at 307, 310 of its parent
+  - 2026-06-15T16:32:41Z https://github.com/microsoft/typescript-go/commit/f315ef97b58466259379254b179572671d586d03 "Ensure node_modules buckets are removed from auto-import registry once they no longer exist (#4303)": its changes miss the pull request's lines, which sit at 307, 310 of its parent
 - Ruling: 
 
-## 65. dbeaver/pro#8260 Add `SMTokenInfo` class and `readAccessTokenInfo` me…
+## 12. stats.lua: display more info on page 5
 
-- Case: clean/dbeaver__dbeaver-40558@dc4d7837
+- Case: clean/mpv-player__mpv-17434@7bc9ed2d (evidence 4cfcaf987c21)
+- Change: https://github.com/mpv-player/mpv/pull/17434/files (48 changed lines in 9 files, C)
+- Commits: base 250d6056c3ebef4c47dbc789e6fbe0ffc3f724c1, head 32fe7425f10954e7f32efb0f2bd4caefd035e754; merged 2026-02-24T18:36:33Z as https://github.com/mpv-player/mpv/commit/3eb8f9a1de70f03c4ef2b1c6ec0cecb81f84c103
+- Licence: NOASSERTION, LICENSE.GPL (unverified: private runs only)
+- Reviews by others: 1 (commented 1); none requested changes
+- Checked up to 2026-05-25T18:36:33Z (read 2026-10-12): 77 later commits on its files, each read line by line (15 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on DOCS/man/input.rst:
+  - 2026-02-27T08:21:14Z https://github.com/mpv-player/mpv/commit/3b555c349c245e0422df20bdeef6a440e41db42e "command: let playlist-play-index current preserve file-local-options": its changes miss the pull request's lines, which sit at 3511, 3519 to 3521 of its parent
+  - 2026-03-08T12:07:05Z https://github.com/mpv-player/mpv/commit/ba30c8c1750c96a3a39150c9f729342867eb161a "player/loadfile: add on_loaded hook": its changes miss the pull request's lines, which sit at 3514, 3522 to 3524 of its parent
+  - 2026-03-08T12:07:37Z https://github.com/mpv-player/mpv/commit/937e67e7b17f50a5a8bee8f2627914ada2dec48a "DOCS/man/input: fix typo": its changes miss the pull request's lines, which sit at 3521, 3529 to 3531 of its parent
+  - 2026-03-08T17:02:01Z https://github.com/mpv-player/mpv/commit/147c951a1735e9164d8e862e081792631f7d27f8 "DOCS/man/input: add tablet-pos node map schema": its changes miss the pull request's lines, which sit at 3521, 3529 to 3531 of its parent
+  - 2026-03-12T14:58:53Z https://github.com/mpv-player/mpv/commit/3cd66d2fd7ee892c623d0d353b4319b3c4db895f "command: avoid crashing the player with mmap": its changes miss the pull request's lines, which sit at 3535, 3543 to 3545 of its parent
+  - 2026-03-21T15:05:36Z https://github.com/mpv-player/mpv/commit/f7f7cf18f3043e2e7cb3d2790ad8eff4c981d372 "command: add update-clipboard command": its changes miss the pull request's lines, which sit at 3540, 3548 to 3550 of its parent
+  - 2026-03-30T15:09:38Z https://github.com/mpv-player/mpv/commit/9465b30a404dd2f713c6ef515c029ce4d26ebdc9 "DOCS: remove behavior changes before version 0.38": its changes miss the pull request's lines, which sit at 3556, 3564 to 3566 of its parent
+  - 2026-03-31T18:44:10Z https://github.com/mpv-player/mpv/commit/5f45db9d708fe74286966d5df82f9d4775d07008 "DOCS/man/input: document dummy properties": its changes miss the pull request's lines, which sit at 3537, 3545 to 3547 of its parent
+  - 2026-03-31T18:44:10Z https://github.com/mpv-player/mpv/commit/d79c4ad1e33301552e23c9bb98ec3c6c9a4324b9 "player/command: add env property": its changes miss the pull request's lines, which sit at 3537, 3545 to 3547 of its parent
+  - 2026-04-01T14:08:26Z https://github.com/mpv-player/mpv/commit/ae2384bce0e8dc55b1f8892e85f330aa872aaa7a "player/command: add default-value/choices arg fields to command-list": its changes miss the pull request's lines, which sit at 3541, 3549 to 3551 of its parent
+  - 2026-04-01T22:09:25Z https://github.com/mpv-player/mpv/commit/70b8b22c8bfd45fd68c61d890e68d1ab88e24d5d "command: remove the deprecated time-start property": its changes miss the pull request's lines, which sit at 3541, 3549 to 3551 of its parent
+  - 2026-04-01T22:10:08Z https://github.com/mpv-player/mpv/commit/c961c96afb83d485d57ffa82106cf7e9882e1e59 "lua: remove the deprecated error field from end-file": its changes miss the pull request's lines, which sit at 3536, 3544 to 3546 of its parent
+  - 2026-04-06T16:33:20Z https://github.com/mpv-player/mpv/commit/80582efca511fa2db80fe5f830e5c29163c3f81c "input/cmd: use _name for command name in mpv_command_node": its changes miss the pull request's lines, which sit at 3532, 3540 to 3542 of its parent
+  - 2026-04-06T16:33:20Z https://github.com/mpv-player/mpv/commit/dbd31fd9d3aecd753d0dedbe8fefbaab6328dddd "DOCS/man: use _name key for mp.command_native": its changes miss the pull request's lines, which sit at 3532, 3540 to 3542 of its parent
+  - 2026-04-08T18:24:07Z https://github.com/mpv-player/mpv/commit/1bfa18107c5596cd86bd6166c994a972656c4118 "DOCS/man/input: add note on env case-sensitivity": its changes miss the pull request's lines, which sit at 3532, 3540 to 3542 of its parent
+  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/6c165fe46e39c0e13c8be79ba0c93c5a7f220d0e "demux_lavf: add support for programs": its changes miss the pull request's lines, which sit at 3537, 3545 to 3547 of its parent
+  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/cc9610b85017f336065ee1e8e469c5b1804b6762 "demux_timeline: add support for programs": its changes miss the pull request's lines, which sit at 3543, 3551 to 3553 of its parent
+  - 2026-04-17T17:46:12Z https://github.com/mpv-player/mpv/commit/aec426a4d87703292cc9ba7d00bc84c7399d3257 "context_menu.lua: set user-data/mpv/context-menu/open": its changes miss the pull request's lines, which sit at 3543, 3551 to 3553 of its parent
+  - 2026-04-17T18:36:48Z https://github.com/mpv-player/mpv/commit/09d075f475e60f3e9c8f88111bbc9fdb53b8cee6 "osc: define and add support for "preview" api": its changes miss the pull request's lines, which sit at 3543, 3551 to 3553 of its parent
+  - 2026-04-18T03:37:38Z https://github.com/mpv-player/mpv/commit/d0df98f701b62d88e23d8afd50df7c835d91d746 "command: allow metadata to be set manually": its changes miss the pull request's lines, which sit at 3543, 3551 to 3553 of its parent
+  - 2026-04-18T19:13:46Z https://github.com/mpv-player/mpv/commit/891273055fd8125c7455addac5fe0736ff5fdc80 "DOCS/man/input: fix mouse-pos/hover documentation": its changes miss the pull request's lines, which sit at 3543, 3551 to 3553 of its parent
+  - 2026-04-25T17:58:52Z https://github.com/mpv-player/mpv/commit/5f02e1b8a21b5323adb643758409506ef0d2bbb6 "sub: add sub-lines property": its changes miss the pull request's lines, which sit at 3550, 3558 to 3560 of its parent
+  - 2026-05-01T09:41:31Z https://github.com/mpv-player/mpv/commit/f5857d3b87c6377629c576cc78f2f2274ad18c14 "demux_lavf: support multiple program mappings per stream": its changes miss the pull request's lines, which sit at 3573, 3581 to 3583 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/87ccb6022ca49a92663c09cbe5a682a555681bd7 "command: add dropped-file property": its changes miss the pull request's lines, which sit at 3579, 3587 to 3589 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/81611b4a4e267999618fa762eacd8614f36cea6b "input/dnd: move built-in drag and drop handling to mpv client": its changes miss the pull request's lines, which sit at 3612, 3620 to 3622 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/675fb1229b25c64ebbb90e16ce9f3d1c30fb9750 "input/dnd: move --drag-and-drop handling to dnd client": its changes miss the pull request's lines, which sit at 3611, 3619 to 3621 of its parent
+  - 2026-05-09T13:01:09Z https://github.com/mpv-player/mpv/commit/ed2e55b94118cb8831781e7cff636dc010be6a57 "options: make player-operation-mode readable as a property": its changes miss the pull request's lines, which sit at 3611, 3619 to 3621 of its parent
+  - 2026-05-18T14:47:14Z https://github.com/mpv-player/mpv/commit/35ae76daad738ac31621c8c7f56300d7e99d1c43 "docs/comments: fix more doubled-word typos": its changes miss the pull request's lines, which sit at 3611, 3619 to 3621 of its parent
+- Later commits on common/av_common.c:
+  - 2026-04-17T02:09:23Z https://github.com/mpv-player/mpv/commit/da2739f44f018c501f7840ea5c3e3a616e2b10dd "various: don't check if endptr is null for strto[udll]": its changes miss the pull request's lines, which sit at 424 to 439 of its parent
+- Later commits on demux/demux_lavf.c:
+  - 2026-03-23T12:29:59Z https://github.com/mpv-player/mpv/commit/9339a68dfb078985bab6e779d741c62067972a57 "demux_lavf: mark packets with keyframe for wrapped avframes too": its changes miss the pull request's lines, which sit at 746, 823, 830 of its parent
+  - 2026-04-17T02:09:23Z https://github.com/mpv-player/mpv/commit/da2739f44f018c501f7840ea5c3e3a616e2b10dd "various: don't check if endptr is null for strto[udll]": its changes miss the pull request's lines, which sit at 746, 823, 830 of its parent
+  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/6c165fe46e39c0e13c8be79ba0c93c5a7f220d0e "demux_lavf: add support for programs": its changes miss the pull request's lines, which sit at 746, 823, 830 of its parent
+  - 2026-04-29T01:45:05Z https://github.com/mpv-player/mpv/commit/91b6d8fdd12401c5e06d9864db0ee9d502c51ee6 "demux: enrich edition titles with codec/resolution/bitrate info": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-04-29T17:23:42Z https://github.com/mpv-player/mpv/commit/5ebe9581d522d6592bcd664c331227e11d5d9f02 "demux_{lavf,timeline}: consider audio only HLS when selecting edition": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-01T04:09:27Z https://github.com/mpv-player/mpv/commit/ec03ef7e9730582ace5698bd27393cefa50d5862 "demux_lavf: remove track flags duplication from title": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-01T04:09:27Z https://github.com/mpv-player/mpv/commit/8aef2c9162eb192c86d8e69d708d7db301c729e6 "demux_lavf: map `comment` to stream title": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-01T08:42:00Z https://github.com/mpv-player/mpv/commit/b4a7ea306e4f3e311060c5aacec7a81140d71f1f "demux_{lavf,timeline}: add `--flatten-editions`": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-01T09:41:31Z https://github.com/mpv-player/mpv/commit/f5857d3b87c6377629c576cc78f2f2274ad18c14 "demux_lavf: support multiple program mappings per stream": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-01T09:44:26Z https://github.com/mpv-player/mpv/commit/cdbe01c3db570bb5ceacbfdd462a3a80e78435a6 "demux_lavf: add support for stream groups": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-13T12:55:48Z https://github.com/mpv-player/mpv/commit/aa57714b633494fd29e3077e2b95baaf44bb7c31 "video: merge the tiles of grid heif and avif images": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+  - 2026-05-16T16:20:42Z https://github.com/mpv-player/mpv/commit/b14d8f5ee1eaf9bf96fbf43df91b4d0a481e68a6 "demux_lavf: route nested HTTP opens through the curl backend": its changes miss the pull request's lines, which sit at 747, 824, 831 of its parent
+- Later commits on demux/stheader.h:
+  - 2026-05-01T09:41:31Z https://github.com/mpv-player/mpv/commit/f5857d3b87c6377629c576cc78f2f2274ad18c14 "demux_lavf: support multiple program mappings per stream": its changes miss the pull request's lines, which sit at 111 to 112, 135, 140 to 142 of its parent
+  - 2026-05-13T12:02:10Z https://github.com/mpv-player/mpv/commit/1095d85b51f9614991e1e4cf88d61b293d4ac29d "demux/stheader: add sh_stream_group representing stream group": its changes miss the pull request's lines, which sit at 122 to 123, 146, 151 to 153 of its parent
+- Later commits on player/command.c:
+  - 2026-02-27T08:21:14Z https://github.com/mpv-player/mpv/commit/3b555c349c245e0422df20bdeef6a440e41db42e "command: let playlist-play-index current preserve file-local-options": its changes miss the pull request's lines, which sit at 2095 of its parent
+  - 2026-02-27T19:18:42Z https://github.com/mpv-player/mpv/commit/e54cee1b23db7e38d84314c4ac719e55b589afdb "player/command: apply `expand-properties` modifier also for string lists": its changes miss the pull request's lines, which sit at 2095 of its parent
+  - 2026-03-03T02:06:39Z https://github.com/mpv-player/mpv/commit/c401ef9c3b005deb24afec1d0b5d1cb4cea72d14 "screenshot: use mp_strip_ext for %F": its changes miss the pull request's lines, which sit at 2095 of its parent
+  - 2026-03-09T14:43:32Z https://github.com/mpv-player/mpv/commit/07c3ff3725ee7221fe9d8da396877d47734f78f6 "command: reject negative offset for overlay-add": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-10T07:56:23Z https://github.com/mpv-player/mpv/commit/3ff7b0479012681805933a808a2d35053c905aa6 "player/command: don't send mouse move event on mouse leave request": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-12T14:58:53Z https://github.com/mpv-player/mpv/commit/3cd66d2fd7ee892c623d0d353b4319b3c4db895f "command: avoid crashing the player with mmap": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-15T13:49:00Z https://github.com/mpv-player/mpv/commit/8ace278cbea63f74863d242a991474e12fab3730 "various: fix `Wdiscarded-qualifiers` warnings": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-15T17:40:09Z https://github.com/mpv-player/mpv/commit/022fbd16b99187d51f1961da788c2720cf3036ec "meson: bump min libplacebo version to v7.360.1": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-21T15:05:36Z https://github.com/mpv-player/mpv/commit/f7f7cf18f3043e2e7cb3d2790ad8eff4c981d372 "command: add update-clipboard command": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-03-31T18:44:10Z https://github.com/mpv-player/mpv/commit/d79c4ad1e33301552e23c9bb98ec3c6c9a4324b9 "player/command: add env property": its changes miss the pull request's lines, which sit at 2093 of its parent
+  - 2026-04-01T14:08:26Z https://github.com/mpv-player/mpv/commit/ae2384bce0e8dc55b1f8892e85f330aa872aaa7a "player/command: add default-value/choices arg fields to command-list": its changes miss the pull request's lines, which sit at 2125 of its parent
+  - 2026-04-01T22:05:27Z https://github.com/mpv-player/mpv/commit/4e6196e1a627c5becd3d1e831bd3d3aa6541e972 "player/command: fix update-clipboard text-primary": its changes miss the pull request's lines, which sit at 2125 of its parent
+  - 2026-04-01T22:09:25Z https://github.com/mpv-player/mpv/commit/70b8b22c8bfd45fd68c61d890e68d1ab88e24d5d "command: remove the deprecated time-start property": its changes miss the pull request's lines, which sit at 2125 of its parent
+  - 2026-04-06T16:26:34Z https://github.com/mpv-player/mpv/commit/7f28b8818ae46eea29461b0e15b321f5c8e475b3 "player/command: use m_property_read_sub for mouse-pos": its changes miss the pull request's lines, which sit at 2118 of its parent
+  - 2026-04-06T16:26:34Z https://github.com/mpv-player/mpv/commit/629205280c75267965f66e2d974166874e5d616a "player/command: rename to mp_property_list_editions": its changes miss the pull request's lines, which sit at 2118 of its parent
+  - 2026-04-06T16:26:34Z https://github.com/mpv-player/mpv/commit/cf957b4f2a02fc1df576967f3f86842d286c5302 "player/command: use m_property_read_sub_validate when suitable": its changes miss the pull request's lines, which sit at 2118 of its parent
+  - 2026-04-06T16:28:04Z https://github.com/mpv-player/mpv/commit/e0fe1a45d2685cd2ec3d30c00064d51ac9d35225 "command: fix race in reading pad_buttons_pressed": its changes miss the pull request's lines, which sit at 2132 of its parent
+  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/85bdf63a484360e4d53a2c719f4c82553352cb0d "player/command: simplify and fix new-line handling": its changes miss the pull request's lines, which sit at 2132 of its parent
+  - 2026-04-17T16:30:43Z https://github.com/mpv-player/mpv/commit/6c165fe46e39c0e13c8be79ba0c93c5a7f220d0e "demux_lavf: add support for programs": its changes miss the pull request's lines, which sit at 2132 of its parent
+  - 2026-04-18T03:37:38Z https://github.com/mpv-player/mpv/commit/d0df98f701b62d88e23d8afd50df7c835d91d746 "command: allow metadata to be set manually": its changes miss the pull request's lines, which sit at 2143 of its parent
+  - 2026-04-18T15:45:03Z https://github.com/mpv-player/mpv/commit/8f66c0982fc14ac38acd8b11294c205f4cc6e834 "command: log menu-data changes at trace level instead of verbose": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-04-18T19:13:46Z https://github.com/mpv-player/mpv/commit/bceb1eeaf49eb98d208a97e1308804f91ef7a6f1 "Revert "player/command: don't send mouse move event on mouse leave request"": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-04-18T19:13:46Z https://github.com/mpv-player/mpv/commit/25e9a0c7400653c84e782fe1a21409c4ab450705 "player/command: remove inaccurate comment in cmd_mouse": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-04-25T05:15:37Z https://github.com/mpv-player/mpv/commit/99b9d9491d363c4209d44cc671221c3f5888a1bd "player/command: add more precision to av speed correction pretty print": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-04-25T05:15:37Z https://github.com/mpv-player/mpv/commit/382e3e74e813bff68614068b891d7a26a0c84801 "player/command: add more precision to avsync pretty print": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-04-25T17:58:52Z https://github.com/mpv-player/mpv/commit/5f02e1b8a21b5323adb643758409506ef0d2bbb6 "sub: add sub-lines property": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-05-01T08:42:00Z https://github.com/mpv-player/mpv/commit/eedadc24ae274aa20fad28564fbf675c9c7c89a8 "player/command: hide dependent tracks": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-05-01T09:41:31Z https://github.com/mpv-player/mpv/commit/f5857d3b87c6377629c576cc78f2f2274ad18c14 "demux_lavf: support multiple program mappings per stream": its changes miss the pull request's lines, which sit at 2147 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/41fb7f9eb284c55f1648c7b14cfc2f78a012e5be "command: use string list helper for option-info": its changes miss the pull request's lines, which sit at 2152 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/87ccb6022ca49a92663c09cbe5a682a555681bd7 "command: add dropped-file property": its changes miss the pull request's lines, which sit at 2152 of its parent
+  - 2026-05-01T11:42:57Z https://github.com/mpv-player/mpv/commit/0ec3015339b0f5ba9404fb3d688e983ab3f3530b "player/external_files: remove handling related to update sub exts": its changes miss the pull request's lines, which sit at 2152 of its parent
+  - 2026-05-09T13:01:09Z https://github.com/mpv-player/mpv/commit/ed2e55b94118cb8831781e7cff636dc010be6a57 "options: make player-operation-mode readable as a property": its changes miss the pull request's lines, which sit at 2152 of its parent
+  - 2026-05-20T21:21:49Z https://github.com/mpv-player/mpv/commit/6eaf35866c329de33569f5e38cb5c403990f450e "command: add support for printing sub-lines": its changes miss the pull request's lines, which sit at 2152 of its parent
+- Later commits on player/lua/stats.lua:
+  - 2026-02-24T19:12:57Z https://github.com/mpv-player/mpv/commit/de0f2f943d485ad6623629831e079a1de8be021b "stats.lua: correctly override mp.input keybinds": its changes miss the pull request's lines, which sit at 38, 684, 1265, 1288, 1332, 1476 of its parent
+- Ruling: 
+
+## 13. fix(graph): class bug in serialization
+
+- Case: clean/alibaba__spring-ai-alibaba-3969@38476032 (evidence 8bdb759eaec0)
+- Change: https://github.com/alibaba/spring-ai-alibaba/pull/3969/files (736 changed lines in 6 files, Java)
+- Commits: base 7a73cb0d437d44b363767eb3a0b5ea8adbfe1ae3, head 643de4ca4ea1eb7fffd700b5a003449ba6876af7; merged 2026-01-08T03:19:15Z as https://github.com/alibaba/spring-ai-alibaba/commit/4186368f3dfdf058f1142f377732c40ad2d41eec
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-04-08T03:19:15Z (read 2026-10-12): 1 later commit on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on spring-ai-alibaba-graph-core/src/main/java/com/alibaba/cloud/ai/graph/serializer/plain_text/jackson/JacksonDeserializer.java:
+  - 2026-01-22T09:08:19Z https://github.com/alibaba/spring-ai-alibaba/commit/13b1e22d18a7c16ffbe31e34cd9b7a49750b6000 "fix(graph): java.lang Serialization failed (#4111)": its changes miss the pull request's lines, which sit at 100 to 104, 322 to 326, 471 to 475 of its parent
+- Ruling: 
+
+## 14. fix tunnel process kill and daemon spawn on windows
+
+- Case: clean/browser-use__browser-use-4530@8e204eb1 (evidence 404ecc8a7c41)
+- Change: https://github.com/browser-use/browser-use/pull/4530/files (58 changed lines in 1 file, Python)
+- Commits: base 86d33635c592e5dea6f8513e76cf932d4e4120fb, head 4950c3baa1638acc7efccadda1ea87eec77eb338; merged 2026-03-25T23:34:17Z as https://github.com/browser-use/browser-use/commit/6ce58afbc3f10d2184c34c2fc221f06592b46136
+- Licence: MIT, LICENSE
+- Reviews by others: 1 (commented 1); none requested changes
+- Checked up to 2026-06-23T23:34:17Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on browser_use/skill_cli/tunnel.py:
+  - 2026-04-02T00:56:39Z https://github.com/browser-use/browser-use/commit/e09f55eedc7c3f79ca2deec7efbd26f23de52517 "chore: remove more dead code (second codex pass)": its changes miss the pull request's lines, which sit at 10, 21 to 22, 162 to 191, 228, 230 to 235, 243 of its parent
+- Ruling: 
+
+## 15. perf(server): optimize people page query
+
+- Case: clean/immich-app__immich-27346@3fd9fbbd (evidence 8e860651c12f)
+- Change: https://github.com/immich-app/immich/pull/27346/files (4 changed lines in 2 files, TypeScript)
+- Commits: base eb20b715e4bb6c6668890f3b79fff6f541987d93, head 7434d1c2cdf77a77c213d497abdd2ee3323ed591; merged 2026-03-28T21:33:05Z as https://github.com/immich-app/immich/commit/b09ebb11e9cf49eb236f5fdabfe897302cf39c31
+- Licence: AGPL-3.0, LICENSE
+- Reviews by others: 4 (approved 2, commented 2); none requested changes
+- Checked up to 2026-06-26T21:33:05Z (read 2026-10-12): 9 later commits on its files, each read line by line (8 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on server/src/queries/person.repository.sql:
+  - 2026-04-01T12:19:38Z https://github.com/immich-app/immich/commit/c29493e3a0bd0a629648fe6cd7c72887d264b931 "fix: withFilePath select edited or unedited file (#27328)": its changes miss the pull request's lines, which sit at 230 to 231, 236 of its parent
+  - 2026-04-01T13:31:54Z https://github.com/immich-app/immich/commit/d1e2e8ab4e9b01951ecc38c664a392cb0d51a7b5 "fix(server): use substring matching for person name search (#26903)": its changes miss the pull request's lines, which sit at 230 to 231, 236 of its parent
+  - 2026-04-09T00:56:07Z https://github.com/immich-app/immich/commit/8d67c1f820aaec8d52ce8c1eb04a15ff0c4d81d9 "fix(server): people search not showing for 3 or less characters (#27629)": its changes miss the pull request's lines, which sit at 227 to 228, 233 of its parent
+  - 2026-06-02T16:05:55Z https://github.com/immich-app/immich/commit/368cb7a4ad90f8cc9abd8c0975bf9092bd36c06b "feat: minimum face count per user (#27452)": its changes miss the pull request's lines, which sit at 233 to 234, 239 of its parent
+- Later commits on server/src/repositories/person.repository.ts:
+  - 2026-04-01T12:19:38Z https://github.com/immich-app/immich/commit/c29493e3a0bd0a629648fe6cd7c72887d264b931 "fix: withFilePath select edited or unedited file (#27328)": its changes miss the pull request's lines, which sit at 354 to 355, 361 of its parent
+  - 2026-04-01T13:31:54Z https://github.com/immich-app/immich/commit/d1e2e8ab4e9b01951ecc38c664a392cb0d51a7b5 "fix(server): use substring matching for person name search (#26903)": its changes miss the pull request's lines, which sit at 346 to 347, 353 of its parent
+  - 2026-04-09T00:56:07Z https://github.com/immich-app/immich/commit/8d67c1f820aaec8d52ce8c1eb04a15ff0c4d81d9 "fix(server): people search not showing for 3 or less characters (#27629)": its changes miss the pull request's lines, which sit at 340 to 341, 347 of its parent
+  - 2026-04-22T14:52:23Z https://github.com/immich-app/immich/commit/4bfb8b36c25f585785e7fb1d8d26825080f751bb "chore!: migrate album owner to album_user (#27467)": its changes miss the pull request's lines, which sit at 343 to 344, 350 of its parent
+  - 2026-06-02T16:05:55Z https://github.com/immich-app/immich/commit/368cb7a4ad90f8cc9abd8c0975bf9092bd36c06b "feat: minimum face count per user (#27452)": its changes miss the pull request's lines, which sit at 343 to 344, 350 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/claytono/infra/pull/2048 "Update immich monorepo to v2.7.5"
+- Ruling: 
+
+## 16. test: add missing unit tests for HTTP request (HostName, PathParam, body, Bind)
+
+- Case: clean/gofr-dev__gofr-3221@2fce3575 (evidence c165b5c228b8)
+- Change: https://github.com/gofr-dev/gofr/pull/3221/files (84 changed lines in 1 file, Go)
+- Commits: base 20a401d52df6f90647ac309c06b53d2bb29ea977, head fc6859edf13ba9907a8ede02409caca815302aa7; merged 2026-03-30T18:31:41Z as https://github.com/gofr-dev/gofr/commit/8ec5abf83bedd3b650422c008282aa9f41ec52a7
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-28T18:31:41Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 17. feat(a2a): support multi-agent registration in single application
+
+- Case: clean/alibaba__spring-ai-alibaba-4419@f0686e50 (evidence 44dd1c190b1b)
+- Change: https://github.com/alibaba/spring-ai-alibaba/pull/4419/files (885 changed lines in 14 files, Java)
+- Commits: base f62f943c6c579b7c38ab088ffada54ec4dab72de, head ad86b2f69b5d0644ee7990647fb03e149275ca73; merged 2026-03-14T09:02:30Z as https://github.com/alibaba/spring-ai-alibaba/commit/99c8d3fcc1270f5d44104659d03d149af8eb8bbb
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-12T09:02:30Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 18. fix: correct OAuth service health check URL
+
+- Case: clean/gofr-dev__gofr-3185@0a6faa23 (evidence dc4ecfbacba1)
+- Change: https://github.com/gofr-dev/gofr/pull/3185/files (107 changed lines in 2 files, Go)
+- Commits: base 01a7e62bd5a153ab82117807630cbbd63200116e, head 724bc995142ca2fc4c0096ec7bdb207eb6f4c0f6; merged 2026-03-24T07:08:11Z as https://github.com/gofr-dev/gofr/commit/a6f8a9d8ad6182e3cd6082be10d086a218ff13e4
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-22T07:08:11Z (read 2026-10-12): 5 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on pkg/gofr/gofr_test.go:
+  - 2026-04-03T07:52:55Z https://github.com/gofr-dev/gofr/commit/93c8dd6244e29248a004deb6539af7a1699763eb "fix: close file logger on shutdown and add verification test": its changes miss the pull request's lines, which sit at 424 to 502 of its parent
+  - 2026-04-10T14:40:31Z https://github.com/gofr-dev/gofr/commit/5fe0011b9132270e8c3f94db1ddff03aa631984c "refactor: ensure safe cron shutdown using sync.Once and reorder application shutdown sequence": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
+  - 2026-04-20T06:27:31Z https://github.com/gofr-dev/gofr/commit/3aec255ca422ab6576e7ea9c937e0fd400df03d6 "Merge pull request #3296 from NitinKumar004/test/improve-core-coverage": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
+  - 2026-05-06T07:12:50Z https://github.com/gofr-dev/gofr/commit/ca648c233960bc7ad194f54a206107662ec2b88a "Merge branch 'development' into fix/crontab-goroutine-leak": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
+  - 2026-05-21T12:01:22Z https://github.com/gofr-dev/gofr/commit/6950b5f20277e0f0e6dadaea0342f73fee95a81b "perf: HTTP hot-path optimizations — alloc/CPU reductions in middleware, router, OTel setup (#3431)": its changes miss the pull request's lines, which sit at 460 to 538 of its parent
+- Ruling: 
+
+## 19. Fix crash on invalid `format_regexp` in `Regexp` format
+
+- Case: clean/ClickHouse__ClickHouse-101074@efd27989 (evidence 4eb3aa16ab20)
+- Change: https://github.com/ClickHouse/ClickHouse/pull/101074/files (9 changed lines in 3 files, C++)
+- Commits: base cef81be62ebc151aed7b98e9e11059ca2250518c, head 90f373b0f63e9274a8a003c4a8ed783d0b780cc5; merged 2026-03-29T19:24:00Z as https://github.com/ClickHouse/ClickHouse/commit/c037aa07f83814496fbfc5ad61d14b265fdfe9d6
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 3 (approved 1, commented 2); none requested changes
+- Checked up to 2026-06-27T19:24:00Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on src/Processors/Formats/Impl/RegexpRowInputFormat.cpp:
+  - 2026-03-29T23:20:54Z https://github.com/ClickHouse/ClickHouse/commit/371e0b496d41773dfa7d268ebb4bed47f1c48664 "Merge remote-tracking branch 'origin/master' into fix-compiler-warnings": its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)
+  - 2026-06-13T12:57:34Z https://github.com/ClickHouse/ClickHouse/commit/0b06c626d8a97f5e889fa0499f34d88f7ecbef9b "Move embedded format documentation into each format's own source file": its changes miss the pull request's lines, which sit at 25 to 27 of its parent
+- Ruling: 
+
+## 20. Use compression_settings in size_utils
+
+- Case: clean/timescale__timescaledb-9329@ed4324e7 (evidence 108c21ca0027)
+- Change: https://github.com/timescale/timescaledb/pull/9329/files (21 changed lines in 1 file, C)
+- Commits: base f6639545b4aa32669c48ebfd45c27697407efe2d, head ad91eea5acc5dbc2dd5ea654ded6c6427d881298; merged 2026-03-04T07:13:29Z as https://github.com/timescale/timescaledb/commit/85229fd60f4ae65af42adeba6b7fb27f6005532f
+- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Reviews by others: 2 (approved 2); none requested changes
+- Checked up to 2026-06-02T07:13:29Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on sql/size_utils.sql:
+  - 2026-05-02T19:23:06Z https://github.com/timescale/timescaledb/commit/f5020d4ccf34afaa5e50e77f9efef05886905bd7 "Use bigint in estimate_uncompressed_size calculations": its changes miss the pull request's lines, which sit at 42 to 43, 378, 380, 397, 399 to 400 of its parent
+- Ruling: 
+
+## 21. Fixed a call hierarchy crash in arrow prop declaration in exported default class
+
+- Case: clean/microsoft__typescript-go-3296@dd0070f5 (evidence ffbedd8af213)
+- Change: https://github.com/microsoft/typescript-go/pull/3296/files (77 changed lines in 3 files, Go)
+- Commits: base f017c028e8e6f8be12cae867533c26a0c65546b3, head 694c0be8d4d26bb87e163a91220f05e7a6dae324; merged 2026-03-30T00:28:53Z as https://github.com/microsoft/typescript-go/commit/8a834dad086d6912b091e8b467e98499dab68cd9
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-28T00:28:53Z (read 2026-10-12): 1 later commit on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on internal/ls/callhierarchy.go:
+  - 2026-05-11T15:33:59Z https://github.com/microsoft/typescript-go/commit/82590062cc8be09ec97755b53bd5ee63d2db3010 "Fix crashes related to call hierarchy container names for computed properties (#3786)": its changes miss the pull request's lines, which sit at 261 of its parent
+- Ruling: 
+
+## 22. [API Nodes] made Reve node price badges more precise
+
+- Case: clean/Comfy-Org__ComfyUI-13154@b2ed02b9 (evidence 8f4d54adf745)
+- Change: https://github.com/Comfy-Org/ComfyUI/pull/13154/files (43 changed lines in 1 file, Python)
+- Commits: base b53b10ea61ef7fc54fbde7c1e7b7c36565bacf82, head f291cec5d28730f62e9c584b4734e0189ab743a4; merged 2026-03-25T18:05:50Z as https://github.com/Comfy-Org/ComfyUI/commit/a55835f10c29c1acdc9158bf9e092656ae1a2188
+- Licence: GPL-3.0, LICENSE
+- Reviews by others: 3 (approved 1, commented 2); none requested changes
+- Checked up to 2026-06-23T18:05:50Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on comfy_api_nodes/nodes_reve.py:
+  - 2026-05-28T00:43:33Z https://github.com/Comfy-Org/ComfyUI/commit/174208df6ba033e5b4784c94d83d065c0d4165a4 "chore: Update nodes categories (#14145)": its changes miss the pull request's lines, which sit at 148 to 161, 241, 245, 247 to 255, 351, 355, 357 to 365 of its parent
+  - 2026-06-02T04:24:46Z https://github.com/Comfy-Org/ComfyUI/commit/e88a81d316205bf3c3f9293778b78f5949e82e97 "Revert partner nodes category (#14229)": its changes miss the pull request's lines, which sit at 148 to 161, 241, 245, 247 to 255, 351, 355, 357 to 365 of its parent
+- Ruling: 
+
+## 23. ci(cypress): fix worldpay cypress test
+
+- Case: clean/juspay__hyperswitch-11465@a7bb498e (evidence 20b2d06dde90)
+- Change: https://github.com/juspay/hyperswitch/pull/11465/files (4 changed lines in 1 file, Rust)
+- Commits: base 747ed7e459d19fae525b5dc9596fc76b58326ef3, head 8f13e7bce791bb1a2b12146abb0cb7da5b8d4bc8; merged 2026-03-11T12:03:01Z as https://github.com/juspay/hyperswitch/commit/1752924d20e834120d23a4b058f450ddd388024d
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 3 (approved 2, dismissed 1); none requested changes
+- Checked up to 2026-06-09T12:03:01Z (read 2026-10-12): 3 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on cypress-tests/cypress/e2e/configs/Payment/WorldPay.js:
+  - 2026-03-31T13:50:35Z https://github.com/juspay/hyperswitch/commit/5aa2452ca212050f9ae47b35b5042e8ae5a19894 "ci(cypress): added payment webhook fixtures (#11612)": its changes miss the pull request's lines, which sit at 672 to 673 of its parent
+  - 2026-04-10T19:48:36Z https://github.com/juspay/hyperswitch/commit/2ef119e5c28402365e43a0288de092f6eaa9e917 "ci(cypress): added refund webhooks for supported connectors (#11754)": its changes miss the pull request's lines, which sit at 672 to 673 of its parent
+  - 2026-05-03T07:20:52Z https://github.com/juspay/hyperswitch/commit/14117dfaf2c793a204f82cb1c4eea0af9ac961fb "test(cypress): add PartialAuthorization coverage for nuvei, checkout, worldpay, worldpayvantiv (#12061)": its changes miss the pull request's lines, which sit at 672 to 673 of its parent
+- Ruling: 
+
+## 24. fix(editor): Fix `/diff` route loading in demo mode
+
+- Case: clean/n8n-io__n8n-27610@5d021fdd (evidence 86f8f4248791)
+- Change: https://github.com/n8n-io/n8n/pull/27610/files (6 changed lines in 1 file, TypeScript)
+- Commits: base d3e45bc126258c86dfcf81282b0e28bc1088bf54, head 7a617e72ad4a46e45ba1b7aa01c72a183d1b8d77; merged 2026-03-26T13:04:26Z as https://github.com/n8n-io/n8n/commit/197a4314b39dc873c6e13fd9cd8164971d53023a
+- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
+- Reviews by others: 3 (approved 1, commented 1, dismissed 1); none requested changes
+- Checked up to 2026-06-24T13:04:26Z (read 2026-10-12): 15 later commits on its files, each read line by line (3 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on packages/frontend/editor-ui/src/app/composables/useWorkflowInitialization.ts:
+  - 2026-04-07T00:37:52Z https://github.com/n8n-io/n8n/commit/4aba06d78e23cac40a662cc15cffe93fc0a51502 "refactor(editor): Migrate workflow name to workflowDocument store (#27343)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
+  - 2026-04-14T11:03:50Z https://github.com/n8n-io/n8n/commit/c9cab112f99a5da2742012773450bf7721484c28 "fix(editor): Show relevant node in workflow activation errors (#26691)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
+  - 2026-04-21T09:17:45Z https://github.com/n8n-io/n8n/commit/b444a95e117133d41c22afbe57d9f7e8db8189f3 "refactor(editor): Migrate workflow object usages (#28534)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
+  - 2026-04-23T12:14:42Z https://github.com/n8n-io/n8n/commit/9415f441d9cebefe6db5458874266f61056ab447 "refactor(editor): Migrate deprecated methods in useWorkflowState (#28672)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
+  - 2026-04-27T14:37:07Z https://github.com/n8n-io/n8n/commit/e028204c5690e3b691f1b4182647c6c548235955 "refactor(editor): Provide workflow id and document store at app root (no-changelog) (#29297)": its changes miss the pull request's lines, which sit at 2, 55 to 56, 90 of its parent
+  - 2026-04-29T15:08:36Z https://github.com/n8n-io/n8n/commit/9a91c83a274cd2ee6ae9658ce42f3df150333d24 "refactor(editor): Scope NDV store per workflow document (no-changelog) (#29392)": its changes miss the pull request's lines, which sit at 2, 60 to 61, 90 of its parent
+  - 2026-05-04T11:46:38Z https://github.com/n8n-io/n8n/commit/d422d2bafb7fc65f2c70fdea8b9d50ab922d34d4 "refactor(editor): Introduce setter facades for workflow execution state (no-changelog) (#29675)": its changes miss the pull request's lines, which sit at 2, 62 to 63, 97 of its parent
+  - 2026-05-06T11:42:12Z https://github.com/n8n-io/n8n/commit/bec74aeb4fda198853b3ea82ed135a1db3ba4988 "fix(core): Add workflow structure validation (#29699)": its changes miss the pull request's lines, which sit at 2, 62 to 63, 97 of its parent
+  - 2026-05-19T07:51:37Z https://github.com/n8n-io/n8n/commit/21a309015248587edc84fae8c230db0940b05bca "fix(editor): Restore workflow name in window tab title (#29826)": its changes miss the pull request's lines, which sit at 2, 63 to 64, 98 of its parent
+  - 2026-05-28T11:51:24Z https://github.com/n8n-io/n8n/commit/1eee149ab8b8aa97e710c04ff2550ff0f4965280 "refactor(editor): Move session state off workflows-store bridge (no-changelog) (#31138)": its changes miss the pull request's lines, which sit at 2, 63 to 64, 98 of its parent
+  - 2026-06-01T10:21:39Z https://github.com/n8n-io/n8n/commit/4188a7c4ed32e50464758cccfb9f6d12206a9c39 "refactor(editor): Drop `NDVStoreKey` and `currentNDVStore` scaffolding (no-changelog) (#31270)": its changes miss the pull request's lines, which sit at 2, 64 to 65, 99 of its parent
+  - 2026-06-02T13:12:48Z https://github.com/n8n-io/n8n/commit/a724624b1afa40e88422111cc83ec57858bd0848 "refactor(editor): Migrate `getNewWorkflowData` to the workflows API (#31556)": its changes miss the pull request's lines, which sit at 2, 63 to 64, 93 of its parent
+  - 2026-06-04T12:06:06Z https://github.com/n8n-io/n8n/commit/15749aa39ec8a1c50f8bb333b5c37e06eae6cf27 "refactor(editor): Resolve workflow push handlers by id and remove workflow state store and composable (no-changelog) (#31514)": its changes miss the pull request's lines, which sit at 2, 66 to 67, 96 of its parent
+  - 2026-06-18T14:14:09Z https://github.com/n8n-io/n8n/commit/e0f4f93afbc098b777b460a104c74d2b3be5f674 "refactor(editor): Resolve workflow id from document store and route (no-changelog) (#32462)": its changes miss the pull request's lines, which sit at 2, 65 to 66, 93 of its parent
+  - 2026-06-22T09:05:49Z https://github.com/n8n-io/n8n/commit/bbd05005125004003ed9f933d8ea49ec84c93b57 "refactor(editor): Thread outgoing workflow id through workspace teardown (no-changelog) (#32734)": its changes miss the pull request's lines, which sit at 2, 65 to 66, 93 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/n8n-io/n8n/pull/27765 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27771 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27772 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27778 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27781 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27786 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27787 ":rocket: Release 2.15.0"; https://github.com/ATHEO-Ingenierie/n8n-helm/pull/32 "Update n8n appVersion to 2.15.0"
+- Ruling: 
+
+## 25. Fix transient user stats animation changing speed after first display
+
+- Case: clean/ppy__osu-36738@0b937f98 (evidence 834fbd681686)
+- Change: https://github.com/ppy/osu/pull/36738/files (123 changed lines in 4 files, C#)
+- Commits: base d139f5997c4e282bd4f2f9f246e1854b36f93a83, head f39615a374afce4c880e02c645a888b8ceffd60e; merged 2026-02-24T07:19:03Z as https://github.com/ppy/osu/commit/e2cbfb970ee24ef04a716f83fb3d22798146a983
+- Licence: MIT, LICENCE
+- Reviews by others: 3 (approved 1, commented 2); none requested changes
+- Checked up to 2026-05-25T07:19:03Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on osu.Game/Overlays/Toolbar/ToolbarButton.cs:
+  - 2026-02-25T07:31:36Z https://github.com/ppy/osu/commit/0dfb362b2d9cc82a25517e794c26f2cdc4192c0a "Use `HotkeyDisplay` for toolbar buttons (#36750)": its changes miss the pull request's lines, which sit at 47 to 48, 63 to 64, 119 to 120, 133 to 134 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/LumpBloom7/sentakki/pull/780 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/GooGuTeam/osu-performance-server/pull/31 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/564 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/GooGuTeam/custom-rulesets/pull/31 "Bump the osu-game group with 5 updates"; https://github.com/Rudicito/gitaroo/pull/76 "Bump ppy.osu.Game from 2026.119.0 to 2026.303.0"; https://github.com/goodtrailer/soyokaze/pull/249 "Bump ppy.osu.Game from 2026.102.0 to 2026.303.0"; https://github.com/taulazer/tau/pull/571 "Bump ppy.osu.Game from 2026.213.0 to 2026.303.0"; https://github.com/LumpBloom7/hishigata/pull/315 "Bump ppy.osu.Game from 2025.1029.0 to 2026.303.0"; https://github.com/Rudicito/gitaroo/pull/77 "Bump ppy.osu.Game from 2026.119.0 to 2026.315.0"; https://github.com/goodtrailer/soyokaze/pull/250 "Bump ppy.osu.Game from 2026.102.0 to 2026.315.0"; https://github.com/GooGuTeam/osu-performance-server/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/custom-rulesets/pull/32 "Bump the osu-game group with 5 updates"; https://github.com/Rudicito/gitaroo/pull/78 "Bump ppy.osu.Game from 2026.119.0 to 2026.317.0"; https://github.com/goodtrailer/soyokaze/pull/251 "Bump ppy.osu.Game from 2026.102.0 to 2026.317.0"; https://github.com/GooGuTeam/osu-performance-server/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/287 "Bump ppy.osu.Game from 2025.816.0 to 2026.408.0"; https://github.com/Game4all/gamebosu/pull/289 "Bump ppy.osu.Game from 2025.816.0 to 2026.429.0"; https://github.com/Game4all/gamebosu/pull/291 "Bump ppy.osu.Game from 2025.816.0 to 2026.505.0"
+- Ruling: 
+
+## 26. fix(voyager): fix race condition with multiple voyagers updating the same client
+
+- Case: clean/unionlabs__union-5396@6a346443 (evidence 222d76424d7c)
+- Change: https://github.com/unionlabs/union/pull/5396/files (10 changed lines in 1 file, Rust)
+- Commits: base 6cbbb4f8ae3334e66f1d45ccf6be5a6aa258731f, head 5fbfd93cb30623e450fbf901c64dfda0f0af3c11; merged 2026-01-20T12:04:08Z as https://github.com/unionlabs/union/commit/00ccdd10156f985d700a8fbebd93c648e67c8a0f
+- Licence: Apache-2.0, LICENSE-APACHE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-04-20T12:04:08Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on voyager/plugins/transaction-batch/src/callback.rs:
+  - 2026-01-26T14:39:29Z https://github.com/unionlabs/union/commit/eac11e32240b7eba2b60823547ebee190ac79d65 "feat: parlia and proof lens clients + voyager plugins & modules": its changes miss the pull request's lines, which sit at 84 to 85 of its parent
+- Ruling: 
+
+## 27. Rename search hits
+
+- Case: clean/elastic__elasticsearch-145252@a2c9e075 (evidence 8af683d2ddd4)
+- Change: https://github.com/elastic/elasticsearch/pull/145252/files (4 changed lines in 1 file, Java)
+- Commits: base 8d0f31d7ffd44514a8bb4367bc2aafee8c3bdd09, head 7f1cc1b0320bb3c071befa5ac24942898bd18d3e; merged 2026-03-31T17:51:18Z as https://github.com/elastic/elasticsearch/commit/7ec12824b2ec23d2942f874048682ee9fc6ce823
+- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-29T17:51:18Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 28. GLSLDecoder: Replace deprecated `substr()` with `slice()`.
+
+- Case: clean/mrdoob__three.js-33260@89866e8c (evidence 51eb5f9e85ce)
+- Change: https://github.com/mrdoob/three.js/pull/33260/files (4 changed lines in 1 file, JavaScript)
+- Commits: base 02de89f05a72761a06adb4ccc78200b8f8208ac8, head e78b92bf148af75c918773c2622afaa74e5eefd4; merged 2026-03-28T08:33:00Z as https://github.com/mrdoob/three.js/commit/f0a65ef67e50d3c6ee158d2198b8fe6910484479
+- Licence: MIT, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-26T08:33:00Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on examples/jsm/transpiler/GLSLDecoder.js:
+  - 2026-05-16T11:24:46Z https://github.com/mrdoob/three.js/commit/2654e309863f6f93e9c77c302521b00c85c89dc5 "Global: Harmonize errors. (#33588)": its changes miss the pull request's lines, which sit at 173, 185 of its parent
+- Ruling: 
+
+## 29. [DevTools] Ignore new production renderers if we already use "worse" versions of React on a page
+
+- Case: clean/react__react-35994@4c43106e (evidence 30505630c432)
+- Change: https://github.com/react/react/pull/35994/files (104 changed lines in 6 files, JavaScript)
+- Commits: base 014138df87869b174956f90a33fd6cf66e160114, head 209a41cdcffefcc3364f606e645dd9c0a756acf1; merged 2026-03-11T09:26:36Z as https://github.com/react/react/commit/7b5b561bd2dda205ed8f397864379003b707d4ae
+- Licence: MIT, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-09T09:26:36Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on packages/react-devtools-shared/src/hook.js:
+  - 2026-06-05T17:54:38Z https://github.com/react/react/commit/fbb137059e4aacfaab1d36516e9b55050b4a0454 "[flow] Bump flow to v0.307.1 (#36199)": its changes miss the pull request's lines, which sit at 20, 75, 215 of its parent
+  - 2026-06-05T23:17:18Z https://github.com/react/react/commit/900ae094d85b11c67d53dd14af50a2bda5db4495 "[flow] Bump flow to v0.317.0 (#36701)": its changes miss the pull request's lines, which sit at 20, 75, 215 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/vercel/next.js/pull/91272 "Upgrade React from `46103596-20260305` to `5e9eedb5-20260312`"
+- Ruling: 
+
+## 30. Fix editor not updating titlebar with new difficulty name after rename
+
+- Case: clean/ppy__osu-36908@97de402f (evidence e65ab2c02639)
+- Change: https://github.com/ppy/osu/pull/36908/files (16 changed lines in 1 file, C#)
+- Commits: base 321e6989061246275f30ef80030fe560109291fd, head ec66e93d5f7336fdb2aa5e5e9a5eeb2003136042; merged 2026-03-10T08:57:26Z as https://github.com/ppy/osu/commit/9105fc15b244a0c3a4d59241d7529de7562500cb
+- Licence: MIT, LICENCE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-08T08:57:26Z (read 2026-10-12): 6 later commits on its files, each read line by line (3 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on osu.Game/Screens/Edit/Editor.cs:
+  - 2026-03-23T08:26:34Z https://github.com/ppy/osu/commit/95648a3d27a0c9c4e544c445f9baba4a8c5b8948 "Fix editor background taking too long to load with certain storyboards (#37038)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 606 to 608 of its parent
+  - 2026-04-24T03:39:55Z https://github.com/ppy/osu/commit/0fa7824a23e70944a3336e10ccec234771b3b7bc "Add localisation support for some more notifications (#37237)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 604 to 606 of its parent
+  - 2026-05-08T07:35:20Z https://github.com/ppy/osu/commit/26266321dd935220865d9a66fa7756078f75423b "Add ability to sync metadata across difficulties in editor setup (#37465)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 604 to 606 of its parent
+  - 2026-05-08T08:25:22Z https://github.com/ppy/osu/commit/e6fdd37e763a600c9d3a8606c9afb2186ed3f3f4 "Restore editor mode when changing difficulty (#37671)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 604 to 606 of its parent
+  - 2026-05-18T09:17:44Z https://github.com/ppy/osu/commit/c0cc6cdbf1800ccc2f592c6dd3562235d8ed515a "Add editor hotkeys for beatmap submit and edit externally (#37782)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 606 to 608 of its parent
+  - 2026-05-20T08:46:51Z https://github.com/ppy/osu/commit/0e443b1c4729073b7151bb17f9ef8615b6c7196f "Add legacy storyboard encoder (#37790)": its changes miss the pull request's lines, which sit at 191 to 193, 195 to 196, 198, 606 to 608 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/LumpBloom7/hishigata/pull/317 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/Rudicito/gitaroo/pull/77 "Bump ppy.osu.Game from 2026.119.0 to 2026.315.0"; https://github.com/goodtrailer/soyokaze/pull/250 "Bump ppy.osu.Game from 2026.102.0 to 2026.315.0"; https://github.com/LumpBloom7/sentakki/pull/823 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/Beamographic/rush/pull/428 "Bump ppy.osu.Game from 2026.303.0 to 2026.315.0"; https://github.com/GooGuTeam/osu-performance-server/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/581 "Bump ppy.osu.Game from 2026.303.0 to 2026.317.0"; https://github.com/GooGuTeam/custom-rulesets/pull/32 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/318 "Bump ppy.osu.Game from 2026.303.0 to 2026.317.0"; https://github.com/Rudicito/gitaroo/pull/78 "Bump ppy.osu.Game from 2026.119.0 to 2026.317.0"; https://github.com/goodtrailer/soyokaze/pull/251 "Bump ppy.osu.Game from 2026.102.0 to 2026.317.0"; https://github.com/LumpBloom7/sentakki/pull/825 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/sentakki/pull/835 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/35 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/custom-rulesets/pull/33 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/320 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/Rudicito/gitaroo/pull/80 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/goodtrailer/soyokaze/pull/252 "Bump ppy.osu.Game from 2026.317.0 to 2026.406.0"; https://github.com/taulazer/tau/pull/584 "Bump ppy.osu.Game from 2026.303.0 to 2026.406.0"; https://github.com/goodtrailer/soyokaze/pull/253 "Bump ppy.osu.Game from 2026.317.0 to 2026.408.0"; https://github.com/LumpBloom7/sentakki/pull/837 "Bump NUnit and ppy.osu.Game"; https://github.com/GooGuTeam/osu-performance-server/pull/36 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/585 "Bump ppy.osu.Game from 2026.303.0 to 2026.408.0"; https://github.com/GooGuTeam/custom-rulesets/pull/34 "Bump the osu-game group with 5 updates"; https://github.com/LumpBloom7/hishigata/pull/322 "Bump ppy.osu.Game from 2026.303.0 to 2026.408.0"; https://github.com/Game4all/gamebosu/pull/287 "Bump ppy.osu.Game from 2025.816.0 to 2026.408.0"; https://github.com/goodtrailer/soyokaze/pull/254 "Bump ppy.osu.Game from 2026.317.0 to 2026.429.0"; https://github.com/GooGuTeam/osu-performance-server/pull/38 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/587 "Bump ppy.osu.Game from 2026.303.0 to 2026.429.0"; https://github.com/GooGuTeam/custom-rulesets/pull/39 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/289 "Bump ppy.osu.Game from 2025.816.0 to 2026.429.0"; https://github.com/goodtrailer/soyokaze/pull/255 "Bump ppy.osu.Game from 2026.317.0 to 2026.505.0"; https://github.com/GooGuTeam/osu-performance-server/pull/39 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/589 "Bump ppy.osu.Game from 2026.303.0 to 2026.505.0"; https://github.com/GooGuTeam/custom-rulesets/pull/40 "Bump the osu-game group with 5 updates"; https://github.com/Game4all/gamebosu/pull/291 "Bump ppy.osu.Game from 2025.816.0 to 2026.505.0"; https://github.com/goodtrailer/soyokaze/pull/256 "Bump ppy.osu.Game from 2026.317.0 to 2026.518.0"; https://github.com/GooGuTeam/osu-performance-server/pull/41 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/590 "Bump ppy.osu.Game from 2026.303.0 to 2026.518.0"; https://github.com/GooGuTeam/custom-rulesets/pull/41 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/592 "Bump ppy.osu.Game from 2026.303.0 to 2026.522.0"; https://github.com/GooGuTeam/custom-rulesets/pull/42 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/257 "Bump ppy.osu.Game from 2026.317.0 to 2026.522.0"; https://github.com/GooGuTeam/osu-performance-server/pull/42 "Bump the osu-game group with 5 updates"; https://github.com/GooGuTeam/osu-performance-server/pull/43 "Bump the osu-game group with 5 updates"; https://github.com/taulazer/tau/pull/594 "Bump ppy.osu.Game from 2026.303.0 to 2026.527.0"; https://github.com/GooGuTeam/custom-rulesets/pull/43 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/258 "Bump ppy.osu.Game from 2026.317.0 to 2026.527.0"; https://github.com/goodtrailer/soyokaze/pull/259 "Bump ppy.osu.Game from 2026.317.0 to 2026.601.0"; https://github.com/taulazer/tau/pull/595 "Bump ppy.osu.Game from 2026.303.0 to 2026.601.0"; https://github.com/GooGuTeam/custom-rulesets/pull/44 "Bump the osu-game group with 5 updates"; https://github.com/goodtrailer/soyokaze/pull/260 "Bump ppy.osu.Game from 2026.317.0 to 2026.605.0"; https://github.com/taulazer/tau/pull/596 "Bump ppy.osu.Game from 2026.303.0 to 2026.605.0"; https://github.com/GooGuTeam/custom-rulesets/pull/45 "Bump ppy.osu.Game and 4 others"
+- Ruling: 
+
+## 31. ci: use LLVM/Clang 22 in tidy job
+
+- Case: clean/bitcoin__bitcoin-34662@b2b782ee (evidence c94acad602a7)
+- Change: https://github.com/bitcoin/bitcoin/pull/34662/files (11 changed lines in 5 files, C++)
+- Commits: base bf9ef4f0433551e850a11c2da8baae0ec6439a99, head 5e35a9069d655419cada6070e1f00a28d4a877f9; merged 2026-03-03T22:40:36Z as https://github.com/bitcoin/bitcoin/commit/17a04039bc5befd51c2f96daf081e9e4a8ed7bff
+- Licence: MIT, COPYING
+- Reviews by others: 6 (approved 1, commented 5); none requested changes
+- Checked up to 2026-06-01T22:40:36Z (read 2026-10-12): 14 later commits on its files, each read line by line (9 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on ci/test/03_test_script.sh:
+  - 2026-03-11T10:37:23Z https://github.com/bitcoin/bitcoin/commit/d03e3be246f64065002268e74ee9a834089de37a "ci: check macos bundle structure and codesigning": its changes miss the pull request's lines, which sit at 177 of its parent
+  - 2026-03-11T12:01:24Z https://github.com/bitcoin/bitcoin/commit/f25843d8ad072205d20651ae6e33eb2b3118c7be "Merge bitcoin/bitcoin#34441: ci: Allow running iwyu CI in worktree": its changes miss the pull request's lines, which sit at 177 of its parent
+  - 2026-03-13T10:16:48Z https://github.com/bitcoin/bitcoin/commit/390e7d61bd531505bb3d13f38316c282b85ed1dd "Merge bitcoin/bitcoin#34787: build: fix native macOS deployment": its changes miss the pull request's lines, which sit at 195 of its parent
+  - 2026-03-24T20:23:35Z https://github.com/bitcoin/bitcoin/commit/3129d4a69345324de3658bf3a1cb5eee23f6bae8 "ci: Rename `TIDY_LLVM_V` to `IWYU_LLVM_V` in IWYU-specific code": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-03-30T15:34:48Z https://github.com/bitcoin/bitcoin/commit/6953363be8c020912a3f69db663ed920f4959d00 "refactor: Move license info into new module": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-03-30T15:39:42Z https://github.com/bitcoin/bitcoin/commit/8b49e2dd4eed93d08a3d9681d444aaf441ab0037 "ci, iwyu: Fix warnings in `src/util` and treat them as errors": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-05-14T11:09:35Z https://github.com/bitcoin/bitcoin/commit/fac6c4270dac566ebf274a5c18e30810a3da70f9 "ci: Put space and non-ASCII char in scratch dir": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-05-21T16:39:59Z https://github.com/bitcoin/bitcoin/commit/fa99a3ccacead02c26ea74c0e12cd845c4dafb91 "ci: Enable pipefail in 03_test_script.sh": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-05-22T06:33:37Z https://github.com/bitcoin/bitcoin/commit/0317f52022cd34a2fb6647f0a85ad6537d7cc820 "ci: enforce iwyu for touched files": its changes miss the pull request's lines, which sit at 203 of its parent
+  - 2026-05-22T11:36:39Z https://github.com/bitcoin/bitcoin/commit/b9f0040caf45355c4621e792df09fffabf23495e "Merge bitcoin/bitcoin#34614: ci: Put space and non-ASCII char in scratch dir": its changes miss the pull request's lines, which sit at 223 of its parent
+  - 2026-05-26T12:39:03Z https://github.com/bitcoin/bitcoin/commit/a4157fc24a29118b1c9d1ac5b7977104217bcee9 "Merge bitcoin/bitcoin#33966: refactor: disentangle miner startup defaults from runtime options": its changes miss the pull request's lines, which sit at 223 of its parent
+  - 2026-05-27T14:53:42Z https://github.com/bitcoin/bitcoin/commit/fa98d449517da406203e042aaccb8acc698d7a0c "ci: Rewrite broken wrap-valgrind.sh to .py": its changes miss the pull request's lines, which sit at 223 of its parent
+  - 2026-05-29T08:36:08Z https://github.com/bitcoin/bitcoin/commit/6183942513789fb3dc94fa02a097744b149bb69a "ci, iwyu: Fix warnings in src/scripts and treat them as error": its changes miss the pull request's lines, which sit at 223 of its parent
+- Later commits on src/script/interpreter.cpp:
+  - 2026-05-29T08:36:08Z https://github.com/bitcoin/bitcoin/commit/6183942513789fb3dc94fa02a097744b149bb69a "ci, iwyu: Fix warnings in src/scripts and treat them as error": its changes miss the pull request's lines, which sit at 1260 to 1263 of its parent
+- Ruling: 
+
+## 32. Remove transitive AspNetCore.App framework reference in trimming tests
+
+- Case: clean/dotnet__aspnetcore-65793@732ecc80 (evidence 3492cb91fc7d)
+- Change: https://github.com/dotnet/aspnetcore/pull/65793/files (14 changed lines in 1 file, C#)
+- Commits: base 5b892736c24f973adbdc8a36542609dc403ed92d, head 9f37385a85b64b4572fed60474bdb3854b9924bd; merged 2026-03-18T09:58:50Z as https://github.com/dotnet/aspnetcore/commit/f7c186e94f7853eb90ff600f3486a1d6733a1de8
+- Licence: MIT, LICENSE.txt
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-16T09:58:50Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on eng/testing/linker/SupportFiles/Directory.Build.targets:
+  - 2026-06-05T08:59:33Z https://github.com/dotnet/aspnetcore/commit/1a6684cc0ca0d72f6124bbd51b7dfe5405f4f011 "Implement Cross-Site Request Forgery Algorithm based on Fetch Metadata headers (#66585)": its changes miss the pull request's lines, which sit at 66 to 79 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/dotnet/dotnet/pull/5587 "[main] Source code updates from dotnet/aspnetcore"
+- Ruling: 
+
+## 33. Add missing Slovak chart filter action translations
+
+- Case: clean/filamentphp__filament-19318@d64ad624 (evidence 46ffd7e8ec16)
+- Change: https://github.com/filamentphp/filament/pull/19318/files (16 changed lines in 1 file, PHP)
+- Commits: base be9a8da37577cf2d73fe19a3ef93caaea0478099, head ebf7b147a4c538ef414f87a89dcd85c30aa65ff5; merged 2026-02-23T08:24:19Z as https://github.com/filamentphp/filament/commit/ada995d009434685500d674d24e0abb5680d4780
+- Licence: MIT, LICENSE.md
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-05-24T08:24:19Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 34. [DevTools] Don't capture durations for disconnected subtrees when profiling
+
+- Case: clean/react__react-35718@52edac83 (evidence 616b8f4ea269)
+- Change: https://github.com/react/react/pull/35718/files (79 changed lines in 2 files, JavaScript)
+- Commits: base 65db1000b944c8a07b5947c06b38eb8364dce4f2, head a1c0c6d100a02840f7e78a60f0803849fa236631; merged 2026-02-09T22:18:17Z as https://github.com/react/react/commit/c6bb26bf833c5d91760daf28fa2750b81067ac30
+- Licence: MIT, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-05-10T22:18:17Z (read 2026-10-12): 10 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on packages/react-devtools-shared/src/__tests__/profilingCommitTreeBuilder-test.js:
+  - 2026-02-10T11:51:58Z https://github.com/react/react/commit/49c3b270f9991fbecbe2b9c29c27e19a54fb4466 "[test] Include `uniqueSuspenders` in Suspense tree snapshots (#35736)": its changes miss the pull request's lines, which sit at 194 to 262 of its parent
+- Later commits on packages/react-devtools-shared/src/backend/fiber/renderer.js:
+  - 2026-02-10T12:09:23Z https://github.com/react/react/commit/f23aa1d9f5034e7cfbd3e6015ce102bb72a005a0 "[DevTools] Fix memory leak when unmounting hoistables (#35741)": its changes miss the pull request's lines, which sit at 5584 to 5589 of its parent
+  - 2026-02-10T15:35:02Z https://github.com/react/react/commit/70890e7c58abccef35a6498f7ee702d608be79d6 "Consistent handling of work tags for rename, delete, and overriding state (#35740)": its changes miss the pull request's lines, which sit at 5584 to 5589 of its parent
+  - 2026-02-10T16:52:35Z https://github.com/react/react/commit/57b79b0388b755096216b2b5308113e54eac3be8 "[DevTools] Only block child Suspense boundaries if the parent has all shared suspenders removed (#35737)": its changes miss the pull request's lines, which sit at 5584 to 5589 of its parent
+  - 2026-02-10T23:35:36Z https://github.com/react/react/commit/e49335e961a77a45be32ad6c9c1877cbe2fe91f4 "[DevTools] Display `React.optimisticKey` in key positions (#35760)": its changes miss the pull request's lines, which sit at 5585 to 5590 of its parent
+  - 2026-02-11T16:59:43Z https://github.com/react/react/commit/8374c2abf13fa803233025192b8d7e87de70b087 "[DevTools] Remove experimental __IS_INTERNAL_MCP_BUILD__ flag and related code (#35755)": its changes miss the pull request's lines, which sit at 5590 to 5595 of its parent
+  - 2026-03-03T12:27:05Z https://github.com/react/react/commit/aac12ce597b49093a5add54b00deee3d8980f874 "[DevTools] chore: extract pure functions from fiber/renderer.js (#35924)": its changes miss the pull request's lines, which sit at 5590 to 5595 of its parent
+  - 2026-03-10T17:05:48Z https://github.com/react/react/commit/014138df87869b174956f90a33fd6cf66e160114 "[DevTools] Fix a crash when rendering a new class Component when simulating errored state (#35985)": its changes miss the pull request's lines, which sit at 5267 to 5272 of its parent
+  - 2026-03-20T14:17:15Z https://github.com/react/react/commit/8b2e903a7447d370eb77bb117bc4c0ae240ce831 "[DevTools] chore: extract getInternalReactConstants (#35986)": its changes miss the pull request's lines, which sit at 5267 to 5272 of its parent
+  - 2026-03-23T14:29:38Z https://github.com/react/react/commit/ed69815cebae33b0326cc69faa90f813bb924f3b "[DevTools] feat: display subtree for Activity and dim in hidden mode (#36094)": its changes miss the pull request's lines, which sit at 4778 to 4783 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/vercel/next.js/pull/89923 "Upgrade React from `272441a9-20260209` to `6066c782-20260212`"
+- Ruling: 
+
+## 35. Deflake Restart target replica during migration (without save) causes success test
+
+- Case: clean/valkey-io__valkey-3226@a1cd5c3b (evidence 0c00776fc776)
+- Change: https://github.com/valkey-io/valkey/pull/3226/files (20 changed lines in 1 file, C)
+- Commits: base 4dee322edeb9c96029d89cfaf1600abad2afead0, head feeb16034cd1cf93533083f879506e45e5c914b3; merged 2026-02-27T02:42:50Z as https://github.com/valkey-io/valkey/commit/75fb0e6cbb7ce7e6762951b6b97083c433e5b4c1
+- Licence: BSD-3-Clause, COPYING
+- Reviews by others: 7 (approved 6, commented 1); none requested changes
+- Checked up to 2026-05-28T02:42:50Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on tests/unit/cluster/cluster-migrateslots.tcl:
+  - 2026-04-08T08:26:29Z https://github.com/valkey-io/valkey/commit/dba128f13b7486322fe3b52a8358bd9188ec613a "Fix slot-migration-max-failover-repl-bytes unable to accept -1 (#3443)": its changes miss the pull request's lines, which sit at 2095 to 2099, 2108 to 2112, 2120 to 2125 of its parent
+  - 2026-05-15T03:55:59Z https://github.com/valkey-io/valkey/commit/390a11c895d5dd1aa570ef7b6e78206ab1bf9776 "Set repl-timeout for slotmigrations tests to prevent disconnections (#3703)": its changes miss the pull request's lines, which sit at 2095 to 2099, 2108 to 2112, 2120 to 2125 of its parent
+- Ruling: 
+
+## 36. fix linux profile detection for chromium users
+
+- Case: clean/browser-use__browser-use-4512@67cff2e8 (evidence 119fcf402f2b)
+- Change: https://github.com/browser-use/browser-use/pull/4512/files (8 changed lines in 2 files, Python)
+- Commits: base 872ef3982dfbb8888588cddedecd341fbad34ead, head e44ce7ce732b9da9dd1c7e0916d8a4af7e0df6ba; merged 2026-03-24T22:28:34Z as https://github.com/browser-use/browser-use/commit/c8779d242db8394372ffd7e51f3f7ede7ca83ac1
+- Licence: MIT, LICENSE
+- Reviews by others: 1 (commented 1); none requested changes
+- Checked up to 2026-06-22T22:28:34Z (read 2026-10-12): 15 later commits on its files, each read line by line (11 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on browser_use/browser/session.py:
+  - 2026-03-25T21:30:42Z https://github.com/browser-use/browser-use/commit/a2313d9665a58b7eda5fe032545249ef05aeae27 "Merge branch 'main' into feature/cdp-navigation-timeout": its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)
+  - 2026-03-25T23:34:25Z https://github.com/browser-use/browser-use/commit/4c883feb7c6f9d71600818b94e0f4a5359651362 "Merge branch 'main' into fix/cloud-session-stop-cdp-reconnect": its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)
+  - 2026-03-31T18:19:43Z https://github.com/browser-use/browser-use/commit/5e644981e82cc1276aca768b27df54155d9ddc3c "fix: close CloudBrowserClient httpx pool on session stop to prevent memory leak": its changes miss the pull request's lines, which sit at 412 of its parent
+  - 2026-04-09T05:05:50Z https://github.com/browser-use/browser-use/commit/76569995fd92db3bad968eb8244a31ceda5d161c "Improve OSS-to-cloud conversion: UTM tracking, better error messages, and cloud nudges": its changes miss the pull request's lines, which sit at 412 of its parent
+  - 2026-04-12T21:43:04Z https://github.com/browser-use/browser-use/commit/c1eb87a35fd7968bfcda91e522a9deb1ba714139 "close alias for BrowserSession stop": its changes miss the pull request's lines, which sit at 412 of its parent
+  - 2026-04-12T21:45:44Z https://github.com/browser-use/browser-use/commit/76604913ad0ca43cc4797da338a395a3e5ea9bb4 "Merge branch 'main' into fix/browser-session-close": its changes miss the pull request's lines, which sit at 412 of its parent
+  - 2026-04-21T00:40:32Z https://github.com/browser-use/browser-use/commit/9a09c4d7dc634a26bc9cf8a4e6d5695682d6f426 "fix(cdp): timeout-wrap CDPClient.send_raw to break silent WebSocket hangs": its changes miss the pull request's lines, which sit at 412 of its parent
+  - 2026-05-18T18:23:41Z https://github.com/browser-use/browser-use/commit/9a6510a85cf1df93e0dd1f6555fac12688d33e37 "fix: respect proxy_country_code=None to disable proxy in cloud mode": its changes miss the pull request's lines, which sit at 413 of its parent
+- Later commits on browser_use/skill_cli/utils.py:
+  - 2026-04-02T00:43:42Z https://github.com/browser-use/browser-use/commit/01995138f119e9795eabdf2c3e9bc3aa6777df3d "chore: remove dead code found by codex review": its changes miss the pull request's lines, which sit at 216 to 220 of its parent
+  - 2026-04-02T00:56:39Z https://github.com/browser-use/browser-use/commit/e09f55eedc7c3f79ca2deec7efbd26f23de52517 "chore: remove more dead code (second codex pass)": its changes miss the pull request's lines, which sit at 170 to 174 of its parent
+  - 2026-04-02T01:24:41Z https://github.com/browser-use/browser-use/commit/b92c7486bfe65bb5d14c2d2ab1edfaa8be141429 "fix: remove 9229 from Chrome CDP port probing (Node.js debugger port, not Chrome)": its changes miss the pull request's lines, which sit at 128 to 132 of its parent
+  - 2026-04-03T00:41:15Z https://github.com/browser-use/browser-use/commit/a05a053da63498bb5a6865422f0e7cbe88175b71 "fix: add per-session auth token to daemon socket to prevent unauthorized code execution": its changes miss the pull request's lines, which sit at 128 to 132 of its parent
+  - 2026-04-14T18:23:50Z https://github.com/browser-use/browser-use/commit/d0fbf4c5807a2904e19ac2c1468d2639189a8f26 "improve connect failure UX: fix chrome://inspect link and add fallback guidance": its changes miss the pull request's lines, which sit at 133 to 137 of its parent
+  - 2026-04-15T17:07:51Z https://github.com/browser-use/browser-use/commit/4c2d136de9d22af9ab53e807f3064341b75d7687 "fix: add utf-8 encoding to Local State file read in list_chrome_profiles": its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)
+  - 2026-04-15T20:06:56Z https://github.com/browser-use/browser-use/commit/9c314e626ecf6f24c36903ceb3c161ae919e75f1 "Merge branch 'main' into fix/local-state-utf8-encoding": its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)
+- Ruling: 
+
+## 37. dbeaver/dbeaver#40062 Fix autocomplete for fabric
+
+- Case: clean/dbeaver__dbeaver-40414@1dbd0fbd (evidence 8596146d980d)
+- Change: https://github.com/dbeaver/dbeaver/pull/40414/files (13 changed lines in 2 files, Java)
+- Commits: base 33a443bc0e6151b948c9409b70e4d940381fd1c3, head dc04f9285bcac2a852231cd7110ba16d9d8112f7; merged 2026-02-23T17:26:03Z as https://github.com/dbeaver/dbeaver/commit/ca3fecf6db993e2a280f3a12900a1e9968a3ce8e
+- Licence: Apache-2.0, LICENSE.md
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-05-24T17:26:03Z (read 2026-10-12): 3 later commits on its files, each read line by line (3 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on plugins/org.jkiss.dbeaver.ext.mssql/src/org/jkiss/dbeaver/ext/mssql/model/SQLServerDataSource.java:
+  - 2026-03-26T09:20:59Z https://github.com/dbeaver/dbeaver/commit/a4c321f95958e6a5eb1ae8ac2eb5ed7aaf42af7f "#39960 Add detect SQL Server expired/must-change password errors and promp… (#40456)": its changes miss the pull request's lines, which sit at 152 of its parent
+  - 2026-04-20T09:50:01Z https://github.com/dbeaver/dbeaver/commit/fb3ff4c1e9e76887269a3336d9e02191741cacbb "#39464 Fix force TOP injection for MSSQL table-valued function queries (#40772)": its changes miss the pull request's lines, which sit at 158 of its parent
+  - 2026-04-21T10:22:43Z https://github.com/dbeaver/dbeaver/commit/5b604d6fde371cd5db2b175b945ed5a19e8e220b "dbeaver/pro#8166 Google BQ new driver (#40747)": its changes miss the pull request's lines, which sit at 159 of its parent
+- Ruling: 
+
+## 38. Fix ZDIFF algorithm 2 memory leak on early exit
+
+- Case: clean/valkey-io__valkey-3342@29993a20 (evidence f5dcfa7a70c2)
+- Change: https://github.com/valkey-io/valkey/pull/3342/files (13 changed lines in 2 files, C)
+- Commits: base 5deebd0f131826124b3ab6231fafb5f9b188523b, head daa115a760d9cbb00bfac57b1ab3bd0af436e7d1; merged 2026-03-11T02:34:15Z as https://github.com/valkey-io/valkey/commit/6b384e9a5b6cd4e4f8198f5df22a74feb1b70e0f
+- Licence: BSD-3-Clause, COPYING
+- Reviews by others: 3 (approved 3); none requested changes
+- Checked up to 2026-06-09T02:34:15Z (read 2026-10-12): 3 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on src/t_zset.c:
+  - 2026-03-11T11:26:44Z https://github.com/valkey-io/valkey/commit/6414720504f689a3fc699338bf22565bb70c3829 "Replace fast_float (C++) with ffc.h (#3329)": its changes miss the pull request's lines, which sit at 2510 to 2513 of its parent
+  - 2026-04-02T10:09:06Z https://github.com/valkey-io/valkey/commit/fb655dbf5cfaf254e0b8bb6617f1f734dbebc07d "Replace dict with thin wrapper around hashtable (#3366)": its changes miss the pull request's lines, which sit at 2510 to 2513 of its parent
+  - 2026-05-06T19:48:26Z https://github.com/valkey-io/valkey/commit/6c9d7fc263dd4dfe07460f7ed6de63295890b77a "CLUSTERSCAN range bounded scanning across contiguous slots (#3391)": its changes miss the pull request's lines, which sit at 2511 to 2514 of its parent
+- Later commits naming it (quoting its title, or with no fix word): https://github.com/valkey-io/valkey/commit/27dd874834fd181f3517d0874cf2406da977ad60 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/6fd227f7a3306ac264a0aac427ab18cdf6ba7a17 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/614351040cab1b77532aec9fbf913f28ddda17f9 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/830d1fecb54d758869ef3f48efd3ff9e325ba2dc "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/4a3714ba93dd2dde3d6364ee6368672e04244518 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/7c33dca93ba13038ff10868ed5ba223b4ef09d54 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"; https://github.com/valkey-io/valkey/commit/e77aa946c4fe89bd17aee9b36be8576f890183c5 "Fix ZDIFF algorithm 2 memory leak on early exit (#3342)"
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/sarthakaggarwal97/valkey/pull/117 "[backport] Weekly backport sweep for 8.1"; https://github.com/sarthakaggarwal97/valkey/pull/234 "[backport] Weekly backport sweep for 7.2"; https://github.com/sarthakaggarwal97/valkey/pull/235 "[backport] Weekly backport sweep for 8.0"; https://github.com/valkey-io/valkey/pull/3735 "[backport][validation failed] Backport sweep for 9.0"; https://github.com/valkey-io/valkey/pull/3737 "[backport] Backport sweep for 8.1"; https://github.com/valkey-io/valkey/pull/3736 "[backport] Backport sweep for 8.0"; https://github.com/valkey-io/valkey/pull/3738 "[backport] Backport sweep for 7.2"; https://github.com/valkey-io/valkey/pull/3879 "[backport] Backport sweep for 9.0"; https://github.com/sarthakaggarwal97/valkey/pull/286 "[backport] Backport sweep for 7.2"
+- Ruling: 
+
+## 39. doc: minor typo fix
+
+- Case: clean/nodejs__node-62358@5869d713 (evidence 119d4ef44656)
+- Change: https://github.com/nodejs/node/pull/62358/files (6 changed lines in 1 file, JavaScript)
+- Commits: base 7547e795ef700e1808702fc2851a0dcc3395a065, head 21bd03ed84e0d9b93421ae39775a9712e8f69972; merged 2026-03-22T21:48:58Z as https://github.com/nodejs/node/commit/61102cdbb3d59155ad5bb4fc9419627a31e63f7a
+- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Reviews by others: 9 (approved 7, commented 2); none requested changes
+- Checked up to 2026-06-20T21:48:58Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on doc/api/vm.md:
+  - 2026-05-10T15:06:35Z https://github.com/nodejs/node/commit/49aef0d3f5d10f7bde0b050c7fcb404271e2ebb4 "doc: remove unnecessary `<!-- eslint-` magic comments": its changes miss the pull request's lines, which sit at 1838, 1840 to 1841 of its parent
+  - 2026-06-12T21:45:48Z https://github.com/nodejs/node/commit/20fda5692ef0b6a3af1ec8ecbe7e1fa9bad4e3d9 "doc: fix typo in vm.md": its changes miss the pull request's lines, which sit at 1834, 1836 to 1837 of its parent
+- Later commits naming it (quoting its title, or with no fix word): https://github.com/nodejs/node/commit/b4182ac60b14996088537df2ee3584d8d9a29e54 "doc: minor typo fix"; https://github.com/nodejs/node/commit/013243617096e36d421cb29ea73b738e0ffa4060 "doc: minor typo fix"; https://github.com/nodejs/node/commit/ce998116990895c26daae1b88d96cf10ecf5712a "doc: minor typo fix"; https://github.com/nodejs/node/commit/75778c6dbe90d772d159f7fd8ab880d2ad3919ff "doc: minor typo fix"; https://github.com/nodejs/node/commit/47e199ae94a1008dffd6e3101bd9c58688dd3141 "doc: minor typo fix"; https://github.com/nodejs/node/commit/68f4ee165109d3cdd884254f665588a1eb0a7ad6 "doc: minor typo fix"; https://github.com/nodejs/node/commit/93d19b1a1cc0457914783c24f158e42996528e4d "doc: minor typo fix"
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/nodejs/node/pull/62522 "2026-04-01, Version 25.9.0 (Current)"; https://github.com/nodejs/node/pull/62681 "2026-04-15, Version 24.15.0 'Krypton' (LTS)"
+- Ruling: 
+
+## 40. dbeaver/pro#8260 Add `SMTokenInfo` class and `readAccessTokenInfo` me…
+
+- Case: clean/dbeaver__dbeaver-40558@dc4d7837 (evidence ca7757b916d9)
 - Change: https://github.com/dbeaver/dbeaver/pull/40558/files (89 changed lines in 2 files, Java)
 - Commits: base 07a18b4e21a9486768969388bb4163382f1be88f, head c165dc827ea3fa6407e77b2550d8db2157d2beb8; merged 2026-03-24T09:56:15Z as https://github.com/dbeaver/dbeaver/commit/83a960ceeb727a4ded2e34cf26b097140d6da2dc
 - Licence: Apache-2.0, LICENSE.md
 - Reviews by others: 1 (commented 1); none requested changes
-- Checked up to 2026-06-22T09:56:15Z (read 2026-10-12): 0 later commits on its files, 0 reading as a fix, revert or follow-up, none touching its lines
+- Checked up to 2026-06-22T09:56:15Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 41. Starknet loopback client
+
+- Case: clean/unionlabs__union-5384@a78ba723 (evidence 32b2f919380e)
+- Change: https://github.com/unionlabs/union/pull/5384/files (552 changed lines in 9 files, Rust)
+- Commits: base df020f8061bce193f651089c0ec776141a1a1e83, head 86cc328fe48bdbc6d76f430e06b006296cc34a42; merged 2026-01-15T09:16:36Z as https://github.com/unionlabs/union/commit/892e9f565c8f1a0c4638235518b0e3907e974b20
+- Licence: Apache-2.0, LICENSE-APACHE
+- Reviews by others: 2 (approved 2); none requested changes
+- Checked up to 2026-04-15T09:16:36Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on Scarb.toml:
+  - 2026-01-15T09:42:20Z https://github.com/unionlabs/union/commit/004b56a36139bae15a92831c4018da04eb8fe687 "chore(starknet): check pairing result": its changes miss the pull request's lines, which sit at 3 to 8, 10 of its parent
+- Ruling: 
+
+## 42. ci(cypress): fix payload and airwallex tests
+
+- Case: clean/juspay__hyperswitch-11561@7cb5be1e (evidence 809ff3ff4d53)
+- Change: https://github.com/juspay/hyperswitch/pull/11561/files (28 changed lines in 2 files, Rust)
+- Commits: base 7833f99045683985f84bd566f2ac3347facc3fde, head 7ef403ab03fb414501219aa8dffbeaa62e4d8634; merged 2026-03-23T11:31:05Z as https://github.com/juspay/hyperswitch/commit/80e8d4e00657f27f5c1cb3f16a218a5165452968
+- Licence: Apache-2.0, LICENSE
+- Reviews by others: 5 (approved 2, commented 1, dismissed 2); none requested changes
+- Checked up to 2026-06-21T11:31:05Z (read 2026-10-12): 7 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on cypress-tests/cypress/e2e/configs/Payment/Airwallex.js:
+  - 2026-03-31T13:50:35Z https://github.com/juspay/hyperswitch/commit/5aa2452ca212050f9ae47b35b5042e8ae5a19894 "ci(cypress): added payment webhook fixtures (#11612)": its changes miss the pull request's lines, which sit at 518 of its parent
+  - 2026-04-10T19:48:36Z https://github.com/juspay/hyperswitch/commit/2ef119e5c28402365e43a0288de092f6eaa9e917 "ci(cypress): added refund webhooks for supported connectors (#11754)": its changes miss the pull request's lines, which sit at 518 of its parent
+  - 2026-05-03T10:54:47Z https://github.com/juspay/hyperswitch/commit/94bf523b6f771b1b9e7c3033f57a6ebbcb17e1ce "test(cypress): add ConnectorMetadata testcases for noon, airwallex, braintree (#12079)": its changes miss the pull request's lines, which sit at 518 of its parent
+  - 2026-05-09T12:15:11Z https://github.com/juspay/hyperswitch/commit/6ac0cd81db0d998fed381fb9507ff3ae5cf74a1c "test(cypress): Add pay_later_pm configs for Airwallex and Mollie (#12183)": its changes miss the pull request's lines, which sit at 518 of its parent
+  - 2026-06-03T12:16:21Z https://github.com/juspay/hyperswitch/commit/d91290241278c1ff0bb8007f2ac9904b850ae45a "test(cypress): add airwallex alternative payment coverage for paylater, and wallet (#12370)": its changes miss the pull request's lines, which sit at 519 of its parent
+- Later commits on cypress-tests/cypress/e2e/configs/Payment/Payload.js:
+  - 2026-03-31T13:50:35Z https://github.com/juspay/hyperswitch/commit/5aa2452ca212050f9ae47b35b5042e8ae5a19894 "ci(cypress): added payment webhook fixtures (#11612)": its changes miss the pull request's lines, which sit at 22 to 23, 160, 185, 193 to 195, 292, 362, 465, 653 of its parent
+  - 2026-05-12T09:46:21Z https://github.com/juspay/hyperswitch/commit/53989bba6067f3d1a35840c46776437f29aa16ef "test(cypress): add bank debit ACH coverage for payload connector (#12253)": its changes miss the pull request's lines, which sit at 22 to 23, 160, 185, 193 to 195, 292, 362, 465, 653 of its parent
+- Ruling: 
+
+## 43. fix(core): Add format validation to source control branch name
+
+- Case: clean/n8n-io__n8n-27518@be2e1eb8 (evidence 9598e8fc5814)
+- Change: https://github.com/n8n-io/n8n/pull/27518/files (25 changed lines in 2 files, TypeScript)
+- Commits: base fc0f0712d8ee07cc259c9757cde44df8da2efe26, head 4f8dd78c8b69a0cba02bdd5b2b73bbccb358b80d; merged 2026-03-25T08:24:38Z as https://github.com/n8n-io/n8n/commit/fb7788d6c286f99126371a33b648c6def9541143
+- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-23T08:24:38Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on packages/cli/src/modules/source-control.ee/__tests__/source-control-preferences.service.ee.test.ts:
+  - 2026-04-28T09:24:01Z https://github.com/n8n-io/n8n/commit/258b9703c5e07ac164bc47a7bb6e758888caf97b "refactor: Migrate all cipher call sites to encryptV2/decryptV2 (#29096)": its changes miss the pull request's lines, which sit at 43 to 62 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/n8n-io/n8n/pull/27765 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27771 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27772 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27778 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27781 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27786 ":rocket: Release 2.15.0"; https://github.com/n8n-io/n8n/pull/27787 ":rocket: Release 2.15.0"; https://github.com/ATHEO-Ingenierie/n8n-helm/pull/32 "Update n8n appVersion to 2.15.0"
+- Ruling: 
+
+## 44. Create LTS pkg and non-LTS pkg for macOS for LTS releases
+
+- Case: clean/PowerShell__PowerShell-27039@d7b9ca6b (evidence 67ff71ceff9b)
+- Change: https://github.com/PowerShell/PowerShell/pull/27039/files (13 changed lines in 1 file, C#)
+- Commits: base 1f8bbe1e5332bb8fe1b39c81c366ddadbf9dd1a2, head b0f291545353eaa900dcd37c887758762dda3596; merged 2026-03-16T19:40:27Z as https://github.com/PowerShell/PowerShell/commit/8c9c9e11872c8d98c2e7d7a1ed991fc7e1d07354
+- Licence: MIT, LICENSE.txt
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-14T19:40:27Z (read 2026-10-12): 3 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on .pipelines/templates/mac-package-build.yml:
+  - 2026-05-01T20:51:55Z https://github.com/PowerShell/PowerShell/commit/da95729be5a451575ad6c8dbec6d29ee0dcc1ebc "Add macOS binary code signing and package notarization": its changes miss the pull request's lines, which sit at 105 to 108, 127, 134 to 139 of its parent
+  - 2026-05-05T19:47:42Z https://github.com/PowerShell/PowerShell/commit/3d13188032c3784ecbf7a9cb6111aefe6bf7ba61 "Fix executable permissions for pwsh and createdump": its changes miss the pull request's lines, which sit at 113 to 116, 135, 142 to 147 of its parent
+  - 2026-05-05T19:47:42Z https://github.com/PowerShell/PowerShell/commit/d49ade659720172dcb2276bd46d59df29585bea2 "Move ESRP key codes into the `certificate_logical_to_actual` variable group": its changes miss the pull request's lines, which sit at 113 to 116, 135, 142 to 147 of its parent
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/PowerShell/PowerShell/pull/27040 "[release/v7.6] Create LTS pkg and non-LTS pkg for macOS for LTS releases"; https://github.com/PowerShell/PowerShell/pull/27162 "[release/v7.5.6] Create LTS pkg and non-LTS pkg for macOS for LTS releases"
+- Ruling: 
+
+## 45. doc: clarify confusing `git range-diff` add/delete output
+
+- Case: clean/bitcoin__bitcoin-34656@107d85ce (evidence 58d9fded9bbb)
+- Change: https://github.com/bitcoin/bitcoin/pull/34656/files (13 changed lines in 1 file, C++)
+- Commits: base ab8a7af74209e5d58203af14d9133d14de6a5776, head 45133c589a970390bc10e4db4f7d9921dbaa0832; merged 2026-02-27T10:21:45Z as https://github.com/bitcoin/bitcoin/commit/3c7b0f97e0f6384824ec387861a2e88dc4cd737a
+- Licence: MIT, COPYING
+- Reviews by others: 2 (approved 2); none requested changes
+- Checked up to 2026-05-28T10:21:45Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 46. Improve XML docs for OpenApiDocumentTransformerContext and ApiDescriptionGroup
+
+- Case: clean/dotnet__aspnetcore-65786@b409403e (evidence 06ef11f855f0)
+- Change: https://github.com/dotnet/aspnetcore/pull/65786/files (70 changed lines in 2 files, C#)
+- Commits: base 6b10dacaefce56e6bf9b54c6eb06fa0b50f5b0c7, head c69ad3986e6a58403931af3c0a1a2f9e4c063bad; merged 2026-03-29T02:16:03Z as https://github.com/dotnet/aspnetcore/commit/f8a4c899e4fcecd0fe720b410446b9ea4c1a0da7
+- Licence: MIT, LICENSE.txt
+- Reviews by others: 3 (approved 1, commented 2); none requested changes
+- Checked up to 2026-06-27T02:16:03Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits naming it (quoting its title, or with no fix word): https://github.com/dotnet/aspnetcore/commit/722124cafd1f7dc8abf3468119e6514a4e677733 "Improve XML docs for OpenApiDocumentTransformerContext and ApiDescriptionGroup (#65786)"
+- Ruling: 
+
+## 47. fix(mobile): mismatch between system and app color when using low-chroma system color scheme
+
+- Case: clean/immich-app__immich-27282@3e94b6c2 (evidence e958de53e45a)
+- Change: https://github.com/immich-app/immich/pull/27282/files (12 changed lines in 1 file, TypeScript)
+- Commits: base e2d26ebdea86c8157017602b64fc4019fb24c842, head 51ce41f373f41d6bce0eb9aa8d53e0eae33d9a82; merged 2026-03-27T14:21:44Z as https://github.com/immich-app/immich/commit/be0fc403d807bca0556e46d18193ca5e7e72de39
+- Licence: AGPL-3.0, LICENSE
+- Reviews by others: 1 (approved 1); none requested changes
+- Checked up to 2026-06-25T14:21:44Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Ruling: 
+
+## 48. Update geoip-processor.md
+
+- Case: clean/elastic__elasticsearch-145087@f8bc183c (evidence eef2ca66d951)
+- Change: https://github.com/elastic/elasticsearch/pull/145087/files (5 changed lines in 1 file, Java)
+- Commits: base b909c6cf7e752f01854de416b242deb719e17a1d, head 3cec09c4b94db97df1f549120b5b3c36eea57b24; merged 2026-03-27T14:07:22Z as https://github.com/elastic/elasticsearch/commit/19728c5eae3bb55c81242a438efcc79a43dc0b9b
+- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
+- Reviews by others: 2 (approved 1, commented 1); none requested changes
+- Checked up to 2026-06-25T14:07:22Z (read 2026-10-12): 2 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits on docs/reference/enrich-processor/geoip-processor.md:
+  - 2026-04-23T17:09:29Z https://github.com/elastic/elasticsearch/commit/f15498898c8a557b96152f977fdceaec9c2963b7 "docs: Update domain list for geoip.elastic.co (#146396)": its changes miss the pull request's lines, which sit at 249 to 251 of its parent
+  - 2026-06-25T10:57:02Z https://github.com/elastic/elasticsearch/commit/f921660b0eb93c703f4a0e94892db3790710c52a "[Docs] Deduplicate  pages in the plugins section (#151983)": its changes miss the pull request's lines, which sit at 250 to 252 of its parent
+- Ruling: 
+
+## 49. tools: keep GN files when updating Merve
+
+- Case: clean/nodejs__node-62167@24cf8219 (evidence 5a25061e4dd7)
+- Change: https://github.com/nodejs/node/pull/62167/files (4 changed lines in 1 file, JavaScript)
+- Commits: base 70b35704a04be477e60755bf075d617976925fef, head 07b43ce6f922f4ebff49c265a7c5a309684bd294; merged 2026-03-11T14:15:25Z as https://github.com/nodejs/node/commit/2b74812c3ca2fdb466fd64d44e9c0cfbf2637b00
+- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Reviews by others: 4 (approved 4); none requested changes
+- Checked up to 2026-06-09T14:15:25Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
+- Later commits naming it (quoting its title, or with no fix word): https://github.com/nodejs/node/commit/1aad512f947ef33ceaee317e6b52f7184896695e "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/7d9db8cd212be8c008279d822e567542938b423c "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/135e8c853cc77e3aca4d2646a22f83d29e462e90 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/9708f7754e9fa715389d8380b29ec9eb6d77c427 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/3d0f97e21aaca29de407a90a5ff30b6089f67c08 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/b771d1e225e06bc986115aedb9c2b144ddb4dcda "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/795d663ff42ff1ad82b83588771567c7b2a7c39a "tools: keep GN files when updating Merve"
+- Later issues and pull requests linking it (no bug label or fix word): https://github.com/nodejs/node/pull/62522 "2026-04-01, Version 25.9.0 (Current)"; https://github.com/nodejs/node/pull/62681 "2026-04-15, Version 24.15.0 'Krypton' (LTS)"
 - Ruling: 
 

@@ -24,6 +24,7 @@
 //   consolidate <ref> <ref>...                 these findings of one case are one issue in different words
 //   confirmed | disputed <case id> --bug <id>  a truth item of the case is right, or wrong
 //   clean | not-clean <case id>                a candidate clean control has no issue, or has one
+//     (on a clean/ candidate, --sheet clean@<seed>@<version> as the clean sheet prints it)
 // <ref> is the start of a findingId, 8 hex or more, as the sheet prints it.
 // --by names the person who made the ruling, as people.json in the queue
 // folder lists them. A model or an agent never rules: the session may draft
@@ -52,10 +53,16 @@
 //    from a test split.
 // 8. A crash halfway through add leaves half a queue: the new file is
 //    written beside the old and renamed over it.
+// 9. A ruling on a clean candidate admits it after its evidence moved: a
+//    clean or not-clean ruling on a clean/ case names the sheet it was made
+//    on, which must show the current version of the candidates
+//    (ingest/clean.mjs cleanRulingBinding), and records the candidate's
+//    evidence hash, which clean.mjs admit checks again.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "./lib/cases.mjs";
+import { cleanRulingBinding } from "./ingest/clean.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { mergeQueue, openAsks } from "./lib/queue.mjs";
 import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
@@ -233,6 +240,7 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
   let caseId;
   let target;
   let found = null;
+  let bound = null;
   if (status === "confirmed" || status === "disputed") {
     caseId = one();
     if (!bug) throw new Error(`refused: ${status} names the truth item with --bug <id>`);
@@ -240,6 +248,13 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
   } else if (status === "clean" || status === "not-clean") {
     caseId = one();
     target = { kind: "case" };
+    // A clean candidate's ruling binds to the sheet's version of the
+    // candidates and to the candidate's evidence (failure 9).
+    if (caseId.startsWith("clean/")) {
+      const b = cleanRulingBinding(caseId, fromSheet, { root: dirname(queue) });
+      if (b.problem) throw new Error(`refused: ${b.problem}`);
+      bound = b.evidence;
+    }
   } else if (status === "consolidate") {
     const members = targets.map((t) => findingOf(t, known));
     const ids = [...new Set(members.map((m) => m.findingId))].sort();
@@ -265,7 +280,7 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     caseId = found.caseId;
     target = { kind: "match", findingId: found.findingId, truthId: found.truth.id };
   }
-  const line = { v: 1, caseId, ...(found?.specsFrom ? { specsFrom: found.specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
+  const line = { v: 1, caseId, ...(found?.specsFrom ? { specsFrom: found.specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : bound };
   const problems = rulingProblems(line, people);
   if (problems.length > 0) throw new Error(`refused: ${problems.join("; ")}`);
   return line;

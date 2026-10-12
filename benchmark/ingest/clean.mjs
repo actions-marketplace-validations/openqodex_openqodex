@@ -35,51 +35,63 @@
 // Failure list, written before the code:
 // 1. A pull request with a later fix on the same lines is offered as clean:
 //    every later commit on the default branch within 90 days of the merge
-//    that touches a file it changed and reads as a fix, revert or follow-up
-//    is checked line by line. The pull request's lines (every line it added,
-//    and both neighbours of every place where it only removed lines) are
-//    placed in that commit's parent by a diff of the file at the pull
-//    request's head and at the parent, so any history shape (squash, rebase,
-//    merge commits) places them; a change to such a line, or a pure
-//    insertion next to one, excludes it. A line that cannot be placed (no
-//    patch, a file too large to read, a commit of 300 files or more) counts
-//    as touched.
-// 2. A later fix-up or revert that names the pull request, or a later bug
+//    that touches a file it changed is read line by line, whatever its
+//    message says (a fix said only in the body, a subject that quotes its
+//    title), and one that changes its lines excludes it. The pull request's
+//    lines (every line it added, and both neighbours of every place where
+//    it only removed lines) are placed in that commit's parent by a diff of
+//    the file at the pull request's head and at the parent, so any history
+//    shape (squash, rebase, merge commits) places them; a change to such a
+//    line, a removal of the file, or a pure insertion next to such a line
+//    excludes it.
+// 2. A line that cannot be followed is read as untouched: no patch, a file
+//    GitHub serves no text of, or a line the commit's parent does not hold
+//    excludes the pull request as "lines could not be followed", unless
+//    GitHub's compare shows that parent does not hold the pull request's
+//    merge (a commit or merge on another branch's line, which changes
+//    nothing on the default branch's line). A commit of 300 files or more
+//    whose list leaves out the file excludes it as too large to check.
+// 3. A later fix-up or revert that names the pull request, or a later bug
 //    report that links it, is missed: GitHub's timeline of the pull request
 //    gives every commit that names it and every issue or pull request that
-//    links it; within the 90 days, one that reads as a fix, revert or
-//    follow-up (or is labelled as a bug) excludes it, unless every line of
-//    it that names the pull request only quotes its title (a backport, a
-//    cherry-pick or a release note does). A later commit in a file's history
-//    that reads as a fix and names it excludes it too.
-// 3. A candidate from a held-out repository group is listed or admitted:
+//    links it, and every later commit on its files is read too. Within the
+//    90 days, a line that names the pull request and reads as a fix, revert
+//    or follow-up once its quoted title is taken out excludes it (a
+//    backport, cherry-pick or release-note line only quotes the title; a
+//    fix word on a line that does not name it is about something else), and
+//    so does a linking issue or pull request labelled as a bug.
+// 4. A candidate from a held-out repository group is listed or admitted:
 //    list reads development groups only and refuses a repository whose name
 //    GitHub now answers with that is not in a development group
 //    (candidateRefusal); admit refuses a candidates file that holds one.
-// 4. A case enters the suite without a person's signed ruling: admit writes
+// 5. A case enters the suite without a person's signed ruling: admit writes
 //    only candidates whose standing ruling (the latest) is clean, signed by
 //    a person on people.json (lib/rulings.mjs); lib/suites.mjs refuses a
 //    clean suite entry without one at every read, so a hand edit stops every
 //    run of the suite.
-// 5. A quota, login or permission error reads as "no later fix": only a 404
+// 6. A quota, login or permission error reads as "no later fix": only a 404
 //    (or "No commit found" for a commit GitHub dropped) means absent; any
 //    other failure of gh stops the listing with GitHub's own words, and
 //    nothing is cached.
-// 6. A candidate whose 90 days had not passed when GitHub was read is
+// 7. A candidate whose 90 days had not passed when GitHub was read is
 //    listed: the day each later-history answer was read must be after the
 //    window's end, or the candidate is excluded with that reason.
-// 7. A file the pull request changed is renamed within the 90 days, and
+// 8. A file the pull request changed is renamed within the 90 days, and
 //    later fixes under its new name are missed: such a candidate is
-//    excluded. (A removed file has no later lines to fix.) A merge into
-//    another branch, whose first parent does not hold the pull request, is
-//    not read as a change on the default branch's line (GitHub's compare).
-// 8. Two listings of the same cache write different files: nothing reads
+//    excluded.
+// 9. Two listings of the same cache write different files: nothing reads
 //    the clock but the day a new answer is cached, every list is sorted,
 //    and the order within a group is a seeded hash.
-// 9. A ruling admits a candidate whose commits changed after the person
-//    read it: a ruling names the candidate's id, whose hash covers the
-//    repository, the commits and the size, so a changed candidate is a new
-//    id with no ruling.
+// 10. A ruling admits a candidate after its commits, its evidence or the
+//    sheet it was made on changed: a ruling names the candidate's id, whose
+//    hash covers the repository, the commits and the size; queue.mjs
+//    decide records it only on a sheet that shows the current version of
+//    the candidates (cleanRulingBinding) and records the candidate's
+//    evidence hash; admit refuses a clean ruling whose sheet version or
+//    evidence hash is not the current one, naming the candidate.
+// The licence class each candidate carries (lib/licence.mjs) travels into
+// the suite entry and every run's case copy, so a case whose licence is
+// unverified runs privately and publishRefusal stops it from leaving.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,7 +101,7 @@ import { benchRoot, gitEnv } from "../lib/cases.mjs";
 import { drawAudit } from "../lib/drops.mjs";
 import { cacheRoot, licenceExclusion, licenceNote, licenceRecord, repoAnswer } from "../lib/licence.mjs";
 import { readDecisions, resolveRulings } from "../lib/rulings.mjs";
-import { HASHED, SUITES, entryHash, realCaseId, sha256, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
+import { HASHED, SUITES, canonicalJson, entryHash, realCaseId, sha256, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
 
 export const SALT = "openqodex-clean-v1";
 export const SPLIT_NAME = "clean-v1";
@@ -115,10 +127,12 @@ export const WHY = Object.freeze({
   named: "a later commit names it as a fix, revert or follow-up",
   linked: "a later issue or pull request links it as a bug, fix or revert",
   unfollowed: "a file it changed was renamed within the 90 days, so later fixes cannot be followed",
-  touched: "a later fix or revert touched lines it changed",
+  touched: "a later commit changed lines it changed",
+  unplaced: "its lines could not be followed through a later commit",
+  tooLarge: "a later commit on its files is too large to check",
 });
 
-export const RULE = `A candidate is a pull request of a development repository group of the AACR split, from one of the group's AACR repositories under the name GitHub now answers with, merged into the default branch between ${WINDOW.from} and ${WINDOW.to}, that: is not authored by a bot; changes as many lines (additions plus deletions) as AACR's usable cases, from the fewest to the most; has a review by someone other than its author and no review that requested changes; and within ${DAYS} days of its merge, read after those days had passed, has no later commit naming it that reads as a fix, revert or follow-up, no later issue or pull request linking it that is labelled or titled as a bug, fix or revert (its own commits, and lines that only quote its title such as backports and release notes, aside), no file of it renamed, and no later commit on the default branch that reads as a fix, revert or follow-up and changes, or inserts next to, a line it added or a place it removed lines. Its lines are placed in that commit's parent by a diff of the file at its head and at that parent; a line that cannot be placed counts as touched. Each group's merged pull requests (GitHub's search, the 100 opened last) are taken in the order of sha256(salt, NUL, group, NUL, repository#number) until ${PER_GROUP} are listed or ${MAX_EVAL} checked. A candidate is not a case: it enters suites/clean/cases.json only through a person's clean ruling (queue.mjs decide) and clean.mjs admit.`;
+export const RULE = `A candidate is a pull request of a development repository group of the AACR split, from one of the group's AACR repositories under the name GitHub now answers with, merged into the default branch between ${WINDOW.from} and ${WINDOW.to}, that: is not authored by a bot; changes as many lines (additions plus deletions) as AACR's usable cases, from the fewest to the most; has a review by someone other than its author and no review that requested changes; and within ${DAYS} days of its merge, read after those days had passed, has no later commit or linking issue or pull request that names it as a fix, revert or follow-up on the line that names it (its quoted title aside) or is labelled as a bug, no file of it renamed, and no later commit on the default branch, whatever its message says, that changes, removes or inserts next to a line it added or a place it removed lines. Its lines are placed in each such commit's parent by a diff of the file at its head and at that parent; a line that cannot be followed (unless the parent does not hold its merge at all) and a commit too large to read exclude it. Each group's merged pull requests (GitHub's search, the 100 opened last) are taken in the order of sha256(salt, NUL, group, NUL, repository#number) until ${PER_GROUP} are listed or ${MAX_EVAL} checked. A candidate is not a case: it enters suites/clean/cases.json only through a person's clean ruling (queue.mjs decide, on the sheet that shows the current candidates) and clean.mjs admit, which refuses a ruling whose sheet or evidence moved.`;
 
 const byBytes = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -213,7 +227,7 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // One GitHub API read through gh: the parsed body (the pages joined for a
 // list), or null when GitHub does not have it (a 404, or "No commit found"
-// for a commit pushed over and dropped); anything else stops (failure 5).
+// for a commit pushed over and dropped); anything else stops (failure 6).
 function ghJson(path, { paginate }) {
   let out;
   try {
@@ -244,7 +258,7 @@ function api(kind, path, { cache, offline, today }) {
 
 // Why a pull request of `repo` may not be a clean candidate, or null: its
 // repository must be a member of a development group of the AACR split,
-// and of the group the candidate names, when it names one (failure 3).
+// and of the group the candidate names, when it names one (failure 4).
 export function candidateRefusal(repo, split, group = null) {
   const k = String(repo ?? "").toLowerCase();
   const g = (split.groups ?? []).find((x) => (x.members ?? []).includes(k));
@@ -300,7 +314,7 @@ function headLines(patch) {
 
 // `lines` of one version of a file in another, by git's diff of the two
 // (-U0): a line inside a changed range is gone, any other moves by the
-// lines added and removed above it.
+// lines added and removed above it. Returns { placed, gone }.
 function mapLines(lines, u0) {
   const hunks = [];
   for (const line of u0.split("\n")) {
@@ -308,6 +322,7 @@ function mapLines(lines, u0) {
     if (h) hunks.push({ a: Number(h[1]), b: h[2] === undefined ? 1 : Number(h[2]), d: h[4] === undefined ? 1 : Number(h[4]) });
   }
   const out = new Set();
+  let lost = 0;
   for (const x of lines) {
     let shift = 0;
     let gone = false;
@@ -325,9 +340,10 @@ function mapLines(lines, u0) {
         shift += h.d;
       }
     }
-    if (!gone) out.add(x + shift);
+    if (gone) lost++;
+    else out.add(x + shift);
   }
-  return out;
+  return { placed: out, gone: lost };
 }
 
 // The lines of the parent, among `lines`, that a commit's patch of one file
@@ -386,27 +402,35 @@ const ranges = (nums) => {
   return out.join(", ");
 };
 
-// Whether a later commit touched the pull request's lines of one file
-// (failure 1): { touched, how }.
-function touches(f, pull, commit, repo, read) {
-  const cf = commit.files.find((x) => x.filename === f.filename) ?? commit.files.find((x) => x.previousFilename === f.filename) ?? null;
-  if (f.status === "removed") return cf?.filename === f.filename && cf.status === "added" ? { touched: true, how: "it adds back the file the pull request removed" } : { touched: false, how: "the pull request removed the file, and this commit does not add it back" };
-  if (!cf) return commit.filesCapped ? { touched: true, how: "it changes 300 files or more, so its change to this file cannot be read; counted as touched" } : { touched: false, how: "it does not change the file on the default branch's line (a merge whose first parent already held it)" };
-  if (cf.status === "removed") return { touched: true, how: "it removes the file" };
-  if (f.patch === null) return { touched: true, how: "GitHub shows no patch for the pull request's change to the file (binary or too large), so its lines cannot be placed; counted as touched" };
+// What a later commit did to the pull request's lines of one file
+// (failures 1 and 2): { result: "touched" | "clear" | "unplaced", how }.
+// `cf` is the commit's entry for the file. A line the commit's parent does
+// not hold is never read as untouched: GitHub's compare says whether that
+// parent holds the pull request's merge at all (a commit on another
+// branch's line, then clear), and otherwise the lines could not be
+// followed.
+const T = (how) => ({ result: "touched", how });
+const C = (how) => ({ result: "clear", how });
+const U = (how) => ({ result: "unplaced", how });
+function touches(f, pull, commit, cf, repo, read) {
+  if (f.status === "removed") return cf?.filename === f.filename && cf.status === "added" ? T("it adds back the file the pull request removed") : C("the pull request removed the file, and this commit does not add it back");
+  if (!cf) return C("it does not change the file against its first parent (a merge whose first parent already held the change)");
+  if (cf.status === "removed") return T("it removes the file");
+  if (f.patch === null) return U("GitHub shows no patch for the pull request's change to the file (binary or too large)");
   const own = headLines(f.patch);
-  if (own.size === 0) return { touched: false, how: "the pull request changed no line of the file" };
-  if (cf.patch === null) return { touched: true, how: "GitHub shows no patch for this commit's change to the file (binary or too large); counted as touched" };
+  if (own.size === 0) return C("the pull request changed no line of the file");
+  if (cf.patch === null) return U("GitHub shows no patch for this commit's change to the file (binary or too large)");
   const atParent = read("contents", PATHS.contents(repo, cf.previousFilename ?? cf.filename, commit.parents[0])).body;
-  if (atParent === null) return { touched: false, how: "the file is not in the commit's parent, so none of the pull request's lines are there" };
   const atHead = read("contents", PATHS.contents(repo, f.filename, pull.headSha)).body;
-  if (atHead === null || atHead.text === null || atParent.text === null) return { touched: true, how: "GitHub serves no text of the file at the pull request's head or at the commit's parent (too large, or gone), so its lines cannot be placed; counted as touched" };
-  const placed = mapLines(own, diffU0(atHead.text, atParent.text));
-  if (placed.size === 0) return { touched: false, how: "every line of the pull request in the file was already rewritten before this commit" };
+  if (atHead === null || atHead.text === null || (atParent !== null && atParent.text === null)) return U("GitHub serves no text of the file at the pull request's head or at the commit's parent (too large, or gone)");
+  const { placed, gone } = atParent === null ? { placed: new Set(), gone: own.size } : mapLines(own, diffU0(atHead.text, atParent.text));
+  if (gone > 0) {
+    const cmp = pull.mergeCommit ? read("compare", PATHS.compare(repo, pull.mergeCommit, commit.parents[0])).body : null;
+    if (cmp && (cmp.status === "behind" || cmp.status === "diverged")) return C("its first parent does not hold the pull request (a commit on another branch's line, or a merge into one)");
+    return U(`${gone} of the pull request's ${own.size} lines are not in the commit's parent${cmp ? ", though that parent holds the pull request's merge" : ", and GitHub cannot say whether that parent holds the pull request's merge"}`);
+  }
   const at = touchedAt(placed, cf.patch);
-  return at.length > 0
-    ? { touched: true, how: `it changes or inserts next to line ${ranges(at)} of its parent, where the pull request's lines sit at ${ranges(placed)}` }
-    : { touched: false, how: `its changes miss the pull request's lines, which sit at ${ranges(placed)} of its parent` };
+  return at.length > 0 ? T(`it changes or inserts next to line ${ranges(at)} of its parent, where the pull request's lines sit at ${ranges(placed)}`) : C(`its changes miss the pull request's lines, which sit at ${ranges(placed)} of its parent`);
 }
 
 // ---------- one pull request ----------
@@ -450,19 +474,24 @@ function namesPull(line, pull, own, repo) {
   return REVERT_WORDS.test(line) && title.length >= 8 && line.toLowerCase().includes(title);
 }
 
+// Whether a line reads as a fix, revert or follow-up once the pull
+// request's own title (or a subject of its commits) is taken out of it.
+function readsBesideTitle(line, pull, own) {
+  let l = String(line ?? "").replace(/\s+/g, " ").toLowerCase();
+  for (const t of [pull.title, ...own.map((c) => c.subject)].map(normTitle).filter((x) => x.length >= 8)) l = l.split(t).join(" ");
+  return reads(l);
+}
+
 // Whether a commit message names the pull request as a fix, revert or
-// follow-up: it reads as one, and a line that names the pull request does
-// more than quote its title. `named` says GitHub already found the
-// pull request named in it (a timeline reference), so the subject stands
-// for the naming line when no line matches here.
+// follow-up: a line that names it reads as one, its quoted title aside (a
+// fix word on another line is about something else). `named` says GitHub
+// already found the pull request named in it (a timeline reference), so
+// the subject stands for the naming line when no line matches here.
 function namesAsFix(message, pull, own, repo, { named = false } = {}) {
   const lines = String(message ?? "").split("\n");
   let naming = lines.filter((l) => namesPull(l, pull, own, repo));
   if (naming.length === 0 && named) naming = [lines[0]];
-  // No line names it, or every one only quotes its title (an empty list
-  // passes every()).
-  if (naming.every((l) => quotesIt(l, pull, own))) return false;
-  return reads(message);
+  return naming.some((l) => readsBesideTitle(l, pull, own));
 }
 
 const commitUrl = (repo, sha) => `https://github.com/${repo}/commit/${sha}`;
@@ -497,7 +526,7 @@ export function candidateEntry({ pull, repo, group, language, licence, evidence 
   };
   entry.hash = entryHash(entry);
   entry.id = realCaseId("clean", entry.name, entry.hash);
-  return { ...entry, evidence };
+  return { ...entry, evidenceSha256: sha256(canonicalJson(evidence ?? null)), evidence };
 }
 
 // Checks one merged pull request against the rule: { entry } for a
@@ -529,7 +558,7 @@ function evaluate(item, { repo, defaultBranch, group, language, licence, sizeRan
   const own = read("prCommits", PATHS.prCommits(repo, n)).body ?? [];
   const isOwn = (sha) => sha === pull.mergeCommit || own.some((c) => c.sha === sha);
 
-  // Commits that name it, and issues or pull requests that link it (failure 2).
+  // Commits that name it, and issues or pull requests that link it (failure 3).
   const timeline = read("timeline", PATHS.timeline(repo, n));
   if (!closedOn(timeline.readOn, until)) return out(WHY.open, `its timeline was read on ${timeline.readOn}, and its ${DAYS} days end on ${until}`);
   const referenced = [];
@@ -547,11 +576,11 @@ function evaluate(item, { repo, defaultBranch, group, language, licence, sizeRan
     if (String(s.repo ?? "").toLowerCase() === repo.toLowerCase() && s.number === n) continue;
     if (!within(s.createdAt, pull.mergedAt, until)) continue;
     const rec = { ref: `${s.repo}#${s.number}`, url: `https://github.com/${s.repo}/${s.kind === "issue" ? "issues" : "pull"}/${s.number}`, kind: s.kind, createdAt: s.createdAt, title: s.title, labels: [...s.labels].sort(byBytes), copy: quotesIt(s.title, pull, own) };
-    if (!rec.copy && (s.labels.some((l) => BUG_LABEL.test(l)) || reads(s.title))) return out(WHY.linked, `${s.kind} ${rec.ref} "${s.title}"${rec.labels.length ? ` (labels ${rec.labels.join(", ")})` : ""}, opened ${s.createdAt} (${rec.url})`);
+    if (readsBesideTitle(s.title, pull, own) || (!rec.copy && s.labels.some((l) => BUG_LABEL.test(l)))) return out(WHY.linked, `${s.kind} ${rec.ref} "${s.title}"${rec.labels.length ? ` (labels ${rec.labels.join(", ")})` : ""}, opened ${s.createdAt} (${rec.url})`);
     linked.push(rec);
   }
 
-  // Later commits on the default branch that touch its files (failures 1, 6, 7).
+  // Later commits on the default branch that touch its files (failures 1, 2, 3, 7, 8).
   const files = [...(read("prFiles", PATHS.prFiles(repo, n)).body ?? [])].sort((a, b) => byBytes(a.filename, b.filename));
   const fileEvidence = [];
   let laterTotal = 0;
@@ -559,44 +588,28 @@ function evaluate(item, { repo, defaultBranch, group, language, licence, sizeRan
   for (const f of files) {
     const hist = read("history", PATHS.history(repo, defaultBranch, f.filename, pull.mergedAt, until));
     if (!closedOn(hist.readOn, until)) return out(WHY.open, `the history of ${f.filename} was read on ${hist.readOn}, and its ${DAYS} days end on ${until}`);
-    const later = (hist.body ?? []).filter((c) => within(c.date, pull.mergedAt, until) && !isOwn(c.sha) && !quotesIt(c.subject, pull, own)).reverse();
-    // The commits read line by line, and the others, one line each:
-    // "<sha> <date> <subject>".
+    // Every later commit on the default branch that touches the file is
+    // read, whatever its message says, oldest first.
+    const later = (hist.body ?? []).filter((c) => within(c.date, pull.mergedAt, until) && !isOwn(c.sha)).reverse();
     const checked = [];
-    const others = [];
-    // A removed file ends its history: no later commit can touch its lines.
-    // A renamed one goes on under a name this history does not follow.
-    if (later.length > 0 && f.status !== "removed") {
-      const newest = read("commit", PATHS.commit(repo, later.at(-1).sha)).body;
-      const moved = newest?.files.find((x) => x.status === "renamed" && x.previousFilename === f.filename);
-      if (moved) return out(WHY.unfollowed, `${f.filename} renamed to ${moved.filename} by ${short(newest.sha)} "${subjectOf(newest.message)}" on ${newest.date} (${commitUrl(repo, newest.sha)})`);
-    }
     for (const c of later) {
-      if (!reads(c.subject)) {
-        others.push(`${c.sha} ${c.date} ${c.subject}`);
-        continue;
-      }
-      fixTotal++;
       const url = commitUrl(repo, c.sha);
+      const at = `${short(c.sha)} "${c.subject}" on ${c.date} (${url})`;
       const commit = read("commit", PATHS.commit(repo, c.sha)).body;
-      if (commit === null) return out(WHY.touched, `${short(c.sha)} "${c.subject}" on ${c.date}, ${f.filename}: GitHub lists it in the file's history and answers 404 for it, so its change cannot be read; counted as touched`);
-      if (namesAsFix(commit.message, pull, own, repo)) return out(WHY.named, `${short(c.sha)} "${c.subject}" on ${c.date} (${url})`);
-      // A merge into another branch (its first parent does not hold the
-      // pull request) changes nothing on the default branch's line.
-      let how = null;
-      if (commit.parents.length > 1 && pull.mergeCommit) {
-        const cmp = read("compare", PATHS.compare(repo, pull.mergeCommit, commit.parents[0])).body;
-        if (cmp && (cmp.status === "behind" || cmp.status === "diverged")) how = "a merge into another branch: its first parent does not hold the pull request";
-      }
-      if (how === null) {
-        const t = touches(f, pull, commit, repo, read);
-        if (t.touched) return out(WHY.touched, `${short(c.sha)} "${c.subject}" on ${c.date} (${url}), ${f.filename}: ${t.how}`);
-        how = t.how;
-      }
-      checked.push({ sha: c.sha, url, date: c.date, subject: c.subject, touched: false, how });
+      if (commit === null) return out(WHY.unplaced, `${at}, ${f.filename}: GitHub lists it in the file's history and answers 404 for it, so its change cannot be read`);
+      if (namesAsFix(commit.message, pull, own, repo)) return out(WHY.named, at);
+      const cf = commit.files.find((x) => x.filename === f.filename) ?? commit.files.find((x) => x.previousFilename === f.filename) ?? null;
+      if (cf === null && commit.filesCapped) return out(WHY.tooLarge, `${at}: it changes 300 files or more, and its list as GitHub serves it leaves out ${f.filename}`);
+      // A renamed file goes on under a name this history does not follow.
+      if (cf?.status === "renamed" && cf.previousFilename === f.filename && f.status !== "removed") return out(WHY.unfollowed, `${f.filename} renamed to ${cf.filename} by ${at}`);
+      const t = touches(f, pull, commit, cf, repo, read);
+      if (t.result === "touched") return out(WHY.touched, `${at}, ${f.filename}: ${t.how}`);
+      if (t.result === "unplaced") return out(WHY.unplaced, `${at}, ${f.filename}: ${t.how}`);
+      if (reads(commit.message)) fixTotal++;
+      checked.push({ sha: c.sha, url, date: c.date, subject: c.subject, how: t.how });
     }
     laterTotal += later.length;
-    fileEvidence.push({ path: f.filename, status: f.status, changedLines: (f.additions ?? 0) + (f.deletions ?? 0), laterCommits: later.length, fixChecked: checked, others });
+    fileEvidence.push({ path: f.filename, status: f.status, changedLines: (f.additions ?? 0) + (f.deletions ?? 0), laterCommits: checked });
   }
 
   const evidence = {
@@ -729,11 +742,21 @@ export const writeCandidates = (result, { root = benchRoot } = {}) => writeFiles
 
 // ---------- the sheet ----------
 
+// The version of the candidates a sheet shows, and a ruling binds to: the
+// first 12 hex of the sha256 of candidates.json as list writes it.
+export const candidatesVersion = (bytes) => sha256(bytes).slice(0, 12);
+const versionOfFile = (file) => candidatesVersion(`${JSON.stringify(file, null, 2)}\n`);
+const SHEET_ID = /^clean@(\d+)@([0-9a-f]{12})$/;
+export const evidenceHash = (candidate) => sha256(canonicalJson(candidate.evidence ?? null));
+
 // The candidates for a person, in a seeded shuffle: { sheet, suite, seed,
-// items }, each item with the change, its evidence and nothing from a run.
+// version, items }, each item with the change, its evidence and nothing
+// from a run. The sheet id names the version of the candidates it shows.
 export function cleanSheet(file, { seed }) {
+  const version = versionOfFile(file);
   return {
-    sheet: `clean@${seed}`,
+    sheet: `clean@${seed}@${version}`,
+    version,
     suite: "clean",
     seed,
     items: drawAudit(file.candidates, file.candidates.length, seed).map((c, i) => ({
@@ -749,9 +772,28 @@ export function cleanSheet(file, { seed }) {
       baseSha: c.baseSha,
       headSha: c.headSha,
       mergedAt: c.mergedAt,
+      evidenceSha256: evidenceHash(c),
       evidence: c.evidence,
     })),
   };
+}
+
+// What a clean or not-clean ruling on a clean candidate binds to (failure
+// 10): the version of the candidates the sheet showed, which must be the
+// current one, and the candidate's evidence as that version holds it.
+// queue.mjs decide records the binding; returns { problem } when the ruling
+// may not be recorded, else { evidence } for the ruling line.
+export function cleanRulingBinding(caseId, sheet, { root = benchRoot } = {}) {
+  const path = join(root, CANDIDATES);
+  if (!existsSync(path)) return { problem: `${path} is missing, so ${caseId} is no candidate; run node benchmark/ingest/clean.mjs list` };
+  const bytes = readFileSync(path);
+  const version = candidatesVersion(bytes);
+  const m = SHEET_ID.exec(String(sheet ?? ""));
+  if (!m) return { problem: `a ruling on a clean candidate names the sheet it was made on, as the sheet prints it (--sheet clean@<seed>@<version>), not ${JSON.stringify(sheet ?? null)}; print it with node benchmark/ingest/clean.mjs sheet` };
+  if (m[2] !== version) return { problem: `the sheet ${sheet} shows version ${m[2]} of the candidates, and ${CANDIDATES} is now version ${version}; print the sheet again and rule from it` };
+  const c = JSON.parse(bytes.toString("utf8")).candidates.find((x) => x.id === caseId);
+  if (!c) return { problem: `${caseId} is no candidate of ${CANDIDATES} version ${version}` };
+  return { evidence: { text: null, lines: null, sha256: evidenceHash(c) } };
 }
 
 export function sheetMarkdown(s) {
@@ -766,14 +808,16 @@ export function sheetMarkdown(s) {
     "node benchmark/ingest/clean.mjs admit",
     "```",
     "",
+    `A ruling binds to this sheet's version of the candidates (${s.version}) and to each candidate's evidence: if node benchmark/ingest/clean.mjs list writes them again with any change, admit refuses the ruling, and the sheet is printed and ruled again.`,
+    "",
   ];
   for (const x of s.items) {
     const e = x.evidence;
-    out.push(`## ${x.item}. ${x.title}`, "", `- Case: ${x.caseId}`, `- Change: ${x.prUrl}/files (${x.changeLines} changed lines in ${plural(e.pull.changedFiles, "file")}, ${x.language})`, `- Commits: base ${x.baseSha}, head ${x.headSha}; merged ${x.mergedAt} as ${e.pull.mergeCommitUrl ?? "no merge commit GitHub names"}`, `- Licence: ${x.licence}${x.licenceClass === "unverified" ? " (unverified: private runs only)" : ""}`, `- Reviews by others: ${e.reviews.byOthers} (${Object.entries(e.reviews.states).sort((a, b) => byBytes(a[0], b[0])).map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")}); none requested changes`, `- Checked up to ${e.window.until} (read ${e.readOn}): ${plural(e.checked.laterCommits, "later commit")} on its files, ${e.checked.fixOrRevertCommits} reading as a fix, revert or follow-up, none touching its lines`);
+    out.push(`## ${x.item}. ${x.title}`, "", `- Case: ${x.caseId} (evidence ${x.evidenceSha256.slice(0, 12)})`, `- Change: ${x.prUrl}/files (${x.changeLines} changed lines in ${plural(e.pull.changedFiles, "file")}, ${x.language})`, `- Commits: base ${x.baseSha}, head ${x.headSha}; merged ${x.mergedAt} as ${e.pull.mergeCommitUrl ?? "no merge commit GitHub names"}`, `- Licence: ${x.licence}${x.licenceClass === "unverified" ? " (unverified: private runs only)" : ""}`, `- Reviews by others: ${e.reviews.byOthers} (${Object.entries(e.reviews.states).sort((a, b) => byBytes(a[0], b[0])).map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")}); none requested changes`, `- Checked up to ${e.window.until} (read ${e.readOn}): ${plural(e.checked.laterCommits, "later commit")} on its files, each read line by line (${e.checked.fixOrRevertCommits} reading as a fix, revert or follow-up), none touching its lines`);
     for (const f of e.files) {
-      if (f.laterCommits === 0) continue;
-      out.push(`- Later commits on ${f.path}: ${f.laterCommits}${f.others.length ? `, ${f.others.length} with no fix word (listed in ${CANDIDATES})` : ""}`);
-      for (const c of f.fixChecked) out.push(`  - ${c.date} ${c.url} "${c.subject}": ${c.how}`);
+      if (f.laterCommits.length === 0) continue;
+      out.push(`- Later commits on ${f.path}:`);
+      for (const c of f.laterCommits) out.push(`  - ${c.date} ${c.url} "${c.subject}": ${c.how}`);
     }
     if (e.referencedCommits.length > 0) out.push(`- Later commits naming it (quoting its title, or with no fix word): ${e.referencedCommits.map((c) => `${c.url} "${c.subject}"`).join("; ")}`);
     if (e.linkedLater.length > 0) out.push(`- Later issues and pull requests linking it (no bug label or fix word): ${e.linkedLater.map((l) => `${l.url} "${l.title}"`).join("; ")}`);
@@ -784,7 +828,7 @@ export function sheetMarkdown(s) {
 
 // ---------- admit ----------
 
-// The clean suite from the candidates and the rulings in force (failure 4):
+// The clean suite from the candidates and the rulings in force (failures 5 and 10):
 // { suite, split, report, files }.
 export function admitClean({ root = benchRoot, queue = join(root, "review-queue") } = {}) {
   const candidatesPath = join(root, CANDIDATES);
@@ -793,6 +837,8 @@ export function admitClean({ root = benchRoot, queue = join(root, "review-queue"
   const split = readJson(join(root, SUITES.aacr.split));
   const d = readDecisions(join(queue, "decisions.jsonl"));
   const R = resolveRulings(d.lines, d.people);
+  const version = candidatesVersion(readFileSync(candidatesPath));
+  const moved = [];
   const seen = new Set();
   const admitted = [];
   const notClean = [];
@@ -807,15 +853,22 @@ export function admitClean({ root = benchRoot, queue = join(root, "review-queue"
     if (licenceWhy) throw new Error(`refused: ${c.id}: ${licenceWhy}`);
     const ruling = R.cases.get(c.id);
     if (!ruling) unruled.push(c);
-    else if (ruling.status === "clean") admitted.push({ c, line: d.lines[ruling.n - 1], n: ruling.n });
-    else notClean.push(c);
+    else if (ruling.status === "clean") {
+      // Failure 10: the ruling binds to the evidence and the sheet's version.
+      const line = d.lines[ruling.n - 1];
+      const ruledOn = SHEET_ID.exec(String(line.fromSheet ?? ""))?.[2] ?? null;
+      if (line.evidence?.sha256 !== evidenceHash(c)) moved.push(`${c.name}: its evidence moved since the ruling on sheet ${line.fromSheet ?? "(none)"} (line ${ruling.n} of the adjudication file), or the ruling holds none`);
+      else if (ruledOn !== version) moved.push(`${c.name}: ruled clean on sheet ${line.fromSheet ?? "(none)"}, and the candidates are now version ${version}`);
+      else admitted.push({ c, line, n: ruling.n });
+    } else notClean.push(c);
   }
+  if (moved.length > 0) throw new Error(`refused: a clean ruling binds to the sheet it was made on and to the candidate's evidence, and for ${plural(moved.length, "candidate")} one of them moved; print the sheet again (node benchmark/ingest/clean.mjs sheet) and rule again:\n  ${moved.join("\n  ")}`);
   const ids = new Set(cand.candidates.map((c) => c.id));
   const stray = [...R.cases.keys()].filter((id) => id.startsWith("clean/") && !ids.has(id)).sort(byBytes);
 
   const cases = admitted.map(({ c, line, n }) => {
     const { evidence: _evidence, ...entry } = c;
-    return { ...entry, ruling: { by: line.by, at: line.at, sheet: line.fromSheet ?? null, note: line.note ?? "", decisionsLine: n } };
+    return { ...entry, ruling: { by: line.by, at: line.at, sheet: line.fromSheet ?? null, evidenceSha256: line.evidence.sha256, note: line.note ?? "", decisionsLine: n } };
   });
   const suite = {
     version: 1,

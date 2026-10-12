@@ -335,20 +335,21 @@ A clean control is a real change with nothing a reviewer should raise: a review 
 ```
 node benchmark/ingest/clean.mjs list [--offline]     # candidates and their evidence
 node benchmark/ingest/clean.mjs sheet [--seed S]     # the candidates for a person, with the commands to rule
-node benchmark/queue.mjs decide clean|not-clean <case id> --by <your name> --sheet clean@S
+node benchmark/queue.mjs decide clean|not-clean <case id> --by <your name> --sheet clean@S@<version>
 node benchmark/ingest/clean.mjs admit                # the suite, from the rulings
 ```
 
 - `list` takes pull requests from the development repository groups of the AACR split only. It reads GitHub through `gh api` and caches every answer. In each group, it takes the pull requests merged into the default branch from 2026-01-01 to 2026-03-31 in a seeded order, and lists at most 2 (checking at most 12).
 - A pull request is a candidate when it passes every check. It is not by a bot. It changes as many lines as AACR's usable cases, from the fewest to the most. Someone other than its author reviewed it, and no review asked for changes. Its licence is usable. In the 90 days after its merge:
-  - no later commit names it as a fix, revert or follow-up (a line that only quotes its title, as a backport or a release note does, does not count);
-  - no later issue or pull request that links it is labelled or titled as a bug, fix or revert;
+  - no later commit or linking issue or pull request names it as a fix, revert or follow-up on the line that names it (its quoted title aside, so a backport or release-note line does not count, and a fix word on another line is about something else), and no linking issue or pull request is labelled as a bug;
   - none of its files is renamed (a later fix under the new name would be missed);
-  - no later commit on the default branch that reads as a fix, revert or follow-up changes one of its lines, or inserts next to one.
-- To place the pull request's lines in a later commit's parent, `list` diffs the file at the pull request's head against that parent. A line that cannot be placed counts as touched.
+  - no later commit on the default branch changes, removes or inserts next to one of its lines, whatever its message says.
+- `list` reads every later commit on the pull request's files. To place the pull request's lines in a commit's parent, it diffs the file at the pull request's head against that parent. A line it cannot follow excludes the pull request, unless GitHub's compare shows that the parent does not hold the pull request's merge (a commit on another branch's line). A commit of 300 files or more whose file list leaves out the file excludes it as too large to check.
 - `list` writes `benchmark/suites/clean/candidates.json` (each candidate as a suite entry with its evidence: links, dates and the commits checked) and `benchmark/suites/clean/ingest-report.txt` (the inclusion and exclusion counts, by reason).
 - A candidate is not a case. `admit` writes `benchmark/suites/clean/cases.json` and `benchmark/splits/clean-v1.json` from the candidates whose latest ruling is `clean`, signed by a person on `people.json`. It refuses a candidate from a held-out group.
 - A ruling names the candidate's id, which hashes its commits and size. A candidate that changes gets a new id and needs a new ruling.
+- A ruling also names the sheet it was made on. `decide` refuses a sheet that does not show the current version of `candidates.json`, and records the candidate's evidence hash. `admit` refuses a clean ruling, naming the candidate, when the candidates have a new version or the candidate's evidence moved since the ruling; the sheet is printed and ruled again.
+- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name (class `unverified`) may run privately, and publishing refuses a run that holds one (`publishRefusal`).
 - Every read of the suite refuses an entry without a standing `clean` ruling, so an entry added by hand stops every run of the suite.
 - No candidate has been ruled yet, so the suite holds no case.
 
