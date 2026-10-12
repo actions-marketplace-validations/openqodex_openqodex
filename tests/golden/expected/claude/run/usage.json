@@ -1,0 +1,27 @@
+{
+  "calls": [
+    {
+      "callId": "claude-1",
+      "reviewer": "primary",
+      "purpose": "brief",
+      "attempt": 1,
+      "model": null,
+      "inputTokens": null,
+      "outputTokens": null,
+      "costUsd": 0.01,
+      "outcome": "ok",
+      "durationMs": "<DURATION_MS>"
+    }
+  ],
+  "totals": {
+    "attempts": 1,
+    "invoked": 1,
+    "failed": 0,
+    "refused": 0,
+    "inputTokens": null,
+    "outputTokens": null,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "costUsd": 0.01
+  }
+}

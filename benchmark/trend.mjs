@@ -137,6 +137,7 @@ import { externalRefusals, inputDifferences } from "./lib/external.mjs";
 import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
 import { ISSUE_METRICS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
 import { isPersonName, readPeople } from "./lib/rulings.mjs";
+import { claudeRunModels, savedSampleRows } from "./lib/runner.mjs";
 import { canonical, rulesDifferences } from "./lib/score.mjs";
 
 // Who may accept a run: the people of the adjudication file's folder.
@@ -576,6 +577,12 @@ export function acceptRun({ index = indexRoot, results = resultsRoot, runId, by,
   const why = acceptRefusals(entry);
   if (why.length === 0) why.push(...runMismatch(entry, results));
   if (why.length > 0) throw new Refusal(`refused: ${runId} cannot be accepted:\n${why.map((w) => `- ${w}`).join("\n")}`);
+  if (entry.mode !== "scan" && entry.reviewers?.claude) {
+    // The index entry keeps no requested model; the run folder's manifest, checked above, does.
+    const requested = JSON.parse(readFileSync(join(results, runId, "manifest.json"), "utf8")).reviewers?.claude?.requestedModel ?? null;
+    const observed = claudeRunModels(savedSampleRows(join(results, runId)), requested);
+    if (observed.why) throw new Refusal(`refused: ${runId} cannot be accepted: ${observed.why}`);
+  }
   const marked = { ...entry, accepted: true, acceptedAt: now, acceptedBy: by };
   const written = writeEntry(marked, join(index, "runs"));
   const record = { runId, commit: entry.build.commit, scoreHash: scoreHash(marked), acceptedAt: now, acceptedBy: by };

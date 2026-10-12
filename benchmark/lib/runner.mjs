@@ -301,7 +301,14 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
       elapsedMin: Math.round((Date.now() - started) / 600) / 100,
     };
     const more = finish();
-    if (resume) appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended, ...more })}\n`);
+    // A model refusal stops a run that finished; a halt or a budget stop keeps
+    // its own reason, and the refusal is recorded beside it.
+    const refused = Boolean(more.modelRefusal) && how === "finished";
+    if (refused) { ended.how = "stopped"; ended.why = more.modelRefusal; }
+    if (resume) {
+      if (more.reviewers) writeFileSync(manifestPath, `${JSON.stringify({ ...readJsonFile(manifestPath), ...more, ...(refused ? { ended } : {}) }, null, 2)}\n`);
+      appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended, ...more })}\n`);
+    }
     else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ...more, ended }, null, 2)}\n`);
     return { ended, ran: total };
   } finally {
@@ -349,8 +356,47 @@ export function failureOf(result, report) {
   return null;
 }
 
+// Failure list: requested models replace served ones, mixed usage looks single,
+// absent usage looks known, reviewer-written text supplies a model, and a
+// review Claude Code never answered (a timeout, a stop) makes a run unknown.
+export const CLAUDE_MODEL_FROM = "the usage record Claude Code returned for this review";
+
+// A round Claude Code answered names its models; a round that failed before
+// Claude Code's result names none. A review with no answered round is "none".
+export function claudeModels(usage) {
+  const calls = Array.isArray(usage?.calls) ? usage.calls : [];
+  const names = (c) => (typeof c.model === "string" ? c.model.split(",").map((m) => m.trim()).filter(Boolean) : []);
+  const models = [...new Set(calls.flatMap(names))].sort();
+  const unknown = calls.some((c) => c.outcome !== "failed" && names(c).length === 0);
+  const modelStatus = models.length > 1 ? "mixed" : unknown ? "unknown" : models.length === 1 ? "known" : "none";
+  return { model: models.length > 1 ? models : modelStatus === "known" ? models[0] : null, models, modelFrom: CLAUDE_MODEL_FROM, modelStatus };
+}
+
+export function claudeRunModels(rows, requested = null) {
+  const samples = rows.filter((r) => r.reviewer === "claude");
+  const models = [...new Set(samples.flatMap((r) => Array.isArray(r.model) ? r.model : typeof r.model === "string" ? [r.model] : r.models ?? []))].sort();
+  const unknown = models.length === 0 || samples.some((r) => r.modelFrom !== CLAUDE_MODEL_FROM || (r.modelStatus !== "none" && r.model == null));
+  const why = models.length > 1 ? `Claude Code samples have mixed models: ${models.join(", ")}` : unknown ? "Claude Code samples have an unknown per-review model" : requested && models[0] !== requested ? `Claude Code requested model ${requested}, but samples were served by ${models[0]}` : null;
+  return { model: models.length === 1 && !unknown ? models[0] : null, models, modelFrom: CLAUDE_MODEL_FROM, why };
+}
+
+// Reads sample.json rather than rows.jsonl, which a crash can leave behind.
+export function savedSampleRows(out) {
+  const rows = [];
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, e.name);
+      if (e.isDirectory()) walk(path);
+      else if (e.name === "sample.json") rows.push(JSON.parse(readFileSync(path, "utf8")));
+    }
+  };
+  walk(join(out, "samples"));
+  return rows;
+}
+
 // The saved record of one attempt, whatever happened to it.
-export function sampleRecord({ job, attempt, result, report, who, startedAt, failure, stopped }) {
+export function sampleRecord({ job, attempt, result, report, who, startedAt, failure, stopped, usageRecord = null }) {
   return {
     jobId: job.jobId ?? null,
     caseId: job.caseId ?? null,
@@ -371,6 +417,7 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
     stopped: stopped ?? null,
     verdict: report?.verdict ?? null,
     reviewerUsed: who ?? null,
+    ...(job.reviewer === "claude" ? claudeModels(usageRecord) : {}),
     findings: report ? report.findings.length + (report.outside_change?.length ?? 0) : null,
     usage: report?.completion?.reviewer?.usage ?? null,
     reviewerMs: report?.completion?.reviewer?.duration_ms ?? null,
@@ -437,7 +484,7 @@ export function resumeProblems(earlier, now) {
     // answered review, which a new invocation does not know yet; the model it
     // asks for is what must match. The served id is held by
     // lib/server-review.mjs recordServed.
-    if (e?.kind === "model" || w?.kind === "model") same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
+    if (e?.kind === "model" || w?.kind === "model" || (n === "claude" && e?.modelFrom === CLAUDE_MODEL_FROM)) same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
     else same(`${n} model`, e?.model, w?.model);
     // A model reviewer's settings (effort, maxOutputTokens), the alias that
     // named it and the scripted model's script.

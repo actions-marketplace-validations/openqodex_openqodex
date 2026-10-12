@@ -96,6 +96,7 @@ import { SCAN_RULES, scanRegressions, scoreScanAttempts } from "./lib/scan-score
 import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value, wordingBlock } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
 import { readAacrOutside } from "./lib/aacr-board.mjs";
+import { claudeRunModels } from "./lib/runner.mjs";
 
 const readJson = (path) => {
   try {
@@ -336,7 +337,11 @@ export function scoreRun(run, { decisionsHash = null, decisions = [], people = [
     mode: m.mode ?? "review",
     path: m.path ?? "laptop",
     build: m.build ?? null,
-    reviewers: m.reviewers ?? (m.reviewer ? { [m.reviewer.name]: m.reviewer } : null),
+    reviewers: (() => {
+      const reviewers = m.reviewers ?? (m.reviewer ? { [m.reviewer.name]: m.reviewer } : null);
+      if (!reviewers?.claude) return reviewers;
+      return { ...reviewers, claude: { ...reviewers.claude, model: claudeRunModels(run.attempts.map((a) => a.row)).model } };
+    })(),
     caseIds: s.caseIds,
     caseSetHash: s.caseIds.every((id) => parseCaseId(id) !== null) ? caseSetHash(s.caseIds) : null,
     decisionsHash,
@@ -404,6 +409,7 @@ export function renderV3(s) {
   const p = s.population;
   out.push(`Run ${s.run}`);
   out.push(`Build ${s.build?.short ?? "unknown"} (openqodex ${s.build?.cliVersion ?? "unknown"}${s.build?.dirty ? ", built from a tree the commit does not hold" : ""}); suite ${s.suite}, split ${s.split}; scoring rules version ${s.rules.version} (${s.rules.hash.slice(0, 12)}).`);
+  if (s.reviewers?.claude) out.push(`Claude Code model: ${s.reviewers.claude.model ?? "unknown"}.`);
   out.push(`Population: ${p.planned} planned reviews (${p.jobsFrom === "manifest" ? "from the manifest's jobs" : "derived from the manifest's cases, configurations and repeats, since it lists no jobs"}), each scored by its first attempt: ${p.complete} complete, ${p.incomplete} incomplete, ${p.failed} failed, ${p.unstarted} never started. ${p.retries} retries, scored apart${p.retries > 0 ? ` (cost ${p.retryCostUsd === null ? "unknown" : `$${p.retryCostUsd.toFixed(2)}`})` : ""}.`);
   if (p.unplanned.length > 0) out.push(`Left out: ${p.unplanned.length} first attempts of no planned review (${p.unplanned.join(", ")}).`);
   if (p.unrecorded > 0) out.push(`${p.unrecorded} attempts the runner never finished recording are scored from their folders.`);
