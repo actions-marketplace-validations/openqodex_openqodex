@@ -100,8 +100,8 @@ The developer can ask you to add a scanner by its GitHub link. You write the con
 2. If it cannot write SARIF, find the flag that makes it write one JSON document. JSON Lines and plain text cannot be read.
 3. Find how it installs. OpenQodex can use a GitHub release file for macOS or Linux. It can also use an exact npm or PyPI version, or a program on `PATH`.
 4. Add the entry under `scanners.custom` in `.openqodex/config.yaml`.
-5. Ask the developer to approve it. The skill's rule: never run `openqodex trust` without asking the developer first.
-6. After the approval, run `openqodex scan --only custom:<name>`. Tell the developer its status and its findings.
+5. Ask the developer to approve it with `~/.openqodex/bin/openqodex trust`. The skill's rule: never run `openqodex trust` without asking the developer first.
+6. After the approval, run `~/.openqodex/bin/openqodex scan --only custom:<name>`. Tell the developer its status and its findings.
 
 An entry with SARIF output:
 
@@ -130,9 +130,9 @@ The keys:
 
 `{report}` in `run` is the file the scanner writes its report to. With no `{report}`, OpenQodex reads the report from the scanner's standard output. `{target}` is the changed files, or the repository root with `target: repo`. `{repo}` is the repository root.
 
-Tell the developer when a scanner is not compatible, and why. A custom scanner never runs in the GitHub Action, because no approval exists there.
+Tell the developer when a scanner is not compatible, and why. The GitHub Action runs a custom scanner only on a runner that holds an approval. A GitHub-hosted runner never does.
 
-`openqodex guide custom-scanners` gives the asset rules, the `json-map` example and what the stored hash proves.
+`~/.openqodex/bin/openqodex guide custom-scanners` gives the asset rules, the `json-map` example and what the stored hash proves.
 
 ## Configure the repository
 
@@ -148,7 +148,7 @@ The config belongs to the team. Change it only when the developer asks.
 
 Write what a reviewer of this repository must know in `.openqodex/custom-instructions.md`. The review brief quotes it word for word.
 
-`openqodex guide config` lists every key.
+`~/.openqodex/bin/openqodex guide config` lists every key.
 
 ## Messages and what to do
 

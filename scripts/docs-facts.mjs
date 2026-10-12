@@ -71,16 +71,20 @@ for (const rel of [README, "docs/index.md", "docs/scanners.md", "docs/for-agents
 }
 
 // 2. The scanner table and the README's category counts.
+// Outer pipes are optional in Markdown, so each is cut only when present.
 function tableRows(text, start, end) {
-  const from = text.indexOf(start);
+  let from = text.indexOf(start);
+  if (from === -1) return null;
+  from = text.lastIndexOf("\n", from) + 1;
   const to = text.indexOf(end, from + 1);
-  if (from === -1 || to === -1) return null;
+  if (to === -1) return null;
   return text
     .slice(from, to)
     .split("\n")
-    .filter((l) => l.startsWith("|") && !/^\|\s*-/.test(l))
+    .map((l) => l.trim())
+    .filter((l) => l.includes("|") && !/^\|?\s*:?-+/.test(l))
     .slice(1)
-    .map((l) => l.slice(1, -1).split("|").map((c) => c.trim()));
+    .map((l) => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim()));
 }
 const SCANNERS_PAGE = "docs/scanners.md";
 const rows = tableRows(read(SCANNERS_PAGE), "<!-- scanner-table:start -->", "<!-- scanner-table:end -->");
@@ -104,7 +108,7 @@ else {
 }
 const readmeText = read(README);
 const section = readmeText.slice(readmeText.indexOf("## Built-in scanners"));
-const readmeRows = tableRows(section, "| What it checks", "\n\n");
+const readmeRows = tableRows(section, "What it checks", "\n\n");
 if (readmeRows === null || readmeRows.length === 0) fail(README, `has no category table under "## Built-in scanners"`);
 else {
   let sum = 0;
@@ -119,15 +123,23 @@ else {
 // 3. What --offline skips: the adapters that refuse to run when offline.
 process.env.OPENQODEX_OFFLINE = "1";
 const offline = new Set(ADAPTERS.filter((a) => typeof a.skip === "function" && a.skip() !== null).map((a) => a.source));
-const names = [...sourceOf.keys()].sort((a, b) => b.length - a.length);
+// Each claim is the list right after "`--offline` skips": names joined by
+// commas and one "and". Every item must be a built-in scanner, and the list
+// must be exactly the set above. Lines are joined first, so wrapping a
+// sentence changes nothing.
 for (const rel of [README, "docs/for-agents.md", "skills/openqodex/SKILL.md", "docs/privacy.md", "docs/security.md"]) {
-  const sentences = read(rel).split(/(?<=\.)\s+|\n/).filter((s) => s.includes("`--offline` skips"));
-  if (sentences.length === 0) fail(rel, "never says what `--offline` skips");
-  for (const sentence of sentences) {
-    const named = new Set(names.filter((n) => new RegExp(`(^|[^\\w-])${n.replace(/[-]/g, "\\-")}([^\\w-]|$)`, "i").test(sentence)).map((n) => sourceOf.get(n)));
+  const text = read(rel).replace(/\s*\n\s*/g, " ");
+  const claims = [...text.matchAll(/`--offline` (?:also )?skips ((?:[\w-]+, )*[\w-]+(?: and [\w-]+)?)/g)];
+  if (claims.length === 0) fail(rel, "never says what `--offline` skips");
+  for (const [, list] of claims) {
+    const items = list.split(/, | and /);
+    const unknown = items.filter((i) => !sourceOf.has(i.toLowerCase()));
+    const named = new Set(items.map((i) => sourceOf.get(i.toLowerCase())).filter(Boolean));
     const missing = [...offline].filter((s) => !named.has(s));
     const extra = [...named].filter((s) => !offline.has(s));
-    if (missing.length || extra.length) fail(rel, `"${sentence.trim().slice(0, 90)}..." ${missing.length ? `leaves out ${missing.join(", ")}` : ""}${missing.length && extra.length ? " and " : ""}${extra.length ? `names ${extra.join(", ")}, which run offline` : ""}`);
+    if (unknown.length) fail(rel, `"\`--offline\` skips ${list}" names ${unknown.join(", ")}, which is not a built-in scanner`);
+    if (missing.length) fail(rel, `"\`--offline\` skips ${list}" leaves out ${missing.join(", ")}`);
+    if (extra.length) fail(rel, `"\`--offline\` skips ${list}" names ${extra.join(", ")}, which run offline`);
   }
 }
 
@@ -145,24 +157,43 @@ function known(command) {
   }
   return helpCache.get(command);
 }
-const FLAG_FILES = { review: ["review.ts", "../flags.ts"], scan: ["scan.ts", "../flags.ts"], doctor: ["doctor.ts", "../flags.ts"], demo: ["demo.ts", "../flags.ts"], trust: ["trust.ts", "../flags.ts"], findings: ["findings.ts", "../flags.ts"], graph: ["graph.ts", "../flags.ts"], init: ["init.ts"], update: ["update.ts"], guide: ["guide.ts", "../flags.ts"], config: ["config.ts", "../flags.ts"], report: ["report.ts", "../flags.ts"], hook: ["hook.ts"], mcp: ["mcp.ts"] };
+// A command's flags: the flag strings in its own file; the shared global
+// flags when it uses the shared parser, or only the globals it names; the
+// flag constants it imports from flags.ts; and Commander's --help. The own
+// file can hold flag strings for other programs (git's in hook.ts), so this
+// can accept a flag the command refuses; it never refuses one it takes.
+const flagsTs = read("packages/cli/src/flags.ts");
+const listOf = (name) => [...(flagsTs.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`))?.[1] ?? "").matchAll(/"(--[a-z-]+)"/g)].map((m) => m[1]);
+const GLOBALS = [...listOf("GLOBAL_VALUES"), ...listOf("GLOBAL_BOOLS")];
+const CONSTANTS = [...flagsTs.matchAll(/export const (\w+) = "(--[a-z-]+)"/g)].map((m) => [m[1], m[2]]);
 function flagsOf(command) {
-  const files = FLAG_FILES[command] ?? [`${command}.ts`];
-  const text = files.map((f) => {
-    const path = join(root, "packages/cli/src/commands", f);
-    return existsSync(path) ? readFileSync(path, "utf8") : "";
-  }).join("\n");
-  return new Set([...text.matchAll(/"(--[a-z][a-z-]*)"/g)].map((m) => m[1]));
+  const path = join(root, "packages/cli/src/commands", `${command}.ts`);
+  const text = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const flags = new Set(["--help", ...[...text.matchAll(/"(--[a-z][a-z-]*)"/g)].map((m) => m[1])]);
+  const shared = /import \{([^}]*)\} from "\.\.\/flags\.js"/.exec(text)?.[1] ?? "";
+  if (/\bparseFlags\b/.test(shared) && !/globals:\s*\[/.test(text)) for (const g of GLOBALS) flags.add(g);
+  for (const [name, flag] of CONSTANTS) if (new RegExp(`\\b${name}\\b`).test(shared)) flags.add(flag);
+  return flags;
+}
+// Each command in a code example: commands joined by &&, ||, | or ; and
+// continued lines are taken apart first.
+const PIN = String.raw`openqodex(?:@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)?`;
+const INVOCATION = new RegExp(String.raw`(?:^|[\s(])(?:npx (?:-y )?)?(?:~\/\.openqodex\/bin\/)?${PIN} ([a-z][a-z-]*)(.*)$`);
+function invocations(code) {
+  return code
+    .replace(/\\\n\s*/g, " ")
+    .split(/&&|\|\||[|;\n]/)
+    .map((segment) => INVOCATION.exec(segment))
+    .filter(Boolean)
+    .map((m) => [m[1], m[2]]);
 }
 for (const rel of [README, "docs/for-agents.md"]) {
   for (const code of splitCode(read(rel)).code) {
-    for (const m of code.matchAll(/(?:^|[\s(])(?:npx (?:-y )?)?(?:~\/\.openqodex\/bin\/)?openqodex(?:@\d+\.\d+\.\d+)? ([a-z][a-z-]*)([^\n]*)/g)) {
-      const [, command, rest] = m;
+    for (const [command, args] of invocations(code)) {
       if (!known(command)) {
         fail(rel, `\`openqodex ${command}\` is not a command the CLI's help knows`);
         continue;
       }
-      const args = rest.split(/&&|\||;/)[0];
       const flags = flagsOf(command);
       for (const flag of args.match(/(?<![\w-])--[a-z][a-z-]*/g) ?? []) {
         if (!flags.has(flag)) fail(rel, `\`openqodex ${command}\` has no flag ${flag}`);
@@ -180,8 +211,11 @@ for (const rel of AGENT_PAGES) {
 
 // 6. Links.
 const REPO = "https://github.com/openqodex/openqodex/blob/";
+// Every destination: inline links and images, a badge's outer link, and
+// reference definitions.
 function links(text) {
-  return [...splitCode(text).prose.matchAll(/!?\[[^\]]*\]\(([^)\s]+)\)/g)].map((m) => m[1]);
+  const prose = splitCode(text).prose;
+  return [...prose.matchAll(/\]\(([^)\s]+)\)/g), ...prose.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)].map((m) => m[1]);
 }
 for (const href of links(readmeText)) {
   if (!href.startsWith("https://")) fail(README, `links ${href}, which does not work on the npm page; use an absolute https link`);
@@ -189,7 +223,7 @@ for (const href of links(readmeText)) {
 const docsPages = readdirSync(join(root, "docs")).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`);
 for (const rel of [README, ...docsPages]) {
   for (const href of links(read(rel))) {
-    const path = href.split("#")[0];
+    const path = href.split(/[?#]/)[0];
     if (href.startsWith(REPO)) {
       const inRepo = path.slice(REPO.length).split("/").slice(1).join("/");
       if (inRepo && !existsSync(join(root, inRepo))) fail(rel, `links ${href}, but ${inRepo} is not in the repository`);

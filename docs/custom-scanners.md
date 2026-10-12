@@ -8,7 +8,7 @@ A custom scanner is a command that runs on your machine with your permissions. O
 
 - It writes SARIF, a standard JSON format for scanner results. Or it writes one JSON document, which a `map` block turns into findings. OpenQodex cannot read plain text, HTML or JSON Lines.
 - It installs in one of these ways: a file of its GitHub release for your system and CPU, an exact npm version, an exact PyPI version, or a program on your `PATH`.
-- It runs on your machine only. A custom scanner never runs in the GitHub Action, because no approval exists on the runner.
+- It runs only where you approved it. The approval lives in your home folder, so the GitHub Action never runs it on a GitHub-hosted runner.
 
 ## Add one
 
@@ -37,7 +37,7 @@ Bearer CLI is under the Elastic License 2.0, which is not an open source licence
 
 ## Add one through your agent
 
-Say to your agent: "add https://github.com/Bearer/bearer to OpenQodex as a custom scanner". The agent reads the scanner's README for its SARIF or JSON flag. It writes the entry in `.openqodex/config.yaml`. The openqodex skill tells it never to run `openqodex trust` without asking you first. After you approve the entry, the agent runs `openqodex scan --only custom:<name>` and tells you what it found.
+Say to your agent: "add https://github.com/Bearer/bearer to OpenQodex as a custom scanner". The agent reads the scanner's README for its SARIF or JSON flag. It writes the entry in `.openqodex/config.yaml`. The openqodex skill tells it never to run `openqodex trust` without asking you first. After you approve the entry, the agent runs `~/.openqodex/bin/openqodex scan --only custom:<name>` and tells you what it found.
 
 `for-agents` gives agents the same steps.
 

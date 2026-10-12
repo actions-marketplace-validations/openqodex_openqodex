@@ -85,7 +85,7 @@ OpenQodex collects no usage data, and the built-in scanners send no code; the [p
 
 ## Built-in scanners
 
-OpenQodex has 22 built-in scanners. A scanner runs only when your change holds a file it reads. Some scanners also read the project or folder around a changed file. OpenQodex then keeps only the findings on changed lines. Each scanner downloads on first use, pinned to one version.
+OpenQodex has 22 built-in scanners. A scanner runs only when your change holds a file it reads. Some scanners also read the project or folder around a changed file. OpenQodex then keeps only the findings on changed lines. Each scanner that needs a download gets it on first use, pinned to one version.
 
 | What it checks | Built-in scanners |
 |---|---|
@@ -113,8 +113,8 @@ You or your agent can configure a compatible scanner from GitHub. Then you appro
          target: repo
    ```
 
-2. Approve it with `openqodex trust`. It downloads the release to a quarantine folder, shows what will run, and asks yes or no.
-3. Check it with `openqodex scan --only custom:bearer`. The next review includes it.
+2. Approve it with `npx openqodex trust`. It downloads the release to a quarantine folder, shows what will run, and asks yes or no.
+3. Check it with `npx openqodex scan --only custom:bearer`. The next review includes it.
 
 To use your agent, say: "add https://github.com/Bearer/bearer to OpenQodex as a custom scanner". The agent writes the entry. The skill tells it never to run `openqodex trust` without asking you first.
 
@@ -122,7 +122,7 @@ A compatible scanner meets these limits:
 
 - It writes SARIF, or one JSON document that a `map` block in the config turns into findings.
 - It installs from a GitHub release file for your system, an exact npm or PyPI version, or your `PATH`.
-- It runs on your machine only. A custom scanner never runs in the GitHub Action.
+- It runs only where you approved it. So the GitHub Action never runs it on a GitHub-hosted runner.
 
 Bearer CLI is under the Elastic License 2.0, which is not an open source licence. The [custom scanner guide](https://github.com/openqodex/openqodex/blob/main/docs/custom-scanners.md) explains every key.
 
