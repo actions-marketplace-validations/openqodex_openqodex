@@ -28,8 +28,12 @@
 //    commit.
 // 6. A case whose base and head have two merge bases (ClickHouse/ClickHouse
 //    #80345) is never built, or is built on a merge base nobody chose: the
-//    ingest freezes the one `git merge-base` prints, the case builds on it,
-//    and the proof records it beside every merge base git found.
+//    ingest freezes one by a fixed rule (the newest committer date, then the
+//    smaller commit id), the case builds on it, and the proof records it
+//    beside every merge base git found, in the rule's order, and the rule.
+// 7. Two machines freeze different merge bases for one case, because the
+//    two share a committer date and `git merge-base` alone picks by the
+//    shape of the history: the commit id breaks the tie.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -37,7 +41,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, git, gitEnv, repoRoot } from "../lib/cases.mjs";
-import { mergeBaseAncestry } from "../lib/materialise.mjs";
+import { MERGE_BASE_RULE, mergeBaseAncestry } from "../lib/materialise.mjs";
 import { materialiseOnly } from "../lib/materialise-only.mjs";
 import { SUITES, entryHash, freezeMergeBase, readCase, realCaseId } from "../lib/suites.mjs";
 import { machinePathsIn, readProofRun, summariseProofs, writeSummary } from "../proof.mjs";
@@ -253,8 +257,9 @@ describe("a summary of a saved proof folder names the summariser's checkout as t
 // pull request each merged the other's first commit, so the dataset's base
 // and the head have two merge bases. `newer` has the later committer date:
 // it is the one `git merge-base` prints alone, and the one `git diff
-// base...head` diffs against.
-function crissCross() {
+// base...head` diffs against. With `tie`, the two share a committer date,
+// and `nonce` goes into the commit messages, which changes every commit id.
+function crissCross({ tie = false, nonce = "" } = {}) {
   const dir = join(tempDir("oq-proof-up-"), "widget");
   mkdirSync(dir);
   git(dir, "init", "-q", "-b", "main");
@@ -267,14 +272,15 @@ function crissCross() {
   };
   writeFileSync(join(dir, "a.txt"), "root\n");
   git(dir, "add", "-A");
-  commit("commit", "-q", "-m", "Root");
+  commit("commit", "-q", "-m", `Root ${nonce}`);
   writeFileSync(join(dir, "main.txt"), "main one\n");
   git(dir, "add", "-A");
-  const older = commit("commit", "-q", "-m", "Main one");
+  const older = commit("commit", "-q", "-m", `Main one ${nonce}`);
   git(dir, "checkout", "-q", "-b", "feature", "HEAD~1");
   writeFileSync(join(dir, "feature.txt"), "feature one\n");
   git(dir, "add", "-A");
-  const newer = commit("commit", "-q", "-m", "Feature one");
+  if (tie) day -= 1;
+  const newer = commit("commit", "-q", "-m", `Feature one ${nonce}`);
   commit("merge", "-q", "--no-ff", "-m", "Merge main's first commit", older);
   writeFileSync(join(dir, "feature.txt"), "feature two\n");
   const headSha = commit("commit", "-q", "-am", "Feature two");
@@ -302,11 +308,12 @@ function oneCaseSuite(up) {
 }
 
 describe("a case whose base and head have two merge bases is never built, or is built on a merge base nobody chose", () => {
-  it("is refused until the ingest freezes the one git merge-base prints, then builds on it, and the proof records it beside both", { timeout: 120_000 }, () => {
+  it("is refused until the ingest freezes the newest merge base, then builds on it, and the proof records it beside both, in the rule's order", { timeout: 120_000 }, () => {
     const up = crissCross();
-    const both = [up.older, up.newer].sort();
-    expect(out(up.dir, "merge-base", "--all", up.baseSha, up.headSha).split("\n").sort()).toEqual(both);
+    expect(out(up.dir, "merge-base", "--all", up.baseSha, up.headSha).split("\n").sort()).toEqual([up.older, up.newer].sort());
     expect(out(up.dir, "merge-base", up.baseSha, up.headSha)).toBe(up.newer);
+    // Newest committer date first.
+    const both = [up.newer, up.older];
     const cache = tempDir("oq-proof-cache-");
     const s = oneCaseSuite(up);
     const refused = prove([readCase(s.id, { root: s.root })], cache).cases[0];
@@ -314,7 +321,7 @@ describe("a case whose base and head have two merge bases is never built, or is 
     expect(refused.error).toMatch(/2 merge bases .*--freeze-merge-base acme__widget-7/);
 
     const frozen = freezeMergeBase("aacr", s.name, { root: s.root, cache, allowFileUrl: true });
-    expect(frozen).toMatchObject({ frozen: true, from: s.id, mergeBaseSha: up.newer, bases: both });
+    expect(frozen).toMatchObject({ frozen: true, from: s.id, mergeBaseSha: up.newer, bases: both, rule: MERGE_BASE_RULE });
     const entry = JSON.parse(readFileSync(join(s.root, SUITES.aacr.cases), "utf8")).cases[0];
     expect(entry.mergeBaseSha).toBe(up.newer);
     expect(entry.hash).toBe(entryHash(entry));
@@ -325,10 +332,39 @@ describe("a case whose base and head have two merge bases is never built, or is 
 
     const c = readCase(frozen.to, { root: s.root });
     const proof = prove([c], cache);
-    expect(proof.cases[0]).toMatchObject({ ok: true, upstream: { mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both, mergeBaseTree: out(up.dir, "rev-parse", `${up.newer}^{tree}`) } });
+    expect(proof.cases[0]).toMatchObject({ ok: true, upstream: { mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both, mergeBaseRule: MERGE_BASE_RULE, mergeBaseTree: out(up.dir, "rev-parse", `${up.newer}^{tree}`) } });
     const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [proof], expected: expected([c]), cache });
-    expect(summary.cases[0]).toMatchObject({ ok: true, mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both });
+    expect(summary.cases[0]).toMatchObject({ ok: true, mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both, mergeBaseRule: MERGE_BASE_RULE });
     // Freezing again changes nothing.
     expect(freezeMergeBase("aacr", s.name, { root: s.root, cache, allowFileUrl: true })).toMatchObject({ frozen: false, from: frozen.to, to: frozen.to });
+  });
+
+  // Two merge bases with one committer date: `git merge-base` alone prints
+  // one of them by the shape of the history, which git does not promise, so
+  // two machines could freeze different bases. The rule breaks the tie by
+  // the smaller commit id. The history is made again with a new nonce until
+  // git's own pick is the larger id, so the test tells the rule from git.
+  it("freezes the same merge base on two machines when both merge bases share a committer date: the smaller commit id", { timeout: 120_000 }, () => {
+    let up = null;
+    for (let nonce = 0; nonce < 32 && up === null; nonce++) {
+      const made = crissCross({ tie: true, nonce: String(nonce) });
+      if (out(made.dir, "merge-base", made.baseSha, made.headSha) !== [made.older, made.newer].sort()[0]) up = made;
+    }
+    expect(up, "no nonce in 32 made git pick the larger commit id").not.toBeNull();
+    const date = (sha) => out(up.dir, "log", "-1", "--format=%ct", sha);
+    expect(date(up.older)).toBe(date(up.newer));
+    const ordered = [up.older, up.newer].sort();
+    const runs = [0, 1].map(() => {
+      const s = oneCaseSuite(up);
+      const cache = tempDir("oq-proof-cache-");
+      const frozen = freezeMergeBase("aacr", s.name, { root: s.root, cache, allowFileUrl: true });
+      const proof = prove([readCase(frozen.to, { root: s.root })], cache);
+      return { frozen, upstream: proof.cases[0].upstream };
+    });
+    for (const { frozen, upstream } of runs) {
+      expect(frozen).toMatchObject({ frozen: true, mergeBaseSha: ordered[0], bases: ordered, rule: MERGE_BASE_RULE });
+      expect(upstream).toMatchObject({ mergeBaseSha: ordered[0], mergeBaseFrom: "entry", mergeBases: ordered, mergeBaseRule: MERGE_BASE_RULE });
+    }
+    expect(runs[1].frozen.to).toBe(runs[0].frozen.to);
   });
 });

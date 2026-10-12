@@ -35,8 +35,9 @@
 // commit between it and either tip is present. Only the merge base and the
 // head are then fetched with their trees. A merge base frozen in the entry
 // must be one git finds. When git finds more than one, the entry must
-// freeze one (the ingest's --freeze-merge-base freezes the one `git
-// merge-base` prints; docs/benchmark.md).
+// freeze one (the ingest's --freeze-merge-base freezes the first by
+// MERGE_BASE_RULE: newest committer date, then the smaller commit id;
+// docs/benchmark.md).
 //
 // Failure list, written before the code:
 // 1. The built head differs from the pull request head, so AACR's lines
@@ -111,6 +112,12 @@
 //    per case (21 GB after 56 AACR cases; issue #160): every commit fetched
 //    into the tree cache gets a ref, and a cache filled before the refs gets
 //    one for each commit its shallow list names, before the next fetch.
+// 18. Two machines freeze different merge bases for one case: when two merge
+//    bases share a committer date, `git merge-base` alone picks one by the
+//    shape of the history, which git does not promise. Every merge base is
+//    listed with --all and ordered by MERGE_BASE_RULE (newest committer
+//    date, then the smaller commit id); the first is the one frozen, and
+//    the record keeps the ordered list and the rule.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -131,6 +138,9 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 // filter; the cache is then never used until a person moves it away.
 const FILTER_REFUSED = "openqodex-filter-refused";
 const FSCK = "git fsck --no-dangling";
+// How a case's merge bases are ordered, the first being the one the ingest
+// freezes when there are several (docs/benchmark.md, "Two merge bases").
+export const MERGE_BASE_RULE = "every merge base git merge-base --all finds, newest committer date first, then the smaller commit id first";
 
 // Every attribute that makes a file's bytes in the working tree differ from
 // its blob, turned off in each attempt's repository (.git/info/attributes
@@ -360,22 +370,30 @@ function chosenMergeBase(c, bases) {
   return m.mergeBaseSha ?? bases[0];
 }
 
+// The merge bases in MERGE_BASE_RULE's order, read from the commits cache:
+// newest committer date first, then the smaller commit id. `git
+// merge-base` alone prints the newest too, but on a tie it picks by the
+// shape of the history, which git does not promise (failure 18).
+function orderedMergeBases(repo, bases) {
+  if (bases.length < 2) return bases;
+  const dates = new Map(g(repo, ["log", "--no-walk=unsorted", "--format=%H %ct", ...bases], commitsEnv()).split("\n").filter(Boolean).map((l) => [l.split(" ")[0], Number(l.split(" ")[1])]));
+  for (const b of bases) if (!Number.isInteger(dates.get(b))) throw new Error(`the commits cache ${repo} gives no committer date for the merge base ${b.slice(0, 12)}`);
+  return [...bases].sort((a, b) => dates.get(b) - dates.get(a) || (a < b ? -1 : a > b ? 1 : 0));
+}
+
 // The merge bases git finds for a pull request case, on commits only (the
-// search a build runs, failure 9), and `pick`, the one `git merge-base
-// <base> <head>` prints: of several, the one with the newest committer
-// date, which `git diff <base>...<head>` diffs against. The ingest freezes
-// `pick` when there are several (lib/suites.mjs freezeMergeBase). No tree,
-// file or truth is read, so a held-out case is not logged.
+// search a build runs, failure 9), in MERGE_BASE_RULE's order, and `pick`,
+// the first. The ingest freezes `pick` when there are several
+// (lib/suites.mjs freezeMergeBase). No tree, file or truth is read, so a
+// held-out case is not logged.
 export function mergeBasesOf(c, { cache = cacheRoot(), allowFileUrl = false } = {}) {
   const why = prRefusal(c, { heldOut: true, allowFileUrl });
   if (why !== null) throw new Error(why);
   const repo = repoCachePath(cache, c, ".commits");
   mkdirSync(dirname(repo), { recursive: true });
   return withLock(`${repoCachePath(cache, c)}.lock`, () => {
-    const { bases } = findMergeBases(repo, c);
-    const pick = g(repo, ["merge-base", c.materialise.baseSha, c.materialise.headSha], commitsEnv());
-    if (!bases.includes(pick)) throw new Error(`${c.id}: git merge-base prints ${pick.slice(0, 12)}, which is not one of the merge bases ${bases.map((b) => b.slice(0, 12)).join(", ")}`);
-    return { bases, pick };
+    const bases = orderedMergeBases(repo, findMergeBases(repo, c).bases);
+    return { bases, pick: bases[0] };
   });
 }
 
@@ -458,7 +476,8 @@ export function verifyCaseRepo(c, { cache = cacheRoot(), heldOut = false, allowF
 // Builds cases/<case hash>.git from the cache: B and H are commits of the
 // upstream merge base's and head's own trees, with the harness's fixed
 // author and date, so their ids are fixed per case. The record names every
-// merge base git found beside the one the case is built on.
+// merge base git found, in MERGE_BASE_RULE's order, and the rule, beside
+// the one the case is built on.
 function buildCaseRepo(cache, c, repo, mergeBaseSha, bases) {
   const m = c.materialise;
   const upstream = {
@@ -468,6 +487,7 @@ function buildCaseRepo(cache, c, repo, mergeBaseSha, bases) {
     mergeBaseSha,
     mergeBaseFrom: m.mergeBaseSha ? "entry" : "git",
     mergeBases: bases,
+    mergeBaseRule: MERGE_BASE_RULE,
     mergeBaseTree: g(repo, ["rev-parse", `${mergeBaseSha}^{tree}`]),
     headTree: g(repo, ["rev-parse", `${m.headSha}^{tree}`]),
   };
@@ -520,7 +540,10 @@ export function caseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl
   // One lock covers both cache repositories of the upstream repository.
   return withLock(`${repo}.lock`, () => {
     if (existsSync(join(path, "materialised.json"))) return { path, record: checkedRecord(path, c), built: false };
-    const { bases, headWant } = findMergeBases(repoCachePath(cache, c, ".commits"), c);
+    const commits = repoCachePath(cache, c, ".commits");
+    const found = findMergeBases(commits, c);
+    const { headWant } = found;
+    const bases = orderedMergeBases(commits, found.bases);
     const mergeBaseSha = chosenMergeBase(c, bases);
     fetchTrees(repo, c, mergeBaseSha, headWant);
     return { path, record: buildCaseRepo(cache, c, repo, mergeBaseSha, bases), built: true };

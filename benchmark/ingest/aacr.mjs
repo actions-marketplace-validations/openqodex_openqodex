@@ -21,8 +21,9 @@
 // repository is written.
 // --freeze-merge-base <name> freezes the merge base of a case whose base and
 // head have more than one, which the materialiser refuses until one is
-// frozen: the one `git merge-base` prints (docs/benchmark.md, "Two merge
-// bases"; lib/suites.mjs freezeMergeBase). It fetches commits only from the
+// frozen: the newest by committer date, then the smaller commit id
+// (docs/benchmark.md, "Two merge bases"; lib/suites.mjs freezeMergeBase), so
+// every machine freezes the same one. It fetches commits only from the
 // case's clone URL into the clone cache and rewrites that case's entry in
 // cases.json, with its new hash and id; a later ingest keeps it.
 //
@@ -625,7 +626,7 @@ async function main(args) {
       return 2;
     }
     const r = freezeMergeBase("aacr", args[1]);
-    if (r.frozen) console.log(`${r.name}: git finds ${r.bases.length} merge bases (${r.bases.join(", ")}); froze ${r.mergeBaseSha}, the one git merge-base prints. ${r.from} is now ${r.to}.`);
+    if (r.frozen) console.log(`${r.name}: git finds ${r.bases.length} merge bases (${r.bases.join(", ")}); froze ${r.mergeBaseSha}, the first by the rule: ${r.rule}. ${r.from} is now ${r.to}.`);
     else console.log(`${r.name}: nothing frozen; ${r.mergeBaseSha ? `the entry already freezes ${r.mergeBaseSha}` : "git finds one merge base"}. The id stays ${r.from}.`);
     return 0;
   }
