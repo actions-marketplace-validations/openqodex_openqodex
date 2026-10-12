@@ -136,7 +136,11 @@ export const RULE = `A candidate is a pull request of a development repository g
 
 const byBytes = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const subjectOf = (message) => String(message ?? "").split("\n")[0].trim();
+// Upstream text (a title, a commit subject) is quoted in the sheet and the
+// candidates file, which hold no em dash by this repository's rule: the
+// character becomes a spaced hyphen, and nothing else in the quote changes.
+const plain = (text) => String(text ?? "").replace(/ *\u2014 */g, " - ");
+const subjectOf = (message) => plain(message).split("\n")[0].trim();
 const short = (sha) => String(sha ?? "").slice(0, 12);
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -176,7 +180,7 @@ const sourceOf = (s) => {
     repo: i.repository?.full_name ?? repoOfApiUrl(`${i.repository_url ?? ""}/`) ?? null,
     number: i.number,
     kind: i.pull_request ? "pull request" : "issue",
-    title: i.title ?? "",
+    title: plain(i.title),
     createdAt: i.created_at ?? null,
     labels: (i.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)).filter(Boolean),
     state: i.state ?? null,
@@ -187,8 +191,8 @@ const sourceOf = (s) => {
 // What is kept of each answer: the fields the checks and the evidence read.
 const PROJECT = {
   repo: (b) => ({ fullName: b.full_name, defaultBranch: b.default_branch }),
-  search: (b) => ({ total: b.total_count, incomplete: b.incomplete_results === true, items: (b.items ?? []).map((i) => ({ number: i.number, title: i.title ?? "", authorType: i.user?.type ?? null, createdAt: i.created_at ?? null, mergedAt: i.pull_request?.merged_at ?? null })) }),
-  pull: (b) => ({ number: b.number, url: b.html_url, title: b.title ?? "", author: b.user?.login ?? null, authorType: b.user?.type ?? null, mergedAt: b.merged_at ?? null, mergeCommit: b.merge_commit_sha ?? null, base: b.base?.ref ?? null, baseSha: b.base?.sha ?? null, headSha: b.head?.sha ?? null, additions: b.additions, deletions: b.deletions, changedFiles: b.changed_files, commits: b.commits, createdAt: b.created_at ?? null }),
+  search: (b) => ({ total: b.total_count, incomplete: b.incomplete_results === true, items: (b.items ?? []).map((i) => ({ number: i.number, title: plain(i.title), authorType: i.user?.type ?? null, createdAt: i.created_at ?? null, mergedAt: i.pull_request?.merged_at ?? null })) }),
+  pull: (b) => ({ number: b.number, url: b.html_url, title: plain(b.title), author: b.user?.login ?? null, authorType: b.user?.type ?? null, mergedAt: b.merged_at ?? null, mergeCommit: b.merge_commit_sha ?? null, base: b.base?.ref ?? null, baseSha: b.base?.sha ?? null, headSha: b.head?.sha ?? null, additions: b.additions, deletions: b.deletions, changedFiles: b.changed_files, commits: b.commits, createdAt: b.created_at ?? null }),
   reviews: (b) => b.map((r) => ({ user: r.user?.login ?? null, state: r.state, at: r.submitted_at ?? null })),
   prCommits: (b) => b.map((c) => ({ sha: c.sha, subject: subjectOf(c.commit?.message) })),
   prFiles: (b) => b.map((f) => ({ filename: f.filename, previousFilename: f.previous_filename ?? null, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch ?? null })),

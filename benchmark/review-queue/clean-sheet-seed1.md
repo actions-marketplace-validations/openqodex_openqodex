@@ -365,7 +365,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
   - 2026-04-10T14:40:31Z https://github.com/gofr-dev/gofr/commit/5fe0011b9132270e8c3f94db1ddff03aa631984c "refactor: ensure safe cron shutdown using sync.Once and reorder application shutdown sequence": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
   - 2026-04-20T06:27:31Z https://github.com/gofr-dev/gofr/commit/3aec255ca422ab6576e7ea9c937e0fd400df03d6 "Merge pull request #3296 from NitinKumar004/test/improve-core-coverage": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
   - 2026-05-06T07:12:50Z https://github.com/gofr-dev/gofr/commit/ca648c233960bc7ad194f54a206107662ec2b88a "Merge branch 'development' into fix/crontab-goroutine-leak": its changes miss the pull request's lines, which sit at 458 to 536 of its parent
-  - 2026-05-21T12:01:22Z https://github.com/gofr-dev/gofr/commit/6950b5f20277e0f0e6dadaea0342f73fee95a81b "perf: HTTP hot-path optimizations — alloc/CPU reductions in middleware, router, OTel setup (#3431)": its changes miss the pull request's lines, which sit at 460 to 538 of its parent
+  - 2026-05-21T12:01:22Z https://github.com/gofr-dev/gofr/commit/6950b5f20277e0f0e6dadaea0342f73fee95a81b "perf: HTTP hot-path optimizations - alloc/CPU reductions in middleware, router, OTel setup (#3431)": its changes miss the pull request's lines, which sit at 460 to 538 of its parent
 - Ruling: 
 
 ## 19. Fix crash on invalid `format_regexp` in `Regexp` format

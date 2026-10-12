@@ -2804,7 +2804,7 @@
                 "sha": "6950b5f20277e0f0e6dadaea0342f73fee95a81b",
                 "url": "https://github.com/gofr-dev/gofr/commit/6950b5f20277e0f0e6dadaea0342f73fee95a81b",
                 "date": "2026-05-21T12:01:22Z",
-                "subject": "perf: HTTP hot-path optimizations — alloc/CPU reductions in middleware, router, OTel setup (#3431)",
+                "subject": "perf: HTTP hot-path optimizations - alloc/CPU reductions in middleware, router, OTel setup (#3431)",
                 "how": "its changes miss the pull request's lines, which sit at 460 to 538 of its parent"
               }
             ]
