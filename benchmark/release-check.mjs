@@ -129,7 +129,9 @@ function parseArgs(argv) {
     else if (a === "--summary") o.summary = resolve(next());
     else throw new Error(`unknown flag ${a}`);
   }
-  for (const s of o.suites) if (s !== "planted" && !SUITES[s]) throw new Error(`--suites takes planted and ${Object.keys(SUITES).join(", ")}, not ${s}`);
+  // A suite whose cases are all held out (martian) never runs before a release.
+  const open = ["planted", ...Object.keys(SUITES).filter((s) => !SUITES[s].heldOutOnly)];
+  for (const s of o.suites) if (!open.includes(s)) throw new Error(`--suites takes ${open.join(" and ")}, not ${s}`);
   if (o.suites.length === 0) throw new Error("--suites names no suite");
   if (o.subset !== null && !o.suites.some((s) => s !== "planted")) throw new Error("--subset names a subset of a pull request suite, and --suites holds none");
   if (o.cases !== null && o.suites.length !== 1) throw new Error("--cases names cases of one suite; name that suite alone in --suites");
@@ -327,7 +329,7 @@ function compareReviews(suite, baseFolder, candFolder) {
 }
 
 const VERDICT_TEXT = {
-  loss: "the candidate loses what the base had. Do not release it until each loss below is fixed or a person has decided to accept it.",
+  loss: "the candidate loses what the base had, as each loss below says. Fix each one before the release.",
   gain: "the candidate gains, and loses nothing the comparison can see.",
   changed: "the candidate differs from the base, neither better nor worse by the rules below.",
   "no change": "the candidate scores what the base scores on every case compared.",
@@ -418,9 +420,8 @@ async function main() {
     if (!(error instanceof CannotRun)) error.message = `the release check itself failed: ${error.stack ?? error.message}`;
     doc.verdict = "could not run";
     doc.why = error.message;
-    doc.losses = [];
-    doc.gains = [];
-    doc.changes = [];
+    // Nothing compared before the failure stands: the report keeps the why and the runs.
+    for (const k of ["losses", "gains", "changes", "notes", "compared", "reviewTables"]) doc[k] = [];
     console.error(`\nThe release check could not run: ${error.message}`);
     finish(2);
   }

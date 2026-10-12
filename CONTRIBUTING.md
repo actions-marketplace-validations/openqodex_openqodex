@@ -57,7 +57,7 @@ node benchmark/ingest/aacr.mjs --data-only
 node benchmark/release-check.mjs --install-scanners
 ```
 
-It runs no model and spends nothing. It must exit 0. Exit 1 names each bug the published package found and the new build misses: fix it, or record in the pull request why the loss is accepted. Exit 2 means it could not run and shows nothing either way. On a machine without Ruby, Go or Cargo, add `--allow-missing-scanners`. `docs/benchmark.md` ("The release check") says what it compares. The release workflow runs the planted part again before it publishes, and does not publish on any exit but 0.
+It runs no model and spends nothing. It must exit 0. Exit 1 names each loss, such as a planted bug the published package found and the new build misses: fix it before the release. Exit 2 means it could not run and shows nothing either way. On a machine without Ruby, Go or Cargo, add `--allow-missing-scanners`. `docs/benchmark.md` ("The release check") says what it compares. The release workflow runs the planted part again before it publishes, and does not publish on any exit but 0.
 
 ## After a release
 
