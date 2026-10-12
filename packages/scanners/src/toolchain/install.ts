@@ -223,15 +223,17 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
 const runtimeChecks = new Map<string, Promise<Runtime>>();
 
 // Whether the developer's runtime for this tool is here, and the environment
-// the tool needs from it. Checked once per process and probe home, the
-// folder the probe runs in.
+// the tool needs from it, from a probe in `probeHome`. Checked once per
+// process for the default probe home. A probe home a server run names lies
+// in its scratch root, which the run removes; its answer is not kept here
+// (it could name folders in it, and a long-running host would keep one per
+// run), and the run's resolver keeps it for that run.
 export function checkRuntime(recipe: Recipe, probeHome: string = defaultProbeHome()): Promise<Runtime> {
   const needs = parseNeeds(recipe.needs);
   if (!needs) return Promise.resolve({ reason: null, env: {} });
-  // Per probe home too: what a probe answers can lie in its home, and a
-  // server's review removes its own when it ends.
+  const kept = probeHome === defaultProbeHome();
   const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}|${probeHome}`;
-  let check = runtimeChecks.get(key);
+  let check = kept ? runtimeChecks.get(key) : undefined;
   if (!check) {
     check = (async () => {
       const name = runtimeNames[needs.runtime] ?? needs.runtime;
@@ -242,7 +244,7 @@ export function checkRuntime(recipe: Recipe, probeHome: string = defaultProbeHom
       if (needs.minimum && !(found.version && atLeast(found.version, needs.minimum))) return { reason, env: {} };
       return { reason: null, env: found.env };
     })();
-    runtimeChecks.set(key, check);
+    if (kept) runtimeChecks.set(key, check);
   }
   return check;
 }
