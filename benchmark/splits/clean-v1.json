@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "clean-v1",
+  "suite": "clean",
+  "salt": null,
+  "rule": "Every clean case is development: clean controls tune nothing a held-out case measures, and come from development repository groups only. The file is only ever extended: a case that loses its clean ruling needs a new split, which is a new file.",
+  "cases": {
+    "dev": [],
+    "test": []
+  },
+  "subsets": {},
+  "counts": {
+    "dev": 0
+  }
+}

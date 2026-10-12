@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "suite": "clean",
+  "rule": "A clean case is a candidate of suites/clean/candidates.json whose standing ruling in review-queue/decisions.jsonl is clean, signed by a person on review-queue/people.json; clean.mjs admit writes this file, and lib/suites.mjs refuses an entry without such a ruling.",
+  "candidates": {
+    "file": "suites/clean/candidates.json",
+    "sha256": "862d9f412fa16c2e289d2af8c04ac5e6973c2663fdbf3619eb986d320cbfdd59"
+  },
+  "hashCovers": [
+    "name",
+    "prUrl",
+    "repo",
+    "cloneUrl",
+    "prRef",
+    "baseSha",
+    "headSha",
+    "mergeBaseSha",
+    "language",
+    "changeLines",
+    "truthHash",
+    "matchSignatures"
+  ],
+  "cases": []
+}

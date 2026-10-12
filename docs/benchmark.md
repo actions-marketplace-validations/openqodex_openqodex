@@ -372,7 +372,7 @@ node benchmark/queue.mjs decide confirmed|disputed <case id> --bug <truth id> --
 | `true`, `false` (or `spec-candidate-accepted`, `spec-candidate-rejected`) | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
 | `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
 | `confirmed`, `disputed` | a truth item of a case, in the spec version of the run `--run` names | labelled in the score's per-bug results on that spec version; recall is unchanged, since a wrong truth item is fixed by a new case version |
-| `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
+| `clean`, `not-clean` | a candidate clean control | the latest ruling decides whether `clean.mjs admit` puts the candidate in the clean suite, and every read of that suite refuses an entry without a standing `clean` ruling; the scorer does not read it |
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
@@ -404,6 +404,31 @@ benchmark/outside/boards/martian.sh <run> [--dry-run]
 - It writes `<run>/outside/martian/<tool>/evaluation.json` per tool name, in the shape `readMartianEvaluation` reads, and `eval.json` with the checkout's commit and tree, each step's exit code, the candidates per finding, and the problems. A tool name gets no evaluation when one of its reviews was judged on something other than its extracted candidates, has no dedup groups, was never judged, or has a failed judge call. The same holds for every tool name when the dedup step fell back to no grouping.
 - A script, not a model, links each candidate Martian extracted to the finding it came from: the finding whose text holds the longest run of the candidate's words. That link feeds only our own counts beside the official ones.
 - `benchmark/outside/fixtures/martian/` holds three saved reviews of pull requests that a golden file written for the tests describes. It holds no Martian pull request. It also holds the entries the converter writes for them, and what Martian's pipeline wrote for them with a stand-in judge.
+
+## Clean controls from real pull requests
+
+A clean control is a real change with nothing a reviewer should raise: a review of it should end with no finding. The `clean` suite holds real pull requests that a person ruled clean. Every case is in the development split, and a run selects it with `--suite clean`.
+
+```
+node benchmark/ingest/clean.mjs list [--offline]     # candidates and their evidence
+node benchmark/ingest/clean.mjs sheet [--seed S]     # the candidates for a person, with the commands to rule
+node benchmark/queue.mjs decide clean|not-clean <case id> --by <your name> --sheet clean@S@<version>
+node benchmark/ingest/clean.mjs admit                # the suite, from the rulings
+```
+
+- `list` takes pull requests from the development repository groups of the AACR split only. It reads GitHub through `gh api` and caches every answer. In each group, it takes the pull requests merged into the default branch from 2026-01-01 to 2026-03-31 in a seeded order, and lists at most 2 (checking at most 12).
+- A pull request is a candidate when it passes every check. It is not by a bot. It changes as many lines as AACR's usable cases, from the fewest to the most. Someone other than its author reviewed it, and no review asked for changes. Its licence is usable. In the 90 days after its merge:
+  - no later commit or linking issue or pull request names it as a fix, revert or follow-up on the line that names it (its quoted title aside, so a backport or release-note line does not count, and a fix word on another line is about something else), and no linking issue or pull request is labelled as a bug;
+  - none of its files is renamed (a later fix under the new name would be missed);
+  - no later commit on the default branch changes, removes or inserts next to one of its lines, whatever its message says.
+- `list` reads every later commit on the pull request's files. To place the pull request's lines in a commit's parent, it diffs the file at the pull request's head against that parent. A line it cannot follow excludes the pull request, unless GitHub's compare shows that the parent does not hold the pull request's merge (a commit on another branch's line). A commit of 300 files or more whose file list leaves out the file excludes it as too large to check.
+- `list` writes `benchmark/suites/clean/candidates.json` (each candidate as a suite entry with its evidence: links, dates and the commits checked) and `benchmark/suites/clean/ingest-report.txt` (the inclusion and exclusion counts, by reason).
+- A candidate is not a case. `admit` writes `benchmark/suites/clean/cases.json` and `benchmark/splits/clean-v1.json` from the candidates whose latest ruling is `clean`, signed by a person on `people.json`. It refuses a candidate from a held-out group.
+- A ruling names the candidate's id, which hashes its commits and size. A candidate that changes gets a new id and needs a new ruling.
+- A ruling also names the sheet it was made on. `decide` refuses a sheet that does not show the current version of `candidates.json`, and records the candidate's evidence hash. `admit` refuses a clean ruling, naming the candidate, when the candidates have a new version or the candidate's evidence moved since the ruling; the sheet is printed and ruled again.
+- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name (class `unverified`) may run privately, and publishing refuses a run that holds one (`publishRefusal`).
+- Every read of the suite refuses an entry without a standing `clean` ruling, so an entry added by hand stops every run of the suite.
+- No candidate has been ruled yet, so the suite holds no case.
 
 ## Why a truth item was missed
 
