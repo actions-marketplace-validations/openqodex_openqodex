@@ -41,6 +41,11 @@
 //    a proposal holds <ledger>.lock, created exclusively, from before the
 //    ledger is read until after its line is appended. A lock whose process
 //    is gone, or older than ten minutes, is stale and taken over.
+// 8. The commit of the accepted review run is read from a file on origin's
+//    main, so it reaches git only as a full hex id that resolves to itself:
+//    a ref name or a tag id in that file cannot pick another base. A clone
+//    that lacks the commit (a shallow clone) stops with the base unknown and
+//    says how to fetch it; the door never fetches on its own.
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -190,6 +195,10 @@ const entryFor = (path, lever, reg) => [...lever.files, ...reg.companions].find(
 // its own commit, so a scan accept never moves the base. origin's main is
 // fetched first. Returns { base, why }; base is null when the branch shares
 // no history with main.
+// The commit named by the accepted pointer (failure 8): a full hex id that
+// resolves to itself, else null.
+const acceptedCommit = (top, id) => (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(String(id)) && revParse(top, id) === id ? id : null);
+
 export function trustedBase(top, commit) {
   git(top, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", REMOTE, `+refs/heads/${MAIN}:refs/remotes/${REMOTE}/${MAIN}`]);
   const main = revParse(top, `refs/remotes/${REMOTE}/${MAIN}`);
@@ -207,8 +216,8 @@ export function trustedBase(top, commit) {
     const reviews = groups.filter(([key]) => key.split("|")[3] === "review").map(([, a]) => a);
     const last = reviews.sort((a, b) => (String(a?.acceptedAt) < String(b?.acceptedAt) ? 1 : String(a?.acceptedAt) > String(b?.acceptedAt) ? -1 : 0))[0];
     if (last !== undefined) {
-      const base = typeof last?.commit === "string" ? revParse(top, last.commit) : null;
-      if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names an accepted review run (${last?.runId}) whose commit this repository does not hold, so the loop's base is unknown`);
+      const base = acceptedCommit(top, last?.commit);
+      if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names an accepted review run (${last?.runId}) whose commit ${String(last?.commit ?? "").slice(0, 8)} this repository does not hold as a full commit id, so the loop's base is unknown; a shallow clone gets it with: git fetch --unshallow ${REMOTE}`);
       return { base, why: `the commit of the review run accepted last in ${ACCEPTED} on ${REMOTE}/${MAIN}` };
     }
   }
