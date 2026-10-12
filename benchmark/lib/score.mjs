@@ -545,7 +545,14 @@ export function regressions(oldSamples, newSamples) {
 //     with no kind is matched on the categories it names, and one with no
 //     severity on the scale is left out of the per-severity tally of format
 //     2 (issue 141). A planted case scores exactly as under version 5.
-export const RULES_VERSION = 6;
+// Rules version 7 fixes how saved files are read. Failure list, written
+// before the code:
+// 40. A custom scanner's rule named like one of OpenQodex's own
+//     (settings-file) counts as OpenQodex's own check, and a rule id that
+//     names a property every object inherits (constructor) gives a function
+//     as its finder (issue 143): only a built-in scanner's candidate is
+//     OpenQodex's own, and own rules are a map with no prototype.
+export const RULES_VERSION = 7;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -694,8 +701,9 @@ export function severityAgreement(given, expected) {
 // diff, and its reading helped by the code graph's caller list. The data
 // cannot tell the two apart, so both are met by a find no scanner located.
 export const REVIEWER_FINDERS = ["reasoning", "graph"];
-// OpenQodex's own candidates, by rule id, and the finder each counts as.
-export const OWN_RULES = { "openqodex.suppression-added": "suppression", "settings-file": "settings" };
+// OpenQodex's own candidates, by rule id, and the finder each counts as. A
+// map with no prototype, so no rule id reads an inherited property.
+export const OWN_RULES = Object.freeze({ __proto__: null, "openqodex.suppression-added": "suppression", "settings-file": "settings" });
 
 // The scanner and rule of a token "<source>:<ruleId>"; a custom scanner's
 // source is "custom:<name>".
@@ -705,7 +713,9 @@ function tokenParts(token) {
   return cut === -1 ? { source: t, ruleId: "" } : { source: t.slice(0, cut), ruleId: t.slice(cut + 1) };
 }
 
-const finderName = (source, ruleId) => OWN_RULES[ruleId] ?? source;
+// Only a built-in scanner's candidate can be OpenQodex's own (core
+// finalize.ts isOwnCandidate): a custom scanner may name a rule anything.
+const finderName = (source, ruleId) => (!String(source).startsWith("custom:") && Object.hasOwn(OWN_RULES, ruleId) ? OWN_RULES[ruleId] : source);
 
 // Where each scanner put a finding that reached the reviewer or was merged
 // into one, with its words: every kept candidate (its id, rule id and
@@ -1240,7 +1250,7 @@ const RULES_BLOCK = {
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue and findings a person's consolidate line groups; any other finding is its own issue, by findingId. Overlap, category, rule id and recurrence never group findings. An issue counts correct or wrong when all its findings do, else unresolved.",
   // Version 4.
   severity: { order: SEVERITY_ORDER, rule: "Each hit, the first finding in report order to find its truth item, compares its severity with the truth item's on the order above: exact, one-off, or off at two steps or more; over when it is more severe, under when less. A duplicate is not judged; a side without a severity on the scale is unknown." },
-  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0 (a merged entry only when the candidate it went into is a kept one on those lines or one a shown finding raised), and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. OpenQodex's own rules count as the finder named in own. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
+  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0 (a merged entry only when the candidate it went into is a kept one on those lines or one a shown finding raised), and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. A built-in scanner's rule whose id is a key of own counts as the finder named there; a custom scanner's rule counts as that custom scanner, whatever its id. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
   // Version 5.
   identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
