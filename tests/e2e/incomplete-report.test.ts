@@ -14,9 +14,12 @@
 //  3. report.md, report.sarif or the terminal receipt leaves the candidates
 //     out, so only report.json says what the scanners found.
 //  4. The candidates read as a review: the verdict is not incomplete, the
-//     exit code is not 2, the receipt does not open with "Review incomplete",
-//     the SARIF run says it completed, report.html counts them as findings,
-//     or the push gate's record holds a verdict.
+//     exit code is not 2 (a listed candidate at block_on_severity makes it 1),
+//     the receipt does not open with "Review incomplete", the SARIF run says
+//     it completed, report.html counts them as findings, the push gate's
+//     record holds a verdict, or the push gate denies the push or passes it
+//     as reviewed instead of saying, as for any incomplete review, that the
+//     review was incomplete and does not block.
 //  5. Listing the candidates shows the demo's secret, which the gitleaks
 //     candidate is about.
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,7 +27,7 @@ import { delimiter, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Candidate, Report } from "@openqodex/core";
 import "./global-setup.js";
-import { demo, generatedSecret, readJson, reportDir, run } from "./support.js";
+import { demo, generatedSecret, readJson, reportDir, run, writeConfig } from "./support.js";
 import type { Result } from "./support.js";
 import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
 
@@ -63,8 +66,11 @@ describe("a review stopped at the time cap", () => {
   let folder: string;
   let report: Report;
   let candidates: Candidate[];
+  let gate: Result;
   beforeAll(() => {
     dir = demo("incomplete-report");
+    // The unchecked candidates meet the block severity: they must still not block.
+    writeConfig(dir, "review:\n  block_on_severity: major\n");
     mkdirSync(join(dir, "db"), { recursive: true });
     writeFileSync(join(dir, "db/admin.sql"), SQL);
     const path = [silentReviewer(), dirname(process.execPath), process.env.PATH].join(delimiter);
@@ -72,9 +78,13 @@ describe("a review stopped at the time cap", () => {
     folder = reportDir(dir);
     report = readJson<Report>(join(folder, "report.json"));
     candidates = readJson<{ candidates: Candidate[] }>(join(folder, "scan.json")).candidates;
+    // The agent push gate, as Claude Code calls it before `git push`.
+    gate = run("incomplete-report-push-gate", dir, ["hook", "check"], { input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" }, cwd: dir }) });
   }, 600_000);
 
-  it("4. is incomplete, exits 2, says it timed out, counts no finding and records no verdict for the push gate", () => {
+  it("4. is incomplete and exits 2 although unchecked candidates meet block_on_severity, says it timed out, counts no finding and records no verdict", () => {
+    expect(report.block_on_severity).toBe("major");
+    expect(report.not_reviewed.some((c) => c.reviewSeverity === "major")).toBe(true);
     expect(review.status, review.stderr).toBe(2);
     expect(report.verdict).toBe("incomplete");
     expect(report.completion?.missing).toContain(CAP);
@@ -83,6 +93,13 @@ describe("a review stopped at the time cap", () => {
     expect(html).toContain('<span class="counts">0 findings</span>');
     expect(html).toContain("Unchecked scanner candidates, not a review");
     expect(readJson<{ verdict: unknown; finalized: boolean }>(join(dir, ".openqodex/latest.json"))).toMatchObject({ verdict: null, finalized: false });
+  });
+
+  it("4. the push gate treats it as any incomplete review: it does not deny, and says the review was incomplete", () => {
+    expect(gate.status, gate.stderr).toBe(0);
+    const out = JSON.parse(gate.stdout) as { hookSpecificOutput: { permissionDecision?: string; additionalContext?: string } };
+    expect(out.hookSpecificOutput.permissionDecision).toBeUndefined();
+    expect(out.hookSpecificOutput.additionalContext).toContain(`the last review of this change was incomplete (${CAP}), so it does not block`);
   });
 
   it("1, 2. report.json lists every scanner candidate under not_reviewed, the sqllint one with its file, line, rule, scanner and message", () => {
