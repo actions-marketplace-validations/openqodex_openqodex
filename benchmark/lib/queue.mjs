@@ -11,7 +11,15 @@
 //     category, severity, text: { title, problem, consequence, fix },
 //     evidence: { lines, text, context, sha256, from, missing },
 //     truth: { id, file, lines, text } | null, asks: ["real", "match"],
-//     occurrences: [{ run, build, commit, config, repeat, outcome }] }
+//     occurrences: [{ run, build, commit, config, repeat, outcome }],
+//     specHash, changedLines: [line], truthItems: [{ id, files }] }
+// specHash is the version of the spec the item was scored against (lib/
+// rulings.mjs specHashOf), which every match ruling on it names;
+// changedLines are its lines the change added, from the brief's diff; and
+// truthItems are that spec's truth items with the files each sits in. They
+// are what decide checks a same-issue ruling that names a truth item
+// against (rules version 7). An item queued before them has none, and
+// decide asks for its run to be added again.
 //
 // Failure list, written before the code:
 // 1. An item lacks what a person needs to rule: it keeps the finding's own
@@ -31,10 +39,13 @@
 // 6. A deleted line that begins with "--" or "++" is read as a file header:
 //    a hunk's rows are counted from its header, so only rows outside a hunk
 //    are headers.
+// 7. A match ruling on one spec version answers the item's question on
+//    another: an item asks again when the rulings on its finding name
+//    another spec version than its own.
 // The blind sheet is queue.mjs's (failure 6 there).
 import { createHash } from "node:crypto";
 import { generatedValue } from "./cases.mjs";
-import { issueOf, matchRuling, realRuling } from "./rulings.mjs";
+import { issueOf, matchRuling, realRuling, specHashOf } from "./rulings.mjs";
 import { asksOf, normPath, shownFindings } from "./score.mjs";
 
 export const QUEUE_VERSION = 1;
@@ -141,6 +152,8 @@ export function unresolvedItems({ runId, build = null, commit = null, suite, spl
     const first = attempts.find((a) => a.case === j.case && a.config === j.config && a.repeat === j.repeat && a.attempt === 1);
     if (!first) continue;
     const spec = specs[j.case];
+    const specHash = specHashOf(spec);
+    const truthItems = (spec.bugs ?? []).filter((b) => b.valid !== false).map((b) => ({ id: b.id, files: [...new Set([b.file, ...(b.also ?? []).map((a) => a.file)].map(normPath))] }));
     const clean = unGenerate(generatedOf(spec));
     const shown = shownFindings(first.report);
     let diff = null;
@@ -171,6 +184,9 @@ export function unresolvedItems({ runId, build = null, commit = null, suite, spl
           truth: bug ? { id: bug.id, file: normPath(bug.file), lines: bug.lines, text: clean(bug.truth ?? bug.description ?? "") } : null,
           asks,
           occurrences: [],
+          specHash,
+          changedLines: (diff.get(normPath(raw.file_path)) ?? []).filter((r) => r.kind === "+" && r.at >= start && r.at <= end).map((r) => r.at),
+          truthItems,
         };
         items.set(f.findingId, item);
       }
@@ -181,22 +197,23 @@ export function unresolvedItems({ runId, build = null, commit = null, suite, spl
 }
 
 // The questions of an item that the rulings in force (lib/rulings.mjs) have
-// not answered. A same-issue ruling answers both; a ruling on whether it is
-// a real issue answers that; a match ruling, or a false ruling, answers
-// whether it is the truth item.
+// not answered. A same-issue ruling on its spec version answers both; a
+// ruling on whether it is a real issue answers that; a match ruling on its
+// spec version, or a false ruling, answers whether it is the truth item.
 export function openAsks(item, R) {
   const id = item.findingId;
-  const same = [...(R.matches.get(id) ?? new Map()).values()].some((m) => m.status === "same-issue");
+  const same = [...(R.matches.get(id) ?? new Map()).values()].some((m) => m.status === "same-issue" && m.specHash === item.specHash);
   if (same) return [];
   const real = realRuling(id, R);
-  return item.asks.filter((a) => (a === "real" ? real === null : real?.status !== "false" && item.truth !== null && matchRuling(id, item.truth.id, R) === null));
+  return item.asks.filter((a) => (a === "real" ? real === null : real?.status !== "false" && item.truth !== null && matchRuling(id, item.truth.id, item.specHash, R) === null));
 }
 
 const occurrenceKey = (o) => `${o.run}\0${o.config}\0${o.repeat}`;
 const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 // The queue after adding a run's items: one item per findingId with every
-// occurrence once, the latest scoring's questions and truth item, only the
+// occurrence once, the latest scoring's questions, truth item, spec version,
+// added lines and truth items, only the
 // questions the rulings leave open, the issue a person put it in (or
 // null), sorted so the file diffs well.
 export function mergeQueue(queue, incoming, R) {
@@ -211,6 +228,9 @@ export function mergeQueue(queue, incoming, R) {
     for (const o of item.occurrences) if (!seen.has(occurrenceKey(o))) old.occurrences.push(o);
     old.asks = item.asks;
     old.truth = item.truth;
+    old.specHash = item.specHash;
+    old.changedLines = item.changedLines;
+    old.truthItems = item.truthItems;
   }
   const out = [];
   for (const item of all.values()) {

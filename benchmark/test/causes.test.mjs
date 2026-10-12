@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { MISS_CAUSES, NON_HIT_CAUSES } from "../lib/causes.mjs";
+import { specHashOf } from "../lib/rulings.mjs";
 import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -40,6 +41,8 @@ const spec = {
   extras: [],
 };
 
+// The spec version a ruling on its truth item names (rules version 7).
+const SPEC = specHashOf(spec);
 const HASH = "ef".repeat(32);
 const CASE_ID = `planted/mixed@${HASH.slice(0, 8)}`;
 const CONFIG = "claude-graph-off";
@@ -213,8 +216,8 @@ describe("a drop on a disputed plant is labelled spec-disputed without a person'
     const dropped = [drop(candidate("c1", "hadolint:DL3008", "Dockerfile", 3, "Pin versions in apt get install"), "Not a defect: the base image pins the packages.")];
     const run = await savedRun([review({ submitted: [SQLI, LOOP, ADMIN], dropped })]);
     expect(causeOf(scored(run), "apt")).toBe("candidate-dropped");
-    expect(causeOf(scored(run, [{ target: { kind: "bug", id: "apt" }, status: "disputed", by: "claude" }]), "apt")).toBe("candidate-dropped");
-    expect(causeOf(scored(run, [{ target: { kind: "bug", id: "apt" }, status: "disputed" }]), "apt")).toBe("spec-disputed");
+    expect(causeOf(scored(run, [{ target: { kind: "bug", id: "apt", specHash: SPEC }, status: "disputed", by: "claude" }]), "apt")).toBe("candidate-dropped");
+    expect(causeOf(scored(run, [{ target: { kind: "bug", id: "apt", specHash: SPEC }, status: "disputed" }]), "apt")).toBe("spec-disputed");
   });
 });
 
@@ -250,7 +253,7 @@ describe("an unresolved case is guessed", () => {
     const before = scored(run);
     expect(causeOf(before, "sqli")).toBe("unresolved");
     const id = before.outcomes.find((o) => o.truthId === "sqli").findingId;
-    expect(causeOf(scored(run, [{ target: { kind: "match", findingId: id, truthId: "sqli" }, status: "different-issue" }]), "sqli")).toBe("judged-wrong");
+    expect(causeOf(scored(run, [{ target: { kind: "match", findingId: id, truthId: "sqli", specHash: SPEC }, status: "different-issue" }]), "sqli")).toBe("judged-wrong");
   });
 
   it("labels a near miss line-off and a finding of another kind wrong-kind, both as a miss and as a finding", async () => {

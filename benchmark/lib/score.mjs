@@ -71,7 +71,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseCaseId } from "./cases.mjs";
-import { bugRuling, issueOf, matchRuling, realRuling, resolveRulings, sameIssueAs } from "./rulings.mjs";
+import { bugRuling, issueOf, matchRuling, realRuling, resolveRulings, sameIssueAs, specHashOf } from "./rulings.mjs";
 
 export const NEAR_LINES = 3;
 export const SEVERITY_ORDER = ["critical", "major", "minor", "nitpick", "info"];
@@ -545,7 +545,20 @@ export function regressions(oldSamples, newSamples) {
 //     with no kind is matched on the categories it names, and one with no
 //     severity on the scale is left out of the per-severity tally of format
 //     2 (issue 141). A planted case scores exactly as under version 5.
-export const RULES_VERSION = 6;
+// Rules version 7 keys every ruling on a truth item to the spec version it
+// judged. Failure list, written before the code:
+// 36. A ruling on a truth item labels it in every later version of its
+//     case (issue 163): a bug or match ruling names the sha256 of the spec
+//     it judged (lib/rulings.mjs specHashOf), and applies only to a job
+//     scored against a spec with that hash; a line that names none applies
+//     to no version. With no ruling, or only rulings on other versions, a
+//     score is the same as under version 6.
+// 37. A planted bug found at a place its spec does not list can never be
+//     ruled found (issue 139): queue.mjs decide records a same-issue ruling
+//     that names the truth item, for a finding on a line the change added in
+//     that item's file; it scores as any same-issue ruling does, a hit on
+//     that item on that spec version.
+export const RULES_VERSION = 7;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -631,18 +644,18 @@ const UNSETTLED = new Set(["unresolved", "near", "wrong-kind"]);
 
 // A finding's outcome after the rulings in force (lib/rulings.mjs): its
 // issue, and for one nothing frozen decides, a hit on the truth item a
-// person ruled it to be, else ruled-true or ruled-false, else unresolved
-// still. `bug` is then the truth item it is a hit on, or the one it is
+// person ruled it to be on this spec version (`specHash`), else ruled-true
+// or ruled-false, else unresolved still. `bug` is then the truth item it is a hit on, or the one it is
 // still a candidate for (a near miss, a wrong kind or a location match no
 // person has ruled out); evidenceKind says what decided the outcome.
-function ruled(g, spec, R) {
+function ruled(g, spec, specHash, R) {
   const issueId = issueOf(g.findingId, R);
   if (!UNSETTLED.has(g.outcome)) return { issueId, evidenceKind: FROZEN.has(g.outcome) ? "frozen" : null };
   const candidate = g.outcome === "unresolved" ? locationMatch(g, spec) : g.bug;
-  const same = sameIssueAs(g.findingId, (spec.bugs ?? []).map((b) => b.id), R);
+  const same = sameIssueAs(g.findingId, (spec.bugs ?? []).map((b) => b.id), specHash, R);
   const real = realRuling(g.findingId, R);
   if (same !== null && !(real?.status === "false" && real.n > same.n)) return { outcome: "hit", bug: same.truthId, evidenceKind: "ruling", issueId };
-  const open = candidate !== null && real?.status !== "false" && matchRuling(g.findingId, candidate, R)?.status !== "different-issue" ? candidate : null;
+  const open = candidate !== null && real?.status !== "false" && matchRuling(g.findingId, candidate, specHash, R)?.status !== "different-issue" ? candidate : null;
   if (real !== null) return { outcome: real.status === "true" ? "ruled-true" : "ruled-false", bug: open, evidenceKind: "ruling", issueId };
   return { bug: open, evidenceKind: open !== null && g.outcome === "unresolved" ? "location-only" : null, issueId };
 }
@@ -880,10 +893,12 @@ export function scoreJob({ job, spec, report = null, brief = null, scan = null, 
   const places = scannerPlaces(scan);
   const raised = new Set(base.findings.map((f) => f.raised).filter((id) => typeof id === "string"));
   const truth = new Map((spec.bugs ?? []).map((b) => [b.id, b]));
+  // A ruling on a truth item applies only to the spec version it judged.
+  const specHash = specHashOf(spec);
   const findings = base.findings.map((f, index) => {
     const g = { ...f, index, legacyOutcome: f.outcome, outcome: outcomeOf(f.outcome, spec), findingId: findingId(job.caseId, shown[index]), confidence: shown[index].confidence ?? null };
     // A ruled hit is judged like a frozen one: the truth item it finds is the one the ruling names.
-    const r = { ...g, ...ruled(g, spec, rulings) };
+    const r = { ...g, ...ruled(g, spec, specHash, rulings) };
     return { ...r, ...judgeHit(r, truth.get(r.bug), places, raised), issue: issueKey(r) };
   });
   // A hit by ruling on a truth item this review already found is a
@@ -1021,6 +1036,8 @@ export function scoreAttempts({ manifest, attempts, specs, decisions = [], peopl
   const pop = population(manifest, attempts);
   if (pop.problems.length > 0) throw new Error(`the run's samples do not match its plan:\n${pop.problems.join("\n")}`);
   const rulings = resolveRulings(decisions, people);
+  // The version of each case's spec, which a ruling on one of its truth items names.
+  const specHashes = new Map(Object.entries(specs).map(([name, spec]) => [name, specHashOf(spec)]));
   const jobs = pop.jobs.map((j) => scoreJob({ job: j, spec: specs[j.case], report: j.first?.report ?? null, brief: j.first?.brief ?? null, scan: j.first?.scan ?? null, row: j.first?.row ?? {}, origin, started: j.first !== null, rulings }));
   const configs = [...new Set(jobs.map((j) => j.config))].sort();
   const byConfig = {};
@@ -1043,8 +1060,8 @@ export function scoreAttempts({ manifest, attempts, specs, decisions = [], peopl
     perBug[j.config] ??= {};
     const bugs = (perBug[j.config][j.caseId] ??= {});
     for (const b of j.bugs) {
-      // Per repeat: whether it was found, the severity its first hit gave, and who found it; and a person's ruling on the item.
-      const x = (bugs[b.id] ??= { found: [], severity: b.severity, given: [], finder: [], cause: null, ruling: bugRuling(j.caseId, b.id, rulings) });
+      // Per repeat: whether it was found, the severity its first hit gave, and who found it; and a person's ruling on the item in this spec version.
+      const x = (bugs[b.id] ??= { found: [], severity: b.severity, given: [], finder: [], cause: null, ruling: bugRuling(j.caseId, b.id, specHashes.get(j.case), rulings) });
       const hit = j.findings.find((f) => f.outcome === "hit" && f.bug === b.id);
       x.found[j.repeat - 1] = b.found;
       x.given[j.repeat - 1] = hit?.severity ?? null;
@@ -1245,6 +1262,8 @@ const RULES_BLOCK = {
   identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
   rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged. A ruled hit is judged for severity and finder like any hit.",
+  // Version 7.
+  specVersion: "A bug ruling and a match ruling (same-issue, different-issue) name the spec version they judged as specHash, the sha256 of the spec's JSON with every object's keys sorted, and apply only to a job whose case is scored against a spec with that hash, the run's own copy or the one --specs names; a line that names none applies to no version and is listed as ignored. A same-issue ruling may name a truth item the finding does not sit on by the location rule: queue.mjs decide records it only when the finding is on a line the change added in a file of that item, and it scores as any same-issue ruling.",
   // Version 6.
   truthWithoutKind: "A truth item with no kind, a pull request comment, is matched on the categories it names; one with no severity on the scale counts in recall and in no severity's tally.",
   code: ruleCodeHash(),
