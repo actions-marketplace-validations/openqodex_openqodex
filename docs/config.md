@@ -47,8 +47,9 @@ review:
 scanners:
   disable: [brakeman]
   custom:
-    - source: https://github.com/aquasecurity/trivy
-      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
+    - source: https://github.com/Bearer/bearer
+      run: bearer scan {target} --format sarif --output {report} --quiet --disable-version-check
+      target: repo
 graph:
   enabled: true
 ```
@@ -135,7 +136,7 @@ A list of globs matched against a finding's citation, `<source>:<rule>`. A match
 - `gitleaks:generic-api-key` drops one gitleaks rule.
 - `semgrep:python.lang.*` drops a family of semgrep rules.
 - `lens:react-*` drops agent findings that cite a review pattern whose name starts with `react-`.
-- `custom:trivy:*` drops every finding of the custom scanner named `trivy`.
+- `custom:bearer:*` drops every finding of the custom scanner named `bearer`.
 
 ## review.default_base
 
@@ -160,8 +161,9 @@ A list of custom scanners. Each one needs two keys:
 ```yaml
 scanners:
   custom:
-    - source: https://github.com/aquasecurity/trivy
-      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
+    - source: https://github.com/Bearer/bearer
+      run: bearer scan {target} --format sarif --output {report} --quiet --disable-version-check
+      target: repo
 ```
 
 A custom scanner never runs until you approve it with `openqodex trust`. `custom-scanners` explains the step.

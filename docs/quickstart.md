@@ -3,15 +3,14 @@
 ## Paste this prompt into your agent
 
 ```
-Install OpenQodex for yourself with `npx -y openqodex@0.12.0 init --yes --agent <host>`, where <host> is the agent you are: claude-code, codex, cursor or cline. Run it from this repository and allow it up to ten minutes: when a reviewer can start, it ends with a review of my current change.
-Then tell me the verdict and the findings, or what its last lines say is missing.
+Install OpenQodex for yourself with `npx -y openqodex@0.12.0 init --yes --agent <host>`. Use the agent you are as <host>: claude-code, codex, cursor or cline. Run the command from this repository. Run it in the background and wait until it exits. It ends with a review of my current change when a reviewer can start. Tell me the verdict and the findings. If there was no review, tell me what its last lines say is missing.
 ```
 
-The agent runs `init` for itself: the same install as the steps below, the push check included, with no question (`--yes`). Then `init` reviews your change and the agent tells you the result. The steps below do the same by hand.
+The agent runs `init` for itself: the same install as the steps below, the push gate included, with no question (`--yes`). Then `init` reviews your change and the agent tells you the result. The steps below do the same by hand.
 
 Codex runs commands in a sandbox that by default cannot write outside the project or reach the network: from Codex, run the line in your own terminal instead.
 
-The skill alone, with no push check, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
+The skill alone, with no push gate, launcher or scanner download: `npx skills add openqodex/openqodex -g`. A later `init` replaces it with the skill it keeps up to date.
 
 ## Before you start
 
@@ -57,7 +56,7 @@ Say to your agent:
 review my change with openqodex
 ```
 
-The agent runs `openqodex review` and shows you the receipt it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code or Codex process that reads that copy. The reviewer checks every scanner finding and is given every changed line; a script checks its answer, and OpenQodex writes the report and prints the receipt. It takes one to three minutes and uses your Claude Code or Codex plan. In your terminal, run it by the full path `init` prints, `~/.openqodex/bin/openqodex review`: an npx install puts no `openqodex` on your `PATH`, and `init` never edits your shell profile.
+The agent runs `openqodex review` and shows you the receipt it prints. That one command works out the change, copies it to a temporary folder, runs the scanners and the code graph, and starts its own reviewer: a separate Claude Code or Codex process that reads that copy. Scripts then check that the reviewer answered every scanner finding and was given every changed line. OpenQodex writes the report and prints the receipt. The review uses your Claude Code or Codex plan. It can take minutes. On the 2026-10-09 benchmark run, a review of a small change took about two minutes with Claude Code. In your terminal, run it by the full path `init` prints, `~/.openqodex/bin/openqodex review`: an npx install puts no `openqodex` on your `PATH`, and `init` never edits your shell profile.
 
 To review the whole repository instead of one change, say:
 
@@ -92,7 +91,7 @@ The verdict is `passed` unless `.openqodex/config.yaml` sets `review.block_on_se
 npx openqodex demo /tmp/openqodex-demo
 ```
 
-`demo` builds a small repo with planted bugs: a secret, a SQL injection, a bad Dockerfile, a vulnerable lockfile, a shell bug and a workflow injection. It scans the change and prints the scanner report. Then run `openqodex review` in that folder, or open it in your agent and ask for a review.
+`demo` builds a small repo with 15 planted bugs. Among them are a secret, a SQL injection, Dockerfile problems, a vulnerable lockfile, shell bugs, a workflow injection, a risky database migration, Terraform open to the internet and a privileged Kubernetes container. It scans the change and prints the scanner report. Two of the bugs need the reviewer: no scanner can see them. Then run `openqodex review` in that folder, or open it in your agent and ask for a review.
 
 ## Without an agent
 

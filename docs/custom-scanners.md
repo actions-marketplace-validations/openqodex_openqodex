@@ -1,18 +1,25 @@
 # Custom scanners
 
-You can add any scanner by its GitHub link. Its findings join the same report as the built-in scanners. Only findings on changed lines are kept.
+You or your agent can configure a compatible scanner from GitHub. Then you approve it before it runs. Its findings join the same report as the built-in scanners. OpenQodex keeps only the findings on changed lines.
 
-A custom scanner is an arbitrary command that runs on your machine with your permissions. Only `openqodex trust` downloads a custom scanner, and it asks you first. `scan` and `review` never download one. Nothing is installed or run before you approve that exact entry.
+A custom scanner is a command that runs on your machine with your permissions. Only `openqodex trust` downloads a custom scanner, and it asks you first. `scan` and `review` never download one. Nothing is installed or run before you approve that exact entry.
+
+## What makes a scanner compatible
+
+- It writes SARIF, a standard JSON format for scanner results. Or it writes one JSON document, which a `map` block turns into findings. OpenQodex cannot read plain text, HTML or JSON Lines.
+- It installs in one of these ways: a file of its GitHub release for your system and CPU, an exact npm version, an exact PyPI version, or a program on your `PATH`.
+- It runs on your machine only. A custom scanner never runs in the GitHub Action, because no approval exists on the runner.
 
 ## Add one
 
-Two lines in your repository's `.openqodex/config.yaml`:
+Add an entry to `.openqodex/config.yaml` in your repository. This entry adds Bearer CLI, which writes SARIF:
 
 ```yaml
 scanners:
   custom:
-    - source: https://github.com/aquasecurity/trivy
-      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
+    - source: https://github.com/Bearer/bearer
+      run: bearer scan {target} --format sarif --output {report} --quiet --disable-version-check
+      target: repo
 ```
 
 - `source`: the scanner's GitHub repository.
@@ -20,11 +27,19 @@ scanners:
 
 Three placeholders are filled in:
 
-- `{report}`: the file the scanner writes its report to.
+- `{report}`: the file the scanner writes its report to. With no `{report}` in `run`, OpenQodex reads the report from the scanner's standard output.
 - `{target}`: the changed files, or the repository root when `target: repo` is set.
 - `{repo}`: the repository root.
 
 `config` lists every optional key: `name`, `version`, `format`, `map`, `paths`, `target`, `timeout_seconds` and `install`.
+
+Bearer CLI is under the Elastic License 2.0, which is not an open source licence. Check the licence of any scanner you add.
+
+## Add one through your agent
+
+Say to your agent: "add https://github.com/Bearer/bearer to OpenQodex as a custom scanner". The agent reads the scanner's README for its SARIF or JSON flag. It writes the entry in `.openqodex/config.yaml`. The openqodex skill tells it never to run `openqodex trust` without asking you first. After you approve the entry, the agent runs `openqodex scan --only custom:<name>` and tells you what it found.
+
+`for-agents` gives agents the same steps.
 
 ## Approve it
 
@@ -55,10 +70,11 @@ OpenQodex matches words in each asset's file name:
 When no asset matches, or more than one does, `trust` stops. It prints the candidates and the line to add. Name the asset by hand. `{version}`, `{os}` and `{arch}` stand for the version and the name words above, so one line fits every machine:
 
 ```yaml
-    - source: https://github.com/aquasecurity/trivy
-      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
+    - source: https://github.com/Bearer/bearer
+      run: bearer scan {target} --format sarif --output {report} --quiet --disable-version-check
+      target: repo
       install:
-        asset: "trivy_{version}_{os}-{arch}.tar.gz"
+        asset: "bearer_{version}_{os}_{arch}.tar.gz"
 ```
 
 The name must match exactly one asset.
@@ -101,23 +117,24 @@ OpenQodex reads each result's rule id, file, start and end line, and message. Th
 
 Without a score, the SARIF level decides: `error` is high, `warning` is medium, `note` is low, `none` is info. Anything else is medium.
 
-### Worked example: trivy with SARIF
+### Worked example: Bearer CLI with SARIF
 
-trivy checks infrastructure files such as Terraform and Kubernetes manifests.
+Bearer CLI checks code for security and privacy problems, such as a weak hash.
 
 ```yaml
 scanners:
   custom:
-    - source: https://github.com/aquasecurity/trivy
-      run: trivy config --disable-telemetry --skip-version-check --skip-check-update --format sarif --output {report} {target}
-      paths: ["**/*.tf", "*.tf", "**/*.yaml", "*.yaml"]
+    - source: https://github.com/Bearer/bearer
+      run: bearer scan {target} --format sarif --output {report} --quiet --disable-version-check
       target: repo
 ```
 
-- `paths` limits the scanner to changes that hold Terraform or YAML files.
-- `target: repo` passes the repository root, because `trivy config` scans a folder.
-- `--disable-telemetry`, `--skip-version-check` and `--skip-check-update` stop trivy sending usage data, checking for a newer trivy and downloading a newer checks bundle; it uses the checks built into its binary. Check what any scanner you add sends before you approve it.
-- Findings appear in the report as `custom:trivy:<rule id>`.
+- `target: repo` passes the repository root, because `bearer scan` scans a folder.
+- `--disable-version-check` stops Bearer from asking for a newer release. Check what any scanner you add sends before you approve it.
+- `--quiet` keeps its progress messages short.
+- Findings appear in the report as `custom:bearer:<rule id>`, such as `custom:bearer:javascript_lang_weak_hash_md5`.
+
+On 2026-10-12, on an Apple Silicon Mac, `trust` picked `bearer_2.1.1_darwin_arm64.tar.gz` and checked it against the project's checksum file. A scan of the demo repository with a changed JavaScript file that used MD5 reported that rule on the changed line.
 
 ### json-map
 

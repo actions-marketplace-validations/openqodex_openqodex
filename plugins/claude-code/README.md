@@ -16,7 +16,7 @@ Say to Claude:
 review my change with openqodex
 ```
 
-The change is the commits not yet pushed plus everything uncommitted. To review the whole repository instead, say "review the whole repo with openqodex". A review takes one to three minutes.
+The change is the commits not yet pushed plus everything uncommitted. To review the whole repository instead, say "review the whole repo with openqodex". It can take minutes. On the 2026-10-09 benchmark run, a review of a small change took about two minutes with Claude Code.
 
 ## What it needs
 
@@ -24,11 +24,11 @@ Claude Code or Codex, installed and logged in: the reviewer runs on that login, 
 
 ## Where the report goes
 
-Each run writes a folder under `.openqodex/reviews/` in your repository, with `report.md`, `report.json` and `report.sarif`. The report says which reviewer ran.
+Each run writes a folder under `.openqodex/reviews/` in your repository, with `report.html`, `report.md`, `report.json` and `report.sarif`. The report says which reviewer ran.
 
 ## What it runs and sends
 
-The hook and the skill run the `openqodex` package from npm, pinned to one version. The reviewer process sends the brief and what it reads to the model your Claude Code or Codex login uses. By default the reviewer can also search the web; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that. The built-in scanners download on first use into `~/.openqodex/tools/`, each pinned to one version. semgrep fetches its rule packs from the Semgrep registry on each run. When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. OpenQodex and the built-in scanners send no code anywhere, and OpenQodex collects no telemetry. A custom scanner named in `.openqodex/config.yaml` never runs until you approve it with `openqodex trust`, and then does whatever its own command does. The privacy page lists every network use.
+The hook and the skill run the `openqodex` package from npm, pinned to one version. The reviewer process sends the brief and what it reads to the model your Claude Code or Codex login uses. By default the reviewer can also search the web; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that. The built-in scanners download on first use into `~/.openqodex/tools/`, each pinned to one version. semgrep fetches its rule packs from the Semgrep registry on each run. When the change holds a lockfile, osv-scanner sends dependency names and versions to osv.dev. kubeconform downloads Kubernetes schemas, and cargo-deny downloads the RustSec advisory database. OpenQodex and the built-in scanners send no code anywhere, and OpenQodex collects no telemetry. A custom scanner named in `.openqodex/config.yaml` never runs until you approve it with `openqodex trust`, and then does whatever its own command does. The privacy page lists every network use.
 
 ## Learn more
 

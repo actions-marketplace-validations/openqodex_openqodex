@@ -18,6 +18,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 
 ## Pages
 
+- `for-agents`: for an AI agent: install, configure, add a custom scanner, and what each message means.
 - `quickstart`: install OpenQodex and run the first review.
 - `claude-code-review`: code review in Claude Code, from install to report.
 - `cli`: every command, flag and exit code.
@@ -31,5 +32,7 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `security`: what runs, what is sent where, and where files go.
 - `telemetry`: there is none.
 - `privacy`: the privacy policy: what OpenQodex collects (nothing) and every network call it makes.
+- `plumbing`: the hidden commands that hooks, the skill and the Action call.
+- `internal-reviewer-drivers`: how the Claude Code and Codex reviewers are started and held to reading.
 - `faq`: short answers.
 - `benchmark`: how review quality is measured, from a clone of the repository, and the rule that a claim about it cites a saved run.

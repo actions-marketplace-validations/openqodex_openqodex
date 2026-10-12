@@ -4,7 +4,54 @@ OpenQodex has twenty-two built-in scanners. Each one runs only when the change h
 
 Pinned versions do not make findings identical on every machine. semgrep fetches its registry rule packs at run time, and OpenQodex does not pin their version.
 
-Every scanner reads the whole changed file. OpenQodex keeps only the findings on changed lines.
+Every scanner reads the whole changed file. Some also read the project or folder around it: brakeman reads the Rails app, golangci-lint the Go packages, cargo-deny the Rust project, and trivy, Checkov and TFLint the folder of each changed Terraform file. OpenQodex keeps only the findings on changed lines.
+
+## All built-in scanners
+
+<!-- scanner-table:start -->
+| What it checks | Scanner | Version | Runs when the change holds | Needs |
+|---|---|---|---|---|
+| Secrets in code | gitleaks | 8.21.2 | any file | nothing |
+| Security problems in code | semgrep | 1.94.0 | any file | Python 3.11, downloaded through uv; the Semgrep registry |
+| Security problems in code | bandit | 1.9.4 | a `.py` or `.pyi` file | the same Python as semgrep |
+| Security problems in code | brakeman | 6.2.1 | a Ruby or Rails file in a Rails app | Ruby 3.0 or newer |
+| Dependencies with known vulnerabilities | osv-scanner | 2.6.0 | a lockfile, such as `package-lock.json` or `uv.lock` | osv.dev |
+| Dependencies with known vulnerabilities | cargo-deny | 0.20.2 | `Cargo.lock` | Cargo; github.com for the RustSec database |
+| Lint | ruff | 0.8.4 | a `.py` or `.pyi` file | nothing |
+| Lint | oxlint | 1.86.0 | a JavaScript or TypeScript file | nothing |
+| Lint | rubocop | 1.69.2 | a `.rb`, `.rake` or `.gemspec` file, or a `Rakefile` | Ruby 2.7 or newer |
+| Lint | golangci-lint | 2.12.2 | a `.go` file | Go |
+| Lint | shellcheck | 0.10.0 | a shell script | `xz` to unpack |
+| GitHub Actions workflows | actionlint | 1.7.7 | a workflow under `.github/workflows/` | nothing |
+| GitHub Actions workflows | zizmor | 1.30.1 | a workflow, an `action.yml` or `.github/dependabot.yml` | nothing |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | hadolint | 2.15.1 | a Dockerfile | nothing |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | trivy | 0.75.0 | Terraform, a Kubernetes manifest or a CloudFormation template | nothing |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | Checkov | 3.3.22 | the same files as trivy | the same Python as semgrep |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | TFLint | 0.64.0 | a `.tf` or `.tf.json` file | nothing |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | kube-linter | 0.8.3 | a Kubernetes manifest | nothing |
+| Dockerfiles, Terraform, Kubernetes and CloudFormation | kubeconform | 0.8.0 | a Kubernetes manifest | raw.githubusercontent.com for schemas |
+| SQL and database migrations | sqllint | built in | a `.sql` file | nothing; it runs inside OpenQodex |
+| SQL and database migrations | squawk | 2.66.0 | a `.sql` file | nothing |
+| SQL and database migrations | SQLFluff | 4.3.0 | a `.sql` file | the same Python as semgrep |
+<!-- scanner-table:end -->
+
+`scripts/docs-facts.mjs --check` holds this table to `packages/scanners/toolchain.json` and the adapter list, and the README's counts to its categories.
+
+## What the checks cover
+
+Each scanner checks less than its name suggests. These are the limits that matter most:
+
+- semgrep runs three registry rule packs: `p/default`, `p/security-audit` and `p/secrets`. The registry can change them between runs.
+- trivy runs `trivy config` only: misconfiguration checks for Terraform, CloudFormation and Kubernetes. It does not run trivy's vulnerability, secret, licence or image scanning.
+- Checkov runs its Terraform, CloudFormation and Kubernetes checks only. It does not run Helm, Kustomize, secret, dependency or image checks. Every Checkov finding is medium severity.
+- osv-scanner checks the lockfiles in the list under its section, against osv.dev. It reads neither `package.json` nor `go.sum`.
+- cargo-deny checks RustSec advisories and crate sources. It does not check licences.
+- golangci-lint runs its default analyzers plus gosec, the Go security checks.
+- oxlint, rubocop, brakeman, golangci-lint, Checkov, TFLint and kube-linter use OpenQodex's own settings. "Changed scanner settings" below lists the repository files the others read.
+- SQLFluff runs eight rules about wrong results and dead code. Its layout and style rules are off.
+- brakeman runs only for a Rails app. Its licence is not open source.
+- The sections below give each scanner's exact files, settings and network use.
+
 
 ## Which scanners run, and why
 
