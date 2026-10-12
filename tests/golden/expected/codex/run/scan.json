@@ -668,7 +668,9 @@
   "projects": [
     {
       "root": "",
-      "frameworks": []
+      "frameworks": [
+        "flask"
+      ]
     }
   ],
   "selection": [

@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { DETECTED_FRAMEWORKS, classifyDrop, classifyReportDrops, drawAudit } from "../lib/drops.mjs";
+import { DETECTED_FRAMEWORKS, NEVER_TAGGED, classifyDrop, classifyReportDrops, drawAudit } from "../lib/drops.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -115,7 +115,7 @@ describe("structure before words", () => {
   });
 
   it("a framework the scan cannot detect is called missing from the project", () => {
-    // detect.ts reads no Flask or SQLAlchemy, so the scan cannot say they are absent.
+    // detect.ts reads no SQLAlchemy, and Flask is never tagged (NEVER_TAGGED), so the scan cannot say they are absent.
     const d = drop(candidate("c7", "semgrep:python.flask.security.xss.audit.template-unescaped", "app/views.py", 9), "Flask escapes this value in its Jinja templates; SQLAlchemy is not involved.");
     expect(classifyDrop(d, { raised: [], frameworks: [] })).toMatchObject({ class: "rule-fp", tags: [] });
   });
@@ -123,7 +123,12 @@ describe("structure before words", () => {
   it("a framework the scan detects is missing from the classifier's names, so its mismatches go untagged", () => {
     const detect = readFileSync(join(repo, "packages", "scanners", "src", "detect.ts"), "utf8");
     const declared = /export type Framework = ([^;]+);/.exec(detect)[1].match(/"([a-z-]+)"/g).map((s) => s.slice(1, -1)).sort();
-    expect([...DETECTED_FRAMEWORKS].sort()).toEqual(declared);
+    expect([...DETECTED_FRAMEWORKS, ...NEVER_TAGGED].sort()).toEqual(declared);
+  });
+
+  it("a Flask rule is never tagged as a mismatch, since a scan saved before Flask was detected records a Flask project with no framework", () => {
+    const d = drop(candidate("c2", "semgrep:python.flask.security.injection.tainted-sql-string.tainted-sql-string", "orders/views.py", 8), "This is a Django view; the Flask rule does not apply.");
+    expect(classifyDrop(d, { raised: [], frameworks: ["django"] })).toMatchObject({ class: "rule-fp", tags: [] });
   });
 
   it("a framework rule dropped as a repeat loses its framework-mismatch tag", () => {

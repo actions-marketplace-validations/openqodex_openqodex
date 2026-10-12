@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { noLinkOnTheWay, readRepoPrefixSync } from "./adapters/read.js";
 
-export type Framework = "rails" | "react" | "react-native" | "nextjs" | "django" | "fastapi" | "airflow";
+export type Framework = "rails" | "react" | "react-native" | "nextjs" | "django" | "flask" | "fastapi" | "airflow";
 
 export type Project = {
   // The project's folder, repo-relative with forward slashes; "" is the repo root.
@@ -149,7 +149,7 @@ export function repoFacts(repoDir: string): RepoFacts {
       else if (name.startsWith("requirements")) deps = requirementsDeps(read(join(name), MAX_MANIFEST_BYTES, true));
       for (const dep of deps) if (!py.has(dep)) py.set(dep, name);
     }
-    for (const [framework, dep] of [["django", "django"], ["fastapi", "fastapi"], ["airflow", "apache-airflow"]] as const) {
+    for (const [framework, dep] of [["django", "django"], ["flask", "flask"], ["fastapi", "fastapi"], ["airflow", "apache-airflow"]] as const) {
       if (py.has(dep)) evidence[framework] = `${dep} in ${py.get(dep)}`;
     }
 
