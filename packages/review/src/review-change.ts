@@ -1008,7 +1008,10 @@ async function reviewInScope(
     if (joined) {
       const theirs = dispositionsOf(joined, second.submission, r.scan, "second");
       const merged = mergeFindings({ name: model.model, findings: r.report.findings }, { name: second.name, findings: joined.findings });
-      checked = { ...r.report, findings: merged.findings, ...(answered ? { verdict: verdictFor(config.blockOnSeverity, merged.findings.map((f) => f.severity)) } : {}) };
+      // A candidate the second reviewer raised or dropped is no longer
+      // unchecked, even when the primary never answered.
+      const disposed = new Set(theirs.map((d) => d.candidate));
+      checked = { ...r.report, findings: merged.findings, not_reviewed: r.report.not_reviewed.filter((c) => !disposed.has(c.id)), ...(answered ? { verdict: verdictFor(config.blockOnSeverity, merged.findings.map((f) => f.severity)) } : {}) };
       foundBy = merged.foundBy;
       if (answered) disagreements = disagreementsOf({ name: model.model, dispositions }, { name: second.name, dispositions: theirs });
       dispositions.push(...theirs);

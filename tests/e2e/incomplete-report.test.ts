@@ -15,8 +15,8 @@
 //     out, so only report.json says what the scanners found.
 //  4. The candidates read as a review: the verdict is not incomplete, the
 //     exit code is not 2, the receipt does not open with "Review incomplete",
-//     the SARIF run says it completed, or the push gate's record holds a
-//     verdict.
+//     the SARIF run says it completed, report.html counts them as findings,
+//     or the push gate's record holds a verdict.
 //  5. Listing the candidates shows the demo's secret, which the gitleaks
 //     candidate is about.
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -74,11 +74,14 @@ describe("a review stopped at the time cap", () => {
     candidates = readJson<{ candidates: Candidate[] }>(join(folder, "scan.json")).candidates;
   }, 600_000);
 
-  it("4. is incomplete, exits 2, says it timed out and records no verdict for the push gate", () => {
+  it("4. is incomplete, exits 2, says it timed out, counts no finding and records no verdict for the push gate", () => {
     expect(review.status, review.stderr).toBe(2);
     expect(report.verdict).toBe("incomplete");
     expect(report.completion?.missing).toContain(CAP);
     expect(review.stdout.split("\n")[0]).toBe("Review incomplete: this is not a review of the change");
+    const html = readFileSync(join(folder, "report.html"), "utf8");
+    expect(html).toContain('<span class="counts">0 findings</span>');
+    expect(html).toContain("Unchecked scanner candidates, not a review");
     expect(readJson<{ verdict: unknown; finalized: boolean }>(join(dir, ".openqodex/latest.json"))).toMatchObject({ verdict: null, finalized: false });
   });
 

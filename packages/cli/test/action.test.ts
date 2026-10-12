@@ -616,4 +616,20 @@ describe("the review mode, without a reviewer", () => {
     expect(fields({ ...partial, block_on_severity: null })[1]).toBe("0");
     expect(fields({ verdict: "passed", block_on_severity: null, findings: [], completion: { status: "complete", missing: [], reviewer: null } }).slice(0, 3)).toEqual(["complete", "0", ""]);
   });
+
+  it("R22. an incomplete report's unchecked scanner candidates are left to the scan that runs after it, not counted as blocking", () => {
+    // A changed scanner settings file is a major candidate in the review and
+    // a minor finding in the scan: the review's copy must not block the job.
+    const fn = /read_run\(\) \{[\s\S]*?\n\}/.exec(SCRIPT)?.[0];
+    expect(fn).toBeDefined();
+    const dir = tempDir("oq-report-");
+    const fields = (report: unknown) => {
+      writeFileSync(join(dir, "report.json"), JSON.stringify(report));
+      return spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", `node_bin='${process.execPath}'\n${fn}\nread_run "$1"`, "x", dir], { encoding: "utf8" }).stdout.split("\n");
+    };
+    const unchecked = [{ reviewSeverity: "major" }];
+    const partial = { verdict: "incomplete", block_on_severity: "major", findings: [], not_reviewed: unchecked, completion: { status: "incomplete", missing: ["the reviewer timed out"], reviewer: null } };
+    expect(fields(partial).slice(0, 2)).toEqual(["incomplete", "0"]);
+    expect(fields({ ...partial, findings: [{ severity: "major" }] })[1]).toBe("1");
+  });
 });
