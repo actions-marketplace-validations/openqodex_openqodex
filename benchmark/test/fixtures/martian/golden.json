@@ -1,0 +1,20 @@
+[
+  {
+    "pr_title": "Cache widget lookups",
+    "url": "https://github.com/alpha/app/pull/1",
+    "comments": [
+      { "comment": "The cache entry is read after the lock is released, so two writers can both miss and both insert.", "severity": "High", "category": "bug" },
+      { "comment": "Read and insert should share one critical section rather than two.", "severity": "Low", "category": "style" },
+      { "comment": "The widget id from the request reaches the SQL string unescaped.", "severity": "Critical", "category": "security" }
+    ]
+  },
+  {
+    "pr_title": "Retry failed deliveries",
+    "url": "https://github.com/eval-org/alpha-copy/pull/1",
+    "original_url": "https://github.com/alpha/app/pull/9",
+    "comments": [
+      { "comment": "The retry counter is shared between workers without a lock.", "severity": "Medium", "category": "concurrency" },
+      { "comment": "The endpoint now answers 200 with an empty body where clients expect 404.", "severity": "High", "category": "api" }
+    ]
+  }
+]
