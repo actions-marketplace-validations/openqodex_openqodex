@@ -14,6 +14,7 @@
 // 10. The blast radius line says nothing when the graph could not see every
 //     call (a floor), or leaves out the public names the change removed.
 import { describe, expect, it } from "vitest";
+import { DISABLED_REASON } from "../config.js";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
 import type { CompletionRecord, Config, ImpactSummary, Report } from "../types.js";
@@ -274,8 +275,9 @@ describe("no rendered output contains a secret", () => {
 });
 
 // Failure cases: failed scanners say Passed; idle scanners inflate selected counts;
-// a scanner disabled in the config counts as did not run; finding verdicts lose
-// their coverage clause; all-ran verdicts change; outputs disagree.
+// a scanner disabled in the config counts as did not run; a scanner --offline
+// skipped vanishes from the count as if disabled; finding verdicts lose their
+// coverage clause; all-ran verdicts change; outputs disagree.
 describe("verdict scanner coverage", () => {
   function outputs(r: Report): string[] {
     return [renderTerminal(r, { color: false }), renderMarkdown(r), renderHtml({ report: r, display: null, version: "test" })];
@@ -306,13 +308,18 @@ describe("verdict scanner coverage", () => {
     expect(line.endsWith("; 1 of 4 scanners did not run"), line).toBe(true);
     for (const output of outputs(r)) expect(output).toContain(line);
   });
-  it("leaves a disabled scanner out of both numbers", () => {
+  it("leaves a scanner disabled in the config out of both numbers and counts one skipped offline", () => {
     const r = review(makeSubmission({ findings: [], dropped: [] }));
     r.not_reviewed = [];
-    r.scanners.push({ ...r.scanners[0]!, scanner: "bandit", status: "disabled", version: null, reason: "disabled in .openqodex/config.yaml" });
+    r.scanners.push({ ...r.scanners[0]!, scanner: "bandit", status: "disabled", version: null, reason: DISABLED_REASON });
     for (const output of outputs(r)) expect(output).toContain("No findings from 3 of 4 scanners; 1 did not run (1 not installed)");
     r.scanners = r.scanners.filter((s) => s.status !== "not_installed");
     for (const output of outputs(r)) expect(output).toContain("Passed: no findings");
+    r.scanners.push({ ...r.scanners[0]!, scanner: "osv-scanner", status: "disabled", version: null, reason: "offline, dependency lookups are off" });
+    for (const output of outputs(r)) {
+      expect(output).toContain("No findings from 3 of 4 scanners; 1 did not run (1 skipped offline)");
+      expect(output).not.toContain("Passed");
+    }
   });
   it("keeps the verdict unchanged when every selected scanner ran", () => {
     const r = review(makeSubmission({ findings: [], dropped: [] }));

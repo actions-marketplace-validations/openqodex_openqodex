@@ -9,7 +9,7 @@
 // belongs to, by its first bytes), then a reason it must not run at all
 // (dependency lookups while offline).
 
-import { display, matchesGlob, safeGit, STATE_DIR } from "@openqodex/core";
+import { DISABLED_REASON, display, matchesGlob, safeGit, STATE_DIR } from "@openqodex/core";
 import type { BuiltinScanner, Config } from "@openqodex/core";
 import { ADAPTERS, IN_PROCESS } from "./adapters/index.js";
 import { repoFacts, type RepoFacts } from "./detect.js";
@@ -32,7 +32,7 @@ export type ScannerChoice = {
   skip: string | null;
 };
 
-export const DISABLED_REASON = "disabled in .openqodex/config.yaml";
+export { DISABLED_REASON };
 export const NOTHING_TO_CHECK = "nothing to check";
 
 export function selectScanners(args: { repoDir: string; paths: string[]; config: Config; facts?: RepoFacts }): ScannerChoice[] {

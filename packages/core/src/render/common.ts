@@ -1,5 +1,6 @@
 // Wording shared by the renderers and the brief, so the terminal, the
 // markdown report and the brief say the same thing the same way.
+import { DISABLED_REASON } from "../config.js";
 import { SEVERITIES, atOrAbove } from "../severity.js";
 import type { Candidate, Report, ReportFinding, ScannerRunSummary, Severity } from "../types.js";
 
@@ -70,14 +71,23 @@ export function severityBreakdown(severities: Severity[]): string {
     .join(", ");
 }
 
+// Why a scanner left out of a run did not run, in the verdict's words. A
+// "disabled" entry here was not switched off in the config: the four network
+// scanners record a reason that starts "offline, " when --offline skips them,
+// and any other skip (folders held back) is "skipped".
+function gapWord(s: ScannerRunSummary): string {
+  if (s.status !== "disabled") return s.status.replace(/_/g, " ");
+  return s.reason?.startsWith("offline, ") ? "skipped offline" : "skipped";
+}
+
 export function verdictLine(report: Report): string {
   const counted = countedSeverities(report);
   const threshold = report.block_on_severity;
   const what = (n: number) => plural(n, "finding", "findings");
-  // A disabled scanner is the developer's choice, not a gap: it is in
-  // neither number. The coverage line still lists it as disabled.
+  // A scanner switched off in the config is the developer's choice, not a
+  // gap: it is in neither number. The coverage line still lists it.
   const { ran, out: left } = scannerCoverage(report.scanners);
-  const out = left.filter((s) => s.status !== "disabled");
+  const out = left.filter((s) => !(s.status === "disabled" && s.reason === DISABLED_REASON));
   const ofSelected = plural(ran + out.length, "scanner", "scanners");
   const clause = out.length > 0 ? `; ${out.length} of ${ofSelected} did not run` : "";
   if (report.verdict === "blocked" && threshold) {
@@ -86,10 +96,10 @@ export function verdictLine(report: Report): string {
   }
   if (counted.length === 0) {
     if (out.length === 0) return "Passed: no findings";
-    const reasons = ["not_installed", "failed", "installing", "untrusted"]
-      .map((status) => [status, out.filter((s) => s.status === status).length] as const)
+    const reasons = ["not installed", "failed", "installing", "skipped offline", "skipped", "untrusted"]
+      .map((word) => [word, out.filter((s) => gapWord(s) === word).length] as const)
       .filter(([, n]) => n > 0)
-      .map(([status, n]) => `${n} ${status.replace(/_/g, " ")}`)
+      .map(([word, n]) => `${n} ${word}`)
       .join(", ");
     return `No findings from ${ran} of ${ofSelected}; ${out.length} did not run (${reasons})`;
   }
