@@ -14,7 +14,8 @@
 //     every flag in it is in that command's own flag list;
 //  5. every pinned `openqodex@x.y.z` names the package version;
 //  6. every README link is absolute, so it works on the npm page; every
-//     link into this repository names a file that exists.
+//     link into this repository names a file that exists, at main or at a
+//     tag that GitHub already has.
 // It cannot check what a sentence means, a measured time or a privacy
 // promise. Those are in the manual claims ledger.
 import { execFileSync } from "node:child_process";
@@ -211,6 +212,23 @@ for (const rel of AGENT_PAGES) {
 
 // 6. Links.
 const REPO = "https://github.com/openqodex/openqodex/blob/";
+// A link into the repository at a ref other than main must name a tag that
+// GitHub already has: a link to a release not yet tagged fails for every
+// reader. git asks GitHub; without the network, the check fails and says so.
+const tagCache = new Map();
+function publishedTag(ref) {
+  if (!tagCache.has(ref)) {
+    let out = "";
+    try {
+      out = execFileSync("git", ["ls-remote", "--tags", "https://github.com/openqodex/openqodex.git", `refs/tags/${ref}`], { encoding: "utf8", timeout: 30_000 });
+    } catch {
+      out = "";
+    }
+    tagCache.set(ref, out.trim() !== "");
+  }
+  return tagCache.get(ref);
+}
+
 // Every destination: inline links and images, a badge's outer link, and
 // reference definitions.
 function links(text) {
@@ -225,8 +243,10 @@ for (const rel of [README, ...docsPages]) {
   for (const href of links(read(rel))) {
     const path = href.split(/[?#]/)[0];
     if (href.startsWith(REPO)) {
-      const inRepo = path.slice(REPO.length).split("/").slice(1).join("/");
+      const [ref, ...rest] = path.slice(REPO.length).split("/");
+      const inRepo = rest.join("/");
       if (inRepo && !existsSync(join(root, inRepo))) fail(rel, `links ${href}, but ${inRepo} is not in the repository`);
+      if (ref !== "main" && !publishedTag(ref)) fail(rel, `links ${href}, but the tag ${ref} is not published on GitHub`);
     } else if (path && !/^[a-z]+:/.test(path) && !existsSync(join(root, normalize(join(dirname(rel), path))))) {
       fail(rel, `links ${href}, which does not exist`);
     }
