@@ -423,12 +423,21 @@ export function resumeProblems(earlier, now) {
   const names = [...new Set([...Object.keys(earlier.reviewers ?? {}), ...Object.keys(now.reviewers ?? {})])].sort();
   for (const n of names) {
     same(`${n} reviewer version`, earlier.reviewers?.[n]?.version, now.reviewers?.[n]?.version);
-    same(`${n} model`, earlier.reviewers?.[n]?.model, now.reviewers?.[n]?.model);
+    const e = earlier.reviewers?.[n];
+    const w = now.reviewers?.[n];
+    // A model reviewer's `model` is the id that served the run's first
+    // answered review, which a new invocation does not know yet; the model it
+    // asks for is what must match. The served id is held by
+    // lib/server-review.mjs recordServed.
+    if (e?.kind === "model" || w?.kind === "model") same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
+    else same(`${n} model`, e?.model, w?.model);
     // A model reviewer's settings (effort, maxOutputTokens), the alias that
     // named it and the scripted model's script.
-    same(`${n} settings`, earlier.reviewers?.[n]?.settings, now.reviewers?.[n]?.settings);
-    same(`${n} alias`, earlier.reviewers?.[n]?.alias, now.reviewers?.[n]?.alias);
-    same(`${n} script`, earlier.reviewers?.[n]?.script?.sha256, now.reviewers?.[n]?.script?.sha256);
+    same(`${n} settings`, e?.settings, w?.settings);
+    same(`${n} alias`, e?.alias, w?.alias);
+    same(`${n} script`, e?.script?.sha256, w?.script?.sha256);
+    // The endpoint, as an HMAC-SHA256 of its base URL keyed with its key; the line names neither.
+    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL or another key than when the run started`);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);

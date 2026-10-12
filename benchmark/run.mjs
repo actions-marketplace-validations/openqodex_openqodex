@@ -238,11 +238,17 @@
 //    boards.json before anything else (lib/server-review.mjs), and the
 //    manifest records the deployment, the alias that named it, and the
 //    settings (effort, maxOutputTokens, the scripted model's script).
+//    A resume is refused when the endpoint, recorded as an HMAC-SHA256 of
+//    its base URL keyed with the endpoint's key, differs from the run's.
 // 26. The model recorded is not the one that answered: each sample records
 //    the model asked for apart from the ones the provider named as
-//    answering.
+//    answering, and the manifest's model is the id that served the run's
+//    first answered review (requestedModel is the one asked for); a review
+//    served by another id stops the run.
 // 27. A review writes outside its workDir, or the key or base URL of the
-//    model endpoint lands in a saved file: either stops the run.
+//    model endpoint lands in a saved file: either stops the run. An answer
+//    that holds the key or the address is checked before anything of its
+//    sample is written or printed, and only the refusal is saved.
 // 28. The scanner preflight reads another tools folder than the reviews:
 //    --install-root names the tools folder of an OpenQodex home, and the
 //    doctor runs with that home.
@@ -297,7 +303,7 @@ import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
-import { createModelReviewer, isModelReviewer, makeWorkRoot, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
+import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
 import { SUITES, materialise, selectCases, specCopy, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
@@ -398,6 +404,8 @@ function parseArgs(argv) {
   if (o.smoke && o.split === "test") throw new Error("--smoke runs development cases only: the test split is held out, and no held-out case runs before a release");
   if (o.smoke && o.addRepeats !== null) throw new Error("--add-repeats grows a run into a measurement, and a smoke run is never one: it stays at most 5 reviews per configuration");
   o.split ??= "dev";
+  // --subset all is the whole split, which a run with no subset names.
+  if (o.subset === "all") o.subset = null;
   // A scan is deterministic (--check-identical proves it), so one repeat; a
   // scan has no reviewer to wait on; a smoke run checks the runner once.
   o.repeat ??= scan || o.smoke ? 1 : 3;
@@ -1127,7 +1135,7 @@ async function main() {
         leave(2);
       }
       const r = models[name].record;
-      console.log(`Reviewer ${name}: model ${r.model}${r.alias ? ` (the alias ${r.alias} in boards.json)` : ""}${r.script ? `, script ${r.script.file} (${r.script.sha256.slice(0, 12)})` : ""}, effort ${r.settings.effort ?? "the deployment's default"}, at most ${r.settings.maxOutputTokens} output tokens per call`);
+      console.log(`Reviewer ${name}: model ${r.requestedModel}${r.alias ? ` (the alias ${r.alias} in boards.json)` : ""}${r.script ? `, script ${r.script.file} (${r.script.sha256.slice(0, 12)})` : ""}, effort ${r.settings.effort ?? "the deployment's default"}, at most ${r.settings.maxOutputTokens} output tokens per call`);
     }
   }
   // The scanners a model review reads, never installed, and the doctor's
@@ -1296,7 +1304,7 @@ async function main() {
     const replacements = [[tempRoot, "<temp>"], [realpathSync(tempRoot), "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
     let saved;
     try {
-      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop });
+      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop, appearsIn: models[job.reviewer].appearsIn });
     } finally {
       rmSync(caseDir, { recursive: true, force: true });
     }
@@ -1307,6 +1315,15 @@ async function main() {
     checkSaved(attemptDir(out, job, k));
     if (rec.outside.length > 0) halt(`${job.case} ${job.config} #${job.repeat}: the review wrote outside its workDir: ${rec.outside.join("; ")}`, "outside-workdir");
     if (saved.error) halt(`${job.case} ${job.config} #${job.repeat}: the review threw: ${String(saved.error.message ?? saved.error).split("\n")[0]}`, "review-threw");
+    if (saved.leaked) halt(`${job.case} ${job.config} #${job.repeat}: the provider's answer held the ${job.reviewer} endpoint's key or address; only the refusal was saved`, "saved-file");
+    else {
+      // The manifest names the model that served the run's first answered
+      // review, on disk now and in the copy executeRun writes at the end; a
+      // review served by another stops the run (failure 26).
+      const served = recordServed({ manifestPath: join(out, "manifest.json"), name: job.reviewer, record: rec });
+      settings.reviewers[job.reviewer].model = served.model;
+      if (served.why) halt(`${job.case} ${job.config} #${job.repeat}: ${served.why}`, "served-model-changed");
+    }
     // The review's own spend, from its envelope in the ledger (failure 32).
     meter.close();
     return { rec, ownUsd: meter.spentUsd ?? 0 };
