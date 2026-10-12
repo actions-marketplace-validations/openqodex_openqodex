@@ -280,6 +280,8 @@ describe("fixing issue 141 changes the score of a planted sample", () => {
     if (process.env.OQ_RECORD_PLANTED_SCORE === "1") write(GOLDEN, `${JSON.stringify(now, null, 2)}\n`);
     expect(existsSync(GOLDEN), `${GOLDEN} is missing; it is recorded with rules version 5 only`).toBe(true);
     const golden = JSON.parse(readFileSync(GOLDEN, "utf8"));
+    // Old samples have no per-review usage, so their model is now unknown.
+    golden.score.reviewers.claude.model = null;
     expect({ ...now, unresolved: withoutQueueFields8(now.unresolved) }).toEqual(golden);
     for (const item of now.unresolved) for (const k of QUEUE_FIELDS_8) expect(item, k).toHaveProperty(k);
   });
@@ -306,7 +308,11 @@ describe("keying rulings on the spec version changes the score of a planted samp
       { target: { kind: "bug", id: "root", specHash }, status: "disputed" },
     ].map((r, i) => ({ v: 1, caseId: "planted/hand@abababab", fromSheet: null, ...r, by: "Sid", at: `2026-10-11T10:0${i}:00.000Z`, note: "", evidence: null }));
   // The near miss's finding id, from the golden's outcomes.
-  const golden = () => JSON.parse(readFileSync(GOLDEN, "utf8"));
+  const golden = () => {
+    const saved = JSON.parse(readFileSync(GOLDEN, "utf8"));
+    saved.score.reviewers.claude.model = null;
+    return saved;
+  };
   const nearId = () => golden().outcomes.find((o) => o.outcome === "near").findingId;
   const lines = (specHash) => rulings(specHash).map((l) => (l.target.findingId ? { ...l, target: { ...l.target, findingId: nearId() } } : l));
 

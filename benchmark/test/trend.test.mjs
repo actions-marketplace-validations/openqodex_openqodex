@@ -107,7 +107,7 @@ async function savedRun({ parent, runId, cases, repeat, found, unlisted = () => 
       for (let i = 0; i < unlisted(c, job.repeat); i++) shown.push(finding("other.py", 100 + i, `Something else ${i}`));
       const report = { findings: shown, outside_change: [], dropped: [], completion: { status: "complete", missing: [], reviewer: { usage: { cost_usd: 0.1 } } } };
       const dir = join(out, "samples", job.case, job.config, String(job.repeat));
-      write(join(dir, "sample.json"), JSON.stringify(sampleRecord({ job, attempt: 1, result: { code: 0, signal: null, wallMs: 20_000 }, report, who: null, startedAt: "t", failure: null, stopped: null })));
+      write(join(dir, "sample.json"), JSON.stringify(sampleRecord({ job, usageRecord: { calls: [{ model: "claude-opus-5-5" }] }, attempt: 1, result: { code: 0, signal: null, wallMs: 20_000 }, report, who: null, startedAt: "t", failure: null, stopped: null })));
       write(join(dir, "report", "report.json"), JSON.stringify(report));
     },
   });
@@ -415,5 +415,37 @@ describe("the trend over the committed index", () => {
     for (const { entry } of legacy) expect(shown.stdout).toContain(entry.runId);
     expect(shown.stdout).toMatch(/legacy: its own scorer, no interval/);
     expect(existsSync(join(fileURLToPath(new URL("../index/", import.meta.url)), "accepted.json")) || /No run is accepted yet/.test(shown.stdout)).toBe(true);
+  });
+});
+
+// Failure list: accept trusts the manifest over mixed or unknown samples;
+// scoring an old sample repeats the manifest's unsupported model claim;
+// accept never sees the model --model asked for, since the index entry drops it.
+describe("per-review models at accept", () => {
+  for (const mixed of [true, false]) it(mixed ? "refuses a saved folder with two models" : "scores missing usage as unknown and refuses accept", async () => {
+    const root = tempDir("oq-bench-models-");
+    const index = tempDir("oq-bench-model-index-");
+    const folder = await savedRun({ parent: root, ...NEWER, cases: TWENTY.slice(0, 2), repeat: 1, found: () => true });
+    const dir = join(folder, "samples", TWENTY[0].name, CONFIG, "1");
+    const row = JSON.parse(readFileSync(join(dir, "sample.json"), "utf8"));
+    if (mixed) row.model = ["claude-opus-5-5", "claude-sonnet-5"];
+    else { delete row.model; delete row.modelFrom; delete row.modelStatus; }
+    write(join(dir, "sample.json"), JSON.stringify(row));
+    await publish(folder, index);
+    const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stderr.trim()).toMatch(mixed ? /samples.*mixed.*claude-opus-5-5, claude-sonnet-5/ : /samples.*unknown/);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    if (!mixed) expect(JSON.parse(readFileSync(join(folder, "score.json"), "utf8")).reviewers.claude.model).toBeNull();
+  });
+  it("refuses a run whose samples were served by another model than --model asked for", async () => {
+    const root = tempDir("oq-bench-models-");
+    const index = tempDir("oq-bench-model-index-");
+    const reviewers = { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5", requestedModel: "claude-sonnet-5" } };
+    const folder = await savedRun({ parent: root, ...NEWER, cases: TWENTY.slice(0, 2), repeat: 1, found: () => true, manifest: { reviewers } });
+    await publish(folder, index);
+    const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stderr.trim()).toMatch(/requested model claude-sonnet-5, but samples were served by claude-opus-5-5/);
   });
 });
