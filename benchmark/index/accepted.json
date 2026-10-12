@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "runId": "2026-10-12-eee3d15-aacr-dev-smoke-scan-ci",
-  "commit": "eee3d152b64b96787aa26a06997c0d72164c4c44",
-  "scoreHash": "8da4022328f74e6ee9739aa7d33c17814b10df62e74deef56fd16e7cdceb1895",
-  "acceptedAt": "2026-10-12T01:37:36.097Z",
+  "runId": "2026-10-12-b43b25b-go126-codex",
+  "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
+  "scoreHash": "5d7c0b8a17dab8ac0b76a1ac59db5dac5570546ae0cc8bf16a81d9b772e019a8",
+  "acceptedAt": "2026-10-12T11:58:31.521Z",
   "acceptedBy": "Sid",
   "groups": {
     "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|scan|laptop|none|none|scan|1|dev-smoke": {
@@ -11,6 +11,20 @@
       "commit": "eee3d152b64b96787aa26a06997c0d72164c4c44",
       "scoreHash": "8da4022328f74e6ee9739aa7d33c17814b10df62e74deef56fd16e7cdceb1895",
       "acceptedAt": "2026-10-12T01:37:36.097Z",
+      "acceptedBy": "Sid"
+    },
+    "planted|dev|none|review|laptop|claude|claude-opus-5-5|claude-graph-on|7": {
+      "runId": "2026-10-12-b43b25b-go126-claude",
+      "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
+      "scoreHash": "a8164d6bfb499e490c562bb971656217e5ccf427f6bc93e5f8ec4d984b3e8746",
+      "acceptedAt": "2026-10-12T11:58:31.413Z",
+      "acceptedBy": "Sid"
+    },
+    "planted|dev|none|review|laptop|codex|gpt-6.1-sol|codex-graph-on|7": {
+      "runId": "2026-10-12-b43b25b-go126-codex",
+      "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
+      "scoreHash": "5d7c0b8a17dab8ac0b76a1ac59db5dac5570546ae0cc8bf16a81d9b772e019a8",
+      "acceptedAt": "2026-10-12T11:58:31.521Z",
       "acceptedBy": "Sid"
     },
     "planted|dev|none|scan|laptop|none|none|scan|1": {

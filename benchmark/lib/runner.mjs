@@ -63,6 +63,14 @@ import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { SCAN_CONFIG } from "./scan-score.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
 
+// The arguments of one laptop review (Claude Code or Codex through
+// `openqodex review`), the same for planted and pull request cases.
+export function laptopReviewArgs({ repo, reportDir, job, web, timeout }) {
+  const args = ["review", "--cwd", repo, "--report-dir", reportDir, "--reviewer", job.reviewer, "--reviewer-web", web, "--timeout", String(timeout), "--no-color"];
+  if (!job.graph) args.push("--no-graph");
+  return args;
+}
+
 // The jobs of a run in run order: per repeat, every case, every
 // configuration, with the configuration order alternating and the case
 // order rotated by repeat so drift lands on no one configuration or case

@@ -22,7 +22,7 @@
 //                          [--check-identical] [--scanner-config <file>]
 //                          [--allow-missing-scanners] [--timeout 120]
 //                          [--out <folder>] [--dry-run] [--draft]
-//   either mode also takes --suite planted|aacr [--split dev]
+//   either mode also takes --suite planted|aacr|clean [--split dev]
 //                          [--subset <name>|all] [--cases <suite>/<name>,...]
 //                          [--package local|npm:<version>|file:<path.tgz>]
 //   a review run also takes --smoke
@@ -54,13 +54,13 @@
 //
 // Without --cases, every case the lock does not mark retired runs. --suite
 // names the suite the cases come from (planted unless --cases names pull
-// request cases); for a real suite (aacr), without --cases, every usable
+// request cases); for a real suite (aacr, clean), without --cases, every usable
 // case on the development side of its split file runs, or the subset that
 // --subset names there (dev-smoke, dev-laptop). The test split is held out
 // and refused: no held-out case runs before a release (lib/suites.mjs
 // selectCases). The manifest records suite, split, splitHash and subset.
-// A real suite's cases run in scan mode, and in review mode by model
-// reviewers only.
+// A real suite's development cases run in scan mode and with laptop or
+// model reviewers, scored against the same saved truth.
 //
 // --reviewers model:<id> is the server path (lib/server-review.mjs): each
 // review is the library's reviewChange in the server profile, on the case
@@ -75,9 +75,9 @@
 // the code graph and gives the reviewer no web tool, so --graph is on and
 // --web off; reviews run 2 at a time unless --concurrency says otherwise;
 // --review-max-usd is required. --cases may name pull request cases
-// (<suite>/<name> or a full case id, development split only), which only
-// model reviewers review here; their resolved truth is copied into the
-// run's cases/ folder. Laptop and model reviewers never share a run.
+// (<suite>/<name> or a full case id, development split only); their
+// resolved truth is copied into the run's cases/ folder. Laptop and model
+// reviewers never share a run.
 //
 // Exit codes: 0 finished; 1 stopped (a limit or login wall, the budget, the
 // same failure twice, Ctrl-C); 2 refused (flags, build, lock, budget
@@ -301,14 +301,14 @@ import { heldOutAccessPath } from "./lib/index.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, claudeRunModels, savedSampleRows, CLAUDE_MODEL_FROM, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopReviewArgs, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
 import { SUITES, materialise, selectCases, specCopy, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]\n       either mode: [--suite planted|aacr] [--split dev] [--subset <name>|all] [--cases <suite>/<name>,...] [--package local|npm:<version>|file:<path.tgz>]; a review run: [--smoke]\n       node benchmark/run.mjs --materialise-only [--suite <suite>] [--split dev|test] [--subset <name>] [--cases a,b] [--reviewers <names> | --mode scan] [--out <folder>]";
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]\n       either mode: [--suite planted|aacr|clean] [--split dev] [--subset <name>|all] [--cases <suite>/<name>,...] [--package local|npm:<version>|file:<path.tgz>]; a review run: [--smoke]\n       node benchmark/run.mjs --materialise-only [--suite <suite>] [--split dev|test] [--subset <name>] [--cases a,b] [--reviewers <names> | --mode scan] [--out <folder>]";
 
 // Flags only a review run reads, flags only a scanner-only run reads, and
 // flags only a model reviewer reads.
@@ -422,7 +422,6 @@ function parseArgs(argv) {
   if (!scan) modelChecks(o, given, models);
   if (o.real) {
     if (o.cases !== null && real.length !== o.cases.length) throw new Error(`--cases names planted cases in a run of the ${o.suite} suite; name pull request cases as ${o.suite}/<name> or a full case id`);
-    if (!scan && !server) throw new Error("pull request cases are reviewed here by model reviewers only (--reviewers model:<id>); the laptop reviewers run the planted cases, and a scanner-only run (--mode scan) scans either");
     for (const f of ["--draft", "--allow-retired"]) if (given.has(f)) throw new Error(`${f} is for planted cases, whose lock it reads; a pull request case is frozen by its suite entry`);
   }
   if (o.scannerConfig !== null && !existsSync(o.scannerConfig)) throw new Error(`--scanner-config: there is no file ${o.scannerConfig}`);
@@ -1071,8 +1070,7 @@ async function main() {
   // commits (lib/suites.mjs).
   const buildRepo = (name, into, shape) => {
     if (real) return materialise(real.byName[name].case, into, { shape });
-    if (shape === "server") return materialise({ name, materialise: { kind: "folders" } }, into, { shape, casesDir: snap });
-    return buildCase(name, into, snap);
+    return materialise({ name, materialise: { kind: "folders" } }, into, { shape, casesDir: snap });
   };
   // The spec each case is scored against: a planted case's own, or a pull
   // request case with its resolved truth.
@@ -1165,7 +1163,9 @@ async function main() {
     console.error(`The scanner preflight failed: ${error.message}`);
     leave(2);
   }
-  if (server) rmSync(join(tempRoot, "preflight"), { recursive: true, force: true });
+  // Only a planted case's laptop copy is kept: a pull request case's
+  // checkout can be large, and the clone cache rebuilds it in seconds.
+  if (server || real) rmSync(join(tempRoot, "preflight"), { recursive: true, force: true });
   if (preflight.complete) console.log(`Scanners: every scanner the cases call for is installed${server ? ` in ${hideHome(installRoot)}` : ""}.`);
   else {
     console.log(`Scanners missing: ${preflight.missing.map((m) => `${m.scanner} for ${m.case} (${m.state})`).join(", ")}.`);
@@ -1250,7 +1250,7 @@ async function main() {
     return differ;
   };
 
-  if (!server) console.log(`Case repositories: ${tempRoot}`);
+  if (!server && !real) console.log(`Case repositories: ${tempRoot}`);
   const secrets = new Set();
   if (!real) for (const c of o.cases) for (const g of readCase(c, snap).generated ?? []) secrets.add(generatedValue(c, g.file, g.kind));
 
@@ -1370,13 +1370,17 @@ async function main() {
   const attempt = async (job, k) => {
     const dir = attemptDir(out, job, k);
     const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${k}`);
-    const { dir: repo } = buildCase(job.case, join(caseDir, "repo"), snap);
+    const { dir: repo } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
-    const args = ["review", "--cwd", repo, "--report-dir", reportDir, "--reviewer", job.reviewer, "--reviewer-web", o.web, "--timeout", String(o.timeout), "--no-color"];
-    if (!job.graph) args.push("--no-graph");
+    const args = laptopReviewArgs({ repo, reportDir, job, web: o.web, timeout: o.timeout });
     const startedAt = new Date().toISOString();
-    const result = await runCli(o.cli, args, env, repo, o.timeout * 1000);
+    let result;
+    try {
+      result = await runCli(o.cli, args, env, repo, o.timeout * 1000);
+    } finally {
+      if (real) rmSync(caseDir, { recursive: true, force: true });
+    }
     const replacements = [[reportDir, "<sample>/report"], [repo, "<repo>"], [tempRoot, "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
     writeFileSync(join(dir, "receipt.txt"), sanitize(result.stdout, replacements));
     writeFileSync(join(dir, "stderr.txt"), sanitize(result.stderr, replacements));
@@ -1469,11 +1473,11 @@ async function main() {
     if (workRoot) rmSync(workRoot, { recursive: true, force: true });
     leave(2);
   }
-  // A model review's clone is removed once its sample is saved, so the
-  // server path keeps no temp folder; the laptop path keeps its case
-  // repositories to look at.
+  // A model review's clone and a pull request case's laptop checkout are
+  // removed once the review ends, so those runs keep no temp folder; a
+  // planted case's laptop repositories are kept to look at.
   if (workRoot) rmSync(workRoot, { recursive: true, force: true });
-  if (server) rmSync(tempRoot, { recursive: true, force: true });
+  if (server || real) rmSync(tempRoot, { recursive: true, force: true });
   const finished = ended.reviewsWithAnAttempt;
   const spent = typeof ended.spentUsd === "number" ? `; $${ended.spentUsd.toFixed(2)} spent` : "";
   if (ended.how === "finished") console.log(`Done: ${finished} reviews saved in ${shown(out)}${spent}`);

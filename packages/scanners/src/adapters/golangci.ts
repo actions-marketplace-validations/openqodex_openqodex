@@ -201,7 +201,7 @@ export async function runGolangci(args: GolangciRunArgs): Promise<AdapterResult>
     // JSON report is the only output, on stdout. --enable=gosec layers the
     // security linter on top of the default bug set. Package dirs are
     // positional so we analyze only changed packages. Every flag was checked
-    // against the help of golangci-lint 2.12.2.
+    // against the help of golangci-lint 2.14.0.
     const cliArgs = [
       "run",
       "--no-config",

@@ -1,0 +1,5 @@
+Clean suite from 49 candidates (suites/clean/candidates.json) and the rulings in review-queue/decisions.jsonl:
+Admitted: 0
+Ruled not clean: 0
+Not ruled yet: 49
+Rulings that name no candidate: 0

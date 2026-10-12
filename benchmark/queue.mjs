@@ -37,6 +37,7 @@
 //                                              against writes it (its own cases/ copy, or the folder
 //                                              --specs names), is right, or wrong
 //   clean | not-clean <case id>                a candidate clean control has no issue, or has one
+//     (on a clean/ candidate, --sheet clean@<seed>@<version> as the clean sheet prints it)
 // <ref> is the start of a findingId, 8 hex or more, as the sheet prints it.
 // A ruling on a truth item (same-issue, different-issue, confirmed,
 // disputed) records the version of the spec it judged, and counts only
@@ -93,12 +94,18 @@
 //    path is built, and the build path must stay inside the temp folder.
 //    No candidate's file path reaches git or a file read: the code at its
 //    lines is looked up in the parsed diff by key.
+// 13. A ruling on a clean candidate admits it after its evidence moved: a
+//    clean or not-clean ruling on a clean/ case names the sheet it was made
+//    on, which must show the current version of the candidates
+//    (ingest/clean.mjs cleanRulingBinding), and records the candidate's
+//    evidence hash, which clean.mjs admit checks again.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASE_NAME, benchRoot, buildCase, caseHash, casesRoot, gitEnv, parseCaseId, repoRoot } from "./lib/cases.mjs";
+import { cleanRulingBinding } from "./ingest/clean.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { CONTEXT_LINES, candidateItems, mergeQueue, openAsks, parseDiff } from "./lib/queue.mjs";
 import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems, specHashOf } from "./lib/rulings.mjs";
@@ -448,6 +455,7 @@ export function rulingLine(status, targets, { by, bug = null, run = null, specs 
   let target;
   let found = null;
   let specsFrom = null;
+  let bound = null;
   if (status === "confirmed" || status === "disputed") {
     if (!bug) throw new Error(`refused: ${status} names the truth item with --bug <id>`);
     if (run === null) throw new Error(`refused: ${status} names the run whose spec it judges with --run <run folder> (and --specs <folder> when that run was scored against other specs), so it never reaches another version of the case`);
@@ -458,6 +466,13 @@ export function rulingLine(status, targets, { by, bug = null, run = null, specs 
   } else if (status === "clean" || status === "not-clean") {
     caseId = one();
     target = { kind: "case" };
+    // A clean candidate's ruling binds to the sheet's version of the
+    // candidates and to the candidate's evidence (failure 13).
+    if (caseId.startsWith("clean/")) {
+      const b = cleanRulingBinding(caseId, fromSheet, { root: dirname(queue) });
+      if (b.problem) throw new Error(`refused: ${b.problem}`);
+      bound = b.evidence;
+    }
   } else if (status === "consolidate") {
     const members = targets.map((t) => findingOf(t, known));
     // A candidate is ruled one by one, on its spec version; an issue ruling would not count for it.
@@ -493,7 +508,7 @@ export function rulingLine(status, targets, { by, bug = null, run = null, specs 
     target = { ...target, candidate: true, specHash: found.specHash };
   }
   specsFrom ??= found?.specsFrom ?? null;
-  const line = { v: 1, caseId, ...(specsFrom ? { specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
+  const line = { v: 1, caseId, ...(specsFrom ? { specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : bound };
   const problems = rulingProblems(line, people);
   if (problems.length > 0) throw new Error(`refused: ${problems.join("; ")}`);
   return line;

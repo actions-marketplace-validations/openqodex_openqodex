@@ -196,7 +196,7 @@ At install time, the release downloads need the network to github.com, and `tar`
 | semgrep, bandit, SQLFluff, Checkov | uv (from `PATH`, or the pinned uv installed into the root), which downloads Python 3.11 into the root, and PyPI | nothing |
 | brakeman | Ruby 3.0 or newer with `gem`, and rubygems.org | the same Ruby |
 | rubocop | Ruby 2.7 or newer with `gem`, and rubygems.org | the same Ruby |
-| golangci | Go on `PATH` | Go 1.26 on `PATH`, and the reviewed modules in the Go module cache: each review reads them from there into a module cache of its own, and nothing goes to the network |
+| golangci | Go on `PATH` | Go 1.26 or 1.27 on `PATH`, and the reviewed modules in the Go module cache: each review reads them from there into a module cache of its own, and nothing goes to the network |
 | cargo-deny | Cargo (Rust) | Cargo, and the crates of the reviewed `Cargo.lock` in the Cargo cache: each review copies what the lock needs from there into a Cargo home of its own, and Cargo runs offline |
 
 At review time, four scanners use the network: semgrep fetches its rule packs from the Semgrep registry, osv-scanner sends dependency names and versions to osv.dev, kubeconform fetches the schemas of the kinds it meets from raw.githubusercontent.com, and cargo-deny fetches the RustSec advisory database from github.com. On a server these caches live in the run's scratch, so each review fetches them again. golangci starts each review with an empty Go build cache, so a Go change takes longer to check than on a laptop. The server profile downloads no Go module: a module whose dependencies are not already in the image's Go module cache is not linted by golangci there.
