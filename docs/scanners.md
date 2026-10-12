@@ -102,7 +102,7 @@ What a project's dependencies switch on:
 | Django, FastAPI, Airflow | `django`, `fastapi` or `apache-airflow` in `pyproject.toml` (its dependency lists), a `requirements*.txt` or a `Pipfile` | ruff adds its `DJ`, `FAST` or `AIR` rules |
 | Rails | `rails` or `railties` in the folder's `Gemfile` or `Gemfile.lock`, and `config/application.rb` or `bin/rails` in that folder | brakeman runs, in that folder; rubocop loads its Rails cops |
 
-`init` prints one line for each scanner that it downloads, with the reason. Examples are `brakeman: Rails app in backend/` and `oxlint: JavaScript or TypeScript files, such as web/app/page.tsx; React, accessibility and Next.js rules in web/`. `init --dry-run` prints the same lines and downloads nothing. `doctor` prints them under "This repository needs". The Action prints them in its plan step. A scan records the projects of the changed files and their frameworks in `scan.json`.
+`init` prints one line for each scanner that it downloads, with the reason. Examples are `brakeman: Rails app in backend/` and `oxlint: JavaScript or TypeScript files, such as web/app/page.tsx; React, accessibility and Next.js rules in web/`. `init --dry-run` prints the same lines and downloads nothing. `doctor` prints them under "This repository needs". The Action prints them in its plan step. A scan records the projects of the changed files and their frameworks in `scan.json`: those in the table, and Flask. Flask comes from `flask` in the same Python files as Django, and it switches nothing on. A framework missing from a project's list is not known to be unused: the list holds only what the files above name.
 
 ## Where scanners come from
 
