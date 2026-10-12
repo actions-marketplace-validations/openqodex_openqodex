@@ -41,6 +41,12 @@
 //    a proposal holds <ledger>.lock, created exclusively, from before the
 //    ledger is read until after its line is appended. A lock whose process
 //    is gone, or older than ten minutes, is stale and taken over.
+// 8. A shallow clone (CI checks out one commit) lacks the commit of the
+//    accepted review run although origin holds it, so the base reads as
+//    unknown: the commit is fetched from origin by its id first, one commit
+//    deep in a shallow clone and with its history in a full one (a depth
+//    would turn a full clone shallow). Only when that fetch fails is the
+//    base unknown.
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -190,6 +196,17 @@ const entryFor = (path, lever, reg) => [...lever.files, ...reg.companions].find(
 // its own commit, so a scan accept never moves the base. origin's main is
 // fetched first. Returns { base, why }; base is null when the branch shares
 // no history with main.
+// A commit this repository holds, else fetched from origin by its id
+// (failure 8); null when origin does not serve it either. The id comes from
+// a file, so only a full hex id reaches git as an argument.
+function heldOrFetched(top, sha) {
+  const held = revParse(top, sha);
+  if (held || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return held;
+  const shallow = git(top, ["rev-parse", "--is-shallow-repository"]).out.trim() === "true";
+  const fetched = git(top, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", ...(shallow ? ["--depth", "1"] : []), REMOTE, sha], { ok: [0, 1, 128] });
+  return fetched.status === 0 ? revParse(top, sha) : null;
+}
+
 export function trustedBase(top, commit) {
   git(top, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", REMOTE, `+refs/heads/${MAIN}:refs/remotes/${REMOTE}/${MAIN}`]);
   const main = revParse(top, `refs/remotes/${REMOTE}/${MAIN}`);
@@ -207,8 +224,8 @@ export function trustedBase(top, commit) {
     const reviews = groups.filter(([key]) => key.split("|")[3] === "review").map(([, a]) => a);
     const last = reviews.sort((a, b) => (String(a?.acceptedAt) < String(b?.acceptedAt) ? 1 : String(a?.acceptedAt) > String(b?.acceptedAt) ? -1 : 0))[0];
     if (last !== undefined) {
-      const base = typeof last?.commit === "string" ? revParse(top, last.commit) : null;
-      if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names an accepted review run (${last?.runId}) whose commit this repository does not hold, so the loop's base is unknown`);
+      const base = typeof last?.commit === "string" ? heldOrFetched(top, last.commit) : null;
+      if (!base) throw new ToolError(`${ACCEPTED} on ${REMOTE}/${MAIN} names an accepted review run (${last?.runId}) whose commit this repository does not hold and ${REMOTE} does not serve, so the loop's base is unknown`);
       return { base, why: `the commit of the review run accepted last in ${ACCEPTED} on ${REMOTE}/${MAIN}` };
     }
   }

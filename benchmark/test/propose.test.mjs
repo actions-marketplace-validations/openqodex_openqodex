@@ -1,4 +1,4 @@
-// The only door into the reviewer loop is benchmark/loop/propose.mjs. Two
+// The only door into the reviewer loop is benchmark/loop/propose.mjs. Three
 // failures are guarded here, each on scratch branches of a real git clone of
 // this repository (real packages/, real planted cases), never a fake git:
 //
@@ -14,6 +14,10 @@
 //    a record without a hypothesis, a primary metric or a loss for every
 //    guard, and any second record for the same branch or commit, also when
 //    two proposals run at once. The ledger only grows.
+// 3. A shallow clone (the CI checkout) lacks the commit of the review run
+//    accepted last, so the loop stops with its base unknown although origin
+//    holds that commit. Fetched by its id; a commit origin lacks too still
+//    stops the check (exit 2).
 //
 // The diff is read from the loop's base, never from a parent the record
 // chooses: here the clone's origin is a bare repository whose main the tests
@@ -31,6 +35,7 @@ afterAll(removeTempDirs);
 const PROPOSE = fileURLToPath(new URL("../loop/propose.mjs", import.meta.url));
 const LENS = "packages/core/lenses/eval-on-user-input.md";
 const MODEL_LOOP = "packages/review/src/model-loop.ts";
+const ACCEPTED = "benchmark/index/accepted.json";
 
 let work;
 let bare;
@@ -52,10 +57,14 @@ beforeAll(() => {
   git(clone, "checkout", "-q", "--detach", base);
   // A real suite's truth lives in the pinned raw files of the cache, which
   // these tests never fetch, so the base drops the committed real suites;
-  // the test that needs one adds its own.
-  if (git(clone, "ls-tree", "--name-only", base, "benchmark/suites/").trim() !== "") {
-    git(clone, "rm", "-r", "-q", "benchmark/suites");
-    git(clone, "commit", "-q", "-m", "the base without the real suites");
+  // the test that needs one adds its own. The base drops the committed
+  // accepted pointer too: a review run accepted on the real main would be
+  // the loop's base in every test here, and a shallow checkout (CI) does not
+  // even hold its commit. The tests that need a pointer write their own.
+  const owned = ["benchmark/suites", ACCEPTED].filter((path) => git(clone, "ls-tree", "--name-only", base, "--", path).trim() !== "");
+  if (owned.length > 0) {
+    git(clone, "rm", "-r", "-q", "--", ...owned);
+    git(clone, "commit", "-q", "-m", "the base without the real suites and the accepted pointer");
     base = git(clone, "rev-parse", "HEAD").trim();
     git(clone, "push", "-q", "origin", `${base}:refs/heads/main`);
   }
@@ -70,17 +79,17 @@ function originMain(sha) {
 
 // A branch from `from` with each file written over (a function gets the old
 // text), committed. Returns the branch tip.
-function branch(name, edits, from = base) {
-  git(clone, "checkout", "-q", "-B", name, from);
+function branch(name, edits, from = base, repo = clone) {
+  git(repo, "checkout", "-q", "-B", name, from);
   for (const [path, edit] of Object.entries(edits)) {
-    const full = join(clone, path);
+    const full = join(repo, path);
     mkdirSync(dirname(full), { recursive: true });
     const old = existsSync(full) ? readFileSync(full, "utf8") : "";
     writeFileSync(full, typeof edit === "function" ? edit(old) : edit);
   }
-  git(clone, "add", "-A");
-  git(clone, "commit", "-q", "-m", name);
-  return git(clone, "rev-parse", "HEAD").trim();
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", name);
+  return git(repo, "rev-parse", "HEAD").trim();
 }
 
 const appendLine = (line) => (old) => `${old}${old.endsWith("\n") ? "" : "\n"}${line}\n`;
@@ -271,6 +280,61 @@ describe("a change editing a spec or naming a case identifier in a lens enters t
       originMain(scanOnly);
       const fromMain = propose(fullRecord("lenses", "lens-from-scan-only-main", { parent: scanOnly }));
       expect(fromMain.code, fromMain.out).toBe(0);
+    } finally {
+      originMain(base);
+    }
+  });
+
+  // CI checks out one commit, so the commit of the review run accepted last
+  // is missing from the checkout although origin holds it, and the loop
+  // stopped with its base unknown. A full clone must stay full: a depth on
+  // the fetch would mark it shallow and cut its history at that commit.
+  it("fetches the accepted run's commit from origin when the clone lacks it, and stops when origin lacks it too", () => {
+    const holds = (repo, sha) => spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: repo }).status === 0;
+    const shallowness = (repo) => git(repo, "rev-parse", "--is-shallow-repository").trim();
+    const accept = (commit, runId) => {
+      const run = { runId, commit, scoreHash: "a".repeat(64), acceptedAt: "2026-10-12T10:00:00.000Z", acceptedBy: "Sid" };
+      return { [ACCEPTED]: `${JSON.stringify({ version: 1, ...run, groups: { [REVIEW_GROUP]: run } })}\n` };
+    };
+    try {
+      // origin's main is one commit past the accepted run's, as on the real main.
+      const tip = branch("main-accepts-base", accept(base, "2026-10-12-review"));
+      originMain(tip);
+      const shallow = join(work, "shallow");
+      git(work, "clone", "-q", "--depth", "1", "--branch", "main", "--no-checkout", `file://${bare}`, shallow);
+      expect(holds(shallow, base)).toBe(false);
+      git(shallow, "branch", "shallow-at-tip", tip);
+      const atTip = propose(fullRecord("lenses", "shallow-at-tip", { parent: tip }), { repo: shallow });
+      expect(atTip.code, atTip.out).toBe(1);
+      expect(atTip.out).toContain(`is not the loop's base ${base.slice(0, 8)}`);
+      expect(holds(shallow, base)).toBe(true);
+      branch("shallow-from-base", lensLine(GENERIC), base, shallow);
+      const fromBase = propose(fullRecord("lenses", "shallow-from-base"), { repo: shallow });
+      expect(fromBase.code, fromBase.out).toBe(0);
+      expect(ledgerLines(fromBase.ledger)[0].record.parent).toBe(base);
+
+      // A run accepted at a pull request's head that was merged by squash:
+      // origin holds the commit, main does not reach it.
+      const offMain = branch("accepted-off-main", lensLine("A commit only a pull request reaches."));
+      git(clone, "push", "-q", "origin", `${offMain}:refs/heads/accepted-off-main`);
+      const mainOff = branch("main-accepts-off-main", accept(offMain, "2026-10-12-off-main"));
+      originMain(mainOff);
+      const full = join(work, "full");
+      git(work, "clone", "-q", "--no-local", "--single-branch", "--branch", "main", "--no-checkout", bare, full);
+      const wasShallow = shallowness(full);
+      expect(holds(full, offMain)).toBe(false);
+      git(full, "branch", "full-at-main", mainOff);
+      const atMain = propose(fullRecord("lenses", "full-at-main", { parent: mainOff }), { repo: full });
+      expect(atMain.code, atMain.out).toBe(1);
+      expect(atMain.out).toContain(`is not the loop's base ${offMain.slice(0, 8)}`);
+      expect(holds(full, offMain)).toBe(true);
+      expect(shallowness(full)).toBe(wasShallow);
+
+      originMain(branch("main-accepts-nowhere", accept("1".repeat(40), "2026-10-12-nowhere")));
+      branch("lens-under-nowhere", lensLine(GENERIC));
+      const nowhere = propose(fullRecord("lenses", "lens-under-nowhere"));
+      expect(nowhere.code, nowhere.out).toBe(2);
+      expect(nowhere.out).toContain("names an accepted review run (2026-10-12-nowhere) whose commit this repository does not hold");
     } finally {
       originMain(base);
     }
