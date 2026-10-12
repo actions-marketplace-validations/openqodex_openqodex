@@ -19,7 +19,11 @@
 //
 // The rule:
 // - Look t is the t-th decision look in the ledger: every line with a look
-//   number counts, every stage of every change. Its error budget is
+//   number counts. A look is a point where a change can be accepted (plan
+//   amendment A2): stage 2 and stage 3 take one each. Stage 1 can only stop
+//   a change, so it takes none: its line records look null and the alpha
+//   it was read at as screenAlpha, the alpha of the look that is due. Its
+//   error budget is
 //   alpha_t = 0.05 / (t (t + 1)), so all looks together spend at most 0.05,
 //   split equally across the primary metric and its guards (one share per
 //   gate metric of compare.mjs). Every bound is one-sided at that share.
@@ -81,12 +85,18 @@
 // 11. A reader of the ledger sees half a line: a line goes in by writing
 //    the whole ledger to a temp file, flushing it and renaming it into
 //    place under the lock (appendLedgerLine).
+// 12. Stage 1 spends error budget where no false acceptance is possible:
+//    its line records no look (A2), so the next decision takes the look
+//    stage 1 read at.
+//
+// The scanner variant (decideScanner below) has its own failure list there.
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRulings } from "../lib/rulings.mjs";
 import { decisionsPath } from "../score.mjs";
-import { GATE_METRICS, comparePairs, loadSides, lossIn, metricOf, pairsOf, readRulings } from "./compare.mjs";
+import { GATE_METRICS, candidateChanges, candidateRuling, comparePairs, loadSides, lossIn, metricOf, pairsOf, readRulings, scanCaseTotals, scanMsP50 } from "./compare.mjs";
 import { ToolError } from "./leak-check.mjs";
 import { LEDGER, lockLedger, readLedger } from "./propose.mjs";
 import { RULE_FILES, ruleHash } from "./rule-hash.mjs";
@@ -370,9 +380,14 @@ export function decisionLine(result, { pairs, at = new Date().toISOString(), pr 
     at,
     event: result.event,
     runs,
-    look: result.look,
-    alpha: result.alpha,
-    share: result.share,
+    // Stage 1 can only stop, so it takes no look (A2, failure 12): it
+    // records the alpha it was read at, the alpha of the look that is due,
+    // and, when nothing stopped the change, that stage 1 is done (the loop
+    // read a stage as done by its look before; loop/stages.mjs changeState).
+    look: result.stage === 1 ? null : result.look,
+    alpha: result.stage === 1 ? null : result.alpha,
+    share: result.stage === 1 ? null : result.share,
+    ...(result.stage === 1 ? { screenAlpha: result.alpha, stageDone: result.event === "stage" } : {}),
     primary: { metric: result.primary, target: result.target },
     acceptableLoss: result.acceptableLoss,
     results: byPath(result, "pooled"),
@@ -390,6 +405,166 @@ export function decisionLine(result, { pairs, at = new Date().toISOString(), pr 
     minutes: ms.length === 0 ? null : sum(ms) / 60_000,
     pr,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The scanner variant (4.11 K1 to K4), with deterministic dominance (plan
+// amendment A1). benchmark/scanners.mjs --against hands it two runs' sides
+// (compare.mjs scanSide) after K1, through lib/scanners.mjs ACCEPTANCE_RULE.
+//
+// - K1 (lib/scanners.mjs judgeAgainst, which scanners.mjs runs first): no
+//   truth item the parent found with issue-level evidence is lost. Hard.
+// - K2 by dominance: the candidate run's candidates are an unchanged subset
+//   of the parent's in every sample, at least one is removed, and every
+//   removed candidate is false: by frozen evidence (a candidate on a clean
+//   control, which the scan scorer records as false) or by a person's
+//   blind ruling through the review queue (queue.mjs add --candidates,
+//   sheet, decide). Absence from the truth set and a reviewer's drop
+//   establish nothing. A removed candidate a person ruled true, or ruled the
+//   truth item it sits on, reverts the change; one with no such ruling
+//   leaves it pending, by name.
+// - K3 on this branch: redundant candidates per case, with no rise in any
+//   case (their share of all candidates is a diagnostic only); issue recall,
+//   critical and major recall, precision with the rulings in force, and
+//   candidates on clean controls, none worse in any case (a true dominance
+//   moves none of them, so any move means the scorer read the change
+//   another way); and the median scan time up by less than the record's
+//   loss (scanMsP50, a fraction; question 20's 20 percent when the record
+//   names none). Read once every removed candidate is ruled.
+// - K4: a review run decided by the reviewer rule, required for every
+//   change that removes or alters a candidate. Its result is the record's
+//   k4 (the scanner ledger line); without one the change is pending K4.
+// - The branch is deterministic: it reads no interval, so it takes no look.
+// - A change that adds or alters a candidate, removes none, or removes one
+//   frozen evidence says is true is not decided by dominance. The paired
+//   K2 for scanner runs is not built, so such a change is "undecided".
+//
+// Failure list, written before the code:
+// 1. A removal whose candidate was only reviewer-dropped is accepted: the
+//    rule reads rulings and frozen evidence only, never a drop, and a
+//    removed candidate with neither leaves the change pending.
+// 2. A clean-control candidate is held for a ruling: frozen false needs none.
+// 3. A candidate ruled true is outvoted by the others ruled false: one is
+//    enough to revert.
+// 4. The redundancy guard as a share of candidates reverts every noise
+//    removal: K3 counts redundant candidates per case.
+// 5. A change decided on other runs than its record names: the record's
+//    baseline and candidate run ids must be the runs compared.
+// 6. A pending ruling reads as a pass, or K3 is read while a removed
+//    candidate is still unresolved (its removal moves precision's upper
+//    bound): pending stops the reading before K3.
+// 7. A candidate the change only altered (its severity, say) reads as
+//    removed, so a true ruling on it reverts the change: a candidate whose
+//    identity its sample still holds is altered, not removed.
+
+// question 20: time +20 percent.
+export const SCANNER_TIME_LOSS = 0.2;
+
+const ratio = (r) => (r.of === 0 ? 1 : r.hit / r.of);
+
+// K3 of the dominance branch for two scanner sides (compare.mjs scanSide).
+// Returns { pass, redundancy: { pass, rose, share }, cases: { <guard>:
+// { pass, worse } }, time: { measured, parent, candidate, change, loss, pass } }.
+export function scannerGuards({ base, cand, rulings = resolveRulings([]), losses = {} }) {
+  const A = scanCaseTotals(base, rulings);
+  const B = scanCaseTotals(cand, rulings);
+  const zero = { recall: { hit: 0, of: 0 }, criticalMajor: { hit: 0, of: 0 }, correct: 0, unresolved: 0, counted: 0, clean: 0, redundant: 0, candidates: 0 };
+  const ids = [...new Set([...A.keys(), ...B.keys()])].sort();
+  const rose = [];
+  // Each guard: its value per case, and whether higher is better.
+  const guards = {
+    recall: [(t) => ratio(t.recall), true],
+    criticalMajorRecall: [(t) => ratio(t.criticalMajor), true],
+    precisionLower: [(t) => ratio({ hit: t.correct, of: t.counted }), true],
+    precisionUpper: [(t) => ratio({ hit: t.correct + t.unresolved, of: t.counted }), true],
+    cleanCandidates: [(t) => t.clean, false],
+  };
+  const worse = Object.fromEntries(Object.keys(guards).map((g) => [g, []]));
+  for (const id of ids) {
+    const a = A.get(id) ?? zero;
+    const b = B.get(id) ?? zero;
+    if (b.redundant > a.redundant) rose.push({ caseId: id, parent: a.redundant, candidate: b.redundant });
+    for (const [g, [value, up]] of Object.entries(guards)) {
+      const [x, y] = [value(a), value(b)];
+      if (up ? y < x - EPS : y > x + EPS) worse[g].push({ caseId: id, parent: x, candidate: y });
+    }
+  }
+  const sumOf = (M, f) => [...M.values()].reduce((n, t) => n + f(t), 0);
+  const share = { parent: { hit: sumOf(A, (t) => t.redundant), of: sumOf(A, (t) => t.candidates) }, candidate: { hit: sumOf(B, (t) => t.redundant), of: sumOf(B, (t) => t.candidates) } };
+  const loss = Number.isFinite(losses.scanMsP50) && losses.scanMsP50 >= 0 ? losses.scanMsP50 : SCANNER_TIME_LOSS;
+  const pa = scanMsP50(base);
+  const pb = scanMsP50(cand);
+  const time = pa === null || pb === null || pa <= 0 ? { measured: false, parent: pa, candidate: pb, change: null, loss, pass: null } : { measured: true, parent: pa, candidate: pb, change: pb / pa - 1, loss, pass: pb / pa - 1 < loss - EPS };
+  const cases = Object.fromEntries(Object.entries(worse).map(([g, list]) => [g, { pass: list.length === 0, worse: list }]));
+  const pass = rose.length === 0 && Object.values(cases).every((c) => c.pass) && time.pass !== false;
+  return { pass, redundancy: { pass: rose.length === 0, rose, share }, cases, time };
+}
+
+const runIdOf = (id) => String(id ?? "").replace(/^local:/, "");
+const placeOf = (c) => `${c.caseId} ${c.file}:${c.lines[0] === c.lines[1] ? c.lines[0] : `${c.lines[0]}-${c.lines[1]}`} ${c.token}`;
+const named = (list) => list.map((c) => `${c.ref} (${placeOf(c)})`).join("; ");
+
+// The scanner variant's decision for two sides (compare.mjs scanSide): `k1`
+// is judgeAgainst's K1 ({ pass, lost, checked }), `rulings` the rulings in
+// force (lib/rulings.mjs resolveRulings), `record` the change's scanner
+// ledger line or null. Returns { change, decision, reason, k1, k2, k3, k4 };
+// throws a Refusal when the sides cannot be compared.
+export function decideScanner({ base, cand, k1, rulings = resolveRulings([]), record = null }) {
+  const changes = candidateChanges(base, cand);
+  if (changes.problems.length > 0) throw new Refusal(`the scanner runs cannot be compared:\n${changes.problems.map((p) => `- ${p}`).join("\n")}`);
+  // Failure 5.
+  if (record) {
+    const wrong = [["baseline", record.baselineRunId, base.runId], ["candidate", record.candidateRunId, cand.runId]].filter(([, named, run]) => named && runIdOf(named) !== run);
+    if (wrong.length > 0) throw new Refusal(`${record.id} names other runs: ${wrong.map(([what, named, run]) => `its ${what} is ${named}, not ${run}`).join("; ")}`);
+  }
+  // Each removed candidate once, with the samples it left. A candidate whose
+  // identity the sample still holds was altered, not removed (failure 7):
+  // it is an added candidate too, so dominance does not apply to the change,
+  // and a ruling on it is not a ruling on something removed.
+  const stillThere = new Set(changes.added.map((c) => `${c.sample}\0${c.candidateId}`));
+  const byId = new Map();
+  for (const c of changes.removed.filter((r) => !stillThere.has(`${r.sample}\0${r.candidateId}`))) {
+    const x = byId.get(c.candidateId) ?? { ref: c.candidateId.slice(0, 12), candidateId: c.candidateId, caseId: c.caseId, file: c.file, lines: c.lines, token: c.token, message: c.message, outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.truthId, samples: 0 };
+    x.samples++;
+    byId.set(c.candidateId, x);
+  }
+  const removed = [...byId.values()].map((x) => {
+    if (x.evidenceKind === "frozen") return { ...x, standing: x.outcome === "false" ? "frozen-false" : "frozen-true" };
+    const r = candidateRuling(x.candidateId, rulings);
+    if (r === null) return { ...x, standing: "pending" };
+    return { ...x, standing: r.status === "false" ? "ruled-false" : "ruled-true", ruling: r.status, ...(r.truthId ? { ruledTruthId: r.truthId } : {}) };
+  });
+  const by = (s) => removed.filter((x) => x.standing === s);
+  const [frozenFalse, ruledFalse, ruledTrue, pending, frozenTrue] = ["frozen-false", "ruled-false", "ruled-true", "pending", "frozen-true"].map(by);
+  const dominance = changes.added.length === 0 && removed.length > 0 && frozenTrue.length === 0;
+  const k2 = { by: dominance ? "dominance" : null, pass: null, subset: changes.added.length === 0, removed: removed.length, added: changes.added.length, frozenFalse, ruledFalse, ruledTrue, pending, frozenTrue, addedCandidates: changes.added.map((c) => ({ ref: c.candidateId.slice(0, 12), candidateId: c.candidateId, caseId: c.caseId, file: c.file, lines: c.lines, token: c.token })) };
+  const k4 = { required: changes.removed.length > 0, pass: typeof record?.k4?.pass === "boolean" ? record.k4.pass : null, decision: record?.k4?.decision ?? null, runId: record?.k4?.runId ?? null };
+  const out = (decision, reason, k3 = null) => ({ change: record?.id ?? null, decision, reason, k1, k2, k3, k4 });
+  const removedSay = `${removed.length} removed ${removed.length === 1 ? "candidate" : "candidates"}`;
+
+  if (!k1?.pass) return out("revert", `revert: K1 fails, ${k1?.lost?.length ?? 0} truth items the parent found with issue-level evidence are lost`);
+  if (ruledTrue.length > 0) return out("revert", `revert: the change removes ${ruledTrue.length === 1 ? "a candidate" : `${ruledTrue.length} candidates`} a person ruled a real issue: ${named(ruledTrue)}`);
+  if (!dominance) {
+    const why = changes.added.length > 0 ? `it adds or alters ${changes.added.length} ${changes.added.length === 1 ? "candidate" : "candidates"}, so its output is no subset of the parent's` : removed.length === 0 ? "it removes no candidate" : `it removes ${frozenTrue.length} ${frozenTrue.length === 1 ? "candidate" : "candidates"} frozen evidence says ${frozenTrue.length === 1 ? "is" : "are"} true: ${named(frozenTrue)}`;
+    return out("undecided", `undecided: the dominance clause does not apply, since ${why}. The paired K2 for scanner runs is not built, so this rule cannot keep the change yet.`);
+  }
+  if (pending.length > 0) {
+    return out("pending-rulings", `pending rulings: ${pending.length} of the ${removedSay} ${pending.length === 1 ? "has" : "have"} no ruling from a person, and a reviewer's drop or absence from the truth does not make a candidate false. Queue the parent's candidates (node benchmark/queue.mjs add --candidates ${base.runId}), and rule each on the blind sheet: ${named(pending)}`);
+  }
+  k2.pass = true;
+  const k3 = scannerGuards({ base, cand, rulings, losses: record?.acceptableLoss ?? {} });
+  const k2Say = `K2 passes by dominance (${removedSay}, every one false: ${frozenFalse.length} frozen false on a clean control, ${ruledFalse.length} ruled false by a person)`;
+  if (!k3.pass) {
+    const fails = [];
+    if (!k3.redundancy.pass) fails.push(`redundant candidates rise in ${k3.redundancy.rose.map((r) => `${r.caseId} (${r.parent} then ${r.candidate})`).join(", ")}`);
+    for (const [g, c] of Object.entries(k3.cases)) if (!c.pass) fails.push(`${g} is worse in ${c.worse.map((w) => w.caseId).join(", ")}`);
+    if (k3.time.pass === false) fails.push(`the median scan time rises ${(k3.time.change * 100).toFixed(1)} percent, not inside its ${(k3.time.loss * 100).toFixed(0)} percent`);
+    return out("revert", `revert: ${k2Say}, but K3 fails: ${fails.join("; ")}`, k3);
+  }
+  const k3Say = `K3 holds${k3.time.measured ? "" : " (scan time not measured: a sample recorded no scan_ms)"}`;
+  if (k4.pass === true) return out("keep", `keep: K1 holds, ${k2Say}, ${k3Say}, and the review run (K4, ${k4.runId ?? "no run named"}) passed`, k3);
+  if (k4.pass === false) return out("revert", `revert: K1 holds, ${k2Say} and ${k3Say}, but the review run (K4, ${k4.runId ?? "no run named"}) did not pass`, k3);
+  return out("pending-k4", `pending K4: K1 holds, ${k2Say}, and ${k3Say}; the review run on both paths with three repeats (K4), which every removal needs, has not run`, k3);
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +623,8 @@ function parseArgs(argv) {
 }
 
 function render(result) {
-  const out = [`${result.id}: look ${result.look}, alpha ${result.alpha.toPrecision(3)} (0.05 / (t (t + 1))), ${result.share.toPrecision(3)} per metric, stage ${result.stage}. Primary ${result.primary} on the ${result.target} path.`];
+  const look = result.stage === 1 ? `stage 1 takes no look; read at the alpha of look ${result.look}, which is due` : `look ${result.look}`;
+  const out = [`${result.id}: ${look}, alpha ${result.alpha.toPrecision(3)} (0.05 / (t (t + 1))), ${result.share.toPrecision(3)} per metric, stage ${result.stage}. Primary ${result.primary} on the ${result.target} path.`];
   for (const c of result.cells) {
     out.push("");
     out.push(`${c.path} ${c.reviewer}${c.target ? " (target)" : ""}, ${c.repeatsUsed} repeats: ${c.pairs.map((p) => `${p.parent.runId} against ${p.candidate.runId}`).join("; ")}`);

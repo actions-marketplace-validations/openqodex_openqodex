@@ -3,13 +3,20 @@
 // person to rule on them.
 //
 //   node benchmark/queue.mjs add <run folder | unresolved file> [--queue <folder>]
+//   node benchmark/queue.mjs add --candidates <run folder> [--specs <folder>] [--queue <folder>]
 //   node benchmark/queue.mjs sheet <suite> [--seed <n>] [--json] [--queue <folder>]
 //   node benchmark/queue.mjs decide <status> <target>... --by <your name>
 //        [--bug <truth id>] [--note <text>] [--sheet <sheet id>] [--queue <folder>]
 //
 // add merges a scored run's unresolved.jsonl (score.mjs writes it) into
 // <queue>/<suite>.jsonl, one item per finding, and drops every question the
-// rulings already answer. sheet prints the open items blind: the case, the
+// rulings already answer. add --candidates merges the run's scanner
+// candidates that no review raised and nothing frozen decides (every one of
+// a scanner-only run, each a review dropped; lib/queue.mjs candidateItems),
+// with the code at their lines from the case built from the live tree when
+// the run's case hash is the live one; --specs scores the run against other
+// specs, as in score.mjs. A candidate is ruled like a finding, by the ref
+// the sheet prints. sheet prints the open items blind: the case, the
 // finding, the code and the truth item, in a seeded shuffle, with no run,
 // build, configuration or count. decide appends one ruling to
 // <queue>/decisions.jsonl, the adjudication file (lib/rulings.mjs), which
@@ -52,13 +59,20 @@
 //    from a test split.
 // 8. A crash halfway through add leaves half a queue: the new file is
 //    written beside the old and renamed over it.
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+// 9. A sheet item for a scanner candidate redacts its own words: the
+//    configuration of a scanner-only run ("scan") names no arm, so it is
+//    not fed to the redactor.
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { benchRoot } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, casesRoot, gitEnv, parseCaseId } from "./lib/cases.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
-import { mergeQueue, openAsks } from "./lib/queue.mjs";
+import { CONTEXT_LINES, candidateItems, mergeQueue, openAsks, parseDiff } from "./lib/queue.mjs";
 import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
+import { SCAN_CONFIG, scoreScanAttempts } from "./lib/scan-score.mjs";
+import { loadRun } from "./score.mjs";
 
 export const queueRoot = join(benchRoot, "review-queue");
 const DECISIONS = "decisions.jsonl";
@@ -81,11 +95,67 @@ function unresolvedFile(path) {
   throw new Error(`${path} holds ${names.join(", ")}; name the one to add`);
 }
 
-export function add(path, { queue = queueRoot } = {}) {
+export function add(path, { queue = queueRoot, candidates = false, specs = null } = {}) {
+  if (candidates) return addCandidates(path, { queue, specs });
+  if (specs !== null) throw new Error("refused: --specs is for add --candidates; score the run against other specs with score.mjs --specs first");
   const file = unresolvedFile(resolve(path));
   const items = readJsonl(file);
   const heldOut = items.filter((i) => i.split === "test");
   if (heldOut.length > 0) throw new Error(`refused: ${file} holds ${heldOut.length} findings of a held-out (test split) run, whose per-case detail stays in the run's asset`);
+  return mergeInto(queue, items, file);
+}
+
+// The change of a case built from the live tree, with CONTEXT_LINES of
+// context, as parseDiff rows by file; untracked files count as added.
+function caseDiff(name, into) {
+  const { dir } = buildCase(name, join(into, name, "repo"));
+  const index = mkdtempSync(join(tmpdir(), "oq-bench-queue-index-"));
+  try {
+    const env = { ...gitEnv(), GIT_INDEX_FILE: join(index, "index") };
+    const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 28 });
+    git("read-tree", "HEAD");
+    git("add", "-A", "-N");
+    return parseDiff(git("diff", `-U${CONTEXT_LINES}`, "--no-color", "--no-renames", "HEAD").split("\n"));
+  } finally {
+    rmSync(index, { recursive: true, force: true });
+  }
+}
+
+// add --candidates: the run's scanner candidates no review raised and
+// nothing frozen decides, merged into the queue.
+function addCandidates(path, { queue, specs }) {
+  const folder = resolve(path);
+  if (!existsSync(join(folder, "manifest.json"))) throw new Error(`refused: ${folder} holds no manifest.json; add --candidates takes a run folder`);
+  const run = loadRun(folder, { specsDir: specs === null ? null : existsSync(specs) ? resolve(specs) : join(folder, specs) });
+  const m = run.manifest;
+  if ((m.split ?? "dev") === "test") throw new Error(`refused: ${folder} is a held-out (test split) run, whose per-case detail stays in the run's asset`);
+  const scored = scoreScanAttempts({ manifest: m, attempts: run.attempts, specs: run.specs });
+  // The code at each candidate's lines: from the case built from the live
+  // tree, where the run scanned that very case (its hash is the live one).
+  const temp = mkdtempSync(join(tmpdir(), "oq-bench-queue-cases-"));
+  const diffs = new Map();
+  try {
+    const names = [...new Set(scored.jobs.filter((j) => j.candidates.some((c) => c.evidenceKind !== "frozen")).map((j) => j.case))];
+    for (const name of (m.suite ?? "planted") === "planted" ? names : []) {
+      try {
+        if (!existsSync(join(casesRoot, name, "case.json"))) continue;
+        const live = caseHash(name);
+        const recorded = m.caseHashes?.[name] ?? null;
+        const hash8 = (m.caseIds ?? []).map(parseCaseId).find((p) => p?.name === name)?.hash8 ?? null;
+        if (recorded === live || (recorded === null && hash8 === live.slice(0, 8))) diffs.set(name, caseDiff(name, temp));
+      } catch {
+        // A case that cannot be built shows no code; the sheet says to open it.
+      }
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  const items = candidateItems({ runId: m.runId ?? basename(folder), build: m.build?.short ?? null, commit: m.build?.commit ?? null, suite: scored.suite, split: m.split ?? "dev", specsFrom: run.specsFrom ?? null, mode: m.mode ?? "review", jobs: scored.jobs, attempts: run.attempts, specs: run.specs, diffs });
+  return mergeInto(queue, items, folder, "scanner candidates");
+}
+
+// Merges items into <queue>/<suite>.jsonl, keeping only the open questions.
+function mergeInto(queue, items, file, what = "findings") {
   const d = readDecisions(join(queue, DECISIONS));
   const R = resolveRulings(d.lines, d.people);
   mkdirSync(queue, { recursive: true });
@@ -97,7 +167,7 @@ export function add(path, { queue = queueRoot } = {}) {
     const merged = mergeQueue(before, items.filter((i) => i.suite === suite), R);
     writeJsonl(target, merged);
     const had = new Set(before.map((i) => i.findingId));
-    out.push(`${suite}: ${items.filter((i) => i.suite === suite).length} findings from ${file}; ${merged.filter((i) => !had.has(i.findingId)).length} new, ${merged.length} awaiting a ruling in ${target}`);
+    out.push(`${suite}: ${items.filter((i) => i.suite === suite).length} ${what} from ${file}; ${merged.filter((i) => !had.has(i.findingId)).length} new, ${merged.length} awaiting a ruling in ${target}`);
   }
   return out;
 }
@@ -115,7 +185,9 @@ export function blindSheet(items, { suite, seed }) {
   const known = [];
   for (const i of items) {
     for (const o of i.occurrences ?? []) {
-      known.push({ kind: "run", value: o.run }, { kind: "configuration", value: o.config });
+      known.push({ kind: "run", value: o.run });
+      // A scanner-only run's one configuration names no arm (failure 9).
+      if (o.config !== SCAN_CONFIG) known.push({ kind: "configuration", value: o.config });
       // The full commit and its short form: either alone names the build.
       for (const value of [o.commit, o.build]) if (value) known.push({ kind: "build", value });
     }
@@ -135,7 +207,8 @@ export function blindSheet(items, { suite, seed }) {
       lines: i.lines,
       category: i.category,
       severity: i.severity,
-      text: { title: r(i.text.title), problem: r(i.text.problem), consequence: r(i.text.consequence), fix: r(i.text.fix) },
+      // A scanner candidate shows its rule and message; a finding its four parts.
+      ...(i.kind === "candidate" ? { kind: "candidate", rule: { token: r(i.rule.token), reference: r(i.rule.reference) }, message: r(i.message) } : { text: { title: r(i.text.title), problem: r(i.text.problem), consequence: r(i.text.consequence), fix: r(i.text.fix) } }),
       evidence: { lines: i.evidence.lines, text: r(i.evidence.text), context: r(i.evidence.context), sha256: i.evidence.sha256, missing: i.evidence.missing ?? [] },
       truth: i.truth ? { id: r(i.truth.id), file: r(i.truth.file), lines: i.truth.lines, text: r(i.truth.text) } : null,
       // Whether it is the truth item first: a same-issue ruling answers both.
@@ -166,15 +239,18 @@ export function sheetMarkdown(s) {
     "",
     "Consolidate findings of one case only when they are the same issue in other words. Sharing a line is not enough.",
     "",
+    "A scanner candidate is a scanner's report on the change that no review raised. Rule it the same way, by its ref: true when it is a real issue in this change, false when it is not.",
+    "",
   ];
   for (const x of s.items) {
-    out.push(`## ${x.item}. ${x.ref}`, "", `- Case: ${x.caseId}`, `- Place: ${x.file}, ${span(x.lines)}`, `- Kind: ${x.category}, rated ${x.severity}`, `- Title: ${x.text.title}`, `- Problem: ${x.text.problem}`, `- Consequence: ${x.text.consequence}`, `- Fix: ${x.text.fix}`, "");
+    const head = x.kind === "candidate" ? [`- Scanner candidate: ${x.rule.token}, rated ${x.severity}`, `- Message: ${x.message}`, ...(x.rule.reference ? [`- Rule: ${x.rule.reference}`] : [])] : [`- Kind: ${x.category}, rated ${x.severity}`, `- Title: ${x.text.title}`, `- Problem: ${x.text.problem}`, `- Consequence: ${x.text.consequence}`, `- Fix: ${x.text.fix}`];
+    out.push(`## ${x.item}. ${x.ref}`, "", `- Case: ${x.caseId}`, `- Place: ${x.file}, ${span(x.lines)}`, ...head, "");
     if (x.evidence.text !== null) {
       out.push("The code at those lines:", "", ...fenced(x.evidence.text), "");
       if (x.evidence.missing.length > 0) out.push(`The diff did not show line ${x.evidence.missing.join(", ")}.`, "");
       out.push("The change around them:", "", ...fenced(x.evidence.context, "diff"), "");
     } else if (x.evidence.sha256 !== null) out.push(`The code is not shown here: the case's licence does not allow it. Its sha256 is ${x.evidence.sha256}; open the case to read it.`, "");
-    else out.push("The diff the reviewer was given does not show those lines; open the case to read them.", "");
+    else out.push(x.kind === "candidate" ? "The code is not shown here; open the case to read it." : "The diff the reviewer was given does not show those lines; open the case to read them.", "");
     if (x.truth) out.push(`The truth item it sits on: ${x.truth.id}, ${x.truth.file} ${span(x.truth.lines)}. ${x.truth.text}`, "");
     if (x.issueId) out.push(`A person consolidated it into ${x.issueId}: rule the whole issue with decide true|false ${x.issueId}.`, "");
     for (const q of x.asks) out.push(`- ${q}`);
@@ -282,16 +358,18 @@ export function decide(status, targets, opts = {}) {
 
 const USAGE = `usage:
   node benchmark/queue.mjs add <run folder | unresolved file> [--queue <folder>]
+  node benchmark/queue.mjs add --candidates <run folder> [--specs <folder>] [--queue <folder>]
   node benchmark/queue.mjs sheet <suite> [--seed <n>] [--json] [--queue <folder>]
   node benchmark/queue.mjs decide <status> <target>... --by <your name> [--bug <id>] [--note <text>] [--sheet <id>] [--queue <folder>]`;
 
 function main() {
   const args = process.argv.slice(2);
-  const opts = { json: false };
+  const opts = { json: false, candidates: false };
   const pos = [];
-  const valued = { "--queue": "queue", "--seed": "seed", "--by": "by", "--bug": "bug", "--note": "note", "--sheet": "sheet" };
+  const valued = { "--queue": "queue", "--seed": "seed", "--by": "by", "--bug": "bug", "--note": "note", "--sheet": "sheet", "--specs": "specs" };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--json") opts.json = true;
+    else if (args[i] === "--candidates") opts.candidates = true;
     else if (valued[args[i]]) {
       if (i + 1 >= args.length) {
         console.error(`${args[i]} needs a value\n${USAGE}`);
@@ -306,7 +384,7 @@ function main() {
   const queue = opts.queue ? resolve(opts.queue) : queueRoot;
   const [command, ...rest] = pos;
   try {
-    if (command === "add" && rest.length === 1) for (const l of add(rest[0], { queue })) console.log(l);
+    if (command === "add" && rest.length === 1) for (const l of add(rest[0], { queue, candidates: opts.candidates, specs: opts.specs ?? null })) console.log(l);
     else if (command === "sheet" && rest.length === 1) {
       const seed = opts.seed === undefined ? Math.floor(Date.now() / 1000) % 2147483647 : Number(opts.seed);
       if (!Number.isInteger(seed) || seed < 0) throw new Error(`refused: --seed must be a whole number, not ${opts.seed}`);
