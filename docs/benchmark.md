@@ -372,7 +372,7 @@ The rule:
 - Before any run, the change's record names one primary metric and an acceptable loss for every metric. The losses never change after that.
 - The candidate is compared with the parent on the same cases, under the same scoring rules, review by review on first attempts. The unit is the case on planted suites and the repository group on real ones, with every repeat inside it. Three reviews of one case that agree count as one case, not three.
 - The test is a paired sign-flip test. If the change did nothing, either run's result for a case is as likely to be the other's, so swapping them case by case shows how large a change noise alone makes. A bootstrap is not used: it calls a change carried by a few cases significant however many cases there are.
-- Each decision is a look. The t-th look in the ledger, counting every stage of every change, may be wrong with a chance of 0.05 / (t (t + 1)), split equally across the nine metrics. All looks together spend at most 0.05, so a loop that decides often does not accept noise sooner or later.
+- Each point where a change can be accepted is a look: stage 2 and stage 3 of every change. Stage 1 can only stop a change and takes none. The t-th look in the ledger may be wrong with a chance of 0.05 / (t (t + 1)), split equally across the nine metrics. All looks together spend at most 0.05, so a loop that decides often does not accept noise sooner or later.
 - Unresolved findings count against the change. The candidate's precision is read at its lower bound and the parent's at its upper bound, and a truth item an unresolved finding may have found counts as missed by the candidate and found by the parent.
 - A change is accepted only when the primary is better on the target path, every other metric (and the primary everywhere else) stays strictly inside its loss (a bound on the loss fails) on every path the change touches, every reviewer and each stratum (planted, real and both pooled), no hard rule breaks, every pair has three repeats, and the laptop path has both Claude Code and Codex.
 - The hard rules refuse a change whatever the bounds say: a critical issue found in two or more of three reviews is found in one or fewer; a clean change draws findings in two or more of three reviews; a review is newly cut short by the budget; a review is complete while a changed range was not delivered.
@@ -389,6 +389,41 @@ The rule:
 The validation of the rule as it stands, `VAL-0002`, ran on `2026-10-08-752b77f` scored with `--specs cases-v2`, after review fixes to the first version (`VAL-0001`, the same results). No simulated change that does nothing was accepted in 1,000 sequences: the primary passed by chance at 1 of 10,000 looks, and a guard stopped it. The constructed harmful change was reverted, and the simulated gain was accepted in 4 of 40 tries. On the saved run, none of 18 decisions on changes that do nothing and none of 18 on harmful changes accepted anything, and all 18 harmful ones were reverted on evidence. On the same run, graph off against graph on is inconclusive on recall (1.8 points better at the bound worse for the change, one-sided p 0.25), and repeat 1 against 2, 1 against 3 and 2 against 3 show no change on any metric in either configuration.
 
 The simulation also says how many cases a decision needs. With about 50 cases and 20 clean ones, the size of the laptop acceptance set, the rule accepted a gain that finds three quarters of what the parent missed in 4 of 40 tries: precision and severity agreement vary too much there for their 2 and 3 point losses at one ninth of a look's error budget. With 200 cases it accepted about half. The A/A pairs say how many cases or repeats each decision needs before it runs.
+
+## The loop
+
+`benchmark/loop.mjs` takes one change to the reviewer from its record to a decision, one step at a time. It never calls a model itself: it runs `run.mjs`, which reviews with the reviewer the parent's runs used, and it applies the acceptance rule above.
+
+```
+node benchmark/loop.mjs propose <record.json>
+node benchmark/loop.mjs step --change <RC-id> --parent <run> [--parent <run> ...] [--candidate <run>] [--checkout <dir>] [--parent-checkout <dir>]
+node benchmark/loop.mjs status
+```
+
+`propose` is the only way in. It checks the change as `benchmark/loop/propose.mjs` does and writes its record to `benchmark/index/ledger/reviewer.jsonl`.
+
+`step` runs the stage that is due for the change and writes one line to the same ledger. Each `--parent` is a saved run of the parent build: one per path (laptop or server) and group of reviewers the change runs on. The loop makes the change's own runs with the parent's settings: the same cases, reviewers, model settings, scanner folder and repeats. It runs them with `run.mjs` from `--checkout`, a checkout of the change's commit built with `node benchmark/build-cli.mjs` (this repository by default). `--candidate` names a run already made for the change (`run.mjs --change <RC-id>`), so a stage whose runs exist costs nothing. Its run folders go to `benchmark/results/<RC-id>-<parent run>`.
+
+The three stages:
+
+- Stage 1, the screen: one repeat of the change on the path it targets, against the parent's saved runs. It can only stop a change. It stops it when the primary metric is not better than zero for some reviewer on that path, when another metric is worse by more than twice its acceptable loss, when a critical issue the parent found in every review of a case is missed in two or more cases, when the change has spent 40 percent of its cap, or when the rule above already reads harm.
+- Stage 2, the decision: three repeats of every reviewer on every path the change runs on, Claude Code and Codex both on the laptop path. The rule decides: accepted, reverted, inconclusive and reverted, or stage 3 when only the primary metric is still open.
+- Stage 3, the confirmation: repeats 4 to 6 on the target path, for the change and the parent (`--parent-checkout` names the parent's build). The rule decides, and an inconclusive change is reverted.
+
+Runs of the scripted model are no evidence about a change: it reads no code, so the parent and the change it reviewed agree whatever the change did. A step on them records the spend and "no evidence", takes no look, and neither stops nor passes the change. Only a real reviewer's runs decide.
+
+What the loop refuses, before it runs anything:
+
+- A change that is decided. A stop at stage 1 is a decision, so nothing more runs for it.
+- Any held-out run, as a parent or a change's run: a test split run, or a run of a suite held out of the loop. It reads each run's manifest first and refuses before it reads a single review.
+- Any change while the earliest-failure signal says stop. The last baseline line in the ledger must carry the signal, and it must say go.
+- A decision before a passing validation of the rule as it stands.
+- A second change in stage 2 or 3 while one is there, checked again as the line is written. Changes are decided one at a time, so each is compared with the parent the last decision left.
+- A parent built from another commit, made more than 7 days ago, a draft, or not finished, and a change's run built from another commit. A parent whose settings differ from the change's runs in anything but the build (another reviewer version, model, script or machine) is not compared: the line says so, and the parent is run again.
+
+A look is a point where a change can be accepted. Stage 2 and stage 3 each take one, and the look number in the line is the one due when the line was written: the loop reads the ledger and writes under one lock, so two changes deciding at once take two numbers. Stage 1 can only stop a change, so it takes no look and spends none of the error budget. Its line records no look number. It reads the rule at the alpha of the look that is due.
+
+Money. Each line records what its runs spent since the ledger last named them, read from each run's `budget.jsonl`, and every run's total, so nothing is counted twice. A run made with the scripted model costs what its script's prices say, which is what a real model would cost for the same tokens. The server path may spend 60 dollars a day (UTC), counted from the day's lines, plus anything the step's own runs spent that the ledger has not recorded yet (a run made before the step). A server run gets as its hard cap the smaller of what is left of the day and what is left of the change's own cap (40 dollars by default), and `budget.mjs` holds every model call to it before the call is sent. So a run stops at the cap even when the forecast said it would fit. The loop starts a stage only when the forecast (what the change's reviews have cost so far, else the parent's) fits in that room. A stage cut short by the day's cap takes no look: the next step, on a later day, finishes it. A stage cut short by the change's own cap is inconclusive and reverted. On the laptop path, a run is held to what is left of the change's 240 reviews. One stage runs reviews at a time. Each `run.mjs` the loop starts runs in a process group of its own, named beside the lock. If a step dies, the next step that runs reviews waits until that `run.mjs` has ended too, then records what the runs spent before it reads the day's room.
 
 ## What it does not measure
 
