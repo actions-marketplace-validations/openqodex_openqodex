@@ -45,6 +45,7 @@ import {
   phaseClock,
   readCoverage,
   redactSecrets,
+  requiredCandidates,
   safeGit,
   selectLenses,
   verdictFor,
@@ -326,7 +327,10 @@ type Prepared = {
   full?: Change;
 };
 
-// A report that carries no finding: an incomplete review.
+// A report that carries no finding: an incomplete review. No answer passed
+// the checks, so no reviewer disposed of any scanner candidate: each one is
+// listed under not_reviewed, and every output still says what the scanners
+// found. The verdict stays incomplete.
 function incompleteReport(change: Change, scan: ScanResult, config: Config, now: number): Report {
   return {
     version: 1,
@@ -341,7 +345,7 @@ function incompleteReport(change: Change, scan: ScanResult, config: Config, now:
     below_threshold: 0,
     outside_change: [],
     low_confidence: [],
-    not_reviewed: [],
+    not_reviewed: requiredCandidates(scan, config),
     dropped: [],
     scanners: scan.scanners,
     impact: null,
