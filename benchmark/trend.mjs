@@ -288,7 +288,10 @@ function scanRow(e, config, status) {
   const s = e.scores[config];
   const c = scanCounts(s);
   const time = typeof s.wallMsMean === "number" ? `${(s.wallMsMean / 1000).toFixed(1)} s` : "n/a";
-  return [startOf(e), e.runId, `${e.build.short} (${e.build.cliVersion ?? "unknown"})`, pct(s.issueRecall.all), pct(s.issueRecall.criticalMajor), `${pct(s.precision.lower)} to ${pct(s.precision.upper)}`, String(c.unresolved), String(c.false), pct(s.controls), String(s.redundancy.of), time, status];
+  // The line rule's recall, a diagnostic: on a pull request case no
+  // candidate finds a comment, so it is the one number such a scan moves.
+  const location = s.location?.recall ? pct(s.location.recall) : "n/a";
+  return [startOf(e), e.runId, `${e.build.short} (${e.build.cliVersion ?? "unknown"})`, pct(s.issueRecall.all), pct(s.issueRecall.criticalMajor), `${pct(s.precision.lower)} to ${pct(s.precision.upper)}`, String(c.unresolved), String(c.false), pct(s.controls), String(s.redundancy.of), location, time, status];
 }
 
 const readJsonOrNull = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
@@ -338,7 +341,7 @@ export function scanGate({ index = indexRoot, branchIndex = null, folder }) {
     const status = (e) => (e.runId === mainId ? (branch === null ? "accepted" : "accepted on main") : e.runId === branchId ? "accepted on this branch" : e.accepted ? "accepted before" : "");
     out.push(`${groupLabel(run, g)}. Build ${run.build.short} (openqodex ${run.build.cliVersion ?? "unknown"})${accepted ? `, against ${against} (build ${accepted.build.short})` : ""}.`, "");
     if (branchDiffers) out.push(`This branch's index accepts ${branchId ?? "no run"} for this group, and main's accepts ${mainId ?? "none"}; the gate compares this run with main's.`, "");
-    const head = ["Started", "Run", "Build", "Issue recall", "Critical and major recall", "Precision, lower to upper", "Unresolved", "False", "Clean controls", "Candidates", "Time per scan", "Status"];
+    const head = ["Started", "Run", "Build", "Issue recall", "Critical and major recall", "Precision, lower to upper", "Unresolved", "False", "Clean controls", "Candidates", "Location recall (diagnostic)", "Time per scan", "Status"];
     out.push(table(head, [...group.map((e) => scanRow(e, g.config, status(e))), scanRow(run, g.config, "this run")]), "");
     const unsound = externalRefusals(run);
     // A scanner that was not installed would read as that scanner's bugs lost.
