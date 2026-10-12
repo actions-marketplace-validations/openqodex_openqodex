@@ -35,8 +35,18 @@
 //    development pull requests from each third by change size.
 // 6. Two ingests of the same pins and cache write different files: nothing
 //    here reads the clock, the order of a Map or a directory listing; every
-//    list is sorted, and a split file already written is never rewritten
-//    with other content (a new split is a new file).
+//    list is sorted, and a split file already written is only ever extended
+//    (lib/suites.mjs splitRewriteProblems): a moved case, a dropped case or
+//    a changed subset needs a new split, which is a new file.
+// 9. A pull request that becomes usable (Sid, 2026-10-11: a licence GitHub
+//    cannot name is usable for private runs, as unverified) moves a case the
+//    split already placed, or changes an id: with the split file it read
+//    (previousSplit), the ingest keeps every placed group on its side and
+//    every subset as it was, and places only the new groups, by the same
+//    rule, counting the groups already placed. Licence and status are not
+//    hashed, so no id changes. A group a reservation now reaches that the
+//    earlier split placed in development stops the ingest: that needs a new
+//    split.
 // 7. A person's frozen matchSignatures are lost on a re-ingest: an entry
 //    whose truth hash is unchanged keeps them.
 // 8. A pull request whose head the host no longer serves (pushed over after
@@ -49,8 +59,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
-import { cacheRoot, commitAnswer, licenceExclusion, licenceRecord, repoAnswer } from "../lib/licence.mjs";
-import { AACR_CATEGORIES, HASHED, SUITES, aacrTruth, checkPinned, entryHash, rawPath, realCaseId, sha256, truthHashOf } from "../lib/suites.mjs";
+import { cacheRoot, commitAnswer, licenceExclusion, licenceNote, licenceRecord, repoAnswer } from "../lib/licence.mjs";
+import { AACR_CATEGORIES, HASHED, SUITES, aacrTruth, checkPinned, entryHash, rawPath, realCaseId, sha256, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
 
 export const SALT = "openqodex-aacr-split-v1";
 export const SPLIT_NAME = "aacr-v1";
@@ -73,7 +83,7 @@ const pct = (n, of) => (of === 0 ? "0.0" : ((100 * n) / of).toFixed(1));
 
 // ---------- pinned files ----------
 
-async function fetchPinned(cache, board, pin, { offline }) {
+export async function fetchPinned(cache, board, pin, { offline }) {
   const path = rawPath(cache, board, pin);
   if (existsSync(path)) return checkPinned(readFileSync(path), pin, path);
   if (offline) throw new Error(`${pin.path} of board ${board} is not in the cache (${path}), and the ingest is offline`);
@@ -114,7 +124,7 @@ const rowKey = (r) => `${r.githubPrUrl}\0${r.target_commit}`;
 
 // ---------- groups ----------
 
-class UnionFind {
+export class UnionFind {
   constructor() {
     this.up = new Map();
   }
@@ -163,7 +173,7 @@ function spread(ordered, languageOf, count) {
 
 // ---------- the ingest ----------
 
-export async function ingestAacr({ boards, cache = cacheRoot(), offline = false, previous = null, log = () => {} }) {
+export async function ingestAacr({ boards, cache = cacheRoot(), offline = false, previous = null, previousSplit = null, log = () => {} }) {
   const aacr = boards.boards.aacr;
   const martian = boards.boards.martian;
   const reviewbench = boards.boards.reviewbench;
@@ -378,10 +388,13 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     g.languages.set(e.language, (g.languages.get(e.language) ?? 0) + 1);
   }
   const languageOfGroup = (g) => [...g.languages.entries()].sort((a, b) => b[1] - a[1] || byBytes(a[0], b[0]))[0][0];
+  // Groups an earlier version of this split file placed keep their side and
+  // their language; only the other groups are placed below (failure 9).
+  const placed = new Map((previousSplit?.groups ?? []).map((g) => [g.group, g]));
   const sideOf = new Map();
   const byLanguage = new Map();
   for (const g of groups.values()) {
-    g.language = languageOfGroup(g);
+    g.language = placed.get(g.group)?.language ?? languageOfGroup(g);
     g.reserved = reservedOf.has(g.group) ? reservedOf.get(g.group).sort((a, b) => byBytes(a.board, b.board) || byBytes(a.prUrl, b.prUrl)) : null;
     g.order = g.reserved ? null : sha256(`${SALT}\0${g.group}`);
     if (!byLanguage.has(g.language)) byLanguage.set(g.language, []);
@@ -391,7 +404,14 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   for (const [language, list] of [...byLanguage.entries()].sort((a, b) => byBytes(a[0], b[0]))) {
     const total = list.reduce((n, g) => n + g.names.length, 0);
     const count = { dev: 0, test: 0, reservedTest: 0 };
-    for (const g of list.filter((x) => x.reserved)) {
+    for (const g of list.filter((x) => placed.has(x.group))) {
+      const side = placed.get(g.group).split;
+      if (g.reserved && side !== "test") throw new Error(`the group ${g.group} now holds a reserved pull request (${g.reserved.map((r) => prRef(r.prUrl)).join(", ")}), but ${SPLIT_NAME} placed it in development; a new split is a new file: write it as ${SPLIT_NAME.replace(/\d+$/, (n) => String(Number(n) + 1))} with its own salt`);
+      sideOf.set(g.group, side);
+      count[side] += g.names.length;
+      if (g.reserved) count.reservedTest += g.names.length;
+    }
+    for (const g of list.filter((x) => !placed.has(x.group) && x.reserved)) {
       sideOf.set(g.group, "test");
       count.test += g.names.length;
       count.reservedTest += g.names.length;
@@ -400,7 +420,7 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     // request of its share, so one large group cannot push a language far
     // past 20% (sending each group to the side further below its share gave
     // 30% held-out on AACR's few, uneven groups).
-    for (const g of list.filter((x) => !x.reserved).sort((a, b) => byBytes(a.order, b.order))) {
+    for (const g of list.filter((x) => !placed.has(x.group) && !x.reserved).sort((a, b) => byBytes(a.order, b.order))) {
       const side = count.test + g.names.length <= SHARE.test * total + 0.5 ? "test" : "dev";
       sideOf.set(g.group, side);
       count[side] += g.names.length;
@@ -416,8 +436,9 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   const devBySize = [...dev].sort(bySize);
   const thirds = [0, 1, 2].map((k) => devBySize.slice(Math.floor((devBySize.length * k) / 3), Math.floor((devBySize.length * (k + 1)) / 3)));
   const languageOf = (n) => entryOf.get(n).language;
-  const laptop = thirds.flatMap((third) => spread([...third].sort((a, b) => byBytes(sha256(`${SALT}\0dev-laptop\0${a}`), sha256(`${SALT}\0dev-laptop\0${b}`))), languageOf, LAPTOP_PER_THIRD)).sort(byBytes);
-  const smoke = spread(devBySize, languageOf, SMOKE).sort(byBytes);
+  // An earlier version of this split file keeps its subsets as they were.
+  const laptop = previousSplit?.subsets?.["dev-laptop"] ?? thirds.flatMap((third) => spread([...third].sort((a, b) => byBytes(sha256(`${SALT}\0dev-laptop\0${a}`), sha256(`${SALT}\0dev-laptop\0${b}`))), languageOf, LAPTOP_PER_THIRD)).sort(byBytes);
+  const smoke = previousSplit?.subsets?.["dev-smoke"] ?? spread(devBySize, languageOf, SMOKE).sort(byBytes);
 
   const groupList = [...groups.values()].sort((a, b) => byBytes(a.group, b.group));
   const reservedGroups = groupList.filter((g) => g.reserved);
@@ -426,7 +447,7 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     version: 1,
     name: SPLIT_NAME,
     suite: "aacr",
-    rule: "The unit is the repository group: a repository with its renames and fork source as GitHub names them, every repository of the same name, and the repositories Martian names as the originals of its evaluation copies. Every group holding a Martian or ReviewBench pull request goes to held-out first. Within each language, the other groups, ordered by sha256(salt, NUL, group), are taken one at a time: a group goes to held-out while held-out stays within half a pull request of 20% of that language's usable pull requests (counting the reserved ones), and to development otherwise. dev-laptop takes 12 development pull requests from each third by change size, in seeded order, one language at a time. dev-smoke takes the smallest development pull requests, one language at a time.",
+    rule: "The unit is the repository group: a repository with its renames and fork source as GitHub names them, every repository of the same name, and the repositories Martian names as the originals of its evaluation copies. Every group holding a Martian or ReviewBench pull request goes to held-out first. Within each language, the other groups, ordered by sha256(salt, NUL, group), are taken one at a time: a group goes to held-out while held-out stays within half a pull request of 20% of that language's usable pull requests (counting the reserved ones), and to development otherwise. dev-laptop takes 12 development pull requests from each third by change size, in seeded order, one language at a time. dev-smoke takes the smallest development pull requests, one language at a time. The file is only ever extended: a group an earlier version placed keeps its side and language, the subsets stay as they were, and a new group (such as one whose licence became usable) is placed by the rule above, counting the groups already placed.",
     salt: SALT,
     share: SHARE,
     dataset: { repo: aacr.repo, revision: aacr.commit, positive: pins.positive.sha256, negative: pins.negative.sha256 },
@@ -459,8 +480,8 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   say(`Cases: ${plural(entries.length, "pull request")} in ${plural(aacrRepos.length, "repository", "repositories")}, ${accepted} accepted comments. Usable: ${usable.length}. Excluded: ${entries.length - usable.length}.`);
   say("Excluded, by reason:");
   const reasons = [
-    ["licence unknown (GitHub names no single licence for the licence file)", (e) => e.licence.class === "unknown" && e.excludedWhy?.startsWith("licence unknown")],
     ["licence none (no licence file)", (e) => e.licence.class === "none" && e.excludedWhy?.startsWith("licence none")],
+    ["licence of no class this benchmark uses", (e) => e.excludedWhy?.startsWith("licence ") && !e.excludedWhy.startsWith("licence none")],
     ["repository unknown to GitHub", (e) => e.excludedWhy?.startsWith("GitHub does not know")],
     [`${HEAD_GONE} (excluded after the split; the split file still lists them)`, (e) => e.excludedWhy?.startsWith(HEAD_GONE)],
   ];
@@ -476,6 +497,9 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     });
     say(`  ${label}: ${plural(hit.length, "pull request")} in ${plural(repos.size, "repository", "repositories")}${detail.length ? `: ${detail.join(", ")}` : ""}`);
   }
+  const unverified = usable.filter((e) => e.licence.class === "unverified");
+  const unverifiedRepos = [...new Set(unverified.map((e) => e.repo))].map((r) => [r, unverified.filter((e) => e.repo === r).length]).sort((a, b) => b[1] - a[1] || byBytes(a[0], b[0]));
+  say(`Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): ${plural(unverified.length, "pull request")} in ${plural(unverifiedRepos.length, "repository", "repositories")}${unverifiedRepos.length ? `: ${unverifiedRepos.map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
   say("Left out before the cases (not cases):");
   say(`  rejected comments of a pull request with no accepted comment: ${plural(negativeOnly.length, "pull request")}, ${plural(negativeOnly.reduce((n, x) => n + x.comments, 0), "rejected comment")}${negativeOnly.length ? `: ${negativeOnly.map((x) => `${x.ref} ${x.comments}`).join(", ")}` : ""}`);
   say(`  malformed or repeated rows: ${notCases.length}${notCases.length ? `: ${notCases.map((x) => `${x.ref} (${x.why})`).join("; ")}` : ""}`);
@@ -506,7 +530,12 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   const joined = groupList.filter((g) => membersOf.get(g.group).length > 1 && !g.reserved);
   say(`  Other groups of more than one repository: ${joined.length ? joined.map((g) => `${g.group} (${membersOf.get(g.group).sort(byBytes).join(", ")})`).join("; ") : "none"}`);
   say();
-  say(`Split ${SPLIT_NAME} (by repository group, within each language, dev ${SHARE.dev} and test ${SHARE.test}, salt ${SALT}), made from the ${splitPool.length} licensed pull requests:`);
+  say(`Split ${SPLIT_NAME} (by repository group, within each language, dev ${SHARE.dev} and test ${SHARE.test}, salt ${SALT}), made from the ${splitPool.length} pull requests whose licence is usable (${splitPool.filter((e) => e.licence.class === "unverified").length} of them unverified):`);
+  // Said only by the ingest that places them, so a later ingest of the same
+  // pins writes the same report.
+  const before = new Set([...(previousSplit?.cases?.dev ?? []), ...(previousSplit?.cases?.test ?? [])]);
+  const added = { dev: dev.filter((n) => !before.has(n)).length, test: test.filter((n) => !before.has(n)).length };
+  if (previousSplit && added.dev + added.test > 0) say(`  newly placed by the same rule: ${plural(added.dev + added.test, "pull request")}, ${added.dev} development and ${added.test} held-out; no case the earlier split placed moved, and the subsets are kept as it drew them`);
   say(`  development: ${plural(split.counts.groups.dev, "group")}, ${plural(dev.length, "pull request")} (${pct(dev.length, splitPool.length)}%)`);
   say(`  held-out: ${plural(split.counts.groups.test, "group")}, ${plural(test.length, "pull request")} (${pct(test.length, splitPool.length)}%): ${split.counts.reserved} reserved, ${test.length - split.counts.reserved} by hash`);
   const goneIn = (names) => names.filter((n) => entryOf.get(n).excludedWhy?.startsWith(HEAD_GONE));
@@ -519,7 +548,8 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
     for (const n of list) m.set(languageOf(n), (m.get(languageOf(n)) ?? 0) + 1);
     return [...m.entries()].sort((a, b) => byBytes(a[0], b[0])).map(([l, n]) => `${l} ${n}`).join(", ");
   };
-  say(`dev-laptop: ${plural(laptop.length, "pull request")}, ${thirds.map((t) => t.filter((n) => laptop.includes(n)).length).join(", ")} from the three thirds by change size (the thirds end at ${ends.slice(0, 2).join(" and ")} changed lines); ${langCount(laptop)}`);
+  if (previousSplit?.subsets?.["dev-laptop"]) say(`dev-laptop: ${plural(laptop.length, "pull request")}, kept as the earlier split file drew them; ${langCount(laptop)}`);
+  else say(`dev-laptop: ${plural(laptop.length, "pull request")}, ${thirds.map((t) => t.filter((n) => laptop.includes(n)).length).join(", ")} from the three thirds by change size (the thirds end at ${ends.slice(0, 2).join(" and ")} changed lines); ${langCount(laptop)}`);
   say(`dev-smoke: ${plural(smoke.length, "pull request")}: ${smoke.map((n) => `${n} (${entryOf.get(n).changeLines} lines, ${languageOf(n)})`).join(", ")}`);
   say("No held-out pull request was materialised, reviewed or scored by this ingest.");
   const report = `${lines.join("\n")}\n`;
@@ -533,12 +563,14 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
 }
 
 // Writes the ingest's files under `root` (the benchmark folder). A split
-// file that exists with other content is never rewritten: a new split is a
-// new file, and runs compare only within one split hash.
+// file that exists is only ever extended (lib/suites.mjs
+// splitRewriteProblems): a moved or dropped case, or a changed subset, needs
+// a new split, which is a new file; runs compare only within one split hash.
 export function writeIngest(result, { root = benchRoot } = {}) {
   const splitPath = join(root, SUITES.aacr.split);
-  if (existsSync(splitPath) && readFileSync(splitPath, "utf8") !== result.files[SUITES.aacr.split]) {
-    throw new Error(`${splitPath} exists with other content, and a new split is a new file: write it as ${SPLIT_NAME.replace(/\d+$/, (n) => String(Number(n) + 1))} with its own salt, or move the old file to the Trash if no run has used it`);
+  const problems = existsSync(splitPath) ? splitRewriteProblems(JSON.parse(readFileSync(splitPath, "utf8")), JSON.parse(result.files[SUITES.aacr.split])) : [];
+  if (problems.length > 0) {
+    throw new Error(`${splitPath} exists, and a new split is a new file: write it as ${SPLIT_NAME.replace(/\d+$/, (n) => String(Number(n) + 1))} with its own salt, or move the old file to the Trash if no run has used it. The new split would change it:\n  ${problems.join("\n  ")}`);
   }
   const written = [];
   for (const [rel, text] of Object.entries(result.files)) {
@@ -559,7 +591,9 @@ async function main(args) {
   const boards = JSON.parse(readFileSync(BOARDS_PATH, "utf8"));
   const casesPath = join(benchRoot, SUITES.aacr.cases);
   const previous = existsSync(casesPath) ? JSON.parse(readFileSync(casesPath, "utf8")) : null;
-  const result = await ingestAacr({ boards, offline: args.includes("--offline"), previous, log: (s) => console.error(s) });
+  const splitPath = join(benchRoot, SUITES.aacr.split);
+  const previousSplit = existsSync(splitPath) ? JSON.parse(readFileSync(splitPath, "utf8")) : null;
+  const result = await ingestAacr({ boards, offline: args.includes("--offline"), previous, previousSplit, log: (s) => console.error(s) });
   writeIngest(result);
   process.stdout.write(result.report);
   return 0;

@@ -19,7 +19,7 @@ import { promisify } from "node:util";
 import type { ReviewerUsage } from "@openqodex/core";
 import { openqodexHome } from "@openqodex/scanners";
 import { checkoutsDir } from "../checkouts.js";
-import { DEPTH_ENV, findOnPath, killGroup, spawnGroup } from "./driver.js";
+import { DEPTH_ENV, TIMED_OUT, findOnPath, killGroup, spawnGroup } from "./driver.js";
 import type { Detected, ReviewerDriver, ReviewerSession, Turn } from "./driver.js";
 import type { ToolCall } from "./trace.js";
 
@@ -365,7 +365,7 @@ function start(opts: { snapshotDir: string; deadline: number; bin: string; web: 
         stopped ??= why;
         killGroup(proc);
       };
-      const timer = setTimeout(() => stop("the reviewer timed out at the deadline and was stopped"), Math.max(0, opts.deadline - Date.now()));
+      const timer = setTimeout(() => stop(TIMED_OUT), Math.max(0, opts.deadline - Date.now()));
       timer.unref();
       let buf = "";
       proc.stdout?.setEncoding("utf8");

@@ -33,9 +33,8 @@
 // 4. A case whose licence nobody verified is converted for a board (Sid,
 //    2026-10-11: such cases are for private runs only): every case's
 //    licence record goes through lib/licence.mjs, licenceExclusion (a class
-//    no run uses) and publishRefusal (a class only private runs use, which
-//    PR 151 adds; before it lands, licenceExclusion refuses that class too),
-//    and one refused case refuses the whole run.
+//    no run uses) and publishRefusal (a class only private runs use), and
+//    one refused case refuses the whole run.
 // 5. Our line count differs from AACR's on the same reports: each comment
 //    carries the path and the range our scorer reads (paths normalised, the
 //    range [line_number, max(line_end, line_number)]), and the dataset step
@@ -56,7 +55,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
 import { parseCaseId, repoRoot } from "../../lib/cases.mjs";
-import * as licence from "../../lib/licence.mjs";
+import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.mjs";
 import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
@@ -104,7 +103,7 @@ export function convertRun(folder) {
       continue;
     }
     const record = spec.source?.licence ?? null;
-    const why = record === null ? "its truth copy holds no licence record" : (licence.licenceExclusion(record) ?? licence.publishRefusal?.([{ name, licence: record.class }]) ?? null);
+    const why = record === null ? "its truth copy holds no licence record" : (licenceExclusion(record) ?? publishRefusal([{ name, licence: record.class }]));
     if (why !== null) problems.push(`${name}: ${why}; a case whose licence is not verified is for private runs only, never converted for a board`);
     if (spec.split === "test" || heldOut.has(name)) problems.push(`${name}: held out (the test split); a held-out case is never converted or exported before a release`);
   }
@@ -218,7 +217,7 @@ export function filterDataset(folder, theirs) {
 }
 
 /** The pinned positive file in the cache, checked by its sha256. */
-export function rawDataset({ cache = licence.cacheRoot() } = {}) {
+export function rawDataset({ cache = cacheRoot() } = {}) {
   const pin = readSuite("aacr").file.dataset.files.positive;
   const path = rawPath(cache, "aacr", pin);
   if (!existsSync(path)) throw new Error(`${pin.path} is not in the cache (${path}); run node benchmark/ingest/aacr.mjs to fetch it`);
@@ -232,7 +231,7 @@ export function rawDataset({ cache = licence.cacheRoot() } = {}) {
  * lies in this repository: their checkout and its venv would land there.
  */
 export function benchCache() {
-  const cache = resolve(licence.cacheRoot());
+  const cache = resolve(cacheRoot());
   let head = cache;
   const rest = [];
   for (;;) {

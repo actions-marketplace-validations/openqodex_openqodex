@@ -157,6 +157,9 @@ export type ReviewInputs = {
   // The deadline itself, on the run's clock, when the host fixed it before
   // any work (reviewChange, at its entry); it then replaces timeoutMs.
   deadlineAt?: number;
+  // The line a review the deadline stopped prints and reports, in place of
+  // TIMED_OUT: the CLI names the cap it hit and the flag that raises it.
+  timedOut?: string;
   // The version the run's manifest names.
   runtimeVersion: string;
   // The lowest confidence a finding may have, in the brief and in the
@@ -634,7 +637,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           session = s;
           say(`Second reviewer: model ${reviewer.model} started`);
         },
-        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver, onRound: onRound("second") }),
+        converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now, check, deliver, onRound: onRound("second"), timedOut: inputs.timedOut }),
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
@@ -649,6 +652,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       check,
       deliver,
       onRound: onRound("primary"),
+      timedOut: inputs.timedOut,
     }).finally(async () => {
       await session?.close();
     });
