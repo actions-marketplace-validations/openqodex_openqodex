@@ -84,4 +84,4 @@ Signed-off-by: Your Name <you@example.com>
 
 ## Adding a built-in scanner
 
-Open a scanner request issue first. A built-in scanner needs three things. It needs a pinned version for every supported system in `packages/scanners/toolchain.json`. It needs an adapter. It needs a planted bug in the demo repository that the end-to-end test checks. Any scanner can already run as a custom scanner without a change here: see `docs/custom-scanners.md`.
+Open a scanner request issue first. A built-in scanner needs three things. It needs a pinned version for every supported system in `packages/scanners/toolchain.json`. It needs an adapter. It needs a planted bug in the demo repository that the end-to-end test checks. A compatible scanner can already run as a custom scanner without a change here: one that writes SARIF or one JSON document. See `docs/custom-scanners.md`.

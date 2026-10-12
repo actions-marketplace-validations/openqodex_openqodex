@@ -4,13 +4,13 @@ This page is the privacy policy for OpenQodex: the `openqodex` package on npm, i
 
 ## What OpenQodex collects
 
-Nothing. OpenQodex collects no usage data, no crash reports and no identifiers. It has no server and no account, and it sends no telemetry. semgrep runs with its own metrics switched off.
+Nothing. OpenQodex collects no usage data, no crash reports and no identifiers. This covers OpenQodex and its built-in scanners. Claude Code, Codex and any custom scanner you approve follow their own policies. It has no server and no account, and it sends no telemetry. semgrep runs with its own metrics switched off.
 
 ## Who reviews your code
 
-The review runs in a reviewer process OpenQodex starts on your machine: Claude Code or Codex, on your own login. That process sends the brief and what the reviewer reads to the model your login uses. OpenQodex adds no other model and needs no other key. By default the reviewer can also search the web, and Claude Code can open web pages; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that.
+By default, the review runs in a reviewer process OpenQodex starts on your machine: Claude Code or Codex, on your own login. That process sends the brief and what the reviewer reads to the model your login uses. OpenQodex adds no other model and needs no other key. By default the reviewer can also search the web, and Claude Code can open web pages; `reviewer_web: off` in `~/.openqodex/config.yaml` removes that.
 
-When neither Claude Code nor Codex can be the reviewer, the coding agent you are in reviews the change itself, on the model that agent already uses.
+When neither Claude Code nor Codex can be the reviewer, `review` names a fallback, `review --agent`. In that fallback, the coding agent you are in reviews the change itself, on the model that agent already uses. So the agent that wrote the code also reviews it. The report says which agent reviewed.
 
 In the GitHub Action's review mode, which runs only when the workflow sets `ANTHROPIC_API_KEY` on the step or asks for `review: required`, the reviewer is Claude Code on the runner. It sends the pull request's change, as the brief and the files it reads, to Anthropic's API under the repository's own key. The reviewer's web tools are off there.
 
