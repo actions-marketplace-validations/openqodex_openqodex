@@ -1,0 +1,56 @@
+Clean candidates from the 36 development repository groups of aacr-v1 (sha256 edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4): pull requests merged into the default branch from 2026-01-01 to 2026-03-31, at most 2 listed and 12 checked per group, in the seeded order (salt openqodex-clean-v1).
+Size: AACR's usable cases change 4 to 971 lines.
+Held-out groups, never read: 14.
+
+Listed: 49 candidates in 28 groups (C 6, C# 5, C++ 4, Go 5, Java 6, JavaScript 6, PHP 2, Python 6, Rust 5, TypeScript 4).
+Checked: 304 pull requests; excluded 255, by the first reason each failed:
+  authored by a bot: 24
+  its size is outside AACR's range: 54
+  no review by anyone but its author: 41
+  a reviewer requested changes: 9
+  a later commit names it as a fix, revert or follow-up: 8
+  a later issue or pull request links it as a bug, fix or revert: 14
+  a file it changed was renamed within the 90 days, so later fixes cannot be followed: 4
+  a later commit changed lines it changed: 77
+  its lines could not be followed through a later commit: 6
+  a later commit on its files is too large to check: 18
+
+Per group: merged in the window (GitHub's count), offered (the search's first page), checked, listed:
+  alibaba/spring-ai-alibaba (Java): 68 merged, 68 offered, 4 checked, 2 listed
+  bitcoin/bitcoin (C++): 390 merged, 100 offered, 8 checked, 2 listed
+  browser-use/browser-use (Python): 195 merged, 100 offered, 4 checked, 2 listed
+  clickhouse/clickhouse (C++): 3109 merged, 100 offered, 12 checked, 1 listed
+  cline/cline (TypeScript): 592 merged, 100 offered, 12 checked, 0 listed
+  comfyanonymous/comfyui (Python): 517 merged, 100 offered, 4 checked, 2 listed
+  dbeaver/dbeaver (Java): 280 merged, 100 offered, 7 checked, 2 listed
+  dotnet/aspnetcore (C#): 332 merged, 100 offered, 12 checked, 2 listed
+  elastic/elasticsearch (Java): 2352 merged, 100 offered, 8 checked, 2 listed
+  facebook/react (JavaScript): 193 merged, 100 offered, 3 checked, 2 listed
+  filamentphp/filament (PHP): 297 merged, 100 offered, 5 checked, 2 listed
+  freecad/freecad (C++): 784 merged, 100 offered, 12 checked, 1 listed
+  gofr-dev/gofr (Go): 257 merged, 100 offered, 8 checked, 2 listed
+  google-gemini/gemini-cli (TypeScript): 1869 merged, 100 offered, 12 checked, 0 listed
+  immich-app/immich (TypeScript): 808 merged, 100 offered, 3 checked, 2 listed
+  infiniflow/ragflow (Python): 691 merged, 100 offered, 12 checked, 0 listed
+  juspay/hyperswitch (Rust): 425 merged, 100 offered, 10 checked, 2 listed
+  kestra-io/kestra (Java): 715 merged, 100 offered, 12 checked, 0 listed
+  laravel/framework (PHP): 118 merged, 100 offered, 12 checked, 0 listed
+  linera-io/linera-protocol (Rust): 207 merged, 100 offered, 12 checked, 1 listed
+  lvgl/lvgl (C): 262 merged, 100 offered, 12 checked, 1 listed
+  microsoft/typescript-go (Go): 471 merged, 100 offered, 9 checked, 2 listed
+  mpv-player/mpv (C): 196 merged, 100 offered, 11 checked, 2 listed
+  mrdoob/three.js (JavaScript): 384 merged, 100 offered, 11 checked, 2 listed
+  n8n-io/n8n (TypeScript): 1572 merged, 100 offered, 3 checked, 2 listed
+  nodejs/node (JavaScript): 527 merged, 100 offered, 8 checked, 2 listed
+  ollama/ollama (Go): 322 merged, 100 offered, 12 checked, 1 listed
+  openai/codex (Rust): 2319 merged, 100 offered, 12 checked, 0 listed
+  powershell/powershell (C#): 89 merged, 89 offered, 12 checked, 1 listed
+  ppy/osu (C#): 240 merged, 100 offered, 10 checked, 2 listed
+  sveltejs/svelte (JavaScript): 297 merged, 100 offered, 12 checked, 0 listed
+  symfony/symfony (PHP): 0 merged, 0 offered, 0 checked, 0 listed
+  timescale/timescaledb (C): 220 merged, 100 offered, 12 checked, 1 listed
+  unionlabs/union (Rust): 61 merged, 61 offered, 2 checked, 2 listed
+  valkey-io/valkey (C): 205 merged, 100 offered, 3 checked, 2 listed
+  vllm-project/vllm (Python): 2815 merged, 100 offered, 3 checked, 2 listed
+
+No candidate is a case until a person rules it clean (node benchmark/queue.mjs decide clean <case id> --by <name>) and node benchmark/ingest/clean.mjs admit writes it.

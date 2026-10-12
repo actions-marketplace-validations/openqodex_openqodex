@@ -40,12 +40,19 @@
 //    are not exactly the ones the suite entry counts; realSpecProblems checks
 //    a saved copy the same way, and against the committed suite while it
 //    still holds the case.
+// The clean suite (benchmark/ingest/clean.mjs):
+// 10. A clean case enters a run without a person's ruling: every read of
+//    the clean suite (listCases, readCase, selectCases, realSpecProblems)
+//    refuses an entry whose standing ruling in review-queue/decisions.jsonl
+//    is not clean, signed by a person on review-queue/people.json
+//    (lib/rulings.mjs). A clean case is clean and has no truth.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { benchRoot, buildCase, caseIdFromHash, casesRoot, git, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
 import { MERGE_BASE_RULE, materialisePr, mergeBasesOf } from "./materialise.mjs";
+import { readDecisions, resolveRulings } from "./rulings.mjs";
 
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -58,10 +65,12 @@ export function canonicalJson(v) {
 
 // The real suites: where each keeps its entries and its split, the board in
 // benchmark/outside/boards.json that pins its raw files, the kind of case it
-// holds (PLAN-benchmark 4.2), and whether every case is held out.
+// holds (PLAN-benchmark 4.2), whether every case is held out, and whether
+// every case is a clean control a person ruled clean (P1-T21).
 export const SUITES = {
   aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json", origin: "real", heldOutOnly: false },
   martian: { board: "martian", cases: "suites/martian/cases.json", split: "splits/martian-v1.json", origin: "injected", heldOutOnly: true },
+  clean: { board: null, cases: "suites/clean/cases.json", split: "splits/clean-v1.json", origin: "real", heldOutOnly: false, clean: true },
 };
 
 // ---------- Martian truth ----------
@@ -166,6 +175,13 @@ export function readSuite(suite, { root = benchRoot } = {}) {
   const splitBytes = split ? readFileSync(join(root, def.split)) : null;
   const dev = split?.cases?.dev ?? [];
   if (def.heldOutOnly && dev.length > 0) throw new Error(`${def.split} places ${dev.length} ${suite} case${dev.length === 1 ? "" : "s"} in development (${dev.join(", ")}), but every ${suite} case is held out: its truth is public, so tuning on it is contamination. Write the split with node benchmark/ingest/${suite}.mjs`);
+  if (def.clean) {
+    // Failure 10: only a person's standing clean ruling keeps an entry.
+    const { lines, people } = readDecisions(join(root, "review-queue", "decisions.jsonl"));
+    const R = resolveRulings(lines, people);
+    const unruled = file.cases.filter((e) => R.cases.get(realCaseId(suite, e.name, e.hash))?.status !== "clean").map((e) => e.name);
+    if (unruled.length > 0) throw new Error(`${def.cases} holds ${unruled.join(", ")} with no standing clean ruling by a person in review-queue/decisions.jsonl: a clean case enters a run only through a person's ruling (node benchmark/queue.mjs decide clean <case id>) and node benchmark/ingest/clean.mjs admit, never by hand`);
+  }
   return { def, file, split, splitHash: splitBytes ? sha256(splitBytes) : null, byName: new Map(file.cases.map((e) => [e.name, e])) };
 }
 
@@ -213,7 +229,7 @@ function realCase(suite, s, entry) {
     repoGroup: entry.repoGroup,
     language: entry.language,
     framework: null,
-    clean: false,
+    clean: s.def.clean === true,
     changeLines: entry.changeLines,
     status: entry.status,
     excludedWhy: entry.excludedWhy,
@@ -364,6 +380,11 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
   if (c.suite === "planted") return plantedTruth(c.spec ?? readPlantedSpec(c.name));
   const def = SUITES[c.suite];
   if (!def) throw new Error(`no real suite named ${c.suite}`);
+  if (def.clean) {
+    const truth = { kind: "lines", items: [] };
+    if (truthHashOf(truth.items) !== c.truthHash) throw new Error(`${c.id}: a clean case has no truth, and its entry's truthHash is not the hash of none`);
+    return truth;
+  }
   if (c.suite === "martian") {
     const { file, sha256: pinned } = c.source.dataset;
     const row = readPinned(cache, def.board, { path: file, sha256: pinned }).find((r) => r.url === c.source.prUrl);
@@ -473,7 +494,8 @@ export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
   const id = parseCaseId(spec.id);
   need(SUITES[suite] !== undefined, `the suite ${suite} has no truth copy rules`);
   need(id !== null && id.suite === suite && id.name === name, `id must be the case id of ${suite}/${name}, not ${JSON.stringify(spec.id)}`);
-  need(spec.origin === "real" && spec.clean === false, "a pull request case is real and never clean");
+  const clean = SUITES[suite]?.clean === true;
+  need(spec.origin === "real" && spec.clean === clean, clean ? "a clean suite case is real and clean" : "a pull request case is real and never clean");
   need(typeof spec.repoGroup === "string" && spec.repoGroup !== "", "repoGroup is missing");
   const count = spec.truthCount?.accepted;
   need(Number.isInteger(count), "truthCount.accepted, the number of accepted comments its suite lists, is missing");
