@@ -2,6 +2,7 @@
 //
 //   node benchmark/ingest/aacr.mjs [--offline]
 //   node benchmark/ingest/aacr.mjs --data-only
+//   node benchmark/ingest/aacr.mjs --freeze-merge-base <name>
 //
 // Reads the pinned data files named in benchmark/outside/boards.json (the
 // cache keeps them under $OPENQODEX_BENCH_CACHE/raw/<board>/<path>), asks
@@ -18,6 +19,13 @@
 // is what a run needs to read its cases' truth (lib/suites.mjs truthOf), and
 // does nothing else: no GitHub answer is asked for and no file of this
 // repository is written.
+// --freeze-merge-base <name> freezes the merge base of a case whose base and
+// head have more than one, which the materialiser refuses until one is
+// frozen: the newest by committer date, then the smaller commit id
+// (docs/benchmark.md, "Two merge bases"; lib/suites.mjs freezeMergeBase), so
+// every machine freezes the same one. It fetches commits only from the
+// case's clone URL into the clone cache and rewrites that case's entry in
+// cases.json, with its new hash and id; a later ingest keeps it.
 //
 // Failure list, written before the code:
 // 1. An upstream edit to the dataset changes the truth under a frozen id:
@@ -69,7 +77,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
 import { cacheRoot, commitAnswer, licenceExclusion, licenceNote, licenceRecord, repoAnswer } from "../lib/licence.mjs";
-import { AACR_CATEGORIES, HASHED, SUITES, aacrTruth, checkPinned, entryHash, rawPath, realCaseId, sha256, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
+import { AACR_CATEGORIES, HASHED, SUITES, aacrTruth, checkPinned, entryHash, freezeMergeBase, rawPath, realCaseId, sha256, splitRewriteProblems, truthHashOf } from "../lib/suites.mjs";
 
 export const SALT = "openqodex-aacr-split-v1";
 export const SPLIT_NAME = "aacr-v1";
@@ -611,10 +619,21 @@ export function writeIngest(result, { root = benchRoot } = {}) {
 }
 
 async function main(args) {
+  const usage = "usage: node benchmark/ingest/aacr.mjs [--offline]\n       node benchmark/ingest/aacr.mjs --data-only\n       node benchmark/ingest/aacr.mjs --freeze-merge-base <name>";
+  if (args[0] === "--freeze-merge-base") {
+    if (args.length !== 2) {
+      console.error(usage);
+      return 2;
+    }
+    const r = freezeMergeBase("aacr", args[1]);
+    if (r.frozen) console.log(`${r.name}: git finds ${r.bases.length} merge bases (${r.bases.join(", ")}); froze ${r.mergeBaseSha}, the first by the rule: ${r.rule}. ${r.from} is now ${r.to}.`);
+    else console.log(`${r.name}: nothing frozen; ${r.mergeBaseSha ? `the entry already freezes ${r.mergeBaseSha}` : "git finds one merge base"}. The id stays ${r.from}.`);
+    return 0;
+  }
   const dataOnly = args.length === 1 && args[0] === "--data-only";
   const unknown = args.filter((a) => a !== "--offline");
   if (!dataOnly && unknown.length > 0) {
-    console.error("usage: node benchmark/ingest/aacr.mjs [--offline]\n       node benchmark/ingest/aacr.mjs --data-only");
+    console.error(usage);
     return 2;
   }
   const boards = JSON.parse(readFileSync(BOARDS_PATH, "utf8"));
