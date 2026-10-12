@@ -14,10 +14,10 @@
 //    a record without a hypothesis, a primary metric or a loss for every
 //    guard, and any second record for the same branch or commit, also when
 //    two proposals run at once. The ledger only grows.
-// 3. A shallow clone (the CI checkout) lacks the commit of the review run
-//    accepted last, so the loop stops with its base unknown although origin
-//    holds that commit. Fetched by its id; a commit origin lacks too still
-//    stops the check (exit 2).
+// 3. The accepted pointer on origin's main names the loop's base, so a
+//    pointer that holds a ref name or a tag id, or a clone that lacks the
+//    commit (a shallow clone), must stop the check (exit 2) and never pick
+//    another base.
 //
 // The diff is read from the loop's base, never from a parent the record
 // chooses: here the clone's origin is a bare repository whose main the tests
@@ -79,17 +79,17 @@ function originMain(sha) {
 
 // A branch from `from` with each file written over (a function gets the old
 // text), committed. Returns the branch tip.
-function branch(name, edits, from = base, repo = clone) {
-  git(repo, "checkout", "-q", "-B", name, from);
+function branch(name, edits, from = base) {
+  git(clone, "checkout", "-q", "-B", name, from);
   for (const [path, edit] of Object.entries(edits)) {
-    const full = join(repo, path);
+    const full = join(clone, path);
     mkdirSync(dirname(full), { recursive: true });
     const old = existsSync(full) ? readFileSync(full, "utf8") : "";
     writeFileSync(full, typeof edit === "function" ? edit(old) : edit);
   }
-  git(repo, "add", "-A");
-  git(repo, "commit", "-q", "-m", name);
-  return git(repo, "rev-parse", "HEAD").trim();
+  git(clone, "add", "-A");
+  git(clone, "commit", "-q", "-m", name);
+  return git(clone, "rev-parse", "HEAD").trim();
 }
 
 const appendLine = (line) => (old) => `${old}${old.endsWith("\n") ? "" : "\n"}${line}\n`;
@@ -285,57 +285,48 @@ describe("a change editing a spec or naming a case identifier in a lens enters t
     }
   });
 
-  // CI checks out one commit, so the commit of the review run accepted last
-  // is missing from the checkout although origin holds it, and the loop
-  // stopped with its base unknown. A full clone must stay full: a depth on
-  // the fetch would mark it shallow and cut its history at that commit.
-  it("fetches the accepted run's commit from origin when the clone lacks it, and stops when origin lacks it too", () => {
-    const holds = (repo, sha) => spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: repo }).status === 0;
-    const shallowness = (repo) => git(repo, "rev-parse", "--is-shallow-repository").trim();
+  // The pointer's commit reaches git from a file on origin's main. A ref
+  // name there would resolve to whatever that ref holds locally, a tag id
+  // would peel to another commit, and a shallow clone (the CI checkout)
+  // lacks the commit: each must stop the check, never pick a base.
+  it("stops with the base unknown when the accepted pointer is not a full commit id this clone holds", () => {
     const accept = (commit, runId) => {
       const run = { runId, commit, scoreHash: "a".repeat(64), acceptedAt: "2026-10-12T10:00:00.000Z", acceptedBy: "Sid" };
       return { [ACCEPTED]: `${JSON.stringify({ version: 1, ...run, groups: { [REVIEW_GROUP]: run } })}\n` };
     };
+    const unknown = (runId) => `names an accepted review run (${runId}) whose commit`;
     try {
       // origin's main is one commit past the accepted run's, as on the real main.
       const tip = branch("main-accepts-base", accept(base, "2026-10-12-review"));
       originMain(tip);
       const shallow = join(work, "shallow");
       git(work, "clone", "-q", "--depth", "1", "--branch", "main", "--no-checkout", `file://${bare}`, shallow);
-      expect(holds(shallow, base)).toBe(false);
+      expect(spawnSync("git", ["cat-file", "-e", `${base}^{commit}`], { cwd: shallow }).status).not.toBe(0);
       git(shallow, "branch", "shallow-at-tip", tip);
       const atTip = propose(fullRecord("lenses", "shallow-at-tip", { parent: tip }), { repo: shallow });
-      expect(atTip.code, atTip.out).toBe(1);
-      expect(atTip.out).toContain(`is not the loop's base ${base.slice(0, 8)}`);
-      expect(holds(shallow, base)).toBe(true);
-      branch("shallow-from-base", lensLine(GENERIC), base, shallow);
-      const fromBase = propose(fullRecord("lenses", "shallow-from-base"), { repo: shallow });
-      expect(fromBase.code, fromBase.out).toBe(0);
-      expect(ledgerLines(fromBase.ledger)[0].record.parent).toBe(base);
+      expect(atTip.code, atTip.out).toBe(2);
+      expect(atTip.out).toContain(unknown("2026-10-12-review"));
+      expect(atTip.out).toContain("git fetch --unshallow origin");
 
-      // A run accepted at a pull request's head that was merged by squash:
-      // origin holds the commit, main does not reach it.
-      const offMain = branch("accepted-off-main", lensLine("A commit only a pull request reaches."));
-      git(clone, "push", "-q", "origin", `${offMain}:refs/heads/accepted-off-main`);
-      const mainOff = branch("main-accepts-off-main", accept(offMain, "2026-10-12-off-main"));
-      originMain(mainOff);
-      const full = join(work, "full");
-      git(work, "clone", "-q", "--no-local", "--single-branch", "--branch", "main", "--no-checkout", bare, full);
-      const wasShallow = shallowness(full);
-      expect(holds(full, offMain)).toBe(false);
-      git(full, "branch", "full-at-main", mainOff);
-      const atMain = propose(fullRecord("lenses", "full-at-main", { parent: mainOff }), { repo: full });
-      expect(atMain.code, atMain.out).toBe(1);
-      expect(atMain.out).toContain(`is not the loop's base ${offMain.slice(0, 8)}`);
-      expect(holds(full, offMain)).toBe(true);
-      expect(shallowness(full)).toBe(wasShallow);
+      // A full clone holds the commit: the same pointer names the base.
+      branch("lens-under-base", lensLine(GENERIC), base);
+      const underBase = propose(fullRecord("lenses", "lens-under-base"));
+      expect(underBase.code, underBase.out).toBe(0);
+      expect(ledgerLines(underBase.ledger)[0].record.parent).toBe(base);
 
-      originMain(branch("main-accepts-nowhere", accept("1".repeat(40), "2026-10-12-nowhere")));
-      branch("lens-under-nowhere", lensLine(GENERIC));
-      const nowhere = propose(fullRecord("lenses", "lens-under-nowhere"));
-      expect(nowhere.code, nowhere.out).toBe(2);
-      expect(nowhere.out).toContain("names an accepted review run (2026-10-12-nowhere) whose commit this repository does not hold");
+      // A ref name in the pointer resolves locally; a tag id peels to a commit. Neither is a base.
+      git(clone, "tag", "-a", "-m", "an annotated tag at the base", "base-tag", base);
+      const tagId = git(clone, "rev-parse", "refs/tags/base-tag").trim();
+      expect(tagId).not.toBe(base);
+      for (const [pointer, runId] of [["refs/heads/lens-under-base", "2026-10-12-ref"], [tagId, "2026-10-12-tag"], ["1".repeat(40), "2026-10-12-nowhere"]]) {
+        originMain(branch(`main-accepts-${runId}`, accept(pointer, runId)));
+        branch(`lens-under-${runId}`, lensLine(GENERIC));
+        const crafted = propose(fullRecord("lenses", `lens-under-${runId}`));
+        expect(crafted.code, crafted.out).toBe(2);
+        expect(crafted.out).toContain(unknown(runId));
+      }
     } finally {
+      git(clone, "tag", "-d", "base-tag");
       originMain(base);
     }
   });
