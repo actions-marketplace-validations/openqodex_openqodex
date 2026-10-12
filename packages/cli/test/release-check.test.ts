@@ -39,7 +39,7 @@ describe("the self-update check in the release workflow", () => {
     expect(text).not.toMatch(/secrets\./);
     expect(text).not.toMatch(/NODE_AUTH_TOKEN|NPM_TOKEN|id-token|registry-url/);
     // The publishing job never waits on it.
-    expect(workflow.jobs.release!.needs).toBeUndefined();
+    expect([workflow.jobs.release!.needs ?? []].flat()).not.toContain(name);
     expect(workflow.jobs.release!.steps.some((s) => s.run?.includes("check-self-update.mjs"))).toBe(false);
   });
 

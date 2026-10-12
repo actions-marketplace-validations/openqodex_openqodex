@@ -47,6 +47,18 @@ pnpm changeset
 
 Pick the `openqodex` package and the bump. Write one line in plain English about what the user sees. The release workflow turns changesets into `CHANGELOG.md`.
 
+## Before a release
+
+The "Version packages" pull request publishes when it merges. Before you merge it, check out its head and compare the build with the published package on the planted cases and AACR-Bench's development subset:
+
+```
+node benchmark/build-cli.mjs
+node benchmark/ingest/aacr.mjs --data-only
+node benchmark/release-check.mjs --install-scanners
+```
+
+It runs no model and spends nothing. It must exit 0. Exit 1 names each bug the published package found and the new build misses: fix it, or record in the pull request why the loss is accepted. Exit 2 means it could not run and shows nothing either way. On a machine without Ruby, Go or Cargo, add `--allow-missing-scanners`. `docs/benchmark.md` ("The release check") says what it compares. The release workflow runs the planted part again before it publishes, and does not publish on any exit but 0.
+
 ## After a release
 
 The self-update can only be proven between two real releases. After a publish, run the release check from the previous release to the new one:
