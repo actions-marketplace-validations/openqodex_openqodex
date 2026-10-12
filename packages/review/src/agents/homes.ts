@@ -9,12 +9,15 @@
 // hand: the system resolves `..` after the links before it, and so does the
 // check every write passes (real-path.ts). Folding it here would point init
 // at another folder than the agent reads.
-import { join, sep } from "node:path";
+import { isAbsolute, join, parse, sep } from "node:path";
 
+// A root (`/`, `F:\`) keeps its slash: `F:` alone names the current folder
+// on that drive. isAbsolute, not a leading `/`, since a Windows path starts
+// with its drive.
 function fromEnv(value: string | undefined): string | null {
   if (value === undefined || value === "") return null;
-  const trimmed = value.length > 1 ? value.replace(/[\\/]+$/, "") : value;
-  return trimmed.startsWith(sep) ? trimmed : `${process.cwd()}${sep}${trimmed}`;
+  const trimmed = value.length > parse(value).root.length ? value.replace(/[\\/]+$/, "") : value;
+  return isAbsolute(trimmed) ? trimmed : `${process.cwd()}${sep}${trimmed}`;
 }
 
 export function claudeHome(home: string, env: NodeJS.ProcessEnv = process.env): string {
