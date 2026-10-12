@@ -121,8 +121,8 @@ describe("the review init ends with", () => {
     const driver = fake();
     await reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [driver] });
     expect(driver.started).toBe(1);
-    // The config disables both scanners, so the clean verdict says none ran.
-    expect(out).toMatch(/^(Passed:|No findings from )/m);
+    // The config disables both scanners: the developer's choice, not a gap.
+    expect(out).toContain("Passed: no findings");
     const md = /^Markdown: (\/.+\/report\.md)$/m.exec(out)?.[1];
     expect(md, out).toBeDefined();
     expect(readFileSync(md!, "utf8")).toContain("Reviewer: claude 9.9.9");

@@ -274,7 +274,8 @@ describe("no rendered output contains a secret", () => {
 });
 
 // Failure cases: failed scanners say Passed; idle scanners inflate selected counts;
-// finding verdicts lose their coverage clause; all-ran verdicts change; outputs disagree.
+// a scanner disabled in the config counts as did not run; finding verdicts lose
+// their coverage clause; all-ran verdicts change; outputs disagree.
 describe("verdict scanner coverage", () => {
   function outputs(r: Report): string[] {
     return [renderTerminal(r, { color: false }), renderMarkdown(r), renderHtml({ report: r, display: null, version: "test" })];
@@ -304,6 +305,14 @@ describe("verdict scanner coverage", () => {
     expect(line.startsWith(`${word}: `), line).toBe(true);
     expect(line.endsWith("; 1 of 4 scanners did not run"), line).toBe(true);
     for (const output of outputs(r)) expect(output).toContain(line);
+  });
+  it("leaves a disabled scanner out of both numbers", () => {
+    const r = review(makeSubmission({ findings: [], dropped: [] }));
+    r.not_reviewed = [];
+    r.scanners.push({ ...r.scanners[0]!, scanner: "bandit", status: "disabled", version: null, reason: "disabled in .openqodex/config.yaml" });
+    for (const output of outputs(r)) expect(output).toContain("No findings from 3 of 4 scanners; 1 did not run (1 not installed)");
+    r.scanners = r.scanners.filter((s) => s.status !== "not_installed");
+    for (const output of outputs(r)) expect(output).toContain("Passed: no findings");
   });
   it("keeps the verdict unchanged when every selected scanner ran", () => {
     const r = review(makeSubmission({ findings: [], dropped: [] }));

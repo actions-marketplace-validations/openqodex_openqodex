@@ -34,13 +34,13 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-// The receipt and verdict use the same selection: a scanner with nothing
-// to check is idle, and every other scanner either ran or was left out.
+// A scanner with nothing to check is idle; every other scanner either ran
+// or was left out.
 function scannerCoverage(scanners: ScannerRunSummary[]) {
   const ran = scanners.filter((s) => s.status === "ran").length;
   const idle = scanners.filter((s) => s.status === "no_matching_files").length;
   const out = scanners.filter((s) => s.status !== "ran" && s.status !== "no_matching_files");
-  return { ran, idle, out, selected: ran + out.length };
+  return { ran, idle, out };
 }
 
 // "7 scanners ran, 4 had nothing to check, 2 not included (brakeman: needs
@@ -74,8 +74,11 @@ export function verdictLine(report: Report): string {
   const counted = countedSeverities(report);
   const threshold = report.block_on_severity;
   const what = (n: number) => plural(n, "finding", "findings");
-  const { ran, out, selected } = scannerCoverage(report.scanners);
-  const ofSelected = plural(selected, "scanner", "scanners");
+  // A disabled scanner is the developer's choice, not a gap: it is in
+  // neither number. The coverage line still lists it as disabled.
+  const { ran, out: left } = scannerCoverage(report.scanners);
+  const out = left.filter((s) => s.status !== "disabled");
+  const ofSelected = plural(ran + out.length, "scanner", "scanners");
   const clause = out.length > 0 ? `; ${out.length} of ${ofSelected} did not run` : "";
   if (report.verdict === "blocked" && threshold) {
     const over = counted.filter((s) => atOrAbove(s, threshold));
@@ -83,7 +86,7 @@ export function verdictLine(report: Report): string {
   }
   if (counted.length === 0) {
     if (out.length === 0) return "Passed: no findings";
-    const reasons = ["not_installed", "failed", "installing", "disabled", "untrusted"]
+    const reasons = ["not_installed", "failed", "installing", "untrusted"]
       .map((status) => [status, out.filter((s) => s.status === status).length] as const)
       .filter(([, n]) => n > 0)
       .map(([status, n]) => `${n} ${status.replace(/_/g, " ")}`)
