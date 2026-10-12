@@ -51,7 +51,8 @@
 // Exit codes: 0 no change or a gain (or a change that is neither); 1 a
 // loss, each one named; 2 the check could not run (a refused flag, a
 // package that is not there, a run that failed or stopped, two passes that
-// differ, runs that cannot be compared), and nothing is concluded.
+// differ, runs or a review metric that cannot be compared), and nothing is
+// concluded.
 //
 // Failure list, written before the code:
 // 1. A build whose scanner finds one fewer planted bug passes the check:
@@ -72,9 +73,19 @@
 // 6. The check quietly compares something else than the release: the base
 //    is the registry's latest version by default, read from the registry
 //    itself, and the report names both builds as the runs recorded them.
+// 7. A review metric one build measures and the other does not reads as no
+//    change: it cannot be compared, so the check exits 2 naming it, or 1
+//    when a loss is shown besides (reviewOutcome, decideVerdict).
+// 8. The published package's code runs with the caller's keys: its install
+//    step and the scanner-only runs get only the variables buildEnv lets
+//    through. A review run keeps the caller's environment, because its
+//    reviewers need their accounts, and a model review loads the package's
+//    library inside run.mjs; the caller who names --reviewers runs that.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanEnv } from "../scripts/self-update-check-lib.mjs";
 import { benchRoot, repoRoot } from "./lib/cases.mjs";
 import { inputDifferences } from "./lib/external.mjs";
 import { buildEntry, resultsRoot } from "./lib/index.mjs";
@@ -185,11 +196,25 @@ async function describeBuild(spec) {
   return { spec, cli: pkg.cli, slug: spec.startsWith("npm:") ? `v${r.version}` : `file-${r.sha256.slice(0, 8)}`, label: `${r.name} ${r.version} ${from} (sha256 ${r.sha256.slice(0, 12)})` };
 }
 
-// One run.mjs invocation: its output goes to the log file and to stderr.
-function bench(args, log) {
+// The variables a package build's install step and a scanner-only run may
+// read, and nothing else (failure 8): what node, git and tar need
+// (scripts/self-update-check-lib.mjs ALLOWED_ENV, LC_*), HOME, the OpenQodex
+// home and the benchmark's cache, and what the scanners' runtimes read (Go,
+// Cargo and rustup, Ruby gems). No API key, token, cloud variable or
+// endpoint of the caller reaches the published package's code.
+const BUILD_ENV = ["HOME", "OPENQODEX_HOME", "OPENQODEX_BENCH_CACHE", "GOROOT", "GOPATH", "GOTOOLCHAIN", "CARGO_HOME", "RUSTUP_HOME", "GEM_HOME", "GEM_PATH"];
+export function buildEnv(base = process.env) {
+  const kept = Object.fromEntries(BUILD_ENV.filter((k) => base[k] !== undefined).map((k) => [k, base[k]]));
+  return cleanEnv(base, { ...kept, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1" });
+}
+
+// One run.mjs invocation: its output goes to the log file and to stderr. A
+// scanner-only run gets buildEnv; a review run the caller's environment,
+// because its reviewers need their accounts.
+function bench(args, log, env = process.env) {
   return new Promise((done) => {
     const file = createWriteStream(log);
-    const child = spawn(process.execPath, [join(benchRoot, "run.mjs"), ...args], { cwd: repoRoot, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [join(benchRoot, "run.mjs"), ...args], { cwd: repoRoot, env, stdio: ["ignore", "pipe", "pipe"] });
     let tail = "";
     const keep = (chunk) => {
       file.write(chunk);
@@ -228,7 +253,7 @@ async function runOne({ o, ctx, suite, side, mode, build }) {
   }
   process.stderr.write(`\n== ${name}: ${build.label} ==\n`);
   ctx.runs.push({ suite, mode, side, folder: relative(ctx.out, folder) });
-  const r = await bench(args, join(ctx.out, "logs", `${name}.log`));
+  const r = await bench(args, join(ctx.out, "logs", `${name}.log`), mode === "scan" ? buildEnv() : process.env);
   if (r.code === 0) return folder;
   const why = r.code === 3 ? "its two passes are not identical, so its score is not one number" : r.code === 1 ? "it stopped before it finished" : r.signal ? `it was ended by ${r.signal}` : "it was refused or failed";
   throw new CannotRun(`the ${side} build's ${mode === "scan" ? "scanner-only" : "review"} run of ${suite} exited ${r.code ?? r.signal}: ${why}. Its last lines: ${lastLines(r.tail)}`);
@@ -297,7 +322,15 @@ function compareReviews(suite, baseFolder, candFolder) {
     throw new CannotRun(`${suite}: the review runs could not be compared: ${error.message}`);
   }
   if (result.problems.length > 0) throw new CannotRun(`${suite}: the review runs cannot be paired: ${result.problems.join("; ")}`);
-  const out = { losses: [], gains: [], changes: [], notes: [], table: renderComparison(result, { alpha }), alpha };
+  return { ...reviewOutcome(result, { suite, alpha }), table: renderComparison(result, { alpha }), alpha };
+}
+
+// What a compare.mjs result says for the release: { losses, gains,
+// changes, notes, incomparable }. A gate metric one side measures and the
+// other does not (a review with no cost on one side) cannot be compared, and
+// is listed in incomparable (failure 7), never read as no change.
+export function reviewOutcome(result, { suite, alpha }) {
+  const out = { losses: [], gains: [], changes: [], notes: [], incomparable: [] };
   for (const cell of result.cells) {
     const where = `${suite} ${cell.path} ${cell.reviewer}`;
     for (const [stratum, s] of Object.entries(cell.strata)) {
@@ -314,18 +347,32 @@ function compareReviews(suite, baseFolder, candFolder) {
         // a zero change against a zero loss (a fraction of a parent value of
         // 0, such as the scripted model's cost) as breaking.
         const moved = (r.like ? [r.like.lower, r.like.upper] : [r]).every((x) => (m.better === "higher" ? x.delta < 0 : x.delta > 0));
+        if (r.measured && !r.comparable) {
+          out.incomparable.push(`${where}, ${stratum}: ${m.label} is measured over ${r.parentSums.of} in the base and over ${r.candidateSums.of} in the candidate, so the two cannot be compared`);
+          continue;
+        }
         const line = `${where}, ${stratum}: ${m.label} ${r.measured ? `${value(m, r.parent)} to ${value(m, r.candidate)} (change ${fmt(m, r.delta)}, bounds ${fmt(m, r.lo)} to ${fmt(m, r.hi)}, acceptable loss ${fmt(m, m.better === "higher" ? -lossAbs : lossAbs)})` : "not measured"}`;
         if (guard === "breaks" && moved) out.losses.push(`${line}: past the acceptable loss`);
         else if (change === "better") out.gains.push(`${line}: better`);
         else if (change === "worse" || change === "mixed") out.changes.push(`${line}: ${change}, not shown past the acceptable loss`);
-        else if (guard === "unclear" && r.measured && r.comparable) out.notes.push(`${line}: no change shown, but the bound passes the acceptable loss, so a loss of that size is not ruled out; more repeats or cases would tell`);
-        else if (r.measured && !r.comparable) out.notes.push(`${line}: not comparable (one side measures it, the other does not)`);
+        else if (guard === "unclear" && r.measured) out.notes.push(`${line}: no change shown, but the bound passes the acceptable loss, so a loss of that size is not ruled out; more repeats or cases would tell`);
       }
     }
     for (const h of cell.hard.broken) out.losses.push(`${where}: hard rule broken: ${h}`);
     for (const h of cell.hard.unresolved) out.notes.push(`${where}: hard rule open until a person rules: ${h}`);
   }
   return out;
+}
+
+// The verdict and exit code of what was compared. A loss is named whatever
+// else holds (exit 1). Otherwise a metric that could not be compared means
+// nothing is concluded (exit 2), never "no change".
+export function decideVerdict({ losses = [], gains = [], changes = [], incomparable = [] }) {
+  if (losses.length > 0) return { verdict: "loss", code: 1 };
+  if (incomparable.length > 0) return { verdict: "could not run", code: 2, why: `these metrics could not be compared: ${incomparable.join("; ")}` };
+  if (gains.length > 0) return { verdict: "gain", code: 0 };
+  if (changes.length > 0) return { verdict: "changed", code: 0 };
+  return { verdict: "no change", code: 0 };
 }
 
 const VERDICT_TEXT = {
@@ -356,7 +403,7 @@ async function main() {
     console.error(`${error.message}\n${USAGE}`);
     process.exit(2);
   }
-  const doc = { version: 1, startedAt: new Date().toISOString(), base: { spec: o.base ?? "npm:<latest>", label: o.base ?? "the published package" }, candidate: { spec: o.candidate, label: o.candidate }, verdict: null, exitCode: null, why: null, losses: [], gains: [], changes: [], notes: [], compared: [], reviewTables: [], runs: [] };
+  const doc = { version: 1, startedAt: new Date().toISOString(), base: { spec: o.base ?? "npm:<latest>", label: o.base ?? "the published package" }, candidate: { spec: o.candidate, label: o.candidate }, verdict: null, exitCode: null, why: null, losses: [], gains: [], changes: [], notes: [], incomparable: [], compared: [], reviewTables: [], runs: [] };
   const ctx = { out: null, runs: doc.runs };
   const finish = (code) => {
     doc.exitCode = code;
@@ -394,12 +441,12 @@ async function main() {
     if (o.install) {
       for (const [side, b] of [["base", base], ["candidate", candidate]]) {
         process.stderr.write(`\n== installing the ${side} build's scanners: doctor --install --all-scanners ==\n`);
-        const p = spawnSync(process.execPath, [b.cli, "doctor", "--install", "--all-scanners"], { cwd: repoRoot, env: { ...process.env, OPENQODEX_AUTO_UPDATE: "0", NO_COLOR: "1" }, stdio: ["ignore", 2, 2], timeout: 1_800_000 });
+        const p = spawnSync(process.execPath, [b.cli, "doctor", "--install", "--all-scanners"], { cwd: repoRoot, env: buildEnv(), stdio: ["ignore", 2, 2], timeout: 1_800_000 });
         if (p.status !== 0) throw new CannotRun(`the ${side} build's doctor --install --all-scanners exited ${p.status ?? p.signal}`);
       }
     }
     const merge = (r) => {
-      for (const k of ["losses", "gains", "changes", "notes"]) doc[k].push(...r[k]);
+      for (const k of ["losses", "gains", "changes", "notes", "incomparable"]) doc[k].push(...(r[k] ?? []));
     };
     for (const suite of o.suites) {
       const folders = {};
@@ -421,12 +468,19 @@ async function main() {
     doc.verdict = "could not run";
     doc.why = error.message;
     // Nothing compared before the failure stands: the report keeps the why and the runs.
-    for (const k of ["losses", "gains", "changes", "notes", "compared", "reviewTables"]) doc[k] = [];
+    for (const k of ["losses", "gains", "changes", "notes", "incomparable", "compared", "reviewTables"]) doc[k] = [];
     console.error(`\nThe release check could not run: ${error.message}`);
     finish(2);
   }
-  doc.verdict = doc.losses.length > 0 ? "loss" : doc.gains.length > 0 ? "gain" : doc.changes.length > 0 ? "changed" : "no change";
-  finish(doc.losses.length > 0 ? 1 : 0);
+  const v = decideVerdict(doc);
+  doc.verdict = v.verdict;
+  if (v.code === 2) {
+    doc.why = v.why;
+    console.error(`\nThe release check could not conclude: ${v.why}`);
+    for (const k of ["losses", "gains", "changes", "notes", "compared", "reviewTables"]) doc[k] = [];
+  } else for (const l of doc.incomparable) doc.notes.push(`not comparable: ${l}`);
+  finish(v.code);
 }
 
-await main();
+// Run as a script, not imported: Node gives import.meta.url the real path, so argv[1] is compared by its real path.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

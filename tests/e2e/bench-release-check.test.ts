@@ -14,8 +14,11 @@
 //    from that build's scans only, and its bugs read as the product's loss.
 // 5. A review the caller names and pays for is run but left out of the
 //    verdict, or compared other than by loop/compare.mjs.
+// 6. The published package's code runs with the caller's keys: its install
+//    step and its scans get every variable of the check's environment, an
+//    API key, an npm token, an Azure endpoint and its key included.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import "./global-setup.js";
@@ -78,6 +81,14 @@ beforeAll(() => {
     if (hits !== 1) throw new Error(`the squawk adapter's owned config appears ${hits} times in dist/bin.js; the crafted regression needs it once`);
     writeFileSync(file, text.replace(owned, `$1${JSON.stringify('excluded_rules = ["require-concurrent-index-creation"]\n')}`));
   });
+  // A scratch build that writes the environment it was given to a file in
+  // HOME each time it starts, and then works as before.
+  packages.recorder = pack("recorder", (dir) => {
+    const file = join(dir, "dist/bin.js");
+    const [shebang, ...rest] = readFileSync(file, "utf8").split("\n");
+    const record = 'import { writeFileSync as __oqRecord } from "node:fs";\n__oqRecord(`${process.env.HOME}/oq-env-${process.argv.slice(2, 4).join("_")}-${process.pid}.json`, JSON.stringify(process.env));';
+    writeFileSync(file, [shebang, record, ...rest].join("\n"));
+  });
   // A scratch build that pins squawk at a version nobody installed.
   packages.repinned = pack("repinned", (dir) => {
     const file = join(dir, "toolchain.json");
@@ -136,6 +147,28 @@ describe.skipIf(skipNetwork("release check (semgrep rule packs, osv.dev)"))("the
     expect(report).toMatch(/server path, model:scripted/);
     expect(report).toMatch(/\| Metric \| Parent \| Candidate \|/);
     expect(readJson<Verdict>(join(out, "release-check.json")).losses).toEqual([]);
+  });
+});
+
+describe.skipIf(skipNetwork("release check (scanner installs, semgrep rule packs)"))("the published package's code runs with the caller's keys", () => {
+  it("gives the install step and the scans of a package no key, token or Azure variable of the caller", () => {
+    const home = tempDir("oq-release-user-");
+    const secrets = { OPENAI_API_KEY: "sk-release-check-openai", NPM_TOKEN: "npm_release-check-token", NODE_AUTH_TOKEN: "npm_release-check-auth", AZURE_OPENAI_API_KEY: "release-check-azure-key", AZURE_OPENAI_ENDPOINT: "https://release-check.openai.azure.com/", ANTHROPIC_API_KEY: "sk-ant-release-check" };
+    const out = join(tempDir("oq-release-run-"), "check");
+    const r = check(["--base", "local", "--candidate", `file:${packages.recorder}`, "--suites", "planted", "--cases", CASE, "--allow-missing-scanners", "--install-scanners", "--out", out], { HOME: home, ...secrets });
+    expect(r.status, r.stderr).toBe(0);
+    const records = readdirSync(home).filter((f) => f.startsWith("oq-env-"));
+    // The install step and the scans each started the package's CLI.
+    expect(records.some((f) => f.startsWith("oq-env-doctor_--install-"))).toBe(true);
+    expect(records.some((f) => f.startsWith("oq-env-scan_"))).toBe(true);
+    for (const f of records) {
+      const text = readFileSync(join(home, f), "utf8");
+      for (const [name, value] of Object.entries(secrets)) {
+        expect(text, `${f} holds ${name}`).not.toContain(value);
+        expect(Object.keys(JSON.parse(text)), f).not.toContain(name);
+      }
+      expect(JSON.parse(text), f).toMatchObject({ HOME: home, PATH: expect.any(String) });
+    }
   });
 });
 
