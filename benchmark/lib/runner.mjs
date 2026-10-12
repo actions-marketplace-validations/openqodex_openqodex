@@ -293,9 +293,12 @@ export async function executeRun({ out, manifest, resume = false, checkResume = 
       elapsedMin: Math.round((Date.now() - started) / 600) / 100,
     };
     const more = finish();
-    if (more.modelRefusal) { ended.how = "stopped"; ended.why = more.modelRefusal; }
+    // A model refusal stops a run that finished; a halt or a budget stop keeps
+    // its own reason, and the refusal is recorded beside it.
+    const refused = Boolean(more.modelRefusal) && how === "finished";
+    if (refused) { ended.how = "stopped"; ended.why = more.modelRefusal; }
     if (resume) {
-      if (more.reviewers) writeFileSync(manifestPath, `${JSON.stringify({ ...readJsonFile(manifestPath), ...more, ...(more.modelRefusal ? { ended } : {}) }, null, 2)}\n`);
+      if (more.reviewers) writeFileSync(manifestPath, `${JSON.stringify({ ...readJsonFile(manifestPath), ...more, ...(refused ? { ended } : {}) }, null, 2)}\n`);
       appendFileSync(resumesPath, `${JSON.stringify({ event: "ended", ...ended, ...more })}\n`);
     }
     else writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ...more, ended }, null, 2)}\n`);

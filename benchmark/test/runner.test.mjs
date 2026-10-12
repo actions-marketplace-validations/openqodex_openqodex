@@ -297,6 +297,14 @@ describe("Claude Code models from usage", () => {
     await executeRun({ out, manifest: null, jobs, resume: true, runJob: async () => {}, finish: () => ({ reviewers: { claude: { model: null } }, modelRefusal: why }) });
     expect(JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")).ended).toMatchObject({ how: "stopped", why });
   });
+  // A halt during the first review leaves no model; the manifest must still name the halt.
+  it("keeps a halt's own reason when the model is unknown", async () => {
+    const { out, jobs, manifest, copies } = runInputs();
+    await executeRun({ out, manifest, jobs, copies, runJob: async (job, attempt) => saveAttempt(out, job, attempt, hitReport), stopReason: () => "interrupted by SIGINT", finish: () => ({ reviewers: { claude: { model: null } }, modelRefusal: "Claude Code samples have an unknown per-review model" }) });
+    const saved = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
+    expect(saved.ended).toMatchObject({ how: "stopped", why: "interrupted by SIGINT" });
+    expect(saved.modelRefusal).toMatch(/unknown/);
+  });
   const usage = (...models) => ({ calls: models.map((model) => ({ model, purpose: "brief", outcome: "ok" })) });
   it("records the served model rather than the requested model or reviewer text", () => {
     const rec = sampleRecord({ job, attempt: 1, result: {}, report: null, who: { model: "claimed" }, usageRecord: usage("served"), startedAt: "t" });
