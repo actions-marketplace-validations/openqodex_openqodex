@@ -84,6 +84,8 @@ Report: /home/you/repo/.openqodex/reviews/20261007-101500-2ef34fbe8470/report.ht
 Markdown: /home/you/repo/.openqodex/reviews/20261007-101500-2ef34fbe8470/report.md
 ```
 
+The verdict line also says how many scanners did not run. A scanner with nothing to check in the change is left out of the count. A scanner switched off by `scanners.disable` is left out too. A scanner that `--offline` skips still counts. When every other scanner ran, a run with no findings says `Passed: no findings`. When at least one did not run and there are no findings, the line says `No findings from 1 of 17 scanners; 16 did not run (16 not installed)`. The brackets list only the reasons that apply: not installed, failed, installing, skipped offline, skipped or untrusted. With findings, the `Passed`, `Passed with warnings` or `Blocked` line ends with `; 16 of 17 scanners did not run`. The terminal, `report.md` and `report.html` show the same line. A scanner that did not run never changes the exit code.
+
 The receipt holds the verdict, the change, the reviewer's summary, one line per finding (its number, severity, category, title, file and line) and the absolute paths of `report.html` and `report.md`. An incomplete review adds one `Missing:` line. When no answer passed the checks, it also lists each scanner candidate no reviewer checked, one line each: its id, file and line, scanner, rule, severity and message. Each finding's problem, consequence and fix are in the report files, so you read them and name what to fix. The numbers are the same in the receipt, `report.md`, `report.html` and `findings`. The two path lines are results, not progress: `--quiet` keeps them, and with `--cwd` they name the run folder of that repository.
 
 `report.html` is one file beside `report.md`, readable by you only. It shows the verdict and the summary on top, then each changed file as a unified diff with old and new line numbers, each finding as a card under the line it cites (with a suggested change, when the reviewer gave one, folded), and the dropped scanner candidates folded under their lines. A finding on a line the page does not show is listed under its file. Below come the coverage, the review accounting, the scanners and the blast radius. It has no script and loads nothing: every string is escaped, its content policy allows only its own stylesheet, and the secrets the scanners found are redacted on both sides of the diff. A review of the whole repository shows a few lines around each cited line instead of a diff. The page is written before the receipt is printed; when it cannot be written, the review prints no receipt, records no review for the push hooks, and exits 2.
@@ -91,6 +93,10 @@ The receipt holds the verdict, the change, the reviewer's summary, one line per 
 ### Deleted lines
 
 A finding counts toward the verdict only on a line the change added or modified. A change that only deletes lines, such as a removed check, has no such line, so the lines next to each deletion count too: the line just above and the line just below it in the new file. The brief lists each deletion point ("2 lines deleted after line 14 of app/auth.py") and tells the reviewer to cite one of those lines and say what was removed. Any other line the change did not touch stays under "Outside the changed lines".
+
+### Very long lines
+
+A correction round carries at most 4,000 rows and 512 KB, context included. The brief carries at most 200 KB of diff text. A line longer than 2,000 characters is given to the reviewer in parts, each with its file, line number and part number. Every part must fit before the line counts as given. A changed line the 200 KB budget cannot carry keeps the review incomplete and is named in the receipt. A context line that large is left out and marked as not shown.
 
 ### Reviewing a branch or a pull request
 

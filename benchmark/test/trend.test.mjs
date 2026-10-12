@@ -136,7 +136,7 @@ async function indexWith({ cases = TWENTY, before, after, unlistedBefore, unlist
   const index = join(root, "index");
   const a = await savedRun({ parent: root, ...ACCEPTED, cases, repeat, found: before, unlisted: unlistedBefore });
   const b = await savedRun({ parent: root, ...NEWER, cases, repeat, found: after, unlisted: unlistedAfter });
-  const published = { base: publish(a, index), next: publish(b, index) };
+  const published = { base: await publish(a, index), next: await publish(b, index) };
   const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", index, "--results", root]);
   expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
   return { index, root, published };
@@ -362,10 +362,10 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
     const runs = join(root, "index", "runs");
     const folder = await savedRun({ parent: root, ...ACCEPTED, cases: TWENTY.slice(0, 8), repeat: 1, found: (c) => c < 6 });
     const again = () => publishRun(folder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-bench-republish-out-") });
-    again();
+    await again();
     const accepted = trend(["--accept", ACCEPTED.runId, "--by", "Sid", "--index", join(root, "index"), "--results", root]);
     expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0);
-    again();
+    await again();
     expect(readEntryAt(join(root, "index"), ACCEPTED.runId)).toMatchObject({ accepted: true, acceptedBy: "Sid" });
     const shown = trend(["--index", join(root, "index")]);
     expect(shown.status, shown.stdout + shown.stderr).toBe(0);

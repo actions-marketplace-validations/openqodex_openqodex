@@ -19,6 +19,7 @@
 import { createHash } from "node:crypto";
 import type { Candidate, ImpactEdge, ImpactSummary, Report, ReportFinding } from "../types.js";
 import type { Display, DisplayFile, DisplayHunk } from "./display.js";
+import { coverageLine, verdictLine } from "./common.js";
 import { REPORT_CSS } from "./html-style.js";
 import { modelReviewerLine, product } from "./review.js";
 
@@ -141,7 +142,7 @@ function seconds(ms: unknown): string {
   return Number.isFinite(n) ? esc(`${fixed(n / 1000, 1)} s`) : "";
 }
 
-// ---------- derived facts (mirror verdictLine, impactLine, coverageLine) ----------
+// ---------- derived facts ----------
 
 type Numbered = [number, ReportFinding];
 
@@ -161,29 +162,15 @@ function breakdown(severities: string[]): string {
     .join(", ");
 }
 
-const atOrAbove = (severity: string, threshold: string): boolean => SEVERITIES_DESC.includes(severity) && SEVERITIES_DESC.includes(threshold) && SEVERITIES_DESC.indexOf(severity) <= SEVERITIES_DESC.indexOf(threshold);
-
 function isComplete(report: Report): boolean {
   if (report.verdict === "incomplete") return false;
   return report.completion === undefined || report.completion === null || report.completion.status === "complete";
 }
 
-function verdictSentence(report: Report): string {
-  const counted = countedSeverities(report);
-  const threshold = report.block_on_severity;
-  const what = (n: number) => plural(n, "finding");
-  if (report.verdict === "blocked" && threshold) {
-    const over = counted.filter((s) => atOrAbove(s, threshold));
-    return `Blocked: ${what(over.length)} at or above ${threshold} (${breakdown(counted)})`;
-  }
-  if (counted.length === 0) return "Passed: no findings";
-  if (!threshold) return `Passed with warnings: ${what(counted.length)} (${breakdown(counted)})`;
-  return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${breakdown(counted)})`;
-}
-
 function verdictShort(report: Report): string {
   if (!isComplete(report)) return "Review incomplete";
   if (report.verdict === "blocked") return "Blocked";
+  if (verdictLine(report).startsWith("No findings from ")) return "No findings";
   return countedSeverities(report).length > 0 ? "Passed with warnings" : "Passed";
 }
 
@@ -225,16 +212,6 @@ function impactSentence(report: Report): string | null {
   parts.push(`${plural(c.callers, "caller")} in ${plural(c.files, "file")}`);
   const partial = impact.status === "partial" ? ", partial graph" : "";
   return `risk ${impact.risk ?? "none"} (${parts.join(", ")}${partial})`;
-}
-
-function coverageSentence(scanners: Report["scanners"]): string {
-  const ran = scanners.filter((s) => s.status === "ran").length;
-  const idle = scanners.filter((s) => s.status === "no_matching_files").length;
-  const out = scanners.filter((s) => s.status !== "ran" && s.status !== "no_matching_files");
-  const parts = [`${plural(ran, "scanner")} ran`];
-  if (idle > 0) parts.push(`${idle} had nothing to check`);
-  if (out.length > 0) parts.push(`${out.length} not included (${out.map((s) => `${s.scanner}: ${s.reason || s.status.replace(/_/g, " ")}`).join("; ")})`);
-  return parts.join(", ");
 }
 
 function reviewerSentence(report: Report): string {
@@ -470,7 +447,7 @@ function masthead(report: Report, complete: boolean, impactText: string | null):
   let verdict: string;
   if (complete) {
     verdictCls = report.verdict === "blocked" ? "verdict-failed" : "verdict-passed";
-    verdict = esc(verdictSentence(report));
+    verdict = esc(verdictLine(report));
   } else {
     verdictCls = "verdict-failed";
     verdict = "Review incomplete: this is not a review of the change";
@@ -639,7 +616,7 @@ function scannersSection(report: Report): string {
     seconds(s.durationMs || 0),
     text(s.reason ?? ""),
   ]);
-  return `<section class="scanners" id="scanners"><h2>Scanners</h2><p>${esc(coverageSentence(scanners))}.</p>${table(["Scanner", "Status", "Version", "Found", "Kept", "Time", "Reason"], rows, new Set([3, 4, 5]))}</section>`;
+  return `<section class="scanners" id="scanners"><h2>Scanners</h2><p>${esc(coverageLine(scanners))}.</p>${table(["Scanner", "Status", "Version", "Found", "Kept", "Time", "Reason"], rows, new Set([3, 4, 5]))}</section>`;
 }
 
 function blastRadius(report: Report): string {

@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+// Failure cases: installs off still says Passed; outputs disagree; missing scanners change the exit code.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Report } from "@openqodex/core";
-import { demo, report, run } from "./support.js";
+import { demo, readBrief, report, reportDir, root, run, submission } from "./support.js";
 import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -24,5 +25,32 @@ describe("scan with an empty tools folder and installs off", () => {
   });
   it("still runs the in-process SQL scanner", () => {
     expect(found.findings.some((f) => f.source === "sqllint:security-definer-no-search-path")).toBe(true);
+  });
+});
+
+describe("demo with installs off in a fresh home", () => {
+  let result: ReturnType<typeof run>; let finalized: ReturnType<typeof run>; let outputs: string[];
+  beforeAll(() => {
+    const home = tempDir("oq-demo-no-install-home-");
+    const dir = join(tempDir("oq-demo-no-install-"), "repo");
+    result = run("demo-no-install", root, ["demo", dir, "--no-install", "--no-color"], { home, tools: join(home, ".openqodex") });
+    outputs = [result.stdout, readFileSync(join(reportDir(dir), "report.md"), "utf8")];
+    const options = { home, tools: join(home, ".openqodex") };
+    const agent = run("demo-no-install-agent", dir, ["review", "--agent", "--no-install"], options);
+    expect(agent.status, agent.stderr).toBe(0);
+    const brief = readBrief(dir);
+    writeFileSync(join(brief.path, "agent-findings.json"), JSON.stringify(submission(brief.changeId, brief.candidates, [])));
+    finalized = run("demo-no-install-finalize", dir, ["review", "--finalize", "--no-color"], options);
+    outputs.push(finalized.stdout, ...["report.md", "report.html"].map((name) => readFileSync(join(reportDir(dir), name), "utf8")));
+  });
+  it("never says Passed when selected scanners were not installed, in terminal, markdown or HTML", () => {
+    for (const output of outputs) {
+      expect(output).toContain("No findings from 1 of 17 scanners; 16 did not run (16 not installed)");
+      expect(output).not.toContain("Passed");
+    }
+  });
+  it("keeps exit 0 when selected scanners were not installed", () => {
+    expect(result.status).toBe(0);
+    expect(finalized.status, finalized.stderr).toBe(0);
   });
 });

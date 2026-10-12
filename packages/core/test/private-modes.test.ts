@@ -14,11 +14,13 @@
 //     such content without a word.
 //  5. A file the developer owns, which init edits in place and keeps as it
 //     is (keepMode), loses its own mode.
+//  6. A Windows drive or UNC share becomes a folder name, or mixed slashes
+//     leave two folder names joined together.
 import { chmodSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { Guard } from "../src/guarded-fs.js";
+import { Guard, split } from "../src/guarded-fs.js";
 import { writeRepoFile } from "../src/repo-state.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
@@ -87,5 +89,15 @@ describe("files that can hold review content, receipts or config", () => {
     chmodSync(file, 0o644);
     new Guard({ repoRoot: root, gitFolders: [], roots: [] }).write(file, "mine\nand ours\n", { keepMode: true });
     expect(mode(file)).toBe(0o644);
+  });
+});
+
+describe("Windows walk roots", () => {
+  it("keeps a drive out of folder names and separates mixed slashes", () => {
+    expect(split("F:\\QodexAI/repo", win32)).toEqual({ root: "F:\\", names: ["QodexAI", "repo"] });
+  });
+
+  it("keeps a UNC share out of folder names", () => {
+    expect(split("\\\\server\\share\\repo", win32)).toEqual({ root: "\\\\server\\share\\", names: ["repo"] });
   });
 });
