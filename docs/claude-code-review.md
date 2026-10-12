@@ -42,7 +42,7 @@ review my change with openqodex
 
 The skill tells Claude Code to run one command, `openqodex review`, wait for it, and show you the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Then Claude Code asks "Fix all, or tell me which?" and fixes only the findings you name. Claude Code does not review the change itself and starts no subagent. In your own terminal, run `~/.openqodex/bin/openqodex review`, the full path `init` prints.
 
-A review takes one to three minutes and uses your own Claude Code plan. `review` prints a line every 15 seconds while the reviewer works. `openqodex review --all` reviews the whole repository instead of one change.
+A review uses your own Claude Code plan. It can take minutes. On the 2026-10-09 benchmark run, a review of a small change took about two minutes with Claude Code. `review` prints a line every 15 seconds while the reviewer works. `openqodex review --all` reviews the whole repository instead of one change.
 
 ## What the reviewer can and cannot do
 

@@ -66,7 +66,7 @@ jobs:
 
 Set the key on this step only, never on the job or the workflow, so no other step gets it. The key is not an input: it never appears in the step's list of inputs. Inside the Action, every step but the one that runs the review sets `ANTHROPIC_API_KEY` empty, so setup-node, the cache, the SARIF upload and the last step never hold the key.
 
-Each review spends your repository's own API credit at Anthropic's prices. A review takes one to three minutes, and a very large change uses millions of input tokens ([issue 30](https://github.com/openqodex/openqodex/issues/30)). OpenQodex sets no budget.
+Each review spends your repository's own API credit at Anthropic's prices. A review can take minutes, and a very large change uses millions of input tokens ([issue 30](https://github.com/openqodex/openqodex/issues/30)). OpenQodex sets no budget.
 
 ## The three review values
 

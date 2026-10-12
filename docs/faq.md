@@ -2,11 +2,11 @@
 
 ## Do I need an API key or an account?
 
-No. The review runs on the model your coding agent already uses. OpenQodex itself calls no model.
+No other key and no account. The reviewer is Claude Code or Codex, on your own login and plan. OpenQodex itself calls no model. Without Claude Code or Codex, there is no full review. The GitHub Action is the exception: its review needs an Anthropic API key.
 
 ## Does OpenQodex send my code anywhere?
 
-Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, dependency names and versions sent to osv.dev, Kubernetes schemas and the RustSec advisory database. Your agent's model sees what your agent reads, as it always does. A custom scanner you approved does whatever its own command does.
+Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, dependency names and versions sent to osv.dev, Kubernetes schemas and the RustSec advisory database. The reviewer sends the brief and the files it reads to the model of your Claude Code or Codex login. A custom scanner you approved does whatever its own command does.
 
 ## Will it block my push?
 
@@ -35,7 +35,7 @@ List globs under `review.paths.exclude`. A `**/` prefix does not match a file at
 
 ## Can I use a scanner that is not built in?
 
-Yes, by its GitHub link. Add two lines to `.openqodex/config.yaml` and approve the entry with `openqodex trust`. `custom-scanners` explains how.
+Yes, when it is compatible: it writes SARIF or one JSON document. You or your agent add it to `.openqodex/config.yaml` by its GitHub link. Then you approve it with `openqodex trust`. `custom-scanners` explains how.
 
 ## Does it change my repository?
 

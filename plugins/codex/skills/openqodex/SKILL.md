@@ -5,7 +5,7 @@ description: Code review for the current change, before it is pushed. One comman
 
 # OpenQodex: review the change before it is pushed
 
-OpenQodex reviews a change in one command. It takes a frozen copy of the change, runs the deterministic scanners that fit the changed files (gitleaks, semgrep, bandit, hadolint, shellcheck, actionlint, osv-scanner and others), keeps what they report on changed lines, and starts its own reviewer: a separate Claude Code or Codex process that reads only that copy. The reviewer checks every scanner finding, is given every changed line and answers in a fixed shape; OpenQodex checks the answer with scripts and prints one report. No key and no account are needed beyond the developer's Claude Code or Codex login. The code goes to the model that login uses. The reviewer can also search the web and open web pages unless `reviewer_web: off` is set in `~/.openqodex/config.yaml`. Two scanners go online, and neither sends code: semgrep downloads its rule packs from the Semgrep registry on each run, and when the change touches a dependency file, osv-scanner sends the names and versions of the dependencies to osv.dev. `--offline` skips both scanners.
+OpenQodex reviews a change in one command. It takes a frozen copy of the change, runs the deterministic scanners that fit the changed files (gitleaks, semgrep, bandit, hadolint, shellcheck, actionlint, osv-scanner and others), keeps what they report on changed lines, and starts its own reviewer: a separate Claude Code or Codex process that reads only that copy. The reviewer checks every scanner finding, is given every changed line and answers in a fixed shape; OpenQodex checks the answer with scripts and prints one report. No key and no account are needed beyond the developer's Claude Code or Codex login. The code goes to the model that login uses. The reviewer can also search the web and open web pages unless `reviewer_web: off` is set in `~/.openqodex/config.yaml`. Four scanners go online, and none sends code. semgrep downloads its rule packs from the Semgrep registry on each run. When the change touches a dependency file, osv-scanner sends the names and versions of the dependencies to osv.dev. kubeconform downloads Kubernetes schemas. cargo-deny downloads the RustSec advisory database. `--offline` skips semgrep, osv-scanner, kubeconform and cargo-deny.
 
 ## When to run
 
@@ -22,7 +22,7 @@ If `review` says "Full review unavailable" and prints a way to review with the a
 
 ## Procedure
 
-When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed. When it does not exist, this skill was installed alone, with no push check: before the first review, run `npx -y openqodex@0.12.0 init --yes --agent <host>` once from the repository, where `<host>` is the agent you are (`claude-code`, `codex`, `cursor` or `cline`). It installs OpenQodex for you, then reviews the change when a reviewer can start, so it can take five minutes: allow it up to ten, or run it in the background and wait for it to exit. When it prints `First review: finished`, the receipt above that line is the review's: show it as step 3 says, then go on from step 4.
+When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y openqodex@<version>` in every command of this skill: it is the copy `openqodex init` installed. When it does not exist, this skill was installed alone, with no push check: before the first review, run `npx -y openqodex@0.12.0 init --yes --agent <host>` once from the repository, where `<host>` is the agent you are (`claude-code`, `codex`, `cursor` or `cline`). It installs OpenQodex for you, then reviews the change when a reviewer can start, so it can take several minutes. Run it in the background and wait for it to exit. When it prints `First review: finished`, the receipt above that line is the review's: show it as step 3 says, then go on from step 4.
 
 1. From the repository, run:
 
@@ -36,7 +36,7 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
    npx -y openqodex@0.12.0 review --all
    ```
 
-2. Wait for it. A review takes one to three minutes. Many agents stop a command after two minutes, so give it up to ten minutes, or run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
+2. Wait for it. A review can take minutes. OpenQodex stops the reviewer after 30 minutes, or after 2 hours with `--all`. Many agents stop a command sooner. So run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
 
 3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code.
 
@@ -100,6 +100,6 @@ It downloads the scanners this repository's files call for into `~/.openqodex/to
 
 ## More
 
-`npx -y openqodex@0.12.0 guide` prints this guide. `npx -y openqodex@0.12.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`.
+`npx -y openqodex@0.12.0 guide` prints this guide. `npx -y openqodex@0.12.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`, `for-agents`. `for-agents` covers the install, the config, custom scanners and what each message means.
 
 Before reading many files to find who calls a function, what implements it, how two parts connect or what a change reaches, you may ask the code graph: `npx -y openqodex@0.12.0 graph help` lists its questions, or use the `graph_` tools of the `openqodex` MCP server when your agent has them; an answer with `unknown.floor` true may be missing callers, so never read it as "unused".
