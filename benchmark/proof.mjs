@@ -234,7 +234,11 @@ function main(argv) {
         console.error(`${file} is missing; no summary is written for ${suite}`);
         return 2;
       }
-      proofs.push(JSON.parse(readFileSync(file, "utf8")));
+      try {
+        proofs.push(JSON.parse(readFileSync(file, "utf8")));
+      } catch (error) {
+        throw new Error(`${file} cannot be read (${error.message}); no summary is written for ${suite}`);
+      }
     }
     const shapes = [...new Set(proofs.map((p) => p.shape))];
     if (shapes.length !== 1 || (o.from === null && shapes[0] !== o.shape)) {
@@ -264,4 +268,16 @@ function main(argv) {
   return failed === 0 ? 0 : 1;
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+// Anything thrown (an unreadable proof.json, a suite file that cannot be
+// read) is the proof failing to run, exit 2, never exit 1, which says a case
+// failed.
+function run(argv) {
+  try {
+    return main(argv);
+  } catch (error) {
+    console.error(`the proof could not run: ${error.message}`);
+    return 2;
+  }
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = run(process.argv.slice(2));
