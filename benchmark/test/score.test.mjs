@@ -315,7 +315,7 @@ describe("a rule constant changes without a version bump, and old and new scores
     // Pull request truth: matched on its categories when it has no kind, and no severity tally without a severity.
     6: "b796da57c0aae63538f12bf8f3aa1139219da6a2f2a8ef7e4ccdd04c0b737536",
     // A ruling on a truth item names the spec version it judged (issue 163), and a same-issue ruling may name the item it joins (issue 139).
-    7: "b64035cf659e611b1776cb05d78ad4af6dd6e1dbba41c42352721659c9d2a854",
+    8: "b15de418a6ad61e611c1bec3bc80521c2bea83520d07520f4ac41449b78555d5",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

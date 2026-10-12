@@ -36,7 +36,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (7), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. Version 7 applies a person's ruling on a truth item only to the version of the spec it judged (see the review queue below); with no ruling, a score is the same as under version 6. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
+Every score carries its rules block: the rules version (8), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. Version 8 applies a person's ruling on a truth item only to the version of the spec it judged (see the review queue below); with no ruling, a score is the same as under version 6. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 

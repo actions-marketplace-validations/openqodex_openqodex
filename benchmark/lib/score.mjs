@@ -545,7 +545,7 @@ export function regressions(oldSamples, newSamples) {
 //     with no kind is matched on the categories it names, and one with no
 //     severity on the scale is left out of the per-severity tally of format
 //     2 (issue 141). A planted case scores exactly as under version 5.
-// Rules version 7 keys every ruling on a truth item to the spec version it
+// Rules version 8 keys every ruling on a truth item to the spec version it
 // judged. Failure list, written before the code:
 // 36. A ruling on a truth item labels it in every later version of its
 //     case (issue 163): a bug or match ruling names the sha256 of the spec
@@ -558,7 +558,7 @@ export function regressions(oldSamples, newSamples) {
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
 //     that item on that spec version.
-export const RULES_VERSION = 7;
+export const RULES_VERSION = 8;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -1262,7 +1262,7 @@ const RULES_BLOCK = {
   identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
   rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged. A ruled hit is judged for severity and finder like any hit.",
-  // Version 7.
+  // Version 8.
   specVersion: "A bug ruling and a match ruling (same-issue, different-issue) name the spec version they judged as specHash, the sha256 of the spec's JSON with every object's keys sorted, and apply only to a job whose case is scored against a spec with that hash, the run's own copy or the one --specs names; a line that names none applies to no version and is listed as ignored. A same-issue ruling may name a truth item the finding does not sit on by the location rule: queue.mjs decide records it only when the finding is on a line the change added in a file of that item, and it scores as any same-issue ruling.",
   // Version 6.
   truthWithoutKind: "A truth item with no kind, a pull request comment, is matched on the categories it names; one with no severity on the scale counts in recall and in no severity's tally.",

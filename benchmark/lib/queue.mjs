@@ -18,7 +18,7 @@
 // changedLines are its lines the change added, from the brief's diff; and
 // truthItems are that spec's truth items with the files each sits in. They
 // are what decide checks a same-issue ruling that names a truth item
-// against (rules version 7). An item queued before them has none, and
+// against (rules version 8). An item queued before them has none, and
 // decide asks for its run to be added again.
 //
 // Failure list, written before the code:

@@ -266,12 +266,12 @@ async function plantedScore(decisions = [], people = []) {
   return JSON.parse(JSON.stringify({ score: rest, outcomes, unresolved }));
 }
 
-// The fields a queue item gained with rules version 7 (the spec version it
+// The fields a queue item gained with rules version 8 (the spec version it
 // was scored against, the lines of it the change added, and the truth items
 // of that spec with their files). They are what decide checks a ruling
 // against, never a score, so the golden, recorded before them, lacks them.
-const QUEUE_FIELDS_7 = ["specHash", "changedLines", "truthItems"];
-const withoutQueueFields7 = (items) => items.map((i) => Object.fromEntries(Object.entries(i).filter(([k]) => !QUEUE_FIELDS_7.includes(k))));
+const QUEUE_FIELDS_8 = ["specHash", "changedLines", "truthItems"];
+const withoutQueueFields8 = (items) => items.map((i) => Object.fromEntries(Object.entries(i).filter(([k]) => !QUEUE_FIELDS_8.includes(k))));
 
 describe("fixing issue 141 changes the score of a planted sample", () => {
   it("scores the planted hand case exactly as rules version 5 did, every number, outcome and question", async () => {
@@ -280,8 +280,8 @@ describe("fixing issue 141 changes the score of a planted sample", () => {
     if (process.env.OQ_RECORD_PLANTED_SCORE === "1") write(GOLDEN, `${JSON.stringify(now, null, 2)}\n`);
     expect(existsSync(GOLDEN), `${GOLDEN} is missing; it is recorded with rules version 5 only`).toBe(true);
     const golden = JSON.parse(readFileSync(GOLDEN, "utf8"));
-    expect({ ...now, unresolved: withoutQueueFields7(now.unresolved) }).toEqual(golden);
-    for (const item of now.unresolved) for (const k of QUEUE_FIELDS_7) expect(item, k).toHaveProperty(k);
+    expect({ ...now, unresolved: withoutQueueFields8(now.unresolved) }).toEqual(golden);
+    for (const item of now.unresolved) for (const k of QUEUE_FIELDS_8) expect(item, k).toHaveProperty(k);
   });
 });
 
@@ -318,7 +318,7 @@ describe("keying rulings on the spec version changes the score of a planted samp
     expect(read).toEqual({ read: 2, ignored: [], people: ["Sid"] });
     expect(JSON.stringify(score)).toBe(JSON.stringify(goldenScore));
     expect(JSON.stringify(other.outcomes)).toBe(JSON.stringify(g.outcomes));
-    expect(JSON.stringify(withoutQueueFields7(other.unresolved))).toBe(JSON.stringify(g.unresolved));
+    expect(JSON.stringify(withoutQueueFields8(other.unresolved))).toBe(JSON.stringify(g.unresolved));
   });
 
   it("changes only the ruled finding, the two ruled items and the sums over them when the rulings name the hand case's spec version", async () => {
@@ -335,7 +335,7 @@ describe("keying rulings on the spec version changes the score of a planted samp
     expect(ruled.score.perBug[config][caseId].root).toMatchObject({ ruling: "disputed", cause: ["spec-disputed", "spec-disputed"] });
     for (const id of Object.keys(g.score.perBug[config][caseId]).filter((x) => x !== "off-by-one" && x !== "root")) expect(ruled.score.perBug[config][caseId][id]).toEqual(g.score.perBug[config][caseId][id]);
     // The ruled finding asks nothing more; the other questions stay.
-    expect(withoutQueueFields7(ruled.unresolved)).toEqual(g.unresolved.filter((i) => i.findingId !== nearId()));
+    expect(withoutQueueFields8(ruled.unresolved)).toEqual(g.unresolved.filter((i) => i.findingId !== nearId()));
     // The sums move by the one found item and the one correct finding, and nothing else in the score moves.
     const c = ruled.score.byConfig[config];
     const gc = g.score.byConfig[config];

@@ -67,7 +67,7 @@ const spec = {
   extras: [],
 };
 
-// The spec version a ruling on its truth item names (rules version 7).
+// The spec version a ruling on its truth item names (rules version 8).
 const SPEC = specHashOf(spec);
 const HASH = "cd".repeat(32);
 const CASE_ID = `planted/files@${HASH.slice(0, 8)}`;
