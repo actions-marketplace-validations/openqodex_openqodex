@@ -11,6 +11,9 @@
 //    home's cache.
 // 2. A developer's Rust, kept in the home folder's .rustup and .cargo, is no
 //    longer found once the probes run in a home of their own.
+// 3. A later review's probe answers point into an earlier review's probe
+//    home, which that review removed: a probe's answer is kept per probe
+//    home.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
@@ -75,4 +78,25 @@ describe("a developer's Rust is no longer found once the probes run in a home of
     expect(statuses(env)["cargo-deny"]).not.toBe("needs_runtime");
     expect(readdirSync(home).sort()).toEqual([".cargo", ".rustup"]);
   }, 180_000);
+});
+
+describe("a later review's probe answers point into an earlier review's removed folder", () => {
+  const haveGo = spawnSync("go", ["version"], { encoding: "utf8" }).status === 0;
+
+  it.skipIf(!haveGo)("probes again for each probe home, and the Go folders it reports lie in that home", async () => {
+    const saved = process.env.HOME;
+    // A host with no Go folders of its own in its home folder.
+    process.env.HOME = tempDir("oq-probe-host-");
+    try {
+      const { checkRuntime } = await import("../src/toolchain/install.js");
+      const { loadToolchain } = await import("../src/toolchain/table.js");
+      const recipe = loadToolchain().tools.golangci!;
+      const first = tempDir("oq-probe-review1-");
+      const second = tempDir("oq-probe-review2-");
+      expect((await checkRuntime(recipe, first)).env.GOPATH?.startsWith(first)).toBe(true);
+      expect((await checkRuntime(recipe, second)).env.GOPATH?.startsWith(second)).toBe(true);
+    } finally {
+      process.env.HOME = saved;
+    }
+  }, 120_000);
 });

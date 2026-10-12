@@ -209,12 +209,14 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
 const runtimeChecks = new Map<string, Promise<Runtime>>();
 
 // Whether the developer's runtime for this tool is here, and the environment
-// the tool needs from it. Checked once per process; `probeHome` is where the
-// first check's probe runs.
+// the tool needs from it. Checked once per process and probe home, the
+// folder the probe runs in.
 export function checkRuntime(recipe: Recipe, probeHome: string = defaultProbeHome()): Promise<Runtime> {
   const needs = parseNeeds(recipe.needs);
   if (!needs) return Promise.resolve({ reason: null, env: {} });
-  const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}`;
+  // Per probe home too: what a probe answers can lie in its home, and a
+  // server's review removes its own when it ends.
+  const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}|${probeHome}`;
   let check = runtimeChecks.get(key);
   if (!check) {
     check = (async () => {
