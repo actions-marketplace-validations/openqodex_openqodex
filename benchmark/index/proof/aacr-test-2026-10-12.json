@@ -4,7 +4,8 @@
   "suite": "aacr",
   "date": "2026-10-12",
   "shape": "server",
-  "commit": "c0680c7cc628cb97fb0ce50e0b6d45fff8f3106c",
+  "commit": "000e95bd39ccdca76a0e235281def626fec90543",
+  "summarisedAt": "b44e951aa8febd0b9d332a766076db4646577e0d",
   "sources": {
     "cases": "benchmark/suites/aacr/cases.json",
     "casesSha256": "48cfc3c60ebd8a763194f8b87f230f5a24d0767dfbe014e1cff153922b9bb451",

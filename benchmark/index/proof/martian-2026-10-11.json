@@ -5,6 +5,7 @@
   "date": "2026-10-11",
   "shape": "server",
   "commit": "a7f5c76c9128db29d627c86de59fd63be5600e98",
+  "summarisedAt": "b44e951aa8febd0b9d332a766076db4646577e0d",
   "sources": {
     "cases": "benchmark/suites/martian/cases.json",
     "casesSha256": "7648b00d0a5427cb8b9a3c663570caabe466dc1b22966465c56982f099aac72b",
