@@ -69,13 +69,37 @@
 // 11. A metric with two bounds gets two chances to reject no change in one
 //    direction within one share: each like for like reading is tested at
 //    half the share, or once at the whole share when both are the same sums.
+//
+// The scanner variant (4.11 K1 to K4, plan amendment A1) reads two runs'
+// scans instead, sample by sample (scanSide below); decide.mjs decides.
+// Failure list for that part, written before the code:
+// 12. A candidate a change altered (its severity, its message, a finding
+//    dedup merged into it) reads as kept: the content compared is every
+//    field but the id, which only numbers candidates in report order, so an
+//    altered candidate is one removed and one added.
+// 13. A scan that failed or never ran reads as the removal of everything it
+//    would have raised: a sample with no scan on either side, or two sides
+//    with different samples, is refused.
+// 14. Two candidates with the same content in one sample count as one: the
+//    candidates are compared as a multiset, each copy counted.
+// 15. A ruling moves a candidate that frozen evidence decides (a hit, or a
+//    candidate on a clean control): rulings act only on the candidates the
+//    scan scorer left unresolved.
+// 16. A candidate ruled false under one version of its case's spec counts
+//    as false under a revised one, where it may sit on an issue the spec
+//    now lists: a candidate ruling counts only when it names the spec
+//    version (target.specHash, lib/rulings.mjs specHashOf) the run is
+//    scored against, and one naming another version is refused with the
+//    reason. Two runs scored against different versions of a case's spec
+//    are refused.
 import { existsSync, realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resultsRoot } from "../lib/index.mjs";
 import { clusterFn, pairedBounds, seedOf } from "../lib/interval.mjs";
-import { readDecisions } from "../lib/rulings.mjs";
-import { PRECISION, originOf, rulesDifferences } from "../lib/score.mjs";
+import { candidateRuling, readDecisions, specHashOf } from "../lib/rulings.mjs";
+import { SCAN_PRECISION, SCAN_RULES, scoreScanAttempts } from "../lib/scan-score.mjs";
+import { PRECISION, canonical, originOf, rulesDifferences } from "../lib/score.mjs";
 import { decisionsPath, loadRun, scoreRun } from "../score.mjs";
 
 // The metrics, by the names benchmark/loop/levers.json gives the guards.
@@ -403,6 +427,135 @@ export function loadSides({ run, specs = null, repeats = null, decisions = { lin
 export function readRulings(path = decisionsPath) {
   const d = readDecisions(path);
   return { lines: d.lines, people: d.people, hash: d.hash };
+}
+
+// ---------------------------------------------------------------------------
+// The scanner variant: one side of a scanner change.
+
+// A candidate's content: every field but its id (failure 12).
+const contentOf = (c) => {
+  const rest = { ...c };
+  delete rest.id;
+  return canonical(rest);
+};
+
+// One run's scans as a side of a scanner change: each planned sample's
+// first attempt scored by the scan scorer (lib/scan-score.mjs), with every
+// candidate's content, its identity (candidateIdOf: the case, the scanner
+// and rule, the file, the lines and the message, which the review queue and
+// the rulings key on) and what the scorer made of it. `loaded` is a run as
+// score.mjs loadRun reads it, a scanner-only run or a review run. Each
+// sample carries the version of its case's spec (specHashOf) it was scored
+// against.
+export function scanSide({ loaded, runId = null }) {
+  const m = loaded.manifest;
+  const s = scoreScanAttempts({ manifest: m, attempts: loaded.attempts, specs: loaded.specs });
+  const first = new Map(loaded.attempts.filter((a) => a.attempt === 1).map((a) => [`${a.case}\0${a.config}\0${a.repeat}`, a]));
+  const samples = s.jobs.map((j) => {
+    const raw = first.get(`${j.case}\0${j.config}\0${j.repeat}`)?.scan?.candidates ?? [];
+    const specHash = specHashOf(loaded.specs[j.case]);
+    return {
+      key: `${j.caseId}\0${j.config}\0${j.repeat}`,
+      caseId: j.caseId,
+      case: j.case,
+      config: j.config,
+      repeat: j.repeat,
+      specHash,
+      clean: j.clean,
+      status: j.status,
+      scanMs: j.scanMs,
+      job: j,
+      candidates: j.candidates.map((c) => ({ content: contentOf(raw[c.index]), candidateId: c.candidateId, caseId: j.caseId, specHash, token: c.token, file: c.file, lines: [c.line, c.end], message: raw[c.index]?.message ?? "", outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.bug ?? null })),
+    };
+  });
+  return { runId: runId ?? m.runId ?? basename(loaded.folder), suite: s.suite, split: m.split ?? "dev", splitHash: m.splitHash ?? null, mode: m.mode ?? "review", rules: { version: SCAN_RULES.version, hash: SCAN_RULES.hash }, samples };
+}
+
+const countBy = (list) => {
+  const out = new Map();
+  for (const c of list) out.set(c.content, (out.get(c.content) ?? 0) + 1);
+  return out;
+};
+
+// What a scanner change did to every sample's candidates: those of the
+// parent it no longer holds (removed) and those it holds beyond the
+// parent's (added), as a multiset by content (failure 14), each with its
+// sample. `problems` says why the sides cannot be compared (failure 13);
+// with problems, nothing else is read.
+export function candidateChanges(base, cand) {
+  const problems = [];
+  for (const [label, s] of [["parent", base], ["candidate", cand]]) if (s.split === "test") problems.push(`the ${label} ${s.runId} is from the test split: the scanner loop never reads a held-out run (PLAN 4.10)`);
+  if (base.suite !== cand.suite) problems.push(`the suites differ: ${base.suite} then ${cand.suite}`);
+  if (base.splitHash !== cand.splitHash) problems.push(`the split hashes differ: ${base.splitHash} then ${cand.splitHash}`);
+  const a = new Map(base.samples.map((s) => [s.key, s]));
+  const b = new Map(cand.samples.map((s) => [s.key, s]));
+  const only = (x, y) => [...x.values()].filter((s) => !y.has(s.key)).map((s) => `${s.case} ${s.config} ${s.repeat}`);
+  if (only(a, b).length > 0 || only(b, a).length > 0) problems.push(`the samples differ: ${only(a, b).length} only in ${base.runId} (${only(a, b).slice(0, 3).join(", ")}), ${only(b, a).length} only in ${cand.runId} (${only(b, a).slice(0, 3).join(", ")})`);
+  for (const [side, map] of [[base, a], [cand, b]]) for (const s of map.values()) if (s.status !== "complete") problems.push(`${side.runId} ${s.case} ${s.config} ${s.repeat} saved no scan (${s.status}), so what it would have raised is unknown`);
+  // Failure 16: one truth for both sides.
+  const differ = [...new Set([...a.values()].filter((s) => b.has(s.key) && b.get(s.key).specHash !== s.specHash).map((s) => s.case))];
+  for (const name of differ) problems.push(`the runs score ${name} against different versions of its spec; score both against one (--specs)`);
+  if (problems.length > 0) return { problems, removed: [], added: [] };
+  const removed = [];
+  const added = [];
+  for (const [key, sa] of a) {
+    const sb = b.get(key);
+    const left = countBy(sb.candidates);
+    for (const c of sa.candidates) {
+      const n = left.get(c.content) ?? 0;
+      if (n > 0) left.set(c.content, n - 1);
+      else removed.push({ sample: key, ...c });
+    }
+    const had = countBy(sa.candidates);
+    for (const c of sb.candidates) {
+      const n = had.get(c.content) ?? 0;
+      if (n > 0) had.set(c.content, n - 1);
+      else added.push({ sample: key, ...c });
+    }
+  }
+  return { problems: [], removed, added };
+}
+
+// What one side holds per case, summed over its samples: issue recall (all,
+// and critical plus major), the candidates precision counts (a duplicate
+// set apart, as the scan scorer sets it) as correct, unresolved or wrong
+// under the rulings on the spec version each sample was scored against
+// (failures 15 and 16; `rulings` as readRulings gives them), candidates on
+// a clean control, redundant candidates (those the scorer counts as
+// redundancy), and all candidates. A Map by case id.
+export function scanCaseTotals(side, rulings = { lines: [], people: [] }) {
+  const plus = (x, y) => ({ hit: x.hit + y.hit, of: x.of + y.of });
+  const out = new Map();
+  for (const s of side.samples) {
+    const t = out.get(s.caseId) ?? { recall: { hit: 0, of: 0 }, criticalMajor: { hit: 0, of: 0 }, correct: 0, unresolved: 0, counted: 0, clean: 0, redundant: 0, candidates: 0 };
+    t.recall = plus(t.recall, s.job.issueRecall.all);
+    t.criticalMajor = plus(t.criticalMajor, s.job.issueRecall.criticalMajor);
+    for (const c of s.candidates) {
+      if (SCAN_PRECISION.apart.includes(c.outcome)) continue;
+      t.counted++;
+      if (SCAN_PRECISION.correct.includes(c.outcome)) t.correct++;
+      else if (SCAN_PRECISION.unresolved.includes(c.outcome)) {
+        const r = candidateRuling(c.candidateId, c.specHash, rulings);
+        if (r.status === "true" || r.status === "same-issue") t.correct++;
+        else if (r.status !== "false") t.unresolved++;
+      }
+    }
+    if (s.clean) t.clean += s.candidates.length;
+    t.redundant += s.job.redundancy.hit;
+    t.candidates += s.candidates.length;
+    out.set(s.caseId, t);
+  }
+  return out;
+}
+
+// The median of a side's scan times (scan_ms per sample), or null when a
+// sample did not record one.
+export function scanMsP50(side) {
+  const xs = side.samples.map((s) => s.scanMs);
+  if (xs.length === 0 || xs.some((x) => typeof x !== "number" || !Number.isFinite(x))) return null;
+  const v = [...xs].sort((x, y) => x - y);
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
 }
 
 // ---------------------------------------------------------------------------

@@ -32,13 +32,16 @@
 // 13. A checkout on a case-folding file system keeps one of two files whose
 //    names differ only in case, and the shape is still handed out.
 // 14. A held-out case is built with no record of the access.
+// 15. The tree fetches send no haves, so the server sends each merge base's
+//    and each head's whole tree again, and the clone cache keeps about three
+//    trees per case (21 GB after 56 AACR cases; issue #160).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { git, gitEnv, listCases, readLock } from "../lib/cases.mjs";
-import { materialisePr, prRefusal, verifyCaseRepo } from "../lib/materialise.mjs";
+import { caseRepo, materialisePr, prRefusal, verifyCaseRepo } from "../lib/materialise.mjs";
 import { materialise, readCase } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -416,6 +419,116 @@ describe("materialising a pull request case", { timeout: 120_000 }, () => {
     mkdirSync(join(unwritable, "held-out-access.log"));
     expect(() => materialisePr(c, into(), { cache: unwritable, allowFileUrl: true, heldOut: true })).toThrow(/cannot be recorded/);
     expect(existsSync(join(unwritable, "repos"))).toBe(false);
+  });
+});
+
+// An upstream whose tree is large next to its changes: 200 files of 4 KB
+// that do not compress well, then three pull requests, each branched from
+// main and changing one file, with main changing another file after each.
+// Every merge base and head shares all but a few files with the others.
+function threePrUpstream() {
+  const dir = join(tempDir("oq-mat-up-"), "widget");
+  mkdirSync(dir);
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "uploadpack.allowFilter", "true");
+  const noise = (seed) => {
+    let text = "";
+    for (let h = seed; text.length < 4096; ) text += h = createHash("sha256").update(h).digest("hex");
+    return `${text}\n`;
+  };
+  for (let i = 0; i < 200; i++) writeFileSync(join(dir, `f${i}.txt`), noise(`f${i}`));
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "Files");
+  const prs = [];
+  for (let k = 1; k <= 3; k++) {
+    const mergeBase = out(dir, "rev-parse", "HEAD");
+    git(dir, "checkout", "-q", "-b", `pr${k}`);
+    writeFileSync(join(dir, `f${k}.txt`), noise(`pull request ${k}`));
+    git(dir, "commit", "-q", "-am", `Pull request ${k}`);
+    const headSha = out(dir, "rev-parse", "HEAD");
+    git(dir, "update-ref", `refs/pull/${k}/head`, headSha);
+    git(dir, "checkout", "-q", "main");
+    git(dir, "branch", "-q", "-D", `pr${k}`);
+    writeFileSync(join(dir, `f${100 + k}.txt`), noise(`main ${k}`));
+    git(dir, "commit", "-q", "-am", `Main ${k}`);
+    prs.push({ k, mergeBase, headSha });
+  }
+  return { dir, baseSha: out(dir, "rev-parse", "HEAD"), prs, treeObjects: lines(out(dir, "ls-tree", "-r", "-t", `${prs[0].headSha}`)).length + 2 };
+}
+
+function threePrCase(up, pr) {
+  const hash = createHash("sha256").update(`${up.dir}\0${pr.headSha}`).digest("hex");
+  const cloneUrl = `file://${up.dir}`;
+  return {
+    id: `aacr/acme__widget-${pr.k}@${hash.slice(0, 8)}`,
+    suite: "aacr",
+    name: `acme__widget-${pr.k}`,
+    hash,
+    split: "dev",
+    status: "usable",
+    excludedWhy: null,
+    source: { repo: "acme/widget", prUrl: `https://github.com/acme/widget/pull/${pr.k}`, cloneUrl, licence: MIT },
+    materialise: { kind: "pr", cloneUrl, prRef: `refs/pull/${pr.k}/head`, baseSha: up.baseSha, headSha: pr.headSha, mergeBaseSha: null },
+  };
+}
+
+// Bytes of every file under `path`.
+function bytesUnder(path) {
+  let total = 0;
+  for (const e of readdirSync(path, { withFileTypes: true, recursive: true })) if (e.isFile()) total += statSync(join(e.parentPath, e.name)).size;
+  return total;
+}
+
+// The objects a repository stores, a copy in two packs counted twice.
+function storedObjects(repo) {
+  const counts = Object.fromEntries(lines(out(repo, "count-objects", "-v")).map((l) => l.split(": ")));
+  return Number(counts.count) + Number(counts["in-pack"]);
+}
+
+describe("the clone cache keeps each tree about once (#160)", { timeout: 240_000 }, () => {
+  it("grows by about one tree per case over three cases of one repository, and a second run adds nothing", () => {
+    const up = threePrUpstream();
+    const cache = tempDir("oq-mat-cache-");
+    const cases = up.prs.map((pr) => threePrCase(up, pr));
+    for (const c of cases) expect(caseRepo(c, { cache, allowFileUrl: true }).built).toBe(true);
+    const trees = join(cache, "repos", "acme__widget.git");
+    const caseRepos = cases.map((c) => join(cache, "cases", `${c.hash}.git`));
+    // A case repository holds B and H, which share all but one file: one
+    // tree. It holds nothing else of the cache.
+    for (const repo of caseRepos) expect(storedObjects(repo)).toBe(lines(out(repo, "rev-list", "--objects", "--all")).length);
+    const tree = bytesUnder(join(caseRepos[0], "objects"));
+    // Six commits fetched with their trees: the tree cache holds one whole
+    // tree and the changes, not six trees.
+    expect(storedObjects(trees)).toBeLessThan(1.5 * up.treeObjects);
+    expect(bytesUnder(join(trees, "objects"))).toBeLessThan(1.5 * tree);
+    // Over three cases, the trees the cache holds are about one per case.
+    const held = bytesUnder(join(trees, "objects")) + caseRepos.reduce((n, repo) => n + bytesUnder(join(repo, "objects")), 0);
+    expect(held).toBeLessThan((cases.length + 1) * 1.25 * tree);
+
+    // A second run adds nothing.
+    const before = bytesUnder(cache);
+    for (const c of cases) expect(caseRepo(c, { cache, allowFileUrl: true }).built).toBe(false);
+    expect(bytesUnder(cache)).toBe(before);
+    // With the case repositories moved away, they are built again from the
+    // tree cache, with nothing fetched.
+    const fetchedAt = statSync(join(trees, "FETCH_HEAD")).mtimeMs;
+    const treeBytes = bytesUnder(trees);
+    renameSync(join(cache, "cases"), join(tempDir("oq-mat-moved-"), "cases"));
+    for (const c of cases) expect(caseRepo(c, { cache, allowFileUrl: true }).built).toBe(true);
+    expect(statSync(join(trees, "FETCH_HEAD")).mtimeMs).toBe(fetchedAt);
+    expect(bytesUnder(trees)).toBe(treeBytes);
+  });
+
+  it("reuses the trees of a tree cache filled before the fix, which holds its commits without refs", () => {
+    const up = threePrUpstream();
+    const cache = tempDir("oq-mat-cache-");
+    const cases = up.prs.map((pr) => threePrCase(up, pr));
+    caseRepo(cases[0], { cache, allowFileUrl: true });
+    const trees = join(cache, "repos", "acme__widget.git");
+    for (const ref of lines(out(trees, "for-each-ref", "--format=%(refname)"))) git(trees, "update-ref", "-d", ref);
+    expect(out(trees, "for-each-ref")).toBe("");
+    for (const c of cases.slice(1)) caseRepo(c, { cache, allowFileUrl: true });
+    expect(storedObjects(trees)).toBeLessThan(1.5 * up.treeObjects);
   });
 });
 

@@ -1,0 +1,155 @@
+{
+  "https://github.com/oq-fixture/ledger/pull/7": {
+    "pr_title": "Archive old ledger rows",
+    "original_url": null,
+    "source_repo": "oq_fixture",
+    "golden_comments": [
+      {
+        "comment": "The migration deletes the archived ledger rows instead of moving them to the archive table.",
+        "severity": "High",
+        "category": "data"
+      },
+      {
+        "comment": "No test covers the archive endpoint when the ledger is empty.",
+        "severity": "Low",
+        "category": "test_gap"
+      }
+    ],
+    "golden_source_file": "oq_fixture.json",
+    "openqodex": {
+      "caseId": "martian/oq-fixture__ledger-7@b2e764d9",
+      "case": "oq-fixture__ledger-7"
+    },
+    "reviews": [
+      {
+        "tool": "openqodex-library-r1",
+        "repo_name": null,
+        "pr_url": "https://github.com/oq-fixture/ledger/pull/7",
+        "review_comments": [
+          {
+            "path": "db/migrate/archive.rb",
+            "line": 8,
+            "body": "Archive migration loses rows. The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty. Archived history is lost for good. Fix: Move the rows in one transaction, and add a test for an empty ledger.",
+            "created_at": "2026-10-11T10:00:00.000Z"
+          }
+        ],
+        "openqodex": {
+          "caseId": "martian/oq-fixture__ledger-7@b2e764d9",
+          "case": "oq-fixture__ledger-7",
+          "config": "model-scripted-graph-on",
+          "repeat": 1,
+          "attempt": 1,
+          "status": "incomplete",
+          "findingIds": [
+            "0342eaf066cf0c874aa5c9c7e30505b7f2068770f7a5b653188e9e8c3e1be87b"
+          ]
+        }
+      }
+    ]
+  },
+  "https://github.com/oq-fixture/shop/pull/11": {
+    "pr_title": "Checkout applies coupons",
+    "original_url": null,
+    "source_repo": "oq_fixture",
+    "golden_comments": [
+      {
+        "comment": "The cart total is read before the discount lock is taken, so two concurrent checkouts can apply one coupon twice.",
+        "severity": "High",
+        "category": "concurrency"
+      },
+      {
+        "comment": "The refund handler writes the full card number into the application log.",
+        "severity": "Critical",
+        "category": "security"
+      }
+    ],
+    "golden_source_file": "oq_fixture.json",
+    "openqodex": {
+      "caseId": "martian/oq-fixture__shop-11@66dbd35b",
+      "case": "oq-fixture__shop-11"
+    },
+    "reviews": [
+      {
+        "tool": "openqodex-library-r1",
+        "repo_name": null,
+        "pr_url": "https://github.com/oq-fixture/shop/pull/11",
+        "review_comments": [
+          {
+            "path": "src/checkout.ts",
+            "line": 40,
+            "body": "Coupon can be applied twice. The cart total is read before the discount lock is taken. Also, the refund handler logs the full card number. Both put customers at risk. Fix: Take the discount lock before reading the total, and mask the card number before logging.",
+            "created_at": "2026-10-11T10:00:00.000Z"
+          },
+          {
+            "path": "src/checkout.ts",
+            "line": 41,
+            "body": "Discount lock taken after the total is read. The cart total is read before the discount lock is taken. One coupon can be applied twice. Fix: Take the lock first.",
+            "created_at": "2026-10-11T10:00:00.000Z"
+          }
+        ],
+        "openqodex": {
+          "caseId": "martian/oq-fixture__shop-11@66dbd35b",
+          "case": "oq-fixture__shop-11",
+          "config": "model-scripted-graph-on",
+          "repeat": 1,
+          "attempt": 1,
+          "status": "complete",
+          "findingIds": [
+            "1c4aa2c07eb0979b5887575672b6c064c79d8fd64a6fb55546cec8ec39a6b4c4",
+            "bd146996238b3bdd6dc7956ae2f64224c4b183d9de53d41f395d060290938e30"
+          ]
+        }
+      }
+    ]
+  },
+  "https://github.com/oq-fixture/shop/pull/12": {
+    "pr_title": "Paged order history",
+    "original_url": null,
+    "source_repo": "oq_fixture",
+    "golden_comments": [
+      {
+        "comment": "The pagination offset multiplies the page number without subtracting one, so the first page of orders is never shown.",
+        "severity": "High",
+        "category": "bug"
+      }
+    ],
+    "golden_source_file": "oq_fixture.json",
+    "openqodex": {
+      "caseId": "martian/oq-fixture__shop-12@31ac5ecd",
+      "case": "oq-fixture__shop-12"
+    },
+    "reviews": [
+      {
+        "tool": "openqodex-library-r1",
+        "repo_name": null,
+        "pr_url": "https://github.com/oq-fixture/shop/pull/12",
+        "review_comments": [
+          {
+            "path": "src/orders/page.py",
+            "line": 12,
+            "body": "First page of orders is skipped. The pagination offset multiplies the page number without subtracting one. The first page of orders is never shown. Fix: Subtract one from the page number before multiplying.",
+            "created_at": "2026-10-11T10:00:00.000Z"
+          },
+          {
+            "path": "src/orders/page.py",
+            "line": 3,
+            "body": "Vague constant name. The constant is named VALUE. A reader cannot tell what it holds. Fix: Name it PAGE_SIZE.",
+            "created_at": "2026-10-11T10:00:00.000Z"
+          }
+        ],
+        "openqodex": {
+          "caseId": "martian/oq-fixture__shop-12@31ac5ecd",
+          "case": "oq-fixture__shop-12",
+          "config": "model-scripted-graph-on",
+          "repeat": 1,
+          "attempt": 1,
+          "status": "complete",
+          "findingIds": [
+            "859b8f88370ef2d068ddf3e97e2f4a128ba2f9b876a5ec2c41eda22760dd3e6d",
+            "c7914f151dce0f68fae65c4e5acf05413396eb49f196cb344bc6f12a8af07c96"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@
 //   node benchmark/scanners.mjs <run> [--specs <folder>]
 //                               [--against <baseline> [--specs <folder>]]
 //                               [--input-change pin-bump:<scanner>|semgrep-packs]
+//                               [--decisions <file>] [--change <SC-id>] [--ledger <file>]
 //                               [--release <version>] [--out <folder>] [--json]
 //
 // <run> is a run folder, or a run id under benchmark/results (fetch a
@@ -32,27 +33,40 @@
 // files of each run's build commit, read with git), a
 // scanner did not run where truth lies or may lie in its remit, or a
 // planned scan is missing; else it applies K1: no truth item the baseline
-// found with issue-level evidence is lost. K2 to K4 are the acceptance
-// rule's (lib/scanners.mjs ACCEPTANCE_RULE, P3-04).
+// found with issue-level evidence is lost. Then it hands both runs to the
+// acceptance rule (lib/scanners.mjs ACCEPTANCE_RULE, loop/decide.mjs
+// decideScanner) for K2 to K4: K2 by deterministic dominance (plan
+// amendment A1), read with the rulings of the adjudication file
+// (--decisions, benchmark/review-queue/decisions.jsonl by default), and the
+// losses and review run (K4) of the change's record when --change names its
+// line in the scanner ledger (--ledger, benchmark/index/ledger/scanner.jsonl
+// by default). It writes no ledger line.
 //
 // A test-split run prints only with --release naming its own release.
 //
-// Exit codes: 0 printed (and with --against, K1 holds); 1 K1 fails; 2
+// Exit codes: 0 printed (and with --against, nothing reverts the change:
+// kept, pending rulings, pending K4, or undecided); 1 the change is
+// reverted (K1 fails, a removed candidate is ruled true, K3 or K4 fails); 2
 // refused, or a run cannot be read.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildCase, caseHash, casesRoot, diffOf, parseCaseId, readCase, repoRoot } from "./lib/cases.mjs";
+import { benchRoot, buildCase, caseHash, casesRoot, diffOf, parseCaseId, readCase, repoRoot } from "./lib/cases.mjs";
 import { DROP_CLASSES, POINTS_AT } from "./lib/drops.mjs";
 import { resultsRoot } from "./lib/index.mjs";
 import { ACCEPTANCE_RULE, GAP, INPUT_CHANGES, RULE_OFF, SCANNERS_VERSION, analyseRun, judgeAgainst, runRefusals, scannerReport, toolchainRecord } from "./lib/scanners.mjs";
+import { readRulings, scanSide } from "./loop/compare.mjs";
+import { Refusal, decideScanner } from "./loop/decide.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
-import { legacyFolderOf, loadRun } from "./score.mjs";
+import { decisionsPath, legacyFolderOf, loadRun } from "./score.mjs";
+
+// The scanner loop's ledger (PLAN 4.8), where a change's record lives.
+export const SCANNER_LEDGER = join(benchRoot, "index", "ledger", "scanner.jsonl");
 
 function parseArgs(argv) {
-  const o = { run: null, against: null, inputChange: null, release: null, out: null, json: false };
+  const o = { run: null, against: null, inputChange: null, release: null, out: null, decisions: decisionsPath, change: null, ledger: SCANNER_LEDGER, json: false };
   let last = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -67,6 +81,9 @@ function parseArgs(argv) {
       if (last === null) throw new Error("--specs follows the run it applies to");
       last.specs = value();
     } else if (a === "--input-change") o.inputChange = value();
+    else if (a === "--decisions") o.decisions = resolve(value());
+    else if (a === "--change") o.change = value();
+    else if (a === "--ledger") o.ledger = resolve(value());
     else if (a === "--release") o.release = value();
     else if (a === "--out") o.out = value();
     else if (a.startsWith("--")) throw new Error(`unknown flag ${a}`);
@@ -165,7 +182,7 @@ function analyse({ run, specs }, { toolchain = false } = {}) {
   const { changedOf, cleanup } = changedLinesOf(loaded.manifest);
   try {
     const analysed = analyseRun({ name: basename(folder), manifest: loaded.manifest, attempts: loaded.attempts, specs: withClasses(loaded.manifest.suite ?? "planted", loaded.specs), changedOf, toolchain: toolchain ? buildToolchain(loaded.manifest) : null });
-    return { folder, analysed, specsFrom: loaded.specsFrom ?? "the run's own cases/" };
+    return { folder, analysed, loaded, specsFrom: loaded.specsFrom ?? "the run's own cases/" };
   } finally {
     cleanup();
   }
@@ -273,7 +290,37 @@ export function render(r, { specsFrom }) {
   return out.join("\n");
 }
 
-function renderJudgement(j, base, cand, inputChange) {
+const placeText = (c) => `${c.ref}: ${c.caseId} ${c.file} ${c.lines[0] === c.lines[1] ? `line ${c.lines[0]}` : `lines ${c.lines[0]} to ${c.lines[1]}`}, ${c.token}${c.samples > 1 ? ` (${c.samples} samples)` : ""}`;
+
+// K2 to K4 as the acceptance rule (decideScanner) read them.
+function renderAcceptance(a) {
+  const out = ["", `### K2 to K4, by ${ACCEPTANCE_RULE}${a.change ? ` for ${a.change}` : ""}`, ""];
+  const k2 = a.k2;
+  out.push(`The change removes ${k2.removed} ${k2.removed === 1 ? "candidate" : "candidates"} and adds or alters ${k2.added}.`);
+  const groups = [
+    ["Frozen false (a clean control), no ruling needed", k2.frozenFalse],
+    ["Ruled false by a person", k2.ruledFalse],
+    ["Ruled a real issue by a person", k2.ruledTrue],
+    ["Awaiting a person's ruling (a reviewer's drop does not count)", k2.pending],
+    ["Frozen true (a hit on a truth item or a listed side issue)", k2.frozenTrue],
+  ];
+  for (const [label, list] of groups) {
+    if (list.length === 0) continue;
+    out.push(`${label}, ${list.length}:`);
+    for (const c of list) out.push(`- ${placeText(c)}${(c.refused ?? []).map((x) => `; the ruling on line ${x.line} of the adjudication file does not count: ${x.why}`).join("")}`);
+  }
+  if (a.k3) {
+    const r = a.k3.redundancy;
+    out.push(`K3: redundant candidates per case ${r.pass ? "rise in no case" : `rise in ${r.rose.map((x) => `${x.caseId} (${x.parent} then ${x.candidate})`).join(", ")}`} (their share of all candidates, a diagnostic only: ${r.share.parent.hit}/${r.share.parent.of} then ${r.share.candidate.hit}/${r.share.candidate.of}). Recall, critical and major recall, precision with the rulings, and clean-control candidates: ${Object.entries(a.k3.cases).filter(([, c]) => !c.pass).map(([g, c]) => `${g} worse in ${c.worse.map((w) => w.caseId).join(", ")}`).join("; ") || "no case worse"}.`);
+    const t = a.k3.time;
+    out.push(t.measured ? `Median scan time ${Math.round(t.parent)} then ${Math.round(t.candidate)} ms (${t.change >= 0 ? "+" : ""}${(t.change * 100).toFixed(1)} percent), ${t.pass ? "inside" : "not inside"} its ${(t.loss * 100).toFixed(0)} percent.` : "Median scan time not measured: a sample recorded no scan_ms.");
+  }
+  out.push(`K4 (a review run on both paths, three repeats): ${a.k4.required ? "required" : "not required"}; ${a.k4.pass === null ? "not run" : a.k4.pass ? `passed (${a.k4.runId ?? "no run named"})` : `did not pass (${a.k4.runId ?? "no run named"})`}.`);
+  out.push("", `Decision: ${a.reason}`);
+  return out.join("\n");
+}
+
+function renderJudgement(j, base, cand, inputChange, acceptance = null) {
   const out = ["", `## Against ${base.name}`, ""];
   if (j.exit === 2) {
     out.push(`Refused: ${cand.name} cannot be judged against ${base.name}:`);
@@ -286,8 +333,17 @@ function renderJudgement(j, base, cand, inputChange) {
     out.push(`K1 fails: ${j.k1.lost.length} of the ${j.k1.checked} truth items ${base.name} found with issue-level evidence ${j.k1.lost.length === 1 ? "is" : "are"} lost:`);
     for (const x of j.k1.lost) out.push(`- ${x.caseId} ${x.truth}: found before by ${x.foundBefore.join(", ")}; now ${x.locatedNow.length === 0 ? "nothing sits on its lines" : `only a location match by ${x.locatedNow.join(", ")}, which is not coverage of this issue`}.`);
   }
-  out.push(`K2 to K4 (a gain, the guards, and a review run when a candidate on truth changed) are the acceptance rule's, ${ACCEPTANCE_RULE} (P3-04), which is not wired here yet; read them from the tables above until it is.`);
+  if (acceptance) out.push(renderAcceptance(acceptance));
   return out.join("\n");
+}
+
+// The record of a change: its latest line in the scanner ledger.
+function recordOf(ledger, id) {
+  if (!existsSync(ledger)) throw new Error(`the scanner ledger ${ledger} does not exist, so it holds no ${id}`);
+  const lines = readFileSync(ledger, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const line = lines.filter((l) => l.id === id).at(-1);
+  if (!line) throw new Error(`the scanner ledger ${ledger} holds no ${id}`);
+  return line;
 }
 
 function main() {
@@ -297,6 +353,7 @@ function main() {
   try {
     o = parseArgs(process.argv.slice(2));
     if (o.inputChange !== null && o.against === null) throw new Error("--input-change names the change a comparison allows; it needs --against");
+    if (o.change !== null && o.against === null) throw new Error("--change names the change a comparison decides; it needs --against");
     if (o.inputChange !== null && !/^pin-bump:.+$/.test(o.inputChange) && o.inputChange !== "semgrep-packs") throw new Error(`--input-change takes ${INPUT_CHANGES}`);
     run = analyse(o.run, { toolchain: o.against !== null });
     if (o.against) base = analyse(o.against, { toolchain: true });
@@ -311,7 +368,20 @@ function main() {
   }
   const report = scannerReport(run.analysed);
   const judgement = base ? judgeAgainst(base.analysed, run.analysed, { inputChange: o.inputChange }) : null;
-  const doc = { ...report, specsFrom: run.specsFrom, comparedWith: base ? { run: base.analysed.name, inputChange: o.inputChange, exit: judgement.exit, refusals: judgement.refusals, k1: judgement.k1, acceptanceRule: ACCEPTANCE_RULE } : null };
+  // K2 to K4: the acceptance rule's, through the seam, once K1 is read.
+  let acceptance = null;
+  if (judgement && judgement.exit !== 2) {
+    try {
+      const record = o.change === null ? null : recordOf(o.ledger, o.change);
+      const d = readRulings(o.decisions);
+      acceptance = decideScanner({ base: scanSide({ loaded: base.loaded, runId: base.analysed.name }), cand: scanSide({ loaded: run.loaded, runId: run.analysed.name }), k1: judgement.k1, rulings: { lines: d.lines, people: d.people }, record });
+    } catch (e) {
+      process.stderr.write(`scanners: refused: ${e instanceof Refusal ? e.message : e.stack}\n`);
+      return 2;
+    }
+  }
+  const exit = judgement === null ? 0 : judgement.exit === 2 ? 2 : acceptance.decision === "revert" ? 1 : 0;
+  const doc = { ...report, specsFrom: run.specsFrom, comparedWith: base ? { run: base.analysed.name, inputChange: o.inputChange, exit, refusals: judgement.refusals, k1: judgement.k1, acceptanceRule: ACCEPTANCE_RULE, acceptance } : null };
   // A legacy run's folder is the published original: its scanners.json goes only to --out.
   const dest = o.out === null ? run.folder : resolve(o.out);
   const legacy = legacyFolderOf(dest, readRecipes());
@@ -324,10 +394,10 @@ function main() {
   if (o.json) process.stdout.write(`${JSON.stringify(doc, null, 2)}\n`);
   else {
     process.stdout.write(`${render(report, { specsFrom: run.specsFrom })}\n`);
-    if (base) process.stdout.write(`${renderJudgement(judgement, base.analysed, run.analysed, o.inputChange)}\n`);
+    if (base) process.stdout.write(`${renderJudgement(judgement, base.analysed, run.analysed, o.inputChange, acceptance)}\n`);
     process.stdout.write(`\n${saved ? `Saved ${saved}.` : `scanners.json not written: ${dest} is, or lies in, the published folder of the legacy run ${legacy}; name another folder with --out.`}\n`);
   }
-  return judgement ? judgement.exit : 0;
+  return exit;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();

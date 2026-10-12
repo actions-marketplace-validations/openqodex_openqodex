@@ -23,7 +23,9 @@
 // benchmark/index/proof/<suite>-<date>.json, or <suite>-<side>-<date>.json
 // for one side, so a summary of one side never takes a whole suite's name.
 // Per case: its licence class,
-// upstream's base, head and merge base, the merge base's and the head's tree
+// upstream's base, head and merge base (where it came from, git or frozen
+// in the entry, every merge base git found in the order of the rule named
+// beside them), the merge base's and the head's tree
 // ids beside the built ones, whether the merge base is an ancestor of the
 // head (with the deepening of the commits cache that answer took, if any),
 // and the reason when the case did not build or prove. `commit` is the
@@ -112,7 +114,7 @@ const nameOf = (id) => id.slice(id.indexOf("/") + 1, id.lastIndexOf("@"));
 // One case of the summary from its proof (lib/materialise-only.mjs), or a
 // failure when there is none (failure 1).
 function caseSummary(id, split, p) {
-  if (!p) return { caseId: id, name: nameOf(id), split, ok: false, licence: null, baseSha: null, headSha: null, mergeBaseSha: null, mergeBaseFrom: null, ancestorOfHead: null, deepening: null, trees: null, fsck: null, error: "no proof was written for this case" };
+  if (!p) return { caseId: id, name: nameOf(id), split, ok: false, licence: null, baseSha: null, headSha: null, mergeBaseSha: null, mergeBaseFrom: null, mergeBases: null, mergeBaseRule: null, ancestorOfHead: null, deepening: null, trees: null, fsck: null, error: "no proof was written for this case" };
   const u = p.upstream ?? null;
   const ancestorOfHead = p.ancestor?.isAncestor ?? null;
   const reasons = [];
@@ -135,6 +137,8 @@ function caseSummary(id, split, p) {
     headSha: u?.headSha ?? null,
     mergeBaseSha: u?.mergeBaseSha ?? null,
     mergeBaseFrom: u?.mergeBaseFrom ?? null,
+    mergeBases: u?.mergeBases ?? null,
+    mergeBaseRule: u?.mergeBaseRule ?? null,
     ancestorOfHead,
     deepening: p.ancestor?.deepening ?? null,
     trees: u ? { mergeBase: u.mergeBaseTree ?? null, head: u.headTree ?? null, builtBase: p.built?.baseTree ?? null, builtHead: p.built?.headTree ?? null } : null,

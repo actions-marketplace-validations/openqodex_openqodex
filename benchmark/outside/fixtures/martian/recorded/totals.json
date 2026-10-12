@@ -1,0 +1,41 @@
+{
+  "beta": 2.0,
+  "profiles": {
+    "strict": {
+      "openqodex-library-r1": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.888888888888889,
+        "fbeta": 0.9523809523809523,
+        "tp": 4,
+        "fp": 1,
+        "fn": 0,
+        "prs": 3
+      }
+    },
+    "core": {
+      "openqodex-library-r1": {
+        "precision": 0.8333333333333334,
+        "recall": 1.0,
+        "f1": 0.9090909090909091,
+        "fbeta": 0.9615384615384615,
+        "tp": 5,
+        "fp": 1,
+        "fn": 0,
+        "prs": 3
+      }
+    },
+    "all": {
+      "openqodex-library-r1": {
+        "precision": 0.8333333333333334,
+        "recall": 1.0,
+        "f1": 0.9090909090909091,
+        "fbeta": 0.9615384615384615,
+        "tp": 5,
+        "fp": 1,
+        "fn": 0,
+        "prs": 3
+      }
+    }
+  }
+}
