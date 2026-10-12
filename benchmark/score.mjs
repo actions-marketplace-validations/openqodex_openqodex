@@ -4,7 +4,7 @@
 //
 //   node benchmark/score.mjs <results folder> [--against <earlier folder>]
 //                            [--specs <folder of <case>.json>] [--judge <judge.json>]
-//                            [--out <folder>] [--decisions <file>] [--json]
+//                            [--out <folder>] [--decisions <file>] [--outside aacr] [--json]
 //
 // The specs are the run's own copies (cases/ in the run). --specs scores the
 // saved reviews against other specs, such as an amended copy; the output and
@@ -75,6 +75,13 @@
 //    truth copy that lacks an accepted comment its suite lists is scored:
 //    a real suite's spec copy is checked with lib/suites.mjs
 //    realSpecProblems, against its own count and the committed suite.
+// 12. An outside board's numbers change our score: --outside aacr reads what
+//    AACR-Bench's own evaluator wrote under <run>/outside/aacr/
+//    (lib/aacr-board.mjs readAacrOutside) after the run is scored, and adds
+//    it as outside.aacr only; every other field of score.json, the rules
+//    block and the exit code are what they are without the flag. Their
+//    files that cannot be read leave outside.aacr null, with one line on
+//    stderr naming why, never a failed scoring.
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,6 +95,7 @@ import { readDecisions, resolveRulings } from "./lib/rulings.mjs";
 import { SCAN_RULES, scanRegressions, scoreScanAttempts } from "./lib/scan-score.mjs";
 import { RULES, SEVERITY_ORDER, attemptOf, bugStability, caseSetHash, groupBy, originOf, regressions, runDifferences, scoreAttempts, scoreSample, specDifferences, summarize, value, wordingBlock } from "./lib/score.mjs";
 import { readRecipes } from "./legacy/rescore.mjs";
+import { readAacrOutside } from "./lib/aacr-board.mjs";
 
 const readJson = (path) => {
   try {
@@ -485,6 +493,24 @@ export function renderV3(s) {
   return out.join("\n");
 }
 
+// The outside.aacr block as text: AACR-Bench's own numbers per
+// configuration, beside our location numbers. A board output only.
+export function renderAacrOutside(b) {
+  const p = (x) => `${Math.round(x * 1000) / 10}%`;
+  const out = [`AACR-Bench's own evaluator (${b.board.repo} at ${b.board.commit.slice(0, 12)}, reader ${b.reader}, line tolerance ${b.lineK}${b.judge ? `, judge ${b.judge.deployment}, ${b.judge.rounds} rounds` : ", no judged evaluation"}). A board output, never an acceptance metric.`];
+  out.push(`Left-side references: ${b.references.left} of ${b.references.total} (${p(b.references.share)}), which no finding can match by line. Findings held with no line: ${b.withoutLine}.`);
+  out.push("");
+  const rows = Object.entries(b.byConfig).map(([config, c]) => {
+    const l = c.mean.line;
+    const s = c.mean.semantic;
+    const equal = c.repeats.every((r) => r.lineEqual);
+    return [config, `${l.matches}/${l.generated} (${p(l.precision)})`, `${l.matches}/${l.expected} (${p(l.recall)})`, equal ? "equal" : "differ", s ? `${p(s.precision)} / ${p(s.recall)} / ${s.f1.toFixed(2)}` : `not reported (${c.repeats.find((r) => r.why)?.why ?? "no judge"})`, s ? p(s.noiseRate) : "n/a"];
+  });
+  out.push(table(["Configuration", "Line precision", "Line recall", "Line counts against ours", "Semantic precision / recall / F1", "Noise rate"], rows));
+  for (const problem of b.problems) out.push(`- ${problem}`);
+  return out.join("\n");
+}
+
 // Everything besides the build that differs between two runs, the
 // external inputs their scans consumed included.
 export function differences(older, newer) {
@@ -623,9 +649,11 @@ function main() {
   let outDir = null;
   let decisionsFile = decisionsPath;
   let json = false;
+  let outside = null;
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--against") against = args[++i];
+    else if (args[i] === "--outside") outside = args[++i];
     else if (args[i] === "--json") json = true;
     else if (args[i] === "--specs") specsDir = args[++i];
     else if (args[i] === "--judge") judgeFile = args[++i];
@@ -633,8 +661,8 @@ function main() {
     else if (args[i] === "--decisions") decisionsFile = args[++i];
     else pos.push(args[i]);
   }
-  if (pos.length !== 1 || against === undefined || specsDir === undefined || judgeFile === undefined || outDir === undefined || decisionsFile === undefined) {
-    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--judge <judge.json>] [--out <folder>] [--decisions <file>] [--json]");
+  if (pos.length !== 1 || against === undefined || specsDir === undefined || judgeFile === undefined || outDir === undefined || decisionsFile === undefined || (outside !== null && outside !== "aacr")) {
+    console.error("usage: node benchmark/score.mjs <results folder> [--against <earlier results folder>] [--specs <folder of <case>.json>] [--judge <judge.json>] [--out <folder>] [--decisions <file>] [--outside aacr] [--json]");
     process.exit(2);
   }
   let run;
@@ -668,6 +696,15 @@ function main() {
   }
   const regs = older ? (scanOnly ? scanRegressions(olderScored.jobs, jobs) : regressions(olderScored.jobs, jobs)) : [];
   const doc = { ...score, comparedWith: older ? { run: older.name, build: older.manifest.build, differences: differences(older, run), regressions: regs } : null };
+  // An outside board's own evaluator, read after the scoring and added beside it (failure 12).
+  if (outside === "aacr") {
+    try {
+      doc.outside = { aacr: readAacrOutside(run.folder, jobs) };
+    } catch (error) {
+      doc.outside = { aacr: null };
+      console.error(`outside.aacr is null: ${String(error.message).split("\n")[0]}`);
+    }
+  }
   // Scored against other specs, the score gets its own files, so the score
   // against the run's own specs is never overwritten.
   const suffix = specsDir === null ? "" : `-${basename(resolve(specsDir))}`;
@@ -678,6 +715,7 @@ function main() {
   if (json) console.log(JSON.stringify(doc, null, 2));
   else {
     console.log(scanOnly ? renderScan(score, run.manifest) : renderV3(score));
+    if (doc.outside?.aacr) console.log(`\n${renderAacrOutside(doc.outside.aacr)}`);
     if (older) console.log(`\n${scanOnly ? renderScanCompare(older, run, regs) : renderCompare(older, run, olderScored.score, score, regs)}`);
     const shown = (p) => (relative(repoRoot, p).startsWith("..") ? p : relative(repoRoot, p));
     console.log(`\nScore saved: ${shown(join(dest, `score${suffix}.json`))}, with ${outcomes.length} finding outcomes in ${shown(join(dest, `outcomes${suffix}.jsonl`))} and ${unresolved.length} findings for the review queue in ${shown(join(dest, `unresolved${suffix}.jsonl`))} (node benchmark/queue.mjs add ${shown(join(dest, `unresolved${suffix}.jsonl`))})`);
