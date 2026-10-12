@@ -8,14 +8,20 @@
 // in production, and the SQL-string-build injection (B608) family.
 //
 // We invoke it only on changed .py / .pyi files so a change without
-// Python is a no-op. Bandit emits one JSON object with a results[] array;
-// every hit is a security finding, ranked by its own issue_severity.
+// Python is a no-op. Test files (core's isTestFile: under a test folder,
+// or named like test_x.py or x_test.py) skip B101 (assert used): a test
+// checks its results with assert, so every check there was a candidate the
+// reviewer dropped. Bandit's -s skips a check for a whole run, so test
+// files run apart with -s B101, and every other check still reads them.
+// Bandit emits one JSON object with a results[] array; every hit is a
+// security finding, ranked by its own issue_severity.
 // Findings are anchored to changed lines downstream (filterToChangedLines).
 // It writes nothing to disk.
 //
 // All errors are captured into the result; the runner never throws on a
 // scanner failure: static analysis is additive context, not a gate.
 
+import { isTestFile } from "@openqodex/core";
 import type {
   AdapterResult,
   ResolvedTool,
@@ -45,21 +51,31 @@ export async function runBandit(args: {
 
   // -f json: the stable machine shape. -q: keep the progress chatter out
   // of the report. Changed files are passed positionally so it scans
-  // only those.
-  const cliArgs = (files: string[]): string[] => ["-f", "json", "-q", "--", ...files];
+  // only those. -s B101 for test files only (the header says why).
+  const cliArgs = (files: string[], tests: boolean): string[] => ["-f", "json", "-q", ...(tests ? ["-s", "B101"] : []), "--", ...files];
 
   // One process per chunk of files, so a whole-repo file list stays under
-  // the argument limit; the findings of every chunk are merged.
+  // the argument limit; the findings of every chunk are merged. Test files
+  // come last, so at most one chunk holds both kinds and runs twice.
+  const ordered = [...pyFiles.filter((p) => !isTestFile(p)), ...pyFiles.filter((p) => isTestFile(p))];
   const tool = args.tool;
   try {
-    const findings = await runInChunks("bandit", pyFiles, BANDIT_TIMEOUT_MS, async (chunk, left) => {
-      const stdout = await execBandit(tool, cliArgs(chunk), args.repoDir, left);
-      try {
-        return parseBanditJson(stdout);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`parse: ${message.slice(0, 200)}`);
+    const findings = await runInChunks("bandit", ordered, BANDIT_TIMEOUT_MS, async (chunk, left) => {
+      const deadline = Date.now() + left;
+      const out: StaticFinding[] = [];
+      for (const tests of [false, true]) {
+        const files = chunk.filter((p) => isTestFile(p) === tests);
+        if (files.length === 0) continue;
+        // execFile reads a timeout of 0 as none.
+        const stdout = await execBandit(tool, cliArgs(files, tests), args.repoDir, Math.max(1, deadline - Date.now()));
+        try {
+          out.push(...parseBanditJson(stdout));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`parse: ${message.slice(0, 200)}`);
+        }
       }
+      return out;
     });
     return { findings, error: null };
   } catch (err) {
