@@ -210,10 +210,11 @@ const NO_RECIPE = "no install recipe; this build cannot run it";
 // then be that home's tools folder. A server fills its own install root with
 // preinstallScanners and reads it with installs off. `installBudgetMs`: how
 // long to wait for the runtime probes and an install; null or left out waits
-// until they finish. `probeHome`: the folder the runtime probes (Go, Cargo,
-// Ruby) run in as their home, so a tool's own state lands there and never in
-// the developer's home folder; by default <OpenQodex home>/cache/runtime-probe.
-// A server names one in its scratch root.
+// until they finish. `probeHome`: where the Go and Cargo runtime probes keep
+// what those tools write for themselves (Go's telemetry, rustup's settings),
+// never the developer's home folder (install.ts); by default
+// <OpenQodex home>/cache/runtime-probe. A server names one in its scratch
+// root.
 export type ResolverOptions = { allowInstall: boolean; installRoot?: string; installBudgetMs?: number | null; onProgress?: (line: string) => void; probeHome?: string };
 
 type Resolver = { allowInstall: boolean; root: string; home: string; installBudgetMs: number | null; onProgress?: (line: string) => void; probeHome?: string };

@@ -60,30 +60,40 @@ const GO_OFFLINE = { GOTOOLCHAIN: "local", GOPROXY: "off" };
 
 const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go", cargo: "Cargo (Rust)" };
 
-// The probes run in a home of their own, never the developer's: rustup
-// keeps its settings, and Go its telemetry (on macOS always under the home
-// folder, whatever XDG says), in the home folder of whatever process runs
-// them. A probe gets HOME and the XDG folders in its own home, and is handed
-// the developer's folders it must find (rustHomes, goHomes), each only when
-// it is there: a folder that is not there holds nothing to find, and a
-// probe handed it would make it.
+// The probes leave the developer's home folder as it was. Two runtimes
+// write their own state there: rustup its settings (in RUSTUP_HOME, by
+// default .rustup in the home folder), and Go its telemetry (in the user
+// config folder, on macOS always under the home folder, whatever XDG says).
+// So the Cargo probe is handed RUSTUP_HOME and CARGO_HOME (the developer's
+// when they are there, else folders in the probe home), and the Go probe
+// runs with HOME and the XDG folders in the probe home, handed the
+// developer's Go folders it must find (goHomes), each only when it is
+// there. A version manager's shim (asdf, mise, goenv, rbenv) finds its
+// versions from the home folder: a Go probe that fails in the probe home is
+// run again in the developer's, the way Go itself is run there, and the Ruby
+// probe, which writes nothing, runs there as before.
 
 /** The probes' home when the caller names none: in the OpenQodex home's cache. */
 export function defaultProbeHome(): string {
   return join(openqodexHome(), "cache", "runtime-probe");
 }
 
-// The small environment of a probe in `probeHome`, made now; a home that
-// cannot be made is replaced by a new folder in the system temp folder.
-function probeEnv(probeHome: string, extra: Record<string, string>): { env: NodeJS.ProcessEnv; cwd: string } {
-  let home = probeHome;
+// The probe home, made now; one that cannot be made is replaced by a new
+// folder in the system temp folder.
+function madeProbeHome(probeHome: string): string {
   try {
-    mkdirSync(home, { recursive: true, mode: 0o700 });
+    mkdirSync(probeHome, { recursive: true, mode: 0o700 });
+    return probeHome;
   } catch {
-    home = mkdtempSync(join(tmpdir(), "openqodex-probe-"));
+    return mkdtempSync(join(tmpdir(), "openqodex-probe-"));
   }
+}
+
+// The small environment of a probe whose home is `home`: HOME and the XDG
+// folders there.
+function homeEnv(home: string, extra: Record<string, string>): NodeJS.ProcessEnv {
   const own = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"), XDG_STATE_HOME: join(home, ".local", "state") };
-  return { env: smallEnv({ ...own, ...extra }), cwd: home };
+  return smallEnv({ ...own, ...extra });
 }
 
 // Where the developer keeps Rust: the toolchains (rustup) and the crate
@@ -153,14 +163,17 @@ function pathWith(first: string[]): string {
 }
 
 // One probe per runtime: its version, plus what a scanner run needs from it.
-// Probes run in `probeHome`, never the repo, so a repo's go.mod or
-// .ruby-version cannot change what they do, and never the developer's home
-// folder, which they leave as it was.
+// Probes run in the user's home folder or the probe home, never the repo, so
+// a repo's go.mod or .ruby-version cannot change what they do; and they
+// leave the home folder as it was (above).
 async function probe(runtime: string, file: string, probeHome: string): Promise<{ version: string; env: Record<string, string> } | null> {
-  const timeoutMs = PROBE_TIMEOUT_MS;
+  const opts = { cwd: homedir(), timeoutMs: PROBE_TIMEOUT_MS };
   if (runtime === "go") {
-    const { env: goEnv, cwd } = probeEnv(probeHome, { ...GO_OFFLINE, ...goHomes() });
-    const out = await run(file, ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"], { cwd, timeoutMs, env: goEnv });
+    const args = ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"];
+    const home = madeProbeHome(probeHome);
+    let out = await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, { ...GO_OFFLINE, ...goHomes() }) });
+    // A version manager's shim found nothing in the probe home.
+    if (out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(GO_OFFLINE) });
     if (out.code !== 0) return null;
     const [goversion = "", gopath = "", modcache = "", cache = ""] = out.stdout.split("\n");
     const env: Record<string, string> = { ...GO_OFFLINE, PATH: pathWith([dirname(file)]) };
@@ -175,8 +188,8 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
     // project's rust-toolchain.toml and could install the toolchain it
     // names; the real cargo and rustc read no such file. RUSTUP_AUTO_INSTALL
     // keeps the probe itself from installing one.
-    const { env: rustup, cwd } = probeEnv(probeHome, { ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
-    const opts = { cwd, timeoutMs };
+    const home = madeProbeHome(probeHome);
+    const rustup = smallEnv({ CARGO_HOME: join(home, ".cargo"), RUSTUP_HOME: join(home, ".rustup"), ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
     const version = await run(file, ["--version"], { ...opts, env: rustup });
     if (version.code !== 0) return null;
     const rustc = join(dirname(file), "rustc");
@@ -200,8 +213,7 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
     return { version: /(\d+\.\d+(?:\.\d+)?)/.exec(version.stdout)?.[1] ?? "", env };
   }
   const args = runtime === "ruby" ? ["-e", "print RUBY_VERSION"] : ["--version"];
-  const { env, cwd } = probeEnv(probeHome, {});
-  const out = await run(file, args, { cwd, timeoutMs, env });
+  const out = await run(file, args, { ...opts, env: smallEnv() });
   if (out.code !== 0) return null;
   return { version: /(\d+\.\d+(?:\.\d+)?)/.exec(out.stdout)?.[1] ?? "", env: { PATH: pathWith([dirname(file)]) } };
 }
