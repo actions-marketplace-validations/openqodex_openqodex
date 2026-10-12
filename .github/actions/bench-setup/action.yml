@@ -1,0 +1,47 @@
+name: Benchmark setup
+description: >-
+  Node 22 and the workspace, Ruby 3.3 and Go 1.26, the benchmark CLI built
+  with its commit recorded, and every scanner at its pinned version in
+  $OPENQODEX_HOME, cached on the toolchain and lock files. The one recipe
+  for the bench-scan job in ci.yml and for bench-weekly.yml. The calling
+  job checks the repository out and sets OPENQODEX_HOME first.
+runs:
+  using: composite
+  steps:
+    - name: Check the scanners' home is named
+      shell: bash
+      run: |
+        if [ -z "${OPENQODEX_HOME:-}" ]; then
+          echo "Set OPENQODEX_HOME before this action: the scanners are installed and cached there." >&2
+          exit 1
+        fi
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 22
+        cache: pnpm
+    # brakeman and rubocop need Ruby, golangci-lint needs Go; the runner
+    # image carries Cargo for cargo-deny.
+    - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+      with:
+        ruby-version: "3.3"
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        # golangci-lint 2.12.2 is built with Go 1.26 and cannot check a newer Go.
+        go-version: "1.26"
+        cache: false
+    - shell: bash
+      run: pnpm install --frozen-lockfile
+    # The Ruby scanners are installed against this Ruby, so its version is in the key.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.OPENQODEX_HOME }}
+        key: bench-scanners-${{ runner.os }}-${{ runner.arch }}-ruby3.3-go1.26-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
+    - name: Build the CLI and record its commit
+      shell: bash
+      run: node benchmark/build-cli.mjs
+    # Fails when any scanner is not installed at its pinned version or does
+    # not report its check case.
+    - name: Install every scanner
+      shell: bash
+      run: node packages/cli/dist/bin.js doctor --install --all-scanners --require-all

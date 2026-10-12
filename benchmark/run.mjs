@@ -211,8 +211,8 @@
 //    boards.json before anything else (lib/server-review.mjs), and the
 //    manifest records the deployment, the alias that named it, and the
 //    settings (effort, maxOutputTokens, the scripted model's script).
-//    A resume is refused when the endpoint, recorded as the sha256 of its
-//    base URL, differs from the run's.
+//    A resume is refused when the endpoint, recorded as an HMAC-SHA256 of
+//    its base URL keyed with the endpoint's key, differs from the run's.
 // 26. The model recorded is not the one that answered: each sample records
 //    the model asked for apart from the ones the provider named as
 //    answering, and the manifest's model is the id that served the run's
@@ -337,6 +337,8 @@ function parseArgs(argv) {
   if (!o.real && o.split !== null && o.split !== "dev") throw new Error(`--split ${o.split}: the planted suite has one split, dev`);
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   o.split ??= "dev";
+  // --subset all is the whole split, which a run with no subset names.
+  if (o.subset === "all") o.subset = null;
   // A scan is deterministic (--check-identical proves it), so one repeat; a scan has no reviewer to wait on.
   o.repeat ??= scan ? 1 : 3;
   o.timeout ??= scan ? 120 : o.real ? 1800 : 900;
