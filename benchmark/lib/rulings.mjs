@@ -213,3 +213,39 @@ export function readDecisions(path) {
   };
   return { hash: createHash("sha256").update(bytes).digest("hex"), lines: raw.map(parse), people };
 }
+
+// A person's standing ruling on a scanner candidate (the review queue's
+// candidate items, keyed on lib/scan-score.mjs candidateIdOf) in the spec
+// version `specHash` (specHashOf), from the file's lines in order and the
+// people who may rule. A candidate's truth depends on the spec it is
+// scored against: a revised spec may list an issue on its lines. queue.mjs
+// decide writes a candidate's ruling as a finding or match ruling whose
+// target also says candidate: true and names that version (specHash). So
+// only a finding or match ruling on the candidate itself that names that
+// version (target.specHash) counts; one naming another version, or none, is
+// refused, with its line and the reason. Returns { status, truthId,
+// answered, refused }: status "true" or "false" on whether it is a real
+// issue, "same-issue" (truthId the item) when a person ruled it the truth
+// item it sits on, the later of the two when both stand, or null (a
+// different-issue ruling alone says only what the candidate is not);
+// answered, the truth items a match ruling on this version answers.
+export function candidateRuling(candidateId, specHash, { lines = [], people = [] } = {}) {
+  let real = null;
+  const matches = new Map();
+  const refused = [];
+  for (const [i, l] of lines.entries()) {
+    const t = l?.target;
+    if (!t || t.findingId !== candidateId || (t.kind !== "finding" && t.kind !== "match") || rulingProblems(l, people).length > 0) continue;
+    if (t.specHash !== specHash) {
+      refused.push({ line: i + 1, why: `it names ${HEX64.test(String(t.specHash)) ? `another version of the case's spec (${t.specHash.slice(0, 12)}, the run's is ${String(specHash).slice(0, 12)})` : "no version of the case's spec"}, so a person rules it again on the sheet` });
+      continue;
+    }
+    if (t.kind === "finding") real = { status: REAL[l.status], n: i + 1 };
+    else matches.set(t.truthId, { status: l.status, n: i + 1 });
+  }
+  let same = null;
+  for (const [truthId, at] of matches) if (at.status === "same-issue" && (same === null || at.n > same.n)) same = { truthId, n: at.n };
+  const answered = [...matches.keys()];
+  if (same !== null && (real === null || same.n > real.n)) return { status: "same-issue", truthId: same.truthId, answered, refused };
+  return { status: real?.status ?? null, truthId: null, answered, refused };
+}
