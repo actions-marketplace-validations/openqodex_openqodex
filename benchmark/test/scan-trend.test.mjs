@@ -154,12 +154,12 @@ const NEXT = { runId: "2026-10-11-bbbbbbb-planted-scan-ci", startedAt: "2026-10-
 
 // An index whose accepted scanner-only entry is a run of `accepted`'s
 // candidates, published and accepted as the session does it.
-function acceptedIndex(accepted = {}) {
+async function acceptedIndex(accepted = {}) {
   const root = tempDir("oq-bench-scan-trend-");
   const index = join(root, "index");
   const at = { ...ACCEPTED, ...accepted };
   const run = scanRun(join(root, "results"), at);
-  publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
+  await publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
   const r = trend(["--accept", at.runId, "--by", "Sid", "--index", index, "--results", dirname(run)]);
   expect(r.status, r.out).toBe(0);
   return { root, index };
@@ -178,8 +178,8 @@ function gate({ root, index }, next = {}, { branchIndex = null } = {}) {
 const BRANCH = { runId: "2026-10-11-ccccccc-planted-scan-ci", startedAt: "2026-10-11T09:30:00.000Z", commit: "c".repeat(40) };
 
 describe("a scanner change lowers the scanner-only score and CI stays green", () => {
-  it("passes a run whose scores equal the accepted run's, and writes the trend table to the summary", () => {
-    const at = acceptedIndex();
+  it("passes a run whose scores equal the accepted run's, and writes the trend table to the summary", async () => {
+    const at = await acceptedIndex();
     const r = gate(at);
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/equal the accepted run's/);
@@ -191,8 +191,8 @@ describe("a scanner change lowers the scanner-only score and CI stays green", ()
     expect(r.summary).toMatch(/equal the accepted run's/);
   });
 
-  it("fails a run that misses a bug the accepted run found, and names the bug in the output and the summary", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV] });
+  it("fails a run that misses a bug the accepted run found, and names the bug in the output and the summary", async () => {
+    const r = gate(await acceptedIndex(), { demo: [OSV] });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
     expect(r.out).toMatch(/shell-rm-unquoted/);
@@ -200,15 +200,15 @@ describe("a scanner change lowers the scanner-only score and CI stays green", ()
     expect(r.summary).toMatch(/regression/i);
   });
 
-  it("fails a run that raises a candidate nobody credits, which the accepted run did not raise", () => {
-    const r = gate(acceptedIndex(), { demo: [SC2115, OSV, STRAY] });
+  it("fails a run that raises a candidate nobody credits, which the accepted run did not raise", async () => {
+    const r = gate(await acceptedIndex(), { demo: [SC2115, OSV, STRAY] });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
     expect(r.out).toMatch(/unresolved/i);
   });
 
-  it("fails a run in which a clean change starts drawing candidates", () => {
-    const r = gate(acceptedIndex(), { clean: [B101] });
+  it("fails a run in which a clean change starts drawing candidates", async () => {
+    const r = gate(await acceptedIndex(), { clean: [B101] });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
     expect(r.out).toMatch(/clean-python-feature/);
@@ -216,8 +216,8 @@ describe("a scanner change lowers the scanner-only score and CI stays green", ()
 });
 
 describe("a scanner change raises the score and the index keeps the old number", () => {
-  it("fails a better run and prints the steps that record it as the accepted run", () => {
-    const r = gate(acceptedIndex({ demo: [OSV] }));
+  it("fails a better run and prints the steps that record it as the accepted run", async () => {
+    const r = gate(await acceptedIndex({ demo: [OSV] }));
     expect(r.status, r.out).toBe(1);
     expect(r.out).not.toMatch(/regression/i);
     expect(r.out).toMatch(/shell-rm-unquoted/);
@@ -239,8 +239,8 @@ describe("the gate passes because there is nothing to compare with", () => {
 });
 
 describe("a Semgrep registry update reads as a product regression and turns every pull request red", () => {
-  it("passes with a warning when the rule packs differ and the score is higher, naming the packs, each difference and the steps to record the run", () => {
-    const r = gate(acceptedIndex({ demo: [OSV] }), { sha: SHA_B });
+  it("passes with a warning when the rule packs differ and the score is higher, naming the packs, each difference and the steps to record the run", async () => {
+    const r = gate(await acceptedIndex({ demo: [OSV] }), { sha: SHA_B });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/warning/i);
     expect(r.out).toMatch(/Semgrep rule packs/);
@@ -249,8 +249,8 @@ describe("a Semgrep registry update reads as a product regression and turns ever
     expect(r.summary).toMatch(/Semgrep rule packs/);
   });
 
-  it("passes equal scores whatever the packs, and names the packs that differ", () => {
-    const r = gate(acceptedIndex(), { sha: SHA_B });
+  it("passes equal scores whatever the packs, and names the packs that differ", async () => {
+    const r = gate(await acceptedIndex(), { sha: SHA_B });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/equal the accepted run's/);
     expect(r.out).toMatch(/Semgrep rule packs/);
@@ -258,8 +258,8 @@ describe("a Semgrep registry update reads as a product regression and turns ever
 });
 
 describe("a scanner change that lowers the score passes while the rule packs differ", () => {
-  it("fails a lost bug when the packs differ too, and says the packs differ", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV], sha: SHA_B });
+  it("fails a lost bug when the packs differ too, and says the packs differ", async () => {
+    const r = gate(await acceptedIndex(), { demo: [OSV], sha: SHA_B });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
     expect(r.out).toMatch(/shell-rm-unquoted/);
@@ -267,10 +267,10 @@ describe("a scanner change that lowers the score passes while the rule packs dif
     expect(r.out).toContain(`trend.mjs --accept ${NEXT.runId}`);
   });
 
-  it("still fails a lost bug when only the osv.dev data differs, since that hash also covers the adapter's own messages", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV, OSV_NEW] });
+  it("still fails a lost bug when only the osv.dev data differs, since that hash also covers the adapter's own messages", async () => {
+    const r = gate(await acceptedIndex(), { demo: [OSV, OSV_NEW] });
     expect(r.status, r.out).toBe(1);
-    const lost = gate(acceptedIndex(), { demo: [OSV_NEW] });
+    const lost = gate(await acceptedIndex(), { demo: [OSV_NEW] });
     expect(lost.status, lost.out).toBe(1);
     expect(lost.out).toMatch(/osv\.dev advisory data/);
     expect(lost.out).toMatch(/shell-rm-unquoted/);
@@ -278,16 +278,16 @@ describe("a scanner change that lowers the score passes while the rule packs dif
 });
 
 describe("two passes that differ are judged by the first", () => {
-  it("refuses a run whose identical.json says its two passes differ, and names the difference", () => {
-    const r = gate(acceptedIndex(), { identical: false });
+  it("refuses a run whose identical.json says its two passes differ, and names the difference", async () => {
+    const r = gate(await acceptedIndex(), { identical: false });
     expect(r.status, r.out).toBe(2);
     expect(r.out).toMatch(/two passes/i);
     expect(r.out).toContain("samples/demo-polyglot/scan/1/report/scan.json");
     expect(r.summary).toMatch(/two passes/i);
   });
 
-  it("refuses a scored run with no identical.json, which was never checked in a second pass", () => {
-    const r = gate(acceptedIndex(), { identical: null });
+  it("refuses a scored run with no identical.json, which was never checked in a second pass", async () => {
+    const r = gate(await acceptedIndex(), { identical: null });
     expect(r.status, r.out).toBe(2);
     expect(r.out).toMatch(/identical\.json/);
     expect(r.out).toMatch(/--check-identical/);
@@ -296,9 +296,9 @@ describe("two passes that differ are judged by the first", () => {
 });
 
 describe("a regression against a newer entry accepted on main passes", () => {
-  it("fails a run that equals the branch's older accepted run but lost a bug main's newer accepted run finds", () => {
-    const main = acceptedIndex({ ...BRANCH });
-    const branch = acceptedIndex({ demo: [OSV] });
+  it("fails a run that equals the branch's older accepted run but lost a bug main's newer accepted run finds", async () => {
+    const main = await acceptedIndex({ ...BRANCH });
+    const branch = await acceptedIndex({ demo: [OSV] });
     const r = gate(main, { demo: [OSV] }, { branchIndex: branch.index });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
@@ -306,9 +306,9 @@ describe("a regression against a newer entry accepted on main passes", () => {
     expect(r.out).toContain(`against the run main accepts, ${BRANCH.runId}`);
   });
 
-  it("passes a higher score that this branch accepts, says the branch accepts another run, and still compares with main's", () => {
-    const main = acceptedIndex({ demo: [OSV] });
-    const branch = acceptedIndex({ ...BRANCH });
+  it("passes a higher score that this branch accepts, says the branch accepts another run, and still compares with main's", async () => {
+    const main = await acceptedIndex({ demo: [OSV] });
+    const branch = await acceptedIndex({ ...BRANCH });
     const r = gate(main, {}, { branchIndex: branch.index });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toContain(`This branch's index accepts ${BRANCH.runId} for this group, and main's accepts ${ACCEPTED.runId}`);
@@ -317,27 +317,27 @@ describe("a regression against a newer entry accepted on main passes", () => {
     expect(r.summary).toContain("This branch's index accepts");
   });
 
-  it("fails a changed score when the branch's accepted run is not this run's score", () => {
-    const main = acceptedIndex({ demo: [OSV] });
-    const branch = acceptedIndex({ ...BRANCH, demo: [SC2115, OSV, STRAY] });
+  it("fails a changed score when the branch's accepted run is not this run's score", async () => {
+    const main = await acceptedIndex({ demo: [OSV] });
+    const branch = await acceptedIndex({ ...BRANCH, demo: [SC2115, OSV, STRAY] });
     const r = gate(main, {}, { branchIndex: branch.index });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/does not match this run/);
   });
 
-  it("fails a drop against main though the branch accepts it", () => {
-    const main = acceptedIndex();
-    const branch = acceptedIndex({ ...BRANCH, demo: [OSV] });
+  it("fails a drop against main though the branch accepts it", async () => {
+    const main = await acceptedIndex();
+    const branch = await acceptedIndex({ ...BRANCH, demo: [OSV] });
     const r = gate(main, { demo: [OSV] }, { branchIndex: branch.index });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/regression/i);
     expect(r.out).toContain("This branch's index accepts");
   });
 
-  it("judges the run against the branch's entry when main accepts none yet, and fails when neither does", () => {
+  it("judges the run against the branch's entry when main accepts none yet, and fails when neither does", async () => {
     const root = tempDir("oq-bench-scan-trend-");
     const empty = { root, index: join(root, "index") };
-    const branch = acceptedIndex({ ...BRANCH });
+    const branch = await acceptedIndex({ ...BRANCH });
     const r = gate(empty, {}, { branchIndex: branch.index });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toMatch(/main accepts no scanner-only run for this group yet/);
@@ -350,11 +350,11 @@ describe("a regression against a newer entry accepted on main passes", () => {
 });
 
 describe("a model, or anyone people.json does not list, accepts a baseline", () => {
-  it("refuses --by naming a model, an agent or a name people.json does not list", () => {
+  it("refuses --by naming a model, an agent or a name people.json does not list", async () => {
     const root = tempDir("oq-bench-scan-trend-");
     const index = join(root, "index");
     const run = scanRun(join(root, "results"), ACCEPTED);
-    publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
+    await publishRun(run, { dryRun: true, writeIndex: true, runs: join(index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
     for (const by of ["Claude Opus 5.5", "gpt-6.1-sol", "the session", "Somebody Else"]) {
       const r = trend(["--accept", ACCEPTED.runId, "--by", by, "--index", index, "--results", dirname(run)]);
       expect(r.status, `${by}: ${r.out}`).toBe(2);
@@ -365,8 +365,8 @@ describe("a model, or anyone people.json does not list, accepts a baseline", () 
 });
 
 describe("a run that lacked a scanner is judged as a scanner change", () => {
-  it("fails a run whose manifest says a scanner was not installed, and names it", () => {
-    const r = gate(acceptedIndex(), { demo: [OSV], missing: ["shellcheck"] });
+  it("fails a run whose manifest says a scanner was not installed, and names it", async () => {
+    const r = gate(await acceptedIndex(), { demo: [OSV], missing: ["shellcheck"] });
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/shellcheck/);
     expect(r.out).toMatch(/not installed/);
@@ -374,10 +374,10 @@ describe("a run that lacked a scanner is judged as a scanner change", () => {
 });
 
 describe("the plain trend compares scanner-only entries with the review runs' noise test", () => {
-  it("raises the alarm when a newer scanner-only entry in the index lost a bug the accepted one found", () => {
-    const at = acceptedIndex();
+  it("raises the alarm when a newer scanner-only entry in the index lost a bug the accepted one found", async () => {
+    const at = await acceptedIndex();
     const run = scanRun(join(at.root, "results"), { ...NEXT, demo: [OSV] });
-    publishRun(run, { dryRun: true, writeIndex: true, runs: join(at.index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
+    await publishRun(run, { dryRun: true, writeIndex: true, runs: join(at.index, "runs"), out: tempDir("oq-bench-scan-trend-asset-") });
     const r = trend(["--mode", "scan", "--index", at.index]);
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/shell-rm-unquoted/);
