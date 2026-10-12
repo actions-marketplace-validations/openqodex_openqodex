@@ -167,8 +167,8 @@ function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | typeof TI
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function installedResolution(root: string, tool: string, recipe: Recipe): Promise<ToolResolution> {
-  return { ok: true, tool: await resolvedTool(root, tool, recipe) };
+async function installedResolution(root: string, tool: string, recipe: Recipe, probeHome?: string): Promise<ToolResolution> {
+  return { ok: true, tool: await resolvedTool(root, tool, recipe, probeHome) };
 }
 
 function failedResolution(root: string, tool: string): ToolResolution {
@@ -179,7 +179,7 @@ function failedResolution(root: string, tool: string): ToolResolution {
 // Starts the install in a detached process, so it keeps going if this process
 // exits, and waits for it until `deadline` (null: no limit). The process
 // installs into the tools folder of `home`.
-function installDetached(entry: string, tool: string, recipe: Recipe, home: string, deadline: number | null): Promise<ToolResolution> {
+function installDetached(entry: string, tool: string, recipe: Recipe, home: string, deadline: number | null, probeHome?: string): Promise<ToolResolution> {
   const root = toolsDir(home);
   return new Promise((done) => {
     let timer: NodeJS.Timeout | undefined;
@@ -190,7 +190,7 @@ function installDetached(entry: string, tool: string, recipe: Recipe, home: stri
     });
     child.once("exit", () => {
       clearTimeout(timer);
-      done(isInstalled(root, tool, recipe) ? installedResolution(root, tool, recipe) : failedResolution(root, tool));
+      done(isInstalled(root, tool, recipe) ? installedResolution(root, tool, recipe, probeHome) : failedResolution(root, tool));
     });
     if (deadline !== null) {
       timer = setTimeout(() => {
@@ -210,10 +210,14 @@ const NO_RECIPE = "no install recipe; this build cannot run it";
 // then be that home's tools folder. A server fills its own install root with
 // preinstallScanners and reads it with installs off. `installBudgetMs`: how
 // long to wait for the runtime probes and an install; null or left out waits
-// until they finish.
-export type ResolverOptions = { allowInstall: boolean; installRoot?: string; installBudgetMs?: number | null; onProgress?: (line: string) => void };
+// until they finish. `probeHome`: where the Go and Cargo runtime probes keep
+// what those tools write for themselves (Go's telemetry, rustup's settings),
+// never the developer's home folder (install.ts); by default
+// <OpenQodex home>/cache/runtime-probe. A server names one in its scratch
+// root.
+export type ResolverOptions = { allowInstall: boolean; installRoot?: string; installBudgetMs?: number | null; onProgress?: (line: string) => void; probeHome?: string };
 
-type Resolver = { allowInstall: boolean; root: string; home: string; installBudgetMs: number | null; onProgress?: (line: string) => void };
+type Resolver = { allowInstall: boolean; root: string; home: string; installBudgetMs: number | null; onProgress?: (line: string) => void; probeHome?: string };
 
 async function resolveOne(scanner: BuiltinScanner, opts: Resolver): Promise<ToolResolution> {
   // The budget covers everything below, the runtime probes included.
@@ -224,11 +228,11 @@ async function resolveOne(scanner: BuiltinScanner, opts: Resolver): Promise<Tool
   const root = opts.root;
   // The probe is shared and may finish in the background; this caller waits
   // for it only as long as its budget allows.
-  const probe = missingRuntime(recipe);
+  const probe = missingRuntime(recipe, opts.probeHome);
   const runtime = deadline === null ? await probe : await withDeadline(probe, remaining(deadline));
   if (runtime === TIMED_OUT) return { ok: false, status: "not_installed", reason: "still checking for the runtime; it will be included next run" };
   if (runtime) return { ok: false, status: "not_installed", reason: runtime };
-  if (isInstalled(root, scanner, recipe)) return installedResolution(root, scanner, recipe);
+  if (isInstalled(root, scanner, recipe)) return installedResolution(root, scanner, recipe, opts.probeHome);
   const unsupported = unsupportedReason(table, recipe);
   if (unsupported) return { ok: false, status: "not_installed", reason: unsupported };
   if (!opts.allowInstall) return { ok: false, status: "not_installed", reason: "not installed (installs are off)" };
@@ -244,7 +248,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: Resolver): Promise<Tool
       if (deadline !== null && Date.now() >= deadline) return STILL_INSTALLING;
       await sleep(deadline === null ? 250 : Math.min(250, remaining(deadline)));
     }
-    if (isInstalled(root, scanner, recipe)) return installedResolution(root, scanner, recipe);
+    if (isInstalled(root, scanner, recipe)) return installedResolution(root, scanner, recipe, opts.probeHome);
     if (lastInstallError(root, scanner)) return failedResolution(root, scanner);
   }
   // Only starting an install needs a program to start; waiting on another
@@ -252,7 +256,7 @@ async function resolveOne(scanner: BuiltinScanner, opts: Resolver): Promise<Tool
   const worker = workerProgram();
   if ("refusal" in worker) return { ok: false, status: "not_installed", reason: worker.refusal };
   opts.onProgress?.(`installing ${scanner} ${recipe.version} (first run only)`);
-  return installDetached(worker.entry, scanner, recipe, opts.home, deadline);
+  return installDetached(worker.entry, scanner, recipe, opts.home, deadline, opts.probeHome);
 }
 
 // The same folder, however it is spelled (a link on the way, /var and
@@ -274,7 +278,7 @@ export function createToolResolver(opts: ResolverOptions): ResolveTool {
       `installs on demand go only into the OpenQodex home's tools folder (${toolsDir(home)}), not ${root}: fill ${root} with preinstallScanners and read it with allowInstall: false`,
     );
   }
-  const resolver: Resolver = { allowInstall: opts.allowInstall, root, home, installBudgetMs: opts.installBudgetMs ?? null, onProgress: opts.onProgress };
+  const resolver: Resolver = { allowInstall: opts.allowInstall, root, home, installBudgetMs: opts.installBudgetMs ?? null, onProgress: opts.onProgress, probeHome: opts.probeHome };
   const seen = new Map<BuiltinScanner, Promise<ToolResolution>>();
   return (scanner) => {
     let resolution = seen.get(scanner);

@@ -20,7 +20,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import type { ResolvedTool } from "@openqodex/core";
 import { InstallError, downloadVerified, extractArchive, isRegularFileInside, run, smallEnv, which } from "./fetch.js";
@@ -31,6 +31,7 @@ import {
   loadToolchain,
   lockFile,
   markerPath,
+  openqodexHome,
   toolDir,
   versionDir,
   type InstallPlace,
@@ -59,15 +60,80 @@ const GO_OFFLINE = { GOTOOLCHAIN: "local", GOPROXY: "off" };
 
 const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go", cargo: "Cargo (Rust)" };
 
+// The probes leave the developer's home folder as it was. Two runtimes
+// write their own state there: rustup its settings (in RUSTUP_HOME, by
+// default .rustup in the home folder), and Go its telemetry (in the user
+// config folder, on macOS always under the home folder, whatever XDG says).
+// So the Cargo probe is handed RUSTUP_HOME and CARGO_HOME (the developer's
+// when they are there, else folders in the probe home), and the Go probe
+// runs with HOME and the XDG folders in the probe home, handed the
+// developer's Go folders it must find (goHomes), each only when it is
+// there. A version manager's shim (asdf, mise, goenv, rbenv) finds its
+// versions from the home folder: a Go probe that fails in the probe home is
+// run again in the developer's, the way Go itself is run there, and the Ruby
+// probe, which writes nothing, runs there as before.
+
+/** The probes' home when the caller names none: in the OpenQodex home's cache. */
+export function defaultProbeHome(): string {
+  return join(openqodexHome(), "cache", "runtime-probe");
+}
+
+// The probe home, made now; one that cannot be made is replaced by a new
+// folder in the system temp folder.
+function madeProbeHome(probeHome: string): string {
+  try {
+    mkdirSync(probeHome, { recursive: true, mode: 0o700 });
+    return probeHome;
+  } catch {
+    return mkdtempSync(join(tmpdir(), "openqodex-probe-"));
+  }
+}
+
+// The small environment of a probe whose home is `home`: HOME and the XDG
+// folders there.
+function homeEnv(home: string, extra: Record<string, string>): NodeJS.ProcessEnv {
+  const own = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"), XDG_STATE_HOME: join(home, ".local", "state") };
+  return smallEnv({ ...own, ...extra });
+}
+
 // Where the developer keeps Rust: the toolchains (rustup) and the crate
-// cache (Cargo). Paths, not secrets; a probe and a scan need them when they
-// are not the defaults under the home folder.
+// cache (Cargo). Paths, not secrets; a probe and a scan need them. Each is
+// the variable when it is set, else the default folder in the home folder
+// when it is there.
 function rustHomes(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const key of ["CARGO_HOME", "RUSTUP_HOME"]) {
-    const value = process.env[key];
+  for (const [key, folder] of [["CARGO_HOME", ".cargo"], ["RUSTUP_HOME", ".rustup"]] as const) {
+    const value = process.env[key] || (existsSync(join(homedir(), folder)) ? join(homedir(), folder) : "");
     if (value) out[key] = value;
   }
+  return out;
+}
+
+// Go's own folders as the developer's home folder gives them, which the Go
+// probe would otherwise read from its own home: the env file `go env -w`
+// writes, GOPATH with the module cache in it, and the build cache. Each one
+// the env file does not set, when it is there.
+function goHomes(): Record<string, string> {
+  const home = homedir();
+  const mac = process.platform === "darwin";
+  const config = mac ? join(home, "Library", "Application Support") : join(home, ".config");
+  const cache = mac ? join(home, "Library", "Caches") : join(home, ".cache");
+  const out: Record<string, string> = {};
+  const fromFile = new Set<string>();
+  const envFile = join(config, "go", "env");
+  if (existsSync(envFile)) {
+    out.GOENV = envFile;
+    for (const line of readFileSync(envFile, "utf8").split("\n")) {
+      const key = /^\s*([A-Z0-9_]+)=/.exec(line)?.[1];
+      if (key) fromFile.add(key);
+    }
+  }
+  const there = (key: string, dir: string) => {
+    if (!fromFile.has(key) && existsSync(dir)) out[key] = dir;
+  };
+  there("GOPATH", join(home, "go"));
+  if (!fromFile.has("GOPATH")) there("GOMODCACHE", join(home, "go", "pkg", "mod"));
+  there("GOCACHE", join(cache, "go-build"));
   return out;
 }
 
@@ -97,12 +163,17 @@ function pathWith(first: string[]): string {
 }
 
 // One probe per runtime: its version, plus what a scanner run needs from it.
-// Probes run in the user's home folder, never the repo, so a repo's go.mod or
-// .ruby-version cannot change what they do.
-async function probe(runtime: string, file: string): Promise<{ version: string; env: Record<string, string> } | null> {
+// Probes run in the user's home folder or the probe home, never the repo, so
+// a repo's go.mod or .ruby-version cannot change what they do; and they
+// leave the home folder as it was (above).
+async function probe(runtime: string, file: string, probeHome: string): Promise<{ version: string; env: Record<string, string> } | null> {
   const opts = { cwd: homedir(), timeoutMs: PROBE_TIMEOUT_MS };
   if (runtime === "go") {
-    const out = await run(file, ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"], { ...opts, env: smallEnv(GO_OFFLINE) });
+    const args = ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"];
+    const home = madeProbeHome(probeHome);
+    let out = await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, { ...GO_OFFLINE, ...goHomes() }) });
+    // A version manager's shim found nothing in the probe home.
+    if (out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(GO_OFFLINE) });
     if (out.code !== 0) return null;
     const [goversion = "", gopath = "", modcache = "", cache = ""] = out.stdout.split("\n");
     const env: Record<string, string> = { ...GO_OFFLINE, PATH: pathWith([dirname(file)]) };
@@ -117,7 +188,8 @@ async function probe(runtime: string, file: string): Promise<{ version: string; 
     // project's rust-toolchain.toml and could install the toolchain it
     // names; the real cargo and rustc read no such file. RUSTUP_AUTO_INSTALL
     // keeps the probe itself from installing one.
-    const rustup = smallEnv({ ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
+    const home = madeProbeHome(probeHome);
+    const rustup = smallEnv({ CARGO_HOME: join(home, ".cargo"), RUSTUP_HOME: join(home, ".rustup"), ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
     const version = await run(file, ["--version"], { ...opts, env: rustup });
     if (version.code !== 0) return null;
     const rustc = join(dirname(file), "rustc");
@@ -149,18 +221,21 @@ async function probe(runtime: string, file: string): Promise<{ version: string; 
 const runtimeChecks = new Map<string, Promise<Runtime>>();
 
 // Whether the developer's runtime for this tool is here, and the environment
-// the tool needs from it. Checked once per process.
-export function checkRuntime(recipe: Recipe): Promise<Runtime> {
+// the tool needs from it. Checked once per process and probe home, the
+// folder the probe runs in.
+export function checkRuntime(recipe: Recipe, probeHome: string = defaultProbeHome()): Promise<Runtime> {
   const needs = parseNeeds(recipe.needs);
   if (!needs) return Promise.resolve({ reason: null, env: {} });
-  const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}`;
+  // Per probe home too: what a probe answers can lie in its home, and a
+  // server's review removes its own when it ends.
+  const key = `${needs.runtime}>=${needs.minimum ?? ""}|${process.env.PATH ?? ""}|${probeHome}`;
   let check = runtimeChecks.get(key);
   if (!check) {
     check = (async () => {
       const name = runtimeNames[needs.runtime] ?? needs.runtime;
       const reason = needs.minimum ? `needs ${name} ${needs.minimum} or newer` : `needs ${name}`;
       const file = which(needs.runtime);
-      const found = file ? await probe(needs.runtime, file) : null;
+      const found = file ? await probe(needs.runtime, file, probeHome) : null;
       if (!found) return { reason, env: {} };
       if (needs.minimum && !(found.version && atLeast(found.version, needs.minimum))) return { reason, env: {} };
       return { reason: null, env: found.env };
@@ -170,15 +245,15 @@ export function checkRuntime(recipe: Recipe): Promise<Runtime> {
   return check;
 }
 
-export async function missingRuntime(recipe: Recipe): Promise<string | null> {
-  return (await checkRuntime(recipe)).reason;
+export async function missingRuntime(recipe: Recipe, probeHome?: string): Promise<string | null> {
+  return (await checkRuntime(recipe, probeHome)).reason;
 }
 
 // The resolved tool, with the environment it needs to start from the small
 // scanner environment.
-export async function resolvedTool(root: string, tool: string, recipe: Recipe): Promise<ResolvedTool> {
+export async function resolvedTool(root: string, tool: string, recipe: Recipe, probeHome?: string): Promise<ResolvedTool> {
   const dir = versionDir(root, tool, recipe);
-  const runtime = await checkRuntime(recipe);
+  const runtime = await checkRuntime(recipe, probeHome);
   let env: Record<string, string> = {};
   if (recipe.method === "uv") {
     // semgrep's launcher starts pysemgrep from PATH; the tool's bin folder holds it.
