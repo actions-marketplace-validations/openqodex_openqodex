@@ -51,16 +51,31 @@
 //    scores.
 // 5. A validation is rerun until it passes: each run appends its own line,
 //    pass or fail, and decide.mjs reads only the last.
+// 6. The line names the hash of files other than the code that ran (a rule
+//    file edited while the checks ran): the rule's files are hashed when
+//    this module starts, before any of them is loaded (the static imports
+//    below are Node's and rule-hash.mjs only; the rest is imported after the
+//    hash), the line names that hash, and the files are hashed again under
+//    the ledger's lock before the line is written; a difference refuses the
+//    write.
+// 7. A reader of the ledger sees half a line: the line goes in through
+//    decide.mjs appendLedgerLine (a temp file renamed over the ledger).
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mulberry32, seedOf } from "../lib/interval.mjs";
-import { decisionsPath, loadRun, scoreRun } from "../score.mjs";
-import { GATE_METRICS, comparePairs, makeSide, metricOf, readRulings, runFolder } from "./compare.mjs";
-import { MIN_SEQUENCES, Refusal, alphaAt, decide, primaryVerdict, ruleHash } from "./decide.mjs";
-import { ToolError } from "./leak-check.mjs";
-import { LEDGER, LEVERS_PATH, lockLedger, readLedger } from "./propose.mjs";
+import { ruleHash } from "./rule-hash.mjs";
+
+// The hash of the rule's files as they were when this module started, before
+// any of them was loaded.
+export const HASH_AT_LOAD = ruleHash();
+
+const { mulberry32, seedOf } = await import("../lib/interval.mjs");
+const { decisionsPath, loadRun, scoreRun } = await import("../score.mjs");
+const { GATE_METRICS, comparePairs, makeSide, metricOf, readRulings, runFolder } = await import("./compare.mjs");
+const { MIN_SEQUENCES, Refusal, alphaAt, appendLedgerLine, decide, primaryVerdict } = await import("./decide.mjs");
+const { ToolError } = await import("./leak-check.mjs");
+const { LEDGER, LEVERS_PATH, lockLedger, readLedger } = await import("./propose.mjs");
 
 export const SIM_DEFAULTS = Object.freeze({ seed: "P3-04 validation", cases: 50, cleanCases: 20, bugsPerCase: 3, repeats: 3, looks: 10, sequences: 1000 });
 // The share of cases whose hits the saved harmful change removes.
@@ -346,7 +361,7 @@ function harmDrop(asSaved, withHarm, config, repeat) {
 // ---------------------------------------------------------------------------
 // The ledger line.
 
-export function validationLine({ simulation, saved, at = new Date().toISOString(), id = "VAL-0001", runs = [] }) {
+export function validationLine({ simulation, saved, at = new Date().toISOString(), id = "VAL-0001", runs = [], hash = HASH_AT_LOAD }) {
   const fails = [];
   if (simulation.sequences < MIN_SEQUENCES) fails.push(`only ${simulation.sequences} simulated sequences, fewer than ${MIN_SEQUENCES}`);
   if (simulation.accepted > 0) fails.push(`${simulation.accepted} simulated null changes accepted`);
@@ -360,7 +375,7 @@ export function validationLine({ simulation, saved, at = new Date().toISOString(
     id,
     at,
     event: "validation",
-    ruleHash: ruleHash(),
+    ruleHash: hash,
     look: null,
     alpha: null,
     runs,
@@ -372,6 +387,26 @@ export function validationLine({ simulation, saved, at = new Date().toISOString(
 }
 
 const nextId = (lines) => `VAL-${String(lines.reduce((n, l) => Math.max(n, Number(/^VAL-(\d+)$/.exec(l.id)?.[1] ?? 0)), 0) + 1).padStart(4, "0")}`;
+
+// Writes one validation line under the ledger's lock: `build(id)` makes the
+// line with the next VAL id. The rule's files are hashed again first, and
+// the line is refused when they are not the files `hashAtLoad` (taken
+// before the checks loaded them) names (failure 6). Returns the line.
+export function writeValidationLine({ ledger, build, hashAtLoad = HASH_AT_LOAD }) {
+  mkdirSync(dirname(ledger), { recursive: true });
+  const lock = lockLedger(ledger);
+  try {
+    const now = ruleHash();
+    if (now !== hashAtLoad) throw new Refusal(`refused: the rule's files changed while the validation ran (hash ${hashAtLoad.slice(0, 12)} when they were loaded, ${now.slice(0, 12)} now); nothing is written, validate again`);
+    const line = build(nextId(readLedger(ledger)));
+    if (line.ruleHash !== hashAtLoad) throw new Refusal(`refused: the line names the rule hash ${String(line.ruleHash).slice(0, 12)}, not the ${hashAtLoad.slice(0, 12)} of the code that ran`);
+    if (!lock.held()) throw new Refusal(`the ledger lock ${ledger}.lock was taken over; nothing is written, validate again`);
+    appendLedgerLine(ledger, line);
+    return line;
+  } finally {
+    lock.release();
+  }
+}
 
 function parseArgs(argv) {
   const o = { runs: [], ledger: LEDGER, decisions: decisionsPath, sequences: SIM_DEFAULTS.sequences, looks: SIM_DEFAULTS.looks, dryRun: false, json: false };
@@ -422,17 +457,7 @@ function main() {
       console.log(o.json ? JSON.stringify(line, null, 2) : `${summary(line)}\n(dry run: nothing written)`);
       process.exit(line.pass ? 0 : 1);
     }
-    mkdirSync(dirname(o.ledger), { recursive: true });
-    const lock = lockLedger(o.ledger);
-    let line;
-    try {
-      const lines = readLedger(o.ledger);
-      line = validationLine({ simulation, saved, runs, id: nextId(lines) });
-      if (!lock.held()) throw new Refusal(`the ledger lock ${o.ledger}.lock was taken over; nothing is written, validate again`);
-      appendFileSync(o.ledger, `${JSON.stringify(line)}\n`);
-    } finally {
-      lock.release();
-    }
+    const line = writeValidationLine({ ledger: o.ledger, build: (id) => validationLine({ simulation, saved, runs, id }) });
     console.log(o.json ? JSON.stringify(line, null, 2) : `${summary(line)}\nWritten to ${o.ledger} as ${line.id}.`);
     process.exit(line.pass ? 0 : 1);
   } catch (error) {

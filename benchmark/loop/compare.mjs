@@ -35,7 +35,8 @@
 // for like readings (lower against lower, upper against upper) say whether
 // anything changed; compare.mjs prints those as its verdict: better, worse,
 // mixed (one bound each way) or no change, at --alpha split across the
-// gate metrics and both directions.
+// gate metrics and both directions, and halved again across the two bounds
+// of a metric whose bounds differ.
 //
 // Exit codes: 0 compared; 2 refused (the runs cannot be paired) or failed.
 //
@@ -65,6 +66,9 @@
 //    comparable.
 // 10. Pooling two suites mixes their case ids: a cluster key carries its
 //    suite.
+// 11. A metric with two bounds gets two chances to reject no change in one
+//    direction within one share: each like for like reading is tested at
+//    half the share, or once at the whole share when both are the same sums.
 import { existsSync, realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -226,17 +230,26 @@ function metricResult(pairs, metric, { seedParts, alpha }) {
   const upperReading = sameSums(upper, lower) ? lowerReading : reading(upper, metric, { seed: seedFor("upper"), alpha });
   const decision = sameSums(decisionSums, lower) ? lowerReading : reading(decisionSums, metric, { seed: seedFor("decision"), alpha });
   const strip = ({ parent, candidate, delta, lo, hi, pBetter, pWorse, measured, comparable, changed, clusters, method }) => ({ parent, candidate, delta, lo, hi, pBetter, pWorse, measured, comparable, changed, clusters, method });
-  return { metric: metric.name, ...decision, like: { lower: strip(lowerReading), upper: strip(upperReading) } };
+  return { metric: metric.name, ...decision, like: { same: upperReading === lowerReading, lower: strip(lowerReading), upper: strip(upperReading) } };
 }
 
-// The verdict of a like for like reading at `alpha`: whether the candidate
-// is better, worse, or neither, on each bound.
+// The verdict of the like for like readings at `alpha` in each direction:
+// whether the candidate is better, worse, both on different bounds (mixed),
+// or neither. A metric with two bounds has two readings and so two chances
+// to reject no change in a direction: each is tested at half of `alpha`,
+// which keeps the chance of a wrong verdict in a direction at `alpha`
+// (failure 11). Splitting is kept over asking both bounds to agree, because
+// a change in one bound alone (a candidate that adds findings nobody has
+// ruled on moves the lower bound and not the upper) is a change to report.
+// When both bounds are the same sums (nothing unresolved), the one reading
+// is tested once at the whole of `alpha`.
 export function changeVerdict(result, alpha) {
   if (!result.measured) return "not measured";
   if (!result.comparable) return "not comparable";
-  const readings = result.like ? [result.like.lower, result.like.upper] : [result];
-  const better = readings.some((r) => r.comparable && r.pBetter <= alpha);
-  const worse = readings.some((r) => r.comparable && r.pWorse <= alpha);
+  const readings = !result.like ? [result] : result.like.same ? [result.like.lower] : [result.like.lower, result.like.upper];
+  const each = alpha / readings.length;
+  const better = readings.some((r) => r.comparable && r.pBetter <= each);
+  const worse = readings.some((r) => r.comparable && r.pWorse <= each);
   return better && worse ? "mixed" : better ? "better" : worse ? "worse" : "no change";
 }
 
@@ -494,7 +507,7 @@ function main() {
     }
     if (o.json) console.log(JSON.stringify({ alpha, family: o.alpha, ...result }, null, 2));
     else {
-      console.log(`Paired comparison, candidate minus parent, by the sign-flip test over clusters (a case on planted suites, a repository group on real ones, every repeat inside it). The verdict reads lower against lower and upper against upper at one-sided alpha ${alpha.toPrecision(3)} each (${o.alpha} over ${GATE_METRICS.length} gate metrics, both directions); the acceptance rule reads the bound worse for the change.\n`);
+      console.log(`Paired comparison, candidate minus parent, by the sign-flip test over clusters (a case on planted suites, a repository group on real ones, every repeat inside it). The verdict reads lower against lower and upper against upper at one-sided alpha ${alpha.toPrecision(3)} per metric and direction (${o.alpha} over ${GATE_METRICS.length} gate metrics, both directions), halved across the two bounds when they differ; the acceptance rule reads the bound worse for the change.\n`);
       console.log(renderComparison(result, { alpha }));
     }
     process.exit(0);

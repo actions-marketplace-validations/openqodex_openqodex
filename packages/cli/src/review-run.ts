@@ -20,7 +20,7 @@
 import { join, relative, resolve } from "node:path";
 import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
 import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
-import { DEPTH_ENV, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
+import { DEPTH_ENV, TIMED_OUT, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
 import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
 import { createToolResolver } from "@openqodex/scanners";
 import { announceRepoFiles } from "./agents/repo-folder.js";
@@ -35,7 +35,19 @@ import { writeHomeLastReview, writeHomeReceipt } from "./receipts.js";
 import { readReviewerSettings } from "./reviewers/settings.js";
 import { dropTempRef, resolveTarget } from "./target.js";
 
-export const DEFAULT_TIMEOUT_SECONDS = 600;
+// How long a review runs before its reviewer is stopped, when --timeout
+// does not say: a change, a branch or a pull request, and the whole
+// repository (--all).
+export const CHANGE_TIMEOUT_SECONDS = 1800;
+export const ALL_TIMEOUT_SECONDS = 7200;
+
+// The line a review stopped at its cap prints and reports: the cap in whole
+// minutes (else in seconds), and the flag that raises it.
+function timedOutLine(timeoutMs: number): string {
+  const seconds = Math.round(timeoutMs / 1000);
+  const cap = seconds % 60 === 0 ? `${seconds / 60} minute` : `${seconds} second`;
+  return `${TIMED_OUT} at the ${cap} cap; pass --timeout <seconds> to allow more`;
+}
 
 // The order `auto` tries them in, after the agent running the command.
 const DRIVERS: ReviewerDriver[] = [claudeDriver, codexDriver, cursorDriver];
@@ -337,7 +349,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   let code: number = EXIT_OK;
   try {
     await runReviewCore(
-      { repoRoot, config, scope: o.scope, all: o.all, target: o.target, overlay: o.overlay, only, skip, noGraph: o.noGraph, reviewer: choice, web, timeoutMs: o.timeoutMs, runtimeVersion: __OPENQODEX_VERSION__ },
+      { repoRoot, config, scope: o.scope, all: o.all, target: o.target, overlay: o.overlay, only, skip, noGraph: o.noGraph, reviewer: choice, web, timeoutMs: o.timeoutMs, timedOut: timedOutLine(o.timeoutMs), runtimeVersion: __OPENQODEX_VERSION__ },
       {
         ...parts,
         clock,
