@@ -88,9 +88,10 @@ const SEPS = sep === "\\" ? /[\\/]/ : "/";
 // The root a path starts from (`/`, `F:\`, `\\server\share\`) and the names
 // below it. Starting every path at `sep` would make the drive a name: on
 // Windows `F:\a` became the folder `\F:` and a mkdir of `F:\F:`.
-function split(path: string): { root: string; names: string[] } {
-  const root = parse(path).root;
-  return { root, names: path.slice(root.length).split(SEPS) };
+export function split(path: string, paths = { parse, sep }): { root: string; names: string[] } {
+  const root = paths.parse(path).root;
+  const separators = paths.sep === "\\" ? /[\\/]/ : "/";
+  return { root, names: path.slice(root.length).split(separators) };
 }
 
 // Walks `path` as the system does. `followLast`: a link as the last name is

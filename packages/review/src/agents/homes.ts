@@ -11,13 +11,15 @@
 // at another folder than the agent reads.
 import { isAbsolute, join, parse, sep } from "node:path";
 
-// A root (`/`, `F:\`) keeps its slash: `F:` alone names the current folder
-// on that drive. isAbsolute, not a leading `/`, since a Windows path starts
-// with its drive.
-function fromEnv(value: string | undefined): string | null {
+// Trailing slashes go, but never into the root (`/`, `F:\`): `F:` alone
+// names the current folder on that drive. The first character always stays:
+// `\` on Linux and macOS names a folder. isAbsolute, not a leading `/`,
+// since a Windows path starts with its drive.
+export function fromEnv(value: string | undefined, paths = { parse, sep, isAbsolute }): string | null {
   if (value === undefined || value === "") return null;
-  const trimmed = value.length > parse(value).root.length ? value.replace(/[\\/]+$/, "") : value;
-  return isAbsolute(trimmed) ? trimmed : `${process.cwd()}${sep}${trimmed}`;
+  const keep = Math.max(1, paths.parse(value).root.length);
+  const trimmed = value.slice(0, keep) + value.slice(keep).replace(/[\\/]+$/, "");
+  return paths.isAbsolute(trimmed) ? trimmed : `${process.cwd()}${paths.sep}${trimmed}`;
 }
 
 export function claudeHome(home: string, env: NodeJS.ProcessEnv = process.env): string {
