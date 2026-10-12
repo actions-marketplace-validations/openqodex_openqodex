@@ -17,10 +17,16 @@
 // 4. A server run's probe writes outside its scratch root, or fails the
 //    scanner when it may not: a run with a scratch root probes there,
 //    whatever probe home its resolver would use by default.
+// From the code review of the probe home (sol):
+// 5. A Go probe run in the developer's home folder (a shim's retry, or a
+//    probe home that cannot be made) writes Go's telemetry there.
+// 6. An empty ~/.rustup is handed to a rustup proxy, which writes its
+//    settings.toml there before it fails.
+// 7. An unreadable Go environment file makes the whole check reject.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
@@ -136,5 +142,70 @@ describe("a server run's runtime probe writes outside its scratch root", () => {
     expect(golangci?.reason ?? "").not.toMatch(/EACCES|permission/);
     for (const dir of Object.values(watched)) expect(readdirSync(dir), dir).toEqual([]);
     expect(readdirSync(join(scratchRoot, "cache"))).toContain("runtime-probe");
+  }, 120_000);
+});
+
+// The Go recipe's runtime check, in this process, with HOME set to `home`
+// for the call.
+async function goCheck(home: string, probeHome: string) {
+  const saved = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const { checkRuntime } = await import("../src/toolchain/install.js");
+    const { loadToolchain } = await import("../src/toolchain/table.js");
+    return await checkRuntime(loadToolchain().tools.golangci!, probeHome);
+  } finally {
+    process.env.HOME = saved;
+  }
+}
+
+// The user config folder Go reads its environment file from, under `home`.
+const goConfig = (home: string) => (process.platform === "darwin" ? join(home, "Library", "Application Support", "go") : join(home, ".config", "go"));
+
+describe("a Go probe run in the developer's home folder writes Go's telemetry there", () => {
+  const haveGo = spawnSync("go", ["version"], { encoding: "utf8" }).status === 0;
+
+  it.skipIf(!haveGo)("finds Go and leaves the home folder empty when the probe home cannot be made", async () => {
+    const home = tempDir("oq-probe-host-");
+    const locked = tempDir("oq-probe-locked-");
+    chmodSync(locked, 0o555);
+    try {
+      const found = await goCheck(home, join(locked, "probe"));
+      expect(found.reason).toBeNull();
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+    expect(readdirSync(home)).toEqual([]);
+  }, 120_000);
+});
+
+describe("an empty ~/.rustup is handed to a rustup proxy", () => {
+  // The cargo on PATH, when it is one of rustup's proxies: a link to rustup,
+  // or the same file as the rustup beside it.
+  const cargo = spawnSync("sh", ["-c", "command -v cargo"], { encoding: "utf8" }).stdout.trim();
+  const beside = join(dirname(cargo), "rustup");
+  const proxy = cargo !== "" && (basename(realpathSync(cargo)).startsWith("rustup") || (existsSync(beside) && statSync(beside).ino === statSync(cargo).ino));
+
+  it.skipIf(!proxy)("reports Cargo absent, naming rustup, and writes nothing into ~/.rustup", () => {
+    const home = tempDir("oq-probe-dev-");
+    mkdirSync(join(home, ".rustup"));
+    const env = envWith(home, { OPENQODEX_HOME: tempDir("oq-probe-oqhome-") });
+    const code = `import { toolStatuses } from ${JSON.stringify(DIST)}; const s = await toolStatuses(); process.stdout.write(JSON.stringify(s.find((x) => x.scanner === "cargo-deny")));`;
+    const p = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env, encoding: "utf8", timeout: 120_000 });
+    const status = JSON.parse(p.stdout);
+    expect(status.state).toBe("needs_runtime");
+    expect(status.detail).toMatch(/rustup/);
+    expect(readdirSync(join(home, ".rustup"))).toEqual([]);
+  }, 180_000);
+});
+
+describe("an unreadable Go environment file makes the whole check reject", () => {
+  const haveGo = spawnSync("go", ["version"], { encoding: "utf8" }).status === 0;
+
+  it.skipIf(!haveGo)("answers that Go cannot be checked, naming the file, when the file is a folder", async () => {
+    const home = tempDir("oq-probe-host-");
+    mkdirSync(join(goConfig(home), "env"), { recursive: true });
+    const found = await goCheck(home, tempDir("oq-probe-review-"));
+    expect(found.reason).toMatch(/go\/env/);
   }, 120_000);
 });

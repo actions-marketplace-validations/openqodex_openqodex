@@ -17,6 +17,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -65,13 +66,21 @@ const runtimeNames: Record<string, string> = { ruby: "Ruby", go: "Go", cargo: "C
 // default .rustup in the home folder), and Go its telemetry (in the user
 // config folder, on macOS always under the home folder, whatever XDG says).
 // So the Cargo probe is handed RUSTUP_HOME and CARGO_HOME (the developer's
-// when they are there, else folders in the probe home), and the Go probe
-// runs with HOME and the XDG folders in the probe home, handed the
-// developer's Go folders it must find (goHomes), each only when it is
-// there. A version manager's shim (asdf, mise, goenv, rbenv) finds its
-// versions from the home folder: a Go probe that fails in the probe home is
-// run again in the developer's, the way Go itself is run there, and the Ruby
-// probe, which writes nothing, runs there as before.
+// installed ones, else folders in the probe home), and a rustup proxy with
+// no installed rustup behind it is not run at all. The Go probe runs with
+// HOME and the XDG folders in the probe home, handed the developer's Go
+// folders it must find (goHomes), and Go's telemetry goes nowhere
+// (NO_TELEMETRY). A version manager's shim (asdf, mise, goenv, rbenv) finds
+// its versions from the home folder: a Go probe that fails in the probe home
+// is run again in the developer's, with the same folders and no telemetry,
+// and the Ruby probe, which writes nothing, runs there as before.
+
+// Where the go command keeps its telemetry counters: the go command reads
+// TEST_TELEMETRY_DIR for that folder (GOTELEMETRY is read only, and an
+// environment value of off changes nothing: Go 1.25 still wrote eight files
+// in the home folder), and a folder that cannot be made turns the counters
+// off. A folder under /dev/null can never be made.
+const NO_TELEMETRY = "/dev/null/openqodex-no-telemetry";
 
 /** The probes' home when the caller names none: in the OpenQodex home's cache. */
 export function defaultProbeHome(): string {
@@ -97,24 +106,49 @@ function homeEnv(home: string, extra: Record<string, string>): NodeJS.ProcessEnv
   return smallEnv({ ...own, ...extra });
 }
 
-// Where the developer keeps Rust: the toolchains (rustup) and the crate
-// cache (Cargo). Paths, not secrets; a probe and a scan need them. Each is
-// the variable when it is set, else the default folder in the home folder
-// when it is there.
+// Where an installed rustup keeps its toolchains: RUSTUP_HOME when it is
+// set, else ~/.rustup when it holds toolchains or rustup's settings; null
+// when there is none. An empty ~/.rustup is no installation, and a proxy
+// handed it would write its settings there.
+function rustupHome(): string | null {
+  if (process.env.RUSTUP_HOME) return process.env.RUSTUP_HOME;
+  const dir = join(homedir(), ".rustup");
+  return existsSync(join(dir, "toolchains")) || existsSync(join(dir, "settings.toml")) ? dir : null;
+}
+
+// Whether `file` is one of rustup's proxies: a link to rustup, or the same
+// file as the rustup beside it.
+function isRustupProxy(file: string): boolean {
+  try {
+    if (basename(realpathSync(file)).startsWith("rustup")) return true;
+    const beside = join(dirname(file), "rustup");
+    if (!existsSync(beside)) return false;
+    const [a, b] = [statSync(file), statSync(beside)];
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch {
+    return false;
+  }
+}
+
+// Where the developer keeps Rust: the toolchains (rustup, rustupHome) and
+// the crate cache (Cargo: CARGO_HOME when it is set, else ~/.cargo when it
+// is there). Paths, not secrets; a probe and a scan need them.
 function rustHomes(): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [key, folder] of [["CARGO_HOME", ".cargo"], ["RUSTUP_HOME", ".rustup"]] as const) {
-    const value = process.env[key] || (existsSync(join(homedir(), folder)) ? join(homedir(), folder) : "");
-    if (value) out[key] = value;
-  }
+  const cargo = process.env.CARGO_HOME || (existsSync(join(homedir(), ".cargo")) ? join(homedir(), ".cargo") : "");
+  if (cargo) out.CARGO_HOME = cargo;
+  const rustup = rustupHome();
+  if (rustup) out.RUSTUP_HOME = rustup;
   return out;
 }
 
-// Go's own folders as the developer's home folder gives them, which the Go
-// probe would otherwise read from its own home: the env file `go env -w`
-// writes, GOPATH with the module cache in it, and the build cache. Each one
-// the env file does not set, when it is there.
-function goHomes(): Record<string, string> {
+// Go's own folders for a probe, which it would otherwise derive from the
+// home folder it runs with: the env file `go env -w` writes, GOPATH with the
+// module cache in it, and the build cache. Each one the env file sets is
+// left to it; else the developer's when it is there; else one in the probe
+// home, when there is one. { problem } when the env file is there and
+// cannot be read.
+function goHomes(probeHome: string | null): { env: Record<string, string> } | { problem: string } {
   const home = homedir();
   const mac = process.platform === "darwin";
   const config = mac ? join(home, "Library", "Application Support") : join(home, ".config");
@@ -123,19 +157,27 @@ function goHomes(): Record<string, string> {
   const fromFile = new Set<string>();
   const envFile = join(config, "go", "env");
   if (existsSync(envFile)) {
+    let text: string;
+    try {
+      text = readFileSync(envFile, "utf8");
+    } catch (error) {
+      return { problem: `Go's environment file ${envFile} cannot be read (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})` };
+    }
     out.GOENV = envFile;
-    for (const line of readFileSync(envFile, "utf8").split("\n")) {
+    for (const line of text.split("\n")) {
       const key = /^\s*([A-Z0-9_]+)=/.exec(line)?.[1];
       if (key) fromFile.add(key);
     }
   }
-  const there = (key: string, dir: string) => {
-    if (!fromFile.has(key) && existsSync(dir)) out[key] = dir;
+  const pick = (key: string, mine: string, own: string | null) => {
+    if (fromFile.has(key)) return;
+    if (existsSync(mine)) out[key] = mine;
+    else if (own !== null) out[key] = own;
   };
-  there("GOPATH", join(home, "go"));
-  if (!fromFile.has("GOPATH")) there("GOMODCACHE", join(home, "go", "pkg", "mod"));
-  there("GOCACHE", join(cache, "go-build"));
-  return out;
+  pick("GOPATH", join(home, "go"), probeHome === null ? null : join(probeHome, "go"));
+  if (!fromFile.has("GOPATH")) pick("GOMODCACHE", join(home, "go", "pkg", "mod"), out.GOPATH ? join(out.GOPATH, "pkg", "mod") : null);
+  pick("GOCACHE", join(cache, "go-build"), probeHome === null ? null : join(probeHome, "go-build"));
+  return { env: out };
 }
 
 function parseNeeds(needs: string | undefined): { runtime: string; minimum: string | null } | null {
@@ -167,14 +209,19 @@ function pathWith(first: string[]): string {
 // Probes run in the user's home folder or the probe home, never the repo, so
 // a repo's go.mod or .ruby-version cannot change what they do; and they
 // leave the home folder as it was (above).
-async function probe(runtime: string, file: string, probeHome: string): Promise<{ version: string; env: Record<string, string> } | null> {
+// The probe's answer: what it found, why the runtime cannot be used (a
+// reason the check adds to its own), or null when it is not there.
+async function probe(runtime: string, file: string, probeHome: string): Promise<{ version: string; env: Record<string, string> } | { reason: string } | null> {
   const opts = { cwd: homedir(), timeoutMs: PROBE_TIMEOUT_MS };
   if (runtime === "go") {
     const args = ["env", "GOVERSION", "GOPATH", "GOMODCACHE", "GOCACHE"];
     const home = madeProbeHome(probeHome);
-    let out = home === null ? null : await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, { ...GO_OFFLINE, ...goHomes() }) });
+    const folders = goHomes(home);
+    if ("problem" in folders) return { reason: folders.problem };
+    const goEnv = { ...GO_OFFLINE, TEST_TELEMETRY_DIR: NO_TELEMETRY, ...folders.env };
+    let out = home === null ? null : await run(file, args, { cwd: home, timeoutMs: PROBE_TIMEOUT_MS, env: homeEnv(home, goEnv) });
     // A version manager's shim found nothing in the probe home.
-    if (out === null || out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(GO_OFFLINE) });
+    if (out === null || out.code !== 0) out = await run(file, args, { ...opts, env: smallEnv(goEnv) });
     if (out.code !== 0) return null;
     const [goversion = "", gopath = "", modcache = "", cache = ""] = out.stdout.split("\n");
     const env: Record<string, string> = { ...GO_OFFLINE, PATH: pathWith([dirname(file)]) };
@@ -188,7 +235,9 @@ async function probe(runtime: string, file: string, probeHome: string): Promise<
     // real files. A rustup proxy started inside a project would follow the
     // project's rust-toolchain.toml and could install the toolchain it
     // names; the real cargo and rustc read no such file. RUSTUP_AUTO_INSTALL
-    // keeps the probe itself from installing one.
+    // keeps the probe itself from installing one. A proxy with no installed
+    // rustup behind it has no toolchain to run, and is not started.
+    if (isRustupProxy(file) && rustupHome() === null) return { reason: `${file} is a rustup proxy, and rustup has no toolchain installed (no RUSTUP_HOME, and no toolchains or settings.toml in ~/.rustup)` };
     const home = madeProbeHome(probeHome);
     const own: Record<string, string> = home === null ? {} : { CARGO_HOME: join(home, ".cargo"), RUSTUP_HOME: join(home, ".rustup") };
     const rustup = smallEnv({ ...own, ...rustHomes(), RUSTUP_AUTO_INSTALL: "0" });
@@ -241,6 +290,7 @@ export function checkRuntime(recipe: Recipe, probeHome: string = defaultProbeHom
       const file = which(needs.runtime);
       const found = file ? await probe(needs.runtime, file, probeHome) : null;
       if (!found) return { reason, env: {} };
+      if ("reason" in found) return { reason: `${reason}: ${found.reason}`, env: {} };
       if (needs.minimum && !(found.version && atLeast(found.version, needs.minimum))) return { reason, env: {} };
       return { reason: null, env: found.env };
     })();
