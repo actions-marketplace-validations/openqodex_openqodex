@@ -13,9 +13,11 @@
 // shape a model review reads (server: the base and the head as two
 // commits), or with --shape laptop the shape Claude Code, Codex and scans
 // read (the change uncommitted). run.mjs logs each suite's held-out cases in
-// benchmark/index/heldout-access.jsonl before it builds any. --from <folder>
-// reads the proof.json files of an earlier proof folder instead of running
-// again. --split proves one side only.
+// benchmark/index/heldout-access.jsonl before it builds any. The proof
+// folder's proof-run.json records the commit the proofs ran on. --from
+// <folder> reads the proof.json files of an earlier proof folder instead of
+// running again, and refuses a folder whose proof-run.json records no
+// commit. --split proves one side only.
 //
 // It then writes one summary per suite, which is committed:
 // benchmark/index/proof/<suite>-<date>.json, or <suite>-<side>-<date>.json
@@ -24,7 +26,9 @@
 // upstream's base, head and merge base, the merge base's and the head's tree
 // ids beside the built ones, whether the merge base is an ancestor of the
 // head (with the deepening of the commits cache that answer took, if any),
-// and the reason when the case did not build or prove.
+// and the reason when the case did not build or prove. `commit` is the
+// commit the proofs ran on; `summarisedAt` is the commit of the checkout
+// that wrote the summary, which differs only after --from.
 // Exit codes: 0 every case proved, 1 a case failed (the summary is still
 // written, with the case and its reason), 2 the proof could not run.
 //
@@ -37,7 +41,15 @@
 // 2. A summary holds a machine path: the clone cache, this checkout, the
 //    temp folder and the home folder become <cache>, <checkout>, <tmp> and
 //    <home>, a file URL becomes file://<path>, and any other absolute path
-//    <path>. A summary that still holds one is never written.
+//    <path>, this machine's or another's, a drive letter path included and
+//    one right after a colon. A summary that still holds one is never
+//    written.
+// 3. A proof's flags say its trees match while the tree ids it records
+//    differ: the summary compares the ids itself, and such a case fails
+//    with both ids.
+// 4. A summary of a saved proof folder names the summariser's checkout as
+//    the commit the proofs ran on: --from reads that commit from the
+//    folder's proof-run.json and refuses a folder that records none.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -54,11 +66,15 @@ const RUN = join(benchRoot, "run.mjs");
 
 // ---------- machine paths ----------
 
-// A file URL, and an absolute path that starts a value or follows a space,
-// a quote, a bracket, an equals sign or a comma (so never a URL's path or a
-// path inside a repository).
+// A file URL, and any absolute path: a "/" or a drive letter ("C:\" or
+// "C:/") that does not continue a word, a path or a URL, after any other
+// character, a colon included (cwd:/a/b). So never a URL's path
+// (https://host/a), a path inside a repository (refs/pull/1/head), or the
+// rest of a path the summary already names by its placeholder
+// (<cache>/cases/...).
 const FILE_URL = /file:\/\/[^\s"'`)\]>,;]*/g;
-const ABSOLUTE = /(?<=^|[\s"'`([=,])\/(?![/\s])[^\s"'`)\],;]+/g;
+const ABSOLUTE = /(?<![\w.~/\\-])(?<!<(?:cache|checkout|tmp|home|path)>)(?:\/(?![/\s])|[A-Za-z]:[\\/])[^\s"'`)\],;]+/g;
+const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 // This machine's folders a proof may name, each with the placeholder a
 // summary names it by, longest first, real paths included.
@@ -103,6 +119,9 @@ function caseSummary(id, split, p) {
   if (p.ok !== true || p.error) reasons.push(p.error ?? "its proof says it is not proved");
   else {
     if (!u || p.trees?.base !== true || p.trees?.head !== true) reasons.push("its proof does not show that the built trees are upstream's");
+    // The flags are checked against the tree ids they stand for (failure 3).
+    if (u && (!COMMIT.test(u.mergeBaseTree ?? "") || u.mergeBaseTree !== p.built?.baseTree)) reasons.push(`the built base tree ${p.built?.baseTree ?? "none"} is not upstream's merge base tree ${u.mergeBaseTree ?? "none"}`);
+    if (u && (!COMMIT.test(u.headTree ?? "") || u.headTree !== p.built?.headTree)) reasons.push(`the built head tree ${p.built?.headTree ?? "none"} is not upstream's head tree ${u.headTree ?? "none"}`);
     if (ancestorOfHead !== true) reasons.push(`its merge base is not proved an ancestor of its head: ${p.ancestor?.why ?? "no answer is recorded"}`);
   }
   if (!p.licence?.class) reasons.push("it has no licence class");
@@ -132,7 +151,7 @@ const tally = (values) => values.reduce((n, v) => ({ ...n, [v]: (n[v] ?? 0) + 1 
  * selects ({ id, split }); a proof of a case it does not list is kept too.
  * Machine paths are replaced by placeholders (failure 2).
  */
-export function summariseProofs({ suite, date, shape, proofs, expected, cache = cacheRoot(), commit = null, sources = null, excluded = null }) {
+export function summariseProofs({ suite, date, shape, proofs, expected, cache = cacheRoot(), commit = null, summarisedAt = null, sources = null, excluded = null }) {
   const byId = new Map();
   for (const doc of proofs) for (const p of doc.cases ?? []) byId.set(p.caseId, { p, split: doc.split ?? p.split ?? null });
   const listed = new Set(expected.map((e) => e.id));
@@ -146,6 +165,7 @@ export function summariseProofs({ suite, date, shape, proofs, expected, cache = 
     date,
     shape,
     commit,
+    summarisedAt,
     sources,
     runs: proofs.map((d) => ({ split: d.split ?? null, startedAt: d.startedAt ?? null, proved: d.proved ?? null, failed: d.failed ?? null, heldOut: d.heldOut ?? null, access: d.access ?? [] })),
     counts: {
@@ -174,6 +194,24 @@ export function writeSummary(path, doc, { cache = cacheRoot() } = {}) {
 }
 
 // ---------- the command ----------
+
+/**
+ * The record a proof folder keeps of its run: { version, commit, startedAt,
+ * shape }, commit being the commit the proofs ran on. Throws when the folder
+ * has none, or it names no full commit id (failure 4).
+ */
+export function readProofRun(folder) {
+  const file = join(folder, "proof-run.json");
+  if (!existsSync(file)) throw new Error(`${folder} carries no proof-run.json, so it records no commit its proofs ran on; --from summarises only a folder that records one`);
+  let record;
+  try {
+    record = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`${file} cannot be read (${error.message})`);
+  }
+  if (!COMMIT.test(record?.commit ?? "")) throw new Error(`${file} records no commit its proofs ran on: ${JSON.stringify(record?.commit ?? null)} is not a full commit id`);
+  return record;
+}
 
 function parseArgs(argv) {
   const o = { suites: [], split: null, shape: "server", from: null };
@@ -211,7 +249,14 @@ function main(argv) {
   }
   const stamp = new Date().toISOString();
   const runRoot = o.from ?? join(resultsRoot, `proof-${stamp.replace(/[:.]/g, "-")}`);
-  const commit = git(repoRoot, "rev-parse", "HEAD").trim();
+  const head = git(repoRoot, "rev-parse", "HEAD").trim();
+  // The commit the proofs ran on: read from a saved folder, recorded in a new one (failure 4).
+  let commit = head;
+  if (o.from !== null) commit = readProofRun(o.from).commit;
+  else {
+    mkdirSync(runRoot, { recursive: true });
+    writeFileSync(join(runRoot, "proof-run.json"), `${JSON.stringify({ version: 1, commit, startedAt: stamp, shape: o.shape }, null, 2)}\n`);
+  }
   let failed = 0;
   for (const suite of o.suites) {
     const def = SUITES[suite];
@@ -251,7 +296,7 @@ function main(argv) {
     const excluded = JSON.parse(readFileSync(suiteFile, "utf8")).cases.filter((c) => c.status !== "usable").length;
     const sources = { cases: `benchmark/${def.cases}`, casesSha256: fileSha(suiteFile), split: `benchmark/${def.split}`, splitSha256: fileSha(splitFile) };
     const date = (proofs.map((p) => p.startedAt).filter(Boolean).sort()[0] ?? stamp).slice(0, 10);
-    const summary = summariseProofs({ suite, date, shape: shapes[0], proofs, expected, commit, sources, excluded });
+    const summary = summariseProofs({ suite, date, shape: shapes[0], proofs, expected, commit, summarisedAt: head, sources, excluded });
     const out = join(indexRoot, "proof", `${suite}-${o.split === null || def.heldOutOnly ? "" : `${o.split}-`}${date}.json`);
     try {
       writeSummary(out, summary);

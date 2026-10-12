@@ -15,21 +15,27 @@
 //    did not build, a case with no proof, and a proof that says ok while its
 //    ancestry is unknown.
 // 2. A summary holds a machine path (the clone cache, the temp folder, the
-//    home folder, this checkout), which a committed file must never hold.
+//    home folder, this checkout, or any other absolute path, after a colon
+//    or as a drive letter path too), which a committed file must never hold.
 // 3. The ancestry proof on a commits cache that a later fetch made shallow
 //    answers "history unknown" and stops there, or deepens without end: it
 //    deepens that repository's commits cache up to a bound, records how deep
 //    and how many commits it fetched, and says so when the bound is reached.
-import { execFileSync } from "node:child_process";
+// 4. A summary trusts a proof's flags that its trees match while the tree
+//    ids it records differ.
+// 5. A summary names the checkout that summarised a saved proof folder as
+//    the commit the proof ran on, or summarises a folder that records no
+//    commit.
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { git, gitEnv, repoRoot } from "../lib/cases.mjs";
+import { benchRoot, git, gitEnv, repoRoot } from "../lib/cases.mjs";
 import { mergeBaseAncestry } from "../lib/materialise.mjs";
 import { materialiseOnly } from "../lib/materialise-only.mjs";
-import { machinePathsIn, summariseProofs, writeSummary } from "../proof.mjs";
+import { machinePathsIn, readProofRun, summariseProofs, writeSummary } from "../proof.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -103,20 +109,28 @@ describe("a case whose merge base is not an ancestor of its head is summarised a
     const frozen = prCase(up, { name: "acme__widget-9", mergeBaseSha: up.baseSha });
     const unknown = prCase(up, { name: "acme__widget-10" });
     const missing = prCase(up, { name: "acme__widget-11", split: "test" });
-    expect(prove([good, moved, unknown], cache)).toMatchObject({ proved: 3, failed: 0 });
+    const flagged = prCase(up, { name: "acme__widget-14" });
+    expect(prove([good, moved, unknown, flagged], cache)).toMatchObject({ proved: 4, failed: 0 });
     // The record now names the target branch's tip as the merge base, as a
     // materialiser that took the tip after the target moved would write it.
     editRecord(cache, moved, (r) => {
       r.upstream.mergeBaseSha = up.baseSha;
     });
-    const proof = prove([good, moved, frozen, unknown], cache);
+    const proof = prove([good, moved, frozen, unknown, flagged], cache);
     // A proof edited to say ok while its ancestry is unknown.
     const edited = proof.cases.find((p) => p.caseId === unknown.id);
     Object.assign(edited, { ok: true, error: null, ancestor: { isAncestor: null, why: "history unknown: the commits cache is shallow, and git found no path within it" } });
+    // A proof whose flags say its trees match while the head tree it records is another tree.
+    const wrongTree = proof.cases.find((p) => p.caseId === flagged.id);
+    expect(wrongTree).toMatchObject({ ok: true, trees: { base: true, head: true } });
+    wrongTree.built.headTree = up.baseTree;
 
-    const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [proof], expected: expected([good, moved, frozen, unknown, missing]), cache });
-    expect(summary.counts).toMatchObject({ cases: 5, proved: 1, failed: 4 });
-    expect(summary.failures.map((f) => f.caseId).sort()).toEqual([moved.id, frozen.id, unknown.id, missing.id].sort());
+    const ranOn = "a".repeat(40);
+    const summarisedAt = "b".repeat(40);
+    const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [proof], expected: expected([good, moved, frozen, unknown, missing, flagged]), cache, commit: ranOn, summarisedAt });
+    expect(summary).toMatchObject({ commit: ranOn, summarisedAt });
+    expect(summary.counts).toMatchObject({ cases: 6, proved: 1, failed: 5 });
+    expect(summary.failures.map((f) => f.caseId).sort()).toEqual([moved.id, frozen.id, unknown.id, missing.id, flagged.id].sort());
     const byId = Object.fromEntries(summary.cases.map((c) => [c.caseId, c]));
     expect(byId[good.id]).toMatchObject({ ok: true, split: "dev", licence: { class: "permissive", spdx: "MIT" }, baseSha: up.baseSha, headSha: up.headSha, mergeBaseSha: up.mergeBase, ancestorOfHead: true, trees: { mergeBase: up.baseTree, head: up.headTree, builtBase: up.baseTree, builtHead: up.headTree }, error: null });
     expect(byId[moved.id]).toMatchObject({ ok: false, mergeBaseSha: up.baseSha, ancestorOfHead: false });
@@ -127,6 +141,8 @@ describe("a case whose merge base is not an ancestor of its head is summarised a
     expect(byId[unknown.id].error).toMatch(/not proved an ancestor/);
     expect(byId[missing.id]).toMatchObject({ ok: false, split: "test" });
     expect(byId[missing.id].error).toMatch(/no proof/);
+    expect(byId[flagged.id]).toMatchObject({ ok: false, trees: { head: up.headTree, builtHead: up.baseTree } });
+    expect(byId[flagged.id].error).toContain(`the built head tree ${up.baseTree} is not upstream's head tree ${up.headTree}`);
   });
 });
 
@@ -143,19 +159,24 @@ describe("a summary holds a machine path", () => {
     const proof = prove([gone, damaged], cache);
     // The proof itself names this machine's folders: that is what the summary must not keep.
     expect(JSON.stringify(proof)).toContain(cache);
+    // Another machine's paths, one right after a colon and one with a drive
+    // letter, beside a URL that must stay as it is.
+    const goneProof = proof.cases.find((p) => p.caseId === gone.id);
+    goneProof.error += " (cwd:/Users/another/cache/repo; D:\\work\\repo; C:/work/other; see https://github.com/acme/widget.git)";
 
     const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [proof], expected: expected([gone, damaged]), cache });
     const text = JSON.stringify(summary);
     const real = (p) => realpathSync(p);
-    for (const p of [cache, real(cache), tmpdir(), real(tmpdir()), homedir(), repoRoot]) expect(text).not.toContain(p);
+    for (const p of [cache, real(cache), tmpdir(), real(tmpdir()), homedir(), repoRoot, "/Users/another", "D:", "C:/work"]) expect(text).not.toContain(p);
     expect(machinePathsIn(text)).toEqual([]);
     const byId = Object.fromEntries(summary.cases.map((c) => [c.caseId, c]));
     expect(byId[damaged.id].error).toMatch(/<cache>\/cases\/[0-9a-f]{64}\.git is damaged/);
     expect(byId[gone.id].ok).toBe(false);
     expect(byId[gone.id].error).toMatch(/is gone from file:\/\/<path>/);
+    expect(byId[gone.id].error).toContain("(cwd:<path>; <path>; <path>; see https://github.com/acme/widget.git)");
 
     const file = join(tempDir("oq-proof-out-"), "proof", "aacr-2026-10-11.json");
-    expect(() => writeSummary(file, { ...summary, note: `built in ${cache}` })).toThrow(/machine path/);
+    for (const note of [`built in ${cache}`, "cwd:/Users/another/cache/repo", "at D:\\work\\repo", "(C:/work/other)"]) expect(() => writeSummary(file, { ...summary, note })).toThrow(/machine path/);
     expect(existsSync(file)).toBe(false);
     writeSummary(file, summary);
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(summary);
@@ -193,5 +214,32 @@ describe("the ancestry proof stops at history unknown on a commits cache a later
     const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [again], expected: expected([c]), cache });
     expect(summary.cases[0]).toMatchObject({ ok: true, ancestorOfHead: true, deepening: { depths: [64], commitsAdded: 6 } });
     expect(summary.counts).toMatchObject({ proved: 1, failed: 0, deepened: 1, commitsAdded: 6 });
+  });
+});
+
+describe("a summary of a saved proof folder names the summariser's checkout as the commit the proof ran on", () => {
+  it("reads the commit from the folder's proof-run.json, and refuses a folder that records none before writing anything", () => {
+    const folder = tempDir("oq-proof-from-");
+    mkdirSync(join(folder, "martian-test"));
+    writeFileSync(join(folder, "martian-test", "proof.json"), `${JSON.stringify({ version: 1, purpose: "materialise-only", suite: "martian", split: "test", subset: null, shape: "server", startedAt: "1999-01-01T00:00:00.000Z", proved: 0, failed: 0, heldOut: 0, access: [], cases: [] })}\n`);
+    // Its date is one no real summary has, so a summary written by mistake
+    // is a new file the listing below finds, never an overwrite.
+    const index = join(benchRoot, "index", "proof");
+    const before = existsSync(index) ? readdirSync(index).sort() : [];
+    const summarise = () => spawnSync(process.execPath, [join(benchRoot, "proof.mjs"), "--suite", "martian", "--from", folder], { cwd: repoRoot, encoding: "utf8" });
+
+    let r = summarise();
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/proof-run\.json/);
+    expect(() => readProofRun(folder)).toThrow(/no commit/);
+    writeFileSync(join(folder, "proof-run.json"), `${JSON.stringify({ version: 1, commit: "main", startedAt: "1999-01-01T00:00:00.000Z", shape: "server" })}\n`);
+    r = summarise();
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/no commit/);
+    expect(existsSync(index) ? readdirSync(index).sort() : []).toEqual(before);
+
+    const commit = "c".repeat(40);
+    writeFileSync(join(folder, "proof-run.json"), `${JSON.stringify({ version: 1, commit, startedAt: "1999-01-01T00:00:00.000Z", shape: "server" })}\n`);
+    expect(readProofRun(folder)).toMatchObject({ commit, shape: "server" });
   });
 });
