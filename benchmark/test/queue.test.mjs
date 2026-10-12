@@ -38,6 +38,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { specHashOf } from "../lib/rulings.mjs";
 import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -66,6 +67,8 @@ const spec = {
   extras: [],
 };
 
+// The spec version a ruling on its truth item names (rules version 8).
+const SPEC = specHashOf(spec);
 const HASH = "cd".repeat(32);
 const CASE_ID = `planted/files@${HASH.slice(0, 8)}`;
 const CONFIG = "claude-graph-on";
@@ -202,7 +205,7 @@ describe("a ruling on one finding transfers to a different issue on the same lin
     const pathId = before.outcomes.find((o) => o.repeat === 1 && o.index === 1).findingId;
     expect(before.outcomes.find((o) => o.repeat === 2).findingId).toBe(pathId);
     expect(sqliId).not.toBe(pathId);
-    writeLines(decisions, [line({ kind: "match", findingId: sqliId, truthId: "sqli" }, "same-issue", "Sid")]);
+    writeLines(decisions, [line({ kind: "match", findingId: sqliId, truthId: "sqli", specHash: SPEC }, "same-issue", "Sid")]);
     const after = scored(run, decisions);
     const byId = (id, repeat) => after.outcomes.find((o) => o.findingId === id && o.repeat === repeat);
     expect(byId(sqliId, 1)).toMatchObject({ outcome: "hit", truthId: "sqli", evidenceKind: "ruling" });
@@ -218,7 +221,7 @@ describe("a ruling on one finding transfers to a different issue on the same lin
     expect(items[0]).toMatchObject({ asks: ["real", "match"], truth: { id: "sqli", file: "app/files.py", lines: [12, 12], text: spec.bugs[0].truth } });
     expect(items[0].occurrences).toHaveLength(2);
     // A ruling on the path traversal stays on the path traversal.
-    writeLines(decisions, [line({ kind: "match", findingId: sqliId, truthId: "sqli" }, "same-issue", "Sid"), line({ kind: "finding", findingId: pathId }, "false", "Sid")]);
+    writeLines(decisions, [line({ kind: "match", findingId: sqliId, truthId: "sqli", specHash: SPEC }, "same-issue", "Sid"), line({ kind: "finding", findingId: pathId }, "false", "Sid")]);
     const last = scored(run, decisions);
     expect(last.outcomes.find((o) => o.findingId === sqliId)).toMatchObject({ outcome: "hit", evidenceKind: "ruling" });
     expect(last.outcomes.filter((o) => o.findingId === pathId).map((o) => o.outcome)).toEqual(["ruled-false", "ruled-false"]);
@@ -297,7 +300,7 @@ describe("a ruling without a person's name changes a score", () => {
     const leak = base.outcomes[1].findingId;
     const sqli = base.outcomes[2].findingId;
     const names = [undefined, "", "  ", "claude", "Codex", "gpt-6.1-sol", "the session", "opus builder"];
-    writeLines(decisions, names.flatMap((by) => [line({ kind: "finding", findingId: leak }, "true", by), line({ kind: "match", findingId: sqli, truthId: "sqli" }, "same-issue", by)]));
+    writeLines(decisions, names.flatMap((by) => [line({ kind: "finding", findingId: leak }, "true", by), line({ kind: "match", findingId: sqli, truthId: "sqli", specHash: SPEC }, "same-issue", by)]));
     const after = scored(run, decisions);
     expect(after.score.byConfig).toEqual(base.score.byConfig);
     expect(after.score.perBug).toEqual(base.score.perBug);
@@ -383,8 +386,8 @@ describe("a status from the adjudication file is refused or dropped", () => {
     expect(queue("add", run, "--queue", q).status).toBe(0);
     const [sqli, path, leak, a, b] = base.outcomes.map((o) => o.findingId.slice(0, 12));
     const steps = [
-      ["confirmed", CASE_ID, "--bug", "sqli"],
-      ["disputed", CASE_ID, "--bug", "sqli"],
+      ["confirmed", CASE_ID, "--bug", "sqli", "--run", run],
+      ["disputed", CASE_ID, "--bug", "sqli", "--run", run],
       ["same-issue", sqli],
       ["different-issue", path],
       ["true", leak],

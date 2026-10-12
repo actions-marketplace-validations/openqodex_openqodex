@@ -36,7 +36,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (7), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. Version 7 credits a custom scanner's rule to that custom scanner, whatever its id, and reads a model review's cost and tokens from its sample record. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
+Every score carries its rules block: the rules version (8), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. Version 7 credits a custom scanner's rule to that custom scanner, whatever its id, and reads a model review's cost and tokens from its sample record. Version 8 applies a person's ruling on a truth item only to the version of the spec it judged (see the review queue below); with no ruling, a score is the same as under version 7. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 
@@ -326,20 +326,24 @@ node benchmark/score.mjs <run>                       # also writes unresolved.js
 node benchmark/queue.mjs add <run>                   # merges it into benchmark/review-queue/<suite>.jsonl
 node benchmark/queue.mjs sheet <suite> [--seed S]    # the blind sheet, as markdown or with --json
 node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <text>] [--sheet <id>]
+node benchmark/queue.mjs decide same-issue <ref> --bug <truth id> --by <your name>
+node benchmark/queue.mjs decide confirmed|disputed <case id> --bug <truth id> --run <run> [--specs <folder>] --by <your name>
 ```
 
 - A finding is the same finding across runs only when its case, its lines and its words (title, problem, consequence, fix) are the same; its id is their sha256. A finding from before those fields existed adds its description and suggested change. Two findings become one issue only when a person consolidates them. A shared line, category, rule or recurrence never groups findings and never carries a ruling from one to another.
 - An unresolved finding within one line of a truth item's lines is a location match: `outcomes.jsonl` names the item with `evidenceKind: "location-only"`, and it finds the item only when a person rules it the same issue.
 - The queue keeps one item per finding: its words, the code at its lines and the change around them as the reviewer's brief showed them (only the code's sha256 when the case's licence is not permissive), the truth item it sits on, and every run, configuration and review it appeared in. `add` refuses a held-out run and drops every question a ruling has answered.
 - The sheet shows the case, the finding, the code and the truth item, in an order drawn from the seed it prints. It shows no run, build, configuration or count, and its text goes through the drop audit's redactor.
+- A ruling on a truth item (`same-issue`, `different-issue`, `confirmed`, `disputed`) judges that item as one version of the case's spec writes it, so it records that version: the sha256 of the spec's JSON with its keys sorted. It counts only when a run is scored against a spec with that hash. A case is edited by making a new version, and a truth item that was wrong in one version can be right in the next. A queue item carries the version it was scored against; a bug ruling takes it from the run `--run` names, from the run's own copy of the spec or from the folder `--specs` names. A line without a version counts for none and is listed as ignored.
+- A finding can be a truth item that it does not sit on, as when a review reports a missing admin check at the action it exposes rather than at the line that removed the check. `decide same-issue <ref> --bug <truth id>` joins them. `decide` records the ruling only when the item is in the finding's own file, in the spec version the finding was scored against, and the finding sits on a line the change added. The scorer then counts the finding as that item's hit.
 - `decide` appends one line to `benchmark/review-queue/decisions.jsonl`, the adjudication file: the target, the status, the person's name, the time, the note and the code the person read. It refuses a name that `benchmark/review-queue/people.json` does not list, and any name with a word that names a model, an agent or a tool: a model never rules. The scorer ignores such a line too and lists it. A person adds a name to `people.json` by hand, in a reviewed pull request.
 
 | Status | Target | Effect on the score |
 |---|---|---|
-| `same-issue`, `different-issue` | a finding and the truth item it sits on | same-issue: the finding finds that item, in recall and precision; different-issue: it never does |
+| `same-issue`, `different-issue` | a finding and the truth item it sits on, or for same-issue one `--bug` names in the finding's file | same-issue: the finding finds that item, in recall and precision; different-issue: it never does; either on that spec version only |
 | `true`, `false` (or `spec-candidate-accepted`, `spec-candidate-rejected`) | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
 | `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
-| `confirmed`, `disputed` | a truth item of a case | labelled in the score's per-bug results; recall is unchanged, since a wrong truth item is fixed by a new case version |
+| `confirmed`, `disputed` | a truth item of a case, in the spec version of the run `--run` names | labelled in the score's per-bug results on that spec version; recall is unchanged, since a wrong truth item is fixed by a new case version |
 | `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
