@@ -14,7 +14,7 @@ OpenQodex is open source AI code review for Claude Code and Codex. It runs befor
 
 - `pnpm build`: builds `@openqodex/core`, `@openqodex/scanners`, `@openqodex/graph`, `@openqodex/review` and `@openqodex/mcp`, then the `openqodex` CLI, then copies the shipped assets beside the bundle.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit), `pnpm test:e2e` (runs the built CLI as a real subprocess).
-- `pnpm gate`: every check in order, stopping at the first failure. It must be green before any push. CI (`.github/workflows/ci.yml`) runs the same steps on Linux and macOS.
+- `pnpm gate`: every check in order, stopping at the first failure. It must be green before any push. CI (`.github/workflows/ci.yml`) runs the same steps: on Linux for a pull request, and on Linux and macOS in the merge queue and on main.
 - `pnpm changeset`: add a changeset to any pull request with a change a user can see.
 - `pnpm docs:index`: regenerates `docs/llms.txt`. The gate checks it with `--check`, and checks the README's facts with `scripts/docs-facts.mjs`.
 
@@ -26,6 +26,14 @@ OpenQodex is open source AI code review for Claude Code and Codex. It runs befor
 - `packages/graph`: the code graph. `packages/review`: the review engine the library uses. `packages/mcp`: the code graph's MCP server.
 - `skills/openqodex/`: the agent skill. `plugins/claude-code/` and `plugins/codex/`: the Claude Code and Codex plugins. `docs/`: the docs, shipped in the package. `examples/demo-repo/`: the sample repo with planted bugs.
 - Assets that ship beside the bundle (lenses, docs, skill, templates, toolchain table, demo) are found at run time relative to the installed package through `assetPath()` in `packages/cli/src/assets.ts`, never from the current directory. `scripts/copy-assets.mjs` copies them into `packages/cli` after the build; the copies are gitignored.
+
+## Pull requests and the merge queue
+
+- A pull request runs one check: the gate on Linux. The macOS gate and the scanner-only benchmark show as skipped.
+- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue. Then it runs the full gate on that result: the gate on Linux, the gate on macOS and the scanner-only benchmark.
+- When the full gate passes, the queue merges the pull request into main. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
+- To run the full gate before the queue, for example on a scanner or installer change, add the label `full-ci` to the pull request.
+- Each push to main runs the full gate again, and the release workflow.
 
 ## Exit codes
 

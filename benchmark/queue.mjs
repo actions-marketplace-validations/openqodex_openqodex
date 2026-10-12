@@ -5,7 +5,8 @@
 //   node benchmark/queue.mjs add <run folder | unresolved file> [--queue <folder>]
 //   node benchmark/queue.mjs sheet <suite> [--seed <n>] [--json] [--queue <folder>]
 //   node benchmark/queue.mjs decide <status> <target>... --by <your name>
-//        [--bug <truth id>] [--note <text>] [--sheet <sheet id>] [--queue <folder>]
+//        [--bug <truth id>] [--run <run folder> [--specs <folder>]]
+//        [--note <text>] [--sheet <sheet id>] [--queue <folder>]
 //
 // add merges a scored run's unresolved.jsonl (score.mjs writes it) into
 // <queue>/<suite>.jsonl, one item per finding, and drops every question the
@@ -21,10 +22,18 @@
 //   true | false <case id>#I<n>                the same for an issue a person consolidated
 //     (spec-candidate-accepted and spec-candidate-rejected are true and false)
 //   same-issue | different-issue <ref>         the finding is, or is not, the truth item it sits on
+//   same-issue <ref> --bug <id>                the finding is truth item <id> of its own file, found at
+//                                              a place the spec does not list
 //   consolidate <ref> <ref>...                 these findings of one case are one issue in different words
-//   confirmed | disputed <case id> --bug <id>  a truth item of the case is right, or wrong
+//   confirmed | disputed <case id> --bug <id> --run <run folder> [--specs <folder>]
+//                                              a truth item of the case, as the spec the run is scored
+//                                              against writes it (its own cases/ copy, or the folder
+//                                              --specs names), is right, or wrong
 //   clean | not-clean <case id>                a candidate clean control has no issue, or has one
 // <ref> is the start of a findingId, 8 hex or more, as the sheet prints it.
+// A ruling on a truth item (same-issue, different-issue, confirmed,
+// disputed) records the version of the spec it judged, and counts only
+// where a run is scored against that version (lib/rulings.mjs).
 // --by names the person who made the ruling, as people.json in the queue
 // folder lists them. A model or an agent never rules: the session may draft
 // rulings, and a person records them.
@@ -40,7 +49,12 @@
 //    refused.
 // 4. A ruling on an issue no person consolidated: refused.
 // 5. A same-issue ruling names a truth item the finding does not sit on:
-//    the truth item is always the one the queue item names.
+//    the truth item is the one the queue item names, unless --bug names
+//    another of the same spec version, in the finding's own file, and the
+//    finding sits on a line the change added there (issue 139: a planted
+//    bug found where it bites, away from its listed lines). Any other
+//    truth item, file or line is refused, and --bug on a status that takes
+//    no truth item is refused rather than ignored.
 // 6. The blind sheet shows the run, the build, the configuration, the arm or
 //    how often a finding recurred, or its order cannot be drawn again: it
 //    carries the case, the finding, the code and the truth item only, every
@@ -52,13 +66,26 @@
 //    from a test split.
 // 8. A crash halfway through add leaves half a queue: the new file is
 //    written beside the old and renamed over it.
+// 9. A ruling on a truth item reaches another version of its case (issue
+//    163): a match ruling takes the spec version from its queue item, and a
+//    bug ruling from the run it names with --run (the case's spec in the
+//    run's cases/, or in the folder --specs names), after checking the run
+//    scored that case and the spec lists that item. A queue item from
+//    before the spec version was recorded is refused until its run is added
+//    again.
+// 10. A bug ruling is recorded against a held-out spec version: --run
+//    refuses a run of the test split, of a suite whose every case is held
+//    out, or of a case the committed split holds out, before any spec is
+//    read, --specs or not (add refuses held-out items the same way, 7).
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { benchRoot } from "./lib/cases.mjs";
+import { benchRoot, parseCaseId, repoRoot } from "./lib/cases.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { mergeQueue, openAsks } from "./lib/queue.mjs";
-import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
+import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems, specHashOf } from "./lib/rulings.mjs";
+import { plannedJobs } from "./lib/score.mjs";
+import { SUITES, readSuite } from "./lib/suites.mjs";
 
 export const queueRoot = join(benchRoot, "review-queue");
 const DECISIONS = "decisions.jsonl";
@@ -200,11 +227,11 @@ export function sheet(suite, { seed, queue = queueRoot } = {}) {
 function knownFindings(queue, lines) {
   const known = new Map();
   const files = existsSync(queue) ? readdirSync(queue).filter((n) => n.endsWith(".jsonl") && n !== DECISIONS) : [];
-  for (const name of files.sort()) for (const i of readJsonl(join(queue, name))) known.set(i.findingId, { caseId: i.caseId, evidence: i.evidence, truth: i.truth, specsFrom: i.specsFrom ?? null });
+  for (const name of files.sort()) for (const i of readJsonl(join(queue, name))) known.set(i.findingId, { caseId: i.caseId, evidence: i.evidence, truth: i.truth, specsFrom: i.specsFrom ?? null, file: i.file, lines: i.lines, specHash: i.specHash ?? null, changedLines: i.changedLines ?? null, truthItems: i.truthItems ?? null });
   for (const l of lines) {
     if (!l || typeof l !== "object" || !l.target) continue;
     const ids = [l.target.findingId, ...(Array.isArray(l.target.members) ? l.target.members : [])].filter((x) => typeof x === "string");
-    for (const id of ids) if (!known.has(id)) known.set(id, { caseId: l.caseId, evidence: l.target.findingId === id ? (l.evidence ?? null) : null, truth: null, specsFrom: l.specsFrom ?? null });
+    for (const id of ids) if (!known.has(id)) known.set(id, { caseId: l.caseId, evidence: l.target.findingId === id ? (l.evidence ?? null) : null, truth: null, specsFrom: l.specsFrom ?? null, file: null, lines: null, specHash: null, changedLines: null, truthItems: null });
   }
   return known;
 }
@@ -218,12 +245,87 @@ function findingOf(ref, known) {
 
 const evidenceOf = (f) => (f.evidence ? { text: f.evidence.text ?? null, lines: f.evidence.lines, sha256: f.evidence.sha256 ?? null } : null);
 
+// A path as a ruling records it: relative to the repository when it lies in
+// it, so no machine path is written.
+const shownPath = (p) => {
+  const r = relative(repoRoot, p);
+  return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : p;
+};
+
+// Why a run is held out, or null: a run of the test split, a run of a suite
+// whose every case is held out, or a run of a case the committed split puts
+// on its test side.
+function heldOutOf(manifest, jobs) {
+  if ((manifest.split ?? "dev") !== "dev") return `is a run of the ${manifest.split} split, which is held out`;
+  const suite = manifest.suite ?? "planted";
+  if (!SUITES[suite]) return null;
+  if (SUITES[suite].heldOutOnly) return `is a run of the ${suite} suite, whose every case is held out`;
+  const test = new Set(readSuite(suite).split?.cases?.test ?? []);
+  const held = [...new Set(jobs.map((j) => j.case))].filter((name) => test.has(name)).sort();
+  return held.length === 0 ? null : `ran ${held.join(", ")}, held out by the ${suite} split`;
+}
+
+// The case and spec version a bug ruling judges, from the run it names: the
+// run's id for the case (its own, or the one a bare <suite>/<name> names),
+// and the case's spec in the run's cases/ copy or in the folder `specs`
+// names, which must list the truth item.
+function specOfRun(run, caseId, bug, specs) {
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(join(run, "manifest.json"), "utf8"));
+  } catch {
+    throw new Error(`refused: ${run} holds no manifest.json that can be read, so it names no run`);
+  }
+  const jobs = plannedJobs(manifest, []).jobs;
+  const held = heldOutOf(manifest, jobs);
+  if (held !== null) throw new Error(`refused: ${run} ${held}, so its spec is never ruled on`);
+  const bare = (id) => {
+    const p = parseCaseId(id);
+    return p ? `${p.suite}/${p.name}` : id;
+  };
+  const named = [...new Map(jobs.filter((j) => j.caseId === caseId || bare(j.caseId) === caseId).map((j) => [j.caseId, j])).values()];
+  if (named.length !== 1) throw new Error(`refused: the run ${run} scored ${named.length === 0 ? "no case" : "more than one case named"} ${caseId}; its cases are ${[...new Set(jobs.map((j) => j.caseId))].sort().join(", ") || "none"}`);
+  const folder = specs ?? join(run, "cases");
+  const file = join(folder, `${named[0].case}.json`);
+  let spec;
+  try {
+    spec = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    throw new Error(`refused: ${file} cannot be read as the spec of ${named[0].caseId}`);
+  }
+  if (!(spec?.bugs ?? []).some((b) => b?.id === bug)) throw new Error(`refused: the spec ${file} lists no truth item ${bug}; it lists ${(spec?.bugs ?? []).map((b) => b?.id).join(", ") || "none"}`);
+  return { caseId: named[0].caseId, specHash: specHashOf(spec), specsFrom: specs ? shownPath(specs) : null };
+}
+
+// The truth item a match ruling judges the finding `f` against: the one
+// the queue item names, or for same-issue the one --bug names, which must
+// be a truth item of the same spec version, in the finding's own file, with
+// the finding on a line the change added there.
+function matchTarget(status, f, bug) {
+  if (!f.specHash) throw new Error(`refused: the queue item of ${f.findingId.slice(0, 12)} names no spec version (it was queued before the version was recorded); add its run to the queue again with queue.mjs add <run>, then rule`);
+  if (bug === null || bug === f.truth?.id) {
+    if (!f.truth) throw new Error(`refused: the queue names no truth item this finding sits on, so there is nothing to rule ${status} against${status === "same-issue" ? "; to join it to a truth item of its own file, name the item with --bug <id>" : ""}`);
+    return f.truth.id;
+  }
+  if (status !== "same-issue") throw new Error(`refused: ${status} answers the truth item the finding sits on${f.truth ? ` (${f.truth.id})` : ""}; --bug names another truth item only for same-issue`);
+  const item = (f.truthItems ?? []).find((t) => t.id === bug);
+  if (!item) throw new Error(`refused: the spec this finding was scored against lists no truth item ${bug}; it lists ${(f.truthItems ?? []).map((t) => t.id).join(", ") || "none"}`);
+  if (!item.files.includes(f.file)) throw new Error(`refused: ${bug} sits in ${item.files.join(", ")}, not in ${f.file}, where the finding is; a same-issue ruling joins a finding only to a truth item of its own file`);
+  if ((f.changedLines ?? []).length === 0) throw new Error(`refused: the finding's lines in ${f.file} (${f.lines.join(" to ")}) hold no line the change added, so it is no find of ${bug} in this change`);
+  return bug;
+}
+
 // The ruling line for one decide call, checked; throws when it is refused.
-export function rulingLine(status, targets, { by, bug = null, note = "", sheet: fromSheet = null, queue = queueRoot, now = new Date() } = {}) {
+export function rulingLine(status, targets, { by, bug = null, run = null, specs = null, note = "", sheet: fromSheet = null, queue = queueRoot, now = new Date() } = {}) {
   const { lines, people } = readDecisions(join(queue, DECISIONS));
   if (!isPersonName(by, people)) throw new Error(`refused: --by must name the person who made this ruling, as ${join(queue, "people.json")} lists them, not ${JSON.stringify(by ?? null)}. A model or an agent never rules; the session may draft rulings, and a person records them.`);
   const kinds = Object.entries(STATUSES).filter(([, s]) => s.includes(status)).map(([k]) => k);
   if (kinds.length === 0) throw new Error(`refused: ${status} is not a status; use one of ${[...new Set(Object.values(STATUSES).flat())].join(", ")}`);
+  // A flag a status does not read is refused, never ignored: a ruling must say what the person meant.
+  const onBug = kinds.includes("bug");
+  if (bug !== null && !onBug && !kinds.includes("match")) throw new Error(`refused: ${status} takes no --bug; --bug names a truth item for confirmed, disputed and same-issue`);
+  if ((run !== null || specs !== null) && !onBug) throw new Error(`refused: ${status} takes no --run or --specs; they name the spec version for confirmed and disputed`);
+  if (specs !== null && run === null) throw new Error("refused: --specs names the spec folder of the run --run names; name the run too");
   const R = resolveRulings(lines, people);
   const known = knownFindings(queue, lines);
   const one = () => {
@@ -233,10 +335,14 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
   let caseId;
   let target;
   let found = null;
+  let specsFrom = null;
   if (status === "confirmed" || status === "disputed") {
-    caseId = one();
     if (!bug) throw new Error(`refused: ${status} names the truth item with --bug <id>`);
-    target = { kind: "bug", id: bug };
+    if (run === null) throw new Error(`refused: ${status} names the run whose spec it judges with --run <run folder> (and --specs <folder> when that run was scored against other specs), so it never reaches another version of the case`);
+    const v = specOfRun(resolve(run), one(), bug, specs === null ? null : resolve(specs));
+    caseId = v.caseId;
+    specsFrom = v.specsFrom;
+    target = { kind: "bug", id: bug, specHash: v.specHash };
   } else if (status === "clean" || status === "not-clean") {
     caseId = one();
     target = { kind: "case" };
@@ -261,11 +367,11 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     target = { kind: "finding", findingId: found.findingId };
   } else {
     found = findingOf(one(), known);
-    if (!found.truth) throw new Error(`refused: the queue names no truth item this finding sits on, so there is nothing to rule ${status} against`);
     caseId = found.caseId;
-    target = { kind: "match", findingId: found.findingId, truthId: found.truth.id };
+    target = { kind: "match", findingId: found.findingId, truthId: matchTarget(status, found, bug), specHash: found.specHash };
   }
-  const line = { v: 1, caseId, ...(found?.specsFrom ? { specsFrom: found.specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
+  specsFrom ??= found?.specsFrom ?? null;
+  const line = { v: 1, caseId, ...(specsFrom ? { specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
   const problems = rulingProblems(line, people);
   if (problems.length > 0) throw new Error(`refused: ${problems.join("; ")}`);
   return line;
@@ -277,19 +383,20 @@ export function decide(status, targets, opts = {}) {
   mkdirSync(queue, { recursive: true });
   appendFileSync(join(queue, DECISIONS), `${JSON.stringify(line)}\n`);
   const what = line.target.kind === "finding" || line.target.kind === "match" ? `finding ${line.target.findingId.slice(0, 12)}` : line.target.kind === "issue" ? line.target.issueId : line.target.kind === "bug" ? `${line.caseId} truth item ${line.target.id}` : line.caseId;
-  return `Recorded ${status} on ${what}${line.target.kind === "match" ? ` against ${line.target.truthId}` : ""}, by ${line.by}, in ${join(queue, DECISIONS)}`;
+  const version = line.target.specHash ? ` (spec version ${line.target.specHash.slice(0, 12)})` : "";
+  return `Recorded ${status} on ${what}${line.target.kind === "match" ? ` against ${line.target.truthId}` : ""}${version}, by ${line.by}, in ${join(queue, DECISIONS)}`;
 }
 
 const USAGE = `usage:
   node benchmark/queue.mjs add <run folder | unresolved file> [--queue <folder>]
   node benchmark/queue.mjs sheet <suite> [--seed <n>] [--json] [--queue <folder>]
-  node benchmark/queue.mjs decide <status> <target>... --by <your name> [--bug <id>] [--note <text>] [--sheet <id>] [--queue <folder>]`;
+  node benchmark/queue.mjs decide <status> <target>... --by <your name> [--bug <id>] [--run <run folder> [--specs <folder>]] [--note <text>] [--sheet <id>] [--queue <folder>]`;
 
 function main() {
   const args = process.argv.slice(2);
   const opts = { json: false };
   const pos = [];
-  const valued = { "--queue": "queue", "--seed": "seed", "--by": "by", "--bug": "bug", "--note": "note", "--sheet": "sheet" };
+  const valued = { "--queue": "queue", "--seed": "seed", "--by": "by", "--bug": "bug", "--run": "run", "--specs": "specs", "--note": "note", "--sheet": "sheet" };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--json") opts.json = true;
     else if (valued[args[i]]) {
@@ -312,7 +419,7 @@ function main() {
       if (!Number.isInteger(seed) || seed < 0) throw new Error(`refused: --seed must be a whole number, not ${opts.seed}`);
       const s = sheet(rest[0], { seed, queue });
       console.log(opts.json ? JSON.stringify(s, null, 2) : sheetMarkdown(s));
-    } else if (command === "decide" && rest.length >= 2) console.log(decide(rest[0], rest.slice(1), { by: opts.by, bug: opts.bug, note: opts.note ?? "", sheet: opts.sheet ?? null, queue }));
+    } else if (command === "decide" && rest.length >= 2) console.log(decide(rest[0], rest.slice(1), { by: opts.by, bug: opts.bug ?? null, run: opts.run ?? null, specs: opts.specs ?? null, note: opts.note ?? "", sheet: opts.sheet ?? null, queue }));
     else {
       console.error(USAGE);
       process.exit(2);

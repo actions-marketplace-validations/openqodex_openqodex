@@ -11,7 +11,10 @@
 // 4. A saved sample of a pull request case cannot be scored (issue 141:
 //    a truth item with no severity and no kind).
 // 5. Fixing 4 changes the score of a planted sample.
+// 6. Keying rulings on the spec version (issues 163 and 139) changes the
+//    score of a planted sample beyond what the rulings themselves do.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -238,7 +241,7 @@ const hand = {
   extras: [{ file: "app/server.py", lines: [30, 32], mentions: ["connection"], why: "a real side issue" }],
 };
 
-async function plantedScore() {
+async function plantedScore(decisions = [], people = []) {
   const HASH = "ab".repeat(32);
   const id = `planted/hand@${HASH.slice(0, 8)}`;
   const config = "claude-graph-on";
@@ -256,12 +259,19 @@ async function plantedScore() {
   ]);
   const two = reviewReport([finding("package.json", 7, "security", "A vulnerable lodash", { severity: "major" }), finding("README.md", 2, "style", "A typo", { severity: "minor" })]);
   const out = await savedRun({ settings, cases: ["hand"], specs: { hand }, jobs, attempts: [{ case: "hand", repeat: 1, report: one }, { case: "hand", repeat: 2, report: two }] });
-  const { score, outcomes, unresolved } = scoreRun(loadRun(out));
+  const { score, outcomes, unresolved } = scoreRun(loadRun(out), { decisions, people });
   // The rules block names its version and hash, the run its folder and the
   // end record the clock; none of them is a score.
   const { rules: _rules, run: _run, ended: _ended, ...rest } = score;
   return JSON.parse(JSON.stringify({ score: rest, outcomes, unresolved }));
 }
+
+// The fields a queue item gained with rules version 8 (the spec version it
+// was scored against, the lines of it the change added, and the truth items
+// of that spec with their files). They are what decide checks a ruling
+// against, never a score, so the golden, recorded before them, lacks them.
+const QUEUE_FIELDS_8 = ["specHash", "changedLines", "truthItems"];
+const withoutQueueFields8 = (items) => items.map((i) => Object.fromEntries(Object.entries(i).filter(([k]) => !QUEUE_FIELDS_8.includes(k))));
 
 describe("fixing issue 141 changes the score of a planted sample", () => {
   it("scores the planted hand case exactly as rules version 5 did, every number, outcome and question", async () => {
@@ -269,6 +279,71 @@ describe("fixing issue 141 changes the score of a planted sample", () => {
     // Recorded once with rules version 5, before the fix: OQ_RECORD_PLANTED_SCORE=1.
     if (process.env.OQ_RECORD_PLANTED_SCORE === "1") write(GOLDEN, `${JSON.stringify(now, null, 2)}\n`);
     expect(existsSync(GOLDEN), `${GOLDEN} is missing; it is recorded with rules version 5 only`).toBe(true);
-    expect(now).toEqual(JSON.parse(readFileSync(GOLDEN, "utf8")));
+    const golden = JSON.parse(readFileSync(GOLDEN, "utf8"));
+    expect({ ...now, unresolved: withoutQueueFields8(now.unresolved) }).toEqual(golden);
+    for (const item of now.unresolved) for (const k of QUEUE_FIELDS_8) expect(item, k).toHaveProperty(k);
+  });
+});
+
+// The hand case's spec version, as the rulings name it: the sha256 of its
+// JSON with the keys of every object in sorted order.
+const sorted = (v) => (Array.isArray(v) ? `[${v.map(sorted).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${sorted(v[k])}`).join(",")}}` : JSON.stringify(v));
+const HAND_SPEC = createHash("sha256").update(sorted(hand)).digest("hex");
+
+// The leaf paths at which two JSON values differ.
+function differ(a, b, at = "") {
+  if (a === b) return [];
+  if (!a || !b || typeof a !== "object" || typeof b !== "object" || Array.isArray(a) !== Array.isArray(b)) return [at];
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => differ(a[k], b[k], `${at}.${k}`));
+}
+
+describe("keying rulings on the spec version changes the score of a planted sample beyond what the rulings themselves do", () => {
+  // Two rulings as queue.mjs decide writes them: the near miss on the
+  // off-by-one is that item, and the root item is wrong.
+  const rulings = (specHash) =>
+    [
+      { target: { kind: "match", findingId: "near", truthId: "off-by-one", specHash }, status: "same-issue" },
+      { target: { kind: "bug", id: "root", specHash }, status: "disputed" },
+    ].map((r, i) => ({ v: 1, caseId: "planted/hand@abababab", fromSheet: null, ...r, by: "Sid", at: `2026-10-11T10:0${i}:00.000Z`, note: "", evidence: null }));
+  // The near miss's finding id, from the golden's outcomes.
+  const golden = () => JSON.parse(readFileSync(GOLDEN, "utf8"));
+  const nearId = () => golden().outcomes.find((o) => o.outcome === "near").findingId;
+  const lines = (specHash) => rulings(specHash).map((l) => (l.target.findingId ? { ...l, target: { ...l.target, findingId: nearId() } } : l));
+
+  it("scores byte for byte as rules version 6 did when the rulings name another spec version", async () => {
+    const other = await plantedScore(lines("0".repeat(64)), ["Sid"]);
+    const g = golden();
+    const { rulings: read, ...score } = other.score;
+    const { rulings: _none, ...goldenScore } = g.score;
+    expect(read).toEqual({ read: 2, ignored: [], people: ["Sid"] });
+    expect(JSON.stringify(score)).toBe(JSON.stringify(goldenScore));
+    expect(JSON.stringify(other.outcomes)).toBe(JSON.stringify(g.outcomes));
+    expect(JSON.stringify(withoutQueueFields8(other.unresolved))).toBe(JSON.stringify(g.unresolved));
+  });
+
+  it("changes only the ruled finding, the two ruled items and the sums over them when the rulings name the hand case's spec version", async () => {
+    const ruled = await plantedScore(lines(HAND_SPEC), ["Sid"]);
+    const g = golden();
+    const config = "claude-graph-on";
+    const caseId = "planted/hand@abababab";
+    // The ruled finding finds the off-by-one; every other finding is as it was.
+    const at = g.outcomes.findIndex((o) => o.outcome === "near");
+    expect(ruled.outcomes[at]).toMatchObject({ outcome: "hit", truthId: "off-by-one", evidenceKind: "ruling" });
+    expect(ruled.outcomes.filter((_, i) => i !== at)).toEqual(g.outcomes.filter((_, i) => i !== at));
+    // The off-by-one is found in the first review, and the root item is labelled and its misses read as disputed.
+    expect(ruled.score.perBug[config][caseId]["off-by-one"].found).toEqual([true, false]);
+    expect(ruled.score.perBug[config][caseId].root).toMatchObject({ ruling: "disputed", cause: ["spec-disputed", "spec-disputed"] });
+    for (const id of Object.keys(g.score.perBug[config][caseId]).filter((x) => x !== "off-by-one" && x !== "root")) expect(ruled.score.perBug[config][caseId][id]).toEqual(g.score.perBug[config][caseId][id]);
+    // The ruled finding asks nothing more; the other questions stay.
+    expect(withoutQueueFields8(ruled.unresolved)).toEqual(g.unresolved.filter((i) => i.findingId !== nearId()));
+    // The sums move by the one found item and the one correct finding, and nothing else in the score moves.
+    const c = ruled.score.byConfig[config];
+    const gc = g.score.byConfig[config];
+    expect(c.issueRecall.all.hit).toBe(gc.issueRecall.all.hit + 1);
+    expect(c.precision.lower.hit).toBe(gc.precision.lower.hit + 1);
+    expect(c.precision.upper).toEqual(gc.precision.upper);
+    const moved = differ({ ...ruled.score, rulings: null }, { ...g.score, rulings: null });
+    const allowed = [`.perBug.${config}.${caseId}.off-by-one.`, `.perBug.${config}.${caseId}.root.`, `.byConfig.${config}.`, `.perCase.${config}.${caseId}.`, ".intervals."];
+    expect(moved.filter((p) => !allowed.some((a) => p.startsWith(a)))).toEqual([]);
   });
 });
