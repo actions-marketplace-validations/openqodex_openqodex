@@ -1,10 +1,16 @@
-// What every outside board's converter and wrapper share about files and
+// What an outside board's converter and wrapper need about files and
 // processes: the one folder of a run a board step writes in, the bench
-// cache their pinned checkouts live in, the state of such a checkout, a
-// command started with core files off, and the filter that keeps the
-// judge's key and base URL out of everything printed or saved. The
-// AACR-Bench board (PR 155) holds the same rules in its own files; once both
-// have landed, it can read them from here.
+// cache their pinned checkouts live in, the state of such a checkout, and
+// the filter that keeps the judge's key and base URL out of everything
+// printed or saved. The AACR-Bench board holds its own copies
+// (lib/aacr-board.mjs boardFolder, outside/convert/aacr.mjs benchCache,
+// outside/boards/aacr-judge.mjs checkoutState and redactor). Only what
+// differs from those is here: a folder for any board, a cache check that
+// also follows a link under the cache, a checkout check that hashes every
+// file instead of asking git's index, and a filter that holds back a secret
+// split across chunks. The one rule both share unchanged, a command started
+// with core files off, is aacr-judge.mjs withoutCore, and the Martian judge
+// imports it from there.
 //
 // Failure list, written before the code:
 // 1. Board files leave the run through a symbolic link: boardFolder(run,
@@ -21,11 +27,7 @@
 //    it with the blob the commit's tree holds, so a file git was told to
 //    assume unchanged, or an ignored file, cannot hide an edit; it names
 //    every file that differs, is missing, or is not in the tree.
-// 4. A crash of a board's evaluator, whose environment holds the judge's key
-//    and base URL, writes a core file: withoutCore starts a command through
-//    a shell that sets the core file limit to zero and then becomes it
-//    (Node cannot set a resource limit itself).
-// 5. A secret reaches the terminal or a log in pieces: a redactor keeps one
+// 4. A secret reaches the terminal or a log in pieces: a redactor keeps one
 //    buffer per stream and holds back what could still be the start of a
 //    secret (up to its length less one) until the next chunk, so a key or
 //    host split across two chunks is replaced whole; it replaces each
@@ -160,9 +162,6 @@ export function checkoutState(dir) {
   name(extra, "files are not in the pinned tree");
   return { commit, tree, problems };
 }
-
-/** A command run with core files off: a shell sets the limit to zero, then becomes the command. */
-export const withoutCore = (command, args) => ["/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', command, ...args]];
 
 /** Each secret with its URL-encoded forms, longest first. */
 export function secretForms(secrets) {

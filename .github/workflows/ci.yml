@@ -67,6 +67,10 @@ jobs:
         run: node scripts/validate-skill.mjs
       - name: Config docs
         run: node scripts/config-docs.mjs --check
+      - name: Docs index
+        run: node scripts/docs-index.mjs --check
+      - name: Docs facts
+        run: node scripts/docs-facts.mjs
       - name: Private material scrub
         run: node scripts/scrub.mjs
 
@@ -99,33 +103,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: pnpm
-      # brakeman and rubocop need Ruby, golangci-lint needs Go; the runner
-      # image carries Cargo for cargo-deny.
-      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
-        with:
-          ruby-version: "3.3"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          # golangci-lint 2.12.2 is built with Go 1.26 and cannot check a newer Go.
-          go-version: "1.26"
-          cache: false
-      - run: pnpm install --frozen-lockfile
-      # The Ruby scanners are installed against this Ruby, so its version is in the key.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/openqodex-bench-home
-          key: bench-scanners-${{ runner.os }}-${{ runner.arch }}-ruby3.3-go1.26-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
-      - name: Build the CLI and record its commit
-        run: node benchmark/build-cli.mjs
-      # Fails when any scanner is not installed at its pinned version or does
-      # not report its check case.
-      - name: Install every scanner
-        run: node packages/cli/dist/bin.js doctor --install --all-scanners --require-all
+      # Node, Ruby, Go, the build and every scanner, cached: the one recipe
+      # this job and bench-weekly.yml share.
+      - uses: ./.github/actions/bench-setup
       - name: Scan the planted cases twice
         run: |
           run_id="$(date -u +%Y-%m-%d)-$(git rev-parse --short=7 HEAD)-planted-scan-ci"

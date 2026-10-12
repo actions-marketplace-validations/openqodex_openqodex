@@ -528,7 +528,8 @@ async function runBuiltin(
   let resolveMs = 0;
   if (!IN_PROCESS.has(source)) {
     const asked = Date.now();
-    const resolution = await args.resolveTool(source);
+    // A server run's runtime probes keep their state in its scratch root.
+    const resolution = await args.resolveTool(source, args.scratch.laptop ? undefined : { probeHome: args.scratch.cache("runtime-probe") });
     resolveMs = Date.now() - asked;
     if (!resolution.ok) return skippedOutcome(source, resolution.status, resolution.reason, started, { resolveMs, files: 0 });
     // The tool's own environment on the laptop; on a scratch root, the

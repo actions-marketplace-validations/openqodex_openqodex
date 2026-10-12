@@ -238,11 +238,17 @@
 //    boards.json before anything else (lib/server-review.mjs), and the
 //    manifest records the deployment, the alias that named it, and the
 //    settings (effort, maxOutputTokens, the scripted model's script).
+//    A resume is refused when the endpoint, recorded as an HMAC-SHA256 of
+//    its base URL keyed with the endpoint's key, differs from the run's.
 // 26. The model recorded is not the one that answered: each sample records
 //    the model asked for apart from the ones the provider named as
-//    answering.
+//    answering, and the manifest's model is the id that served the run's
+//    first answered review (requestedModel is the one asked for); a review
+//    served by another id stops the run.
 // 27. A review writes outside its workDir, or the key or base URL of the
-//    model endpoint lands in a saved file: either stops the run.
+//    model endpoint lands in a saved file: either stops the run. An answer
+//    that holds the key or the address is checked before anything of its
+//    sample is written or printed, and only the refusal is saved.
 // 28. The scanner preflight reads another tools folder than the reviews:
 //    --install-root names the tools folder of an OpenQodex home, and the
 //    doctor runs with that home.
@@ -259,17 +265,21 @@
 //    manifest's `package` names the package, version, sha256 and integrity,
 //    and its build names no commit; a local run's `package` names the commit.
 // 32. A model run spends on after its setup broke: after each review the
-//    halt rules (lib/halts.mjs) are asked: the endpoint refusing the key or
-//    the quota, the served model changing, two reviews in a row incomplete
-//    for one reason, and from the tenth review more than 20% incomplete, a
-//    mean cost past 1.5 times the estimate or a forecast past --max-usd. A
+//    halt rules (lib/halts.mjs) are asked: the endpoint refusing the key,
+//    the quota or the billing, a reviewer's served model changing, two
+//    reviews in a row incomplete for one reason, and from the tenth review
+//    more than 20% incomplete, a mean cost past 1.5 times the estimate or a
+//    forecast past --max-usd, both from finished reviews' own spend. A
 //    halt stops launches, lets the running reviews finish and save, records
-//    { rule, why } in the end record, and --resume continues. A saved file
-//    holding this machine's home folder stops the run too.
+//    { rule, why } in the end record, and --resume continues. A rate
+//    limited review is tried once more after a wait of at most a minute. A
+//    saved file holding this machine's home folder stops the run too.
 // 33. A smoke run reads a held-out case, grows into a measurement, or is
 //    indexed: --smoke refuses the test split and any held-out case, refuses
-//    more than 5 reviews per configuration, and its manifest says smoke,
-//    which publish-run.mjs refuses and a resume keeps.
+//    more than 5 reviews per configuration and --add-repeats, stops when
+//    the reviewer was invoked 5 times for a configuration, retries
+//    included, and its manifest says smoke, which publish-run.mjs refuses
+//    and a resume keeps.
 // 34. A held-out case is built before a release with no record, or truth is
 //    read for it: only --materialise-only selects the test split, logs each
 //    suite's held-out cases first, reads no truth and runs no review.
@@ -285,7 +295,7 @@ import { pathToFileURL } from "node:url";
 import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, git, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { estimateRun, loadPrices, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
 import { externalOf, toolchainOf } from "./lib/external.mjs";
-import { haltRules } from "./lib/halts.mjs";
+import { haltRules, rateLimitRetry, smokeCap } from "./lib/halts.mjs";
 import { comparePasses } from "./lib/identical.mjs";
 import { heldOutAccessPath } from "./lib/index.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
@@ -293,7 +303,7 @@ import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, executeRun, failureOf, jobState, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
-import { createModelReviewer, isModelReviewer, makeWorkRoot, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
+import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
 import { SUITES, materialise, selectCases, specCopy, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
@@ -394,6 +404,8 @@ function parseArgs(argv) {
   if (o.smoke && o.split === "test") throw new Error("--smoke runs development cases only: the test split is held out, and no held-out case runs before a release");
   if (o.smoke && o.addRepeats !== null) throw new Error("--add-repeats grows a run into a measurement, and a smoke run is never one: it stays at most 5 reviews per configuration");
   o.split ??= "dev";
+  // --subset all is the whole split, which a run with no subset names.
+  if (o.subset === "all") o.subset = null;
   // A scan is deterministic (--check-identical proves it), so one repeat; a
   // scan has no reviewer to wait on; a smoke run checks the runner once.
   o.repeat ??= scan || o.smoke ? 1 : 3;
@@ -1036,7 +1048,7 @@ async function main() {
   // The build under test: this checkout's, or a package build (failure 31).
   let pkg = null;
   try {
-    pkg = preparePackage(o.package);
+    pkg = await preparePackage(o.package);
   } catch (error) {
     console.error(`--package ${o.package}: ${error.message}`);
     leave(2);
@@ -1047,7 +1059,8 @@ async function main() {
     for (const p of problems) console.error(p);
     leave(2);
   }
-  const packageRecord = pkg ? pkg.record : { spec: "local", commit: build.commit, dirty: build.dirty };
+  // The manifest names the package and how many files it unpacked; the cache's record holds each file's sha256.
+  const packageRecord = pkg ? (({ files, ...rest }) => ({ ...rest, fileCount: Object.keys(files).length }))(pkg.record) : { spec: "local", commit: build.commit, dirty: build.dirty };
   if (pkg) console.log(`Package ${pkg.record.name} ${pkg.record.version} (${pkg.record.spec}, sha256 ${pkg.record.sha256.slice(0, 12)})`);
   const board = real ? boardOf(SUITES[suite].board) : null;
   if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board });
@@ -1122,7 +1135,7 @@ async function main() {
         leave(2);
       }
       const r = models[name].record;
-      console.log(`Reviewer ${name}: model ${r.model}${r.alias ? ` (the alias ${r.alias} in boards.json)` : ""}${r.script ? `, script ${r.script.file} (${r.script.sha256.slice(0, 12)})` : ""}, effort ${r.settings.effort ?? "the deployment's default"}, at most ${r.settings.maxOutputTokens} output tokens per call`);
+      console.log(`Reviewer ${name}: model ${r.requestedModel}${r.alias ? ` (the alias ${r.alias} in boards.json)` : ""}${r.script ? `, script ${r.script.file} (${r.script.sha256.slice(0, 12)})` : ""}, effort ${r.settings.effort ?? "the deployment's default"}, at most ${r.settings.maxOutputTokens} output tokens per call`);
     }
   }
   // The scanners a model review reads, never installed, and the doctor's
@@ -1262,6 +1275,8 @@ async function main() {
   // The halt rules of a model run, counting this invocation's reviews, with
   // the served models the run's earlier samples named (failure 32).
   const priced = estimate.reviews - estimate.unpriced;
+  // A smoke run's cap on reviewer invocations, retries and earlier attempts included (failure 33).
+  const cap = o.smoke ? smokeCap(SMOKE_MAX_REVIEWS, { rows: readRows(out) }) : null;
   const rules = server ? haltRules({ maxUsd: o.maxUsd, toRun: todo.length, estimatePerReview: priced > 0 ? estimate.usd / priced : null, servedBefore: servedByConfig(out), spentBefore }) : null;
 
   // Each saved file is checked for a generated secret and, for a model
@@ -1289,7 +1304,7 @@ async function main() {
     const replacements = [[tempRoot, "<temp>"], [realpathSync(tempRoot), "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
     let saved;
     try {
-      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop });
+      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop, appearsIn: models[job.reviewer].appearsIn });
     } finally {
       rmSync(caseDir, { recursive: true, force: true });
     }
@@ -1300,8 +1315,54 @@ async function main() {
     checkSaved(attemptDir(out, job, k));
     if (rec.outside.length > 0) halt(`${job.case} ${job.config} #${job.repeat}: the review wrote outside its workDir: ${rec.outside.join("; ")}`, "outside-workdir");
     if (saved.error) halt(`${job.case} ${job.config} #${job.repeat}: the review threw: ${String(saved.error.message ?? saved.error).split("\n")[0]}`, "review-threw");
-    const h = rules.after(rec, { spentUsd: budget.summary().spentUsd });
-    if (h) halt(`${job.case} ${job.config} #${job.repeat}: ${h.why}`, h.rule);
+    if (saved.leaked) halt(`${job.case} ${job.config} #${job.repeat}: the provider's answer held the ${job.reviewer} endpoint's key or address; only the refusal was saved`, "saved-file");
+    else {
+      // The manifest names the model that served the run's first answered
+      // review, on disk now and in the copy executeRun writes at the end; a
+      // review served by another stops the run (failure 26).
+      const served = recordServed({ manifestPath: join(out, "manifest.json"), name: job.reviewer, record: rec });
+      settings.reviewers[job.reviewer].model = served.model;
+      if (served.why) halt(`${job.case} ${job.config} #${job.repeat}: ${served.why}`, "served-model-changed");
+    }
+    // The review's own spend, from its envelope in the ledger (failure 32).
+    meter.close();
+    return { rec, ownUsd: meter.spentUsd ?? 0 };
+  };
+
+  // A model job (failure 32): its attempt, and when the provider rate
+  // limited it (a 429 that is not a quota or billing refusal), one more
+  // after a bounded wait, in its next attempt folder with a meter of its
+  // own; then the halt rules, once per job, with what its attempts spent.
+  // A smoke run counts every attempt against its cap (failure 33).
+  const modelJob = async (job, k, ticket) => {
+    let meter = ticket;
+    let attemptNo = k;
+    let ownUsd = 0;
+    try {
+      for (let retries = 0; ; retries++) {
+        const capped = cap?.take(job.config, { retry: retries > 0 });
+        if (capped) return halt(capped.why, capped.rule);
+        const done = await serverJob(job, attemptNo, meter);
+        ownUsd += done.ownUsd;
+        const again = stop === null ? rateLimitRetry(done.rec, retries) : null;
+        const next = again ? budget.openReview(job) : null;
+        if (next?.ok) {
+          console.log(`  ${job.case} ${job.config} #${job.repeat}: rate limited; waiting ${again.waitMs / 1000} s, then once more`);
+          const until = Date.now() + again.waitMs;
+          while (stop === null && Date.now() < until) await new Promise((wake) => setTimeout(wake, Math.min(500, until - Date.now())));
+          meter = next.review;
+          if (stop !== null) return;
+          attemptNo = jobState(out, job).next;
+          continue;
+        }
+        const h = rules.after(done.rec, { ownUsd, reservedUsd: budget.summary().reservedUsd });
+        if (h) halt(`${job.case} ${job.config} #${job.repeat}: ${h.why}`, h.rule);
+        return;
+      }
+    } finally {
+      // A retry's meter is this job's to close; the first is closed already, and closing is idempotent.
+      if (meter !== ticket) meter.close();
+    }
   };
 
   // One attempt, saved as its own scored sample whatever happened (failure 4).
@@ -1335,18 +1396,21 @@ async function main() {
 
   // One job's reviews: its next free attempt (a first attempt that started
   // and never saved is kept, and the work goes to the next folder), and one
-  // more after a reviewer failure. A model review gets one attempt: its
-  // ticket is the review's meter, which holds its cap.
+  // more after a reviewer failure. A model review's ticket is its meter,
+  // which holds its cap; it gets one more attempt only when rate limited
+  // (modelJob).
   const runJob = async (job, k, ticket) => {
     if (server) {
       try {
-        await serverJob(job, k, ticket);
+        await modelJob(job, k, ticket);
       } catch (error) {
         halt(`${job.case} ${job.config} #${job.repeat}: the benchmark itself failed: ${error.message}`, "benchmark-failed");
       }
       return;
     }
     try {
+      const capped = cap?.take(job.config);
+      if (capped) return halt(capped.why, capped.rule);
       const first = await attempt(job, k);
       if (stop !== null) return;
       if (first?.unavailable) return halt(`${job.case} ${job.config}: ${first.cause}`, "reviewer-unavailable");
@@ -1355,6 +1419,8 @@ async function main() {
       if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`, "reviewer-blocked");
       const p = await probeReviewer(job.reviewer, { env });
       if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`, "reviewer-blocked");
+      const cappedRetry = cap?.take(job.config, { retry: true });
+      if (cappedRetry) return halt(cappedRetry.why, cappedRetry.rule);
       console.log(`  ${job.case} ${job.config} #${job.repeat}: reviewer failed (${first.cause}); running it once more`);
       const second = await attempt(job, jobState(out, job).next);
       if (stop !== null) return;

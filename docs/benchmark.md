@@ -17,7 +17,7 @@ From the saved reports it counts (score format 3):
 - Planted-rule precision: the earlier rule, which leaves out duplicates, listed side issues and requests for a test, with the count of those requests. It is computed on planted cases only and never pooled with other numbers.
 - A location diagnostic: findings within one line of a planted bug's lines, whatever they say (the line rule of AACR-Bench). It never decides anything.
 - Severity agreement: for each bug found, the severity the first finding that found it gave, against the bug's own, on the scale critical, major, minor, nitpick, info. It is exact, one step off, or off by two steps or more, and rated higher or lower than the case says. The score keeps the full table of given against expected severity.
-- Who found each bug: a scanner, when one of its candidates, or a finding merged into one, sits on the bug's lines in that review's `scan.json`; the reviewer alone otherwise. A candidate from a scanner the case does not expect counts only when its rule or message names the bug's words, so a finding about another issue inside a wide range is not credited. The case's expected finder is what this is compared with, never the answer: the score gives the share found by whom the case expects, each expected finder's share, and the bugs the case expected from a scanner that the reviewer found alone. A review that saved no `scan.json` is left out of these shares.
+- Who found each bug: a scanner, when one of its candidates, or a finding merged into one, sits on the bug's lines in that review's `scan.json`; the reviewer alone otherwise. A candidate from a scanner the case does not expect counts only when its rule or message names the bug's words, so a finding about another issue inside a wide range is not credited. OpenQodex's own candidates about a changed settings file or an added suppression comment count as the settings or suppression check when a built-in scanner raised them; a custom scanner's rule counts as that custom scanner, whatever its id. The case's expected finder is what this is compared with, never the answer: the score gives the share found by whom the case expects, each expected finder's share, and the bugs the case expected from a scanner that the reviewer found alone. A review that saved no `scan.json` is left out of these shares.
 - Clean controls: two cases have no bug. Any finding on them is false. A clean case passes only when its review completed with no finding; an incomplete or failed review fails it.
 - Graph disclosure, for the cases that need the graph: whether the brief named the callers the change breaks, and whether it said what the graph could not see (a caller list that is a floor, a call it could not bind).
 - Time per review (from the start of the CLI to its exit), reviewer turns, tokens and cost, as the report records them.
@@ -36,7 +36,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (6), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
+Every score carries its rules block: the rules version (7), every constant and list above, and a hash over them and the code that applies them. Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally. Version 7 credits a custom scanner's rule to that custom scanner, whatever its id, and reads a model review's cost and tokens from its sample record. A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
 ## The cases
 
@@ -97,22 +97,22 @@ node benchmark/run.mjs --reviewers model:scripted --cases flask-path-traversal -
 node benchmark/run.mjs --reviewers model:gpt-6.1-sol --cases aacr/laravel__framework-56591 --repeat 1 --max-usd 2 --max-minutes 30 --review-max-usd 0.5
 ```
 
-- `<id>` is `scripted`, a deployment that `benchmark/outside/boards.json` records as probed (`gpt-6.1-sol` today), or a name in its `aliases` map that points at one. Anything else is refused before anything runs. The manifest records the deployment, the alias that named it, and the settings.
+- `<id>` is `scripted`, a deployment that `benchmark/outside/boards.json` records as probed (`gpt-6.1-sol` today), or a name in its `aliases` map that points at one. Anything else is refused before anything runs. The manifest records the model asked for (`requestedModel`), the alias that named it, the settings, and the endpoint as an HMAC-SHA256 of its base URL keyed with the endpoint's key, never the URL or the key; a resume on another base URL or another key is refused. The manifest's `model` is the model the provider named as serving the run's first answered review, and a later review served by another model stops the run.
 - `model:scripted` is the scripted model (`benchmark/lib/scripted-model.mjs`), for tests and dry runs. It answers from a script (`--model-script <file>`, by default `benchmark/lib/scripted-model.json`): it drops every scanner candidate the brief names, raises the script's findings and makes no network call. Its calls cost what the script's prices say, zero by default.
 - A deployment is called through `benchmark/lib/openai-reviewer.mjs`, at the endpoint that `~/.config/openqodex-bench/azure.env` names (`benchmark/lib/model-env.mjs`). `--model-effort <level>` and `--max-output-tokens <n>` (default 32000) are the adapter's settings.
 - Each review gets the case as two commits (the merge base and the head) and a workDir of its own in a short folder under `/tmp`, removed when the review returns. The scanners are read from `--install-root`, the tools folder of an OpenQodex home (by default `$OPENQODEX_HOME/tools` or `~/.openqodex/tools`), and never installed; the scanner preflight runs that home's doctor. The code graph is always on and web access off. `--review-max-usd` is required: every call is held to it before it is sent. Reviews run 2 at a time unless `--concurrency` says otherwise, and `--timeout` is each review's deadline (900 s for planted cases, 1800 s for pull request cases).
-- `--cases` may name pull request cases, as `<suite>/<name>` or a full case id, from the development split only; `--suite aacr` without `--cases` runs every usable development case, and `--subset dev-smoke` (or `dev-laptop`) the cases the split file lists there. `--split test` is refused: the held-out cases run only in a release run, and only `--materialise-only` (below) builds one before that. Each case's truth is read from the pinned dataset files and saved with the case in the run's `cases/` folder, with its accepted comments only, so recall counts over those; the rejected comments are left out, and the location diagnostic's count of candidates on them (`knownNoise`) reads 0. Only model reviewers review them here. The manifest records `suite`, `split`, `splitHash` and `subset`.
-- A model review's sample holds `report/report.json` and `report/report.md` (the library's own renderings), `report/scan.json` (when the library's result carries the scan record), `usage.json`, `completion.json`, `dispositions.json`, `rounds.json`, `progress.txt` and `sample.json`. Its status is the result's (complete with a blocking finding counts as complete). `requestedModel` is the model each call asked for, and `servedModel` the one the provider named as answering: null when it named none, or more than one.
-- The run stops when a review changes its clone (a write outside its workDir), when a review throws, or when a saved file holds the endpoint's key or base URL. Laptop and model reviewers never share a run.
+- `--cases` may name pull request cases, as `<suite>/<name>` or a full case id, from the development split only; `--suite aacr` without `--cases` runs every usable development case, and `--subset dev-smoke` (or `dev-laptop`) the cases the split file lists there. `--split test` is refused: the held-out cases run only in a release run, and only `--materialise-only` (below) builds one before that. Each case's truth is read from the pinned dataset files and saved with the case in the run's `cases/` folder, with its accepted comments only, so recall counts over those; the rejected comments are left out, and the location diagnostic's count of candidates on them (`knownNoise`) reads 0. Only model reviewers review them here. The manifest records `suite`, `split`, `splitHash` and `subset` (`--subset all` is recorded as no subset). The index entry carries the subset too, and the trend keeps runs of different subsets in different groups, each with its own accepted run; a run with no subset keeps the group it had.
+- A model review's sample holds `report/report.json` and `report/report.md` (the library's own renderings), `report/scan.json` (when the library's result carries the scan record), `usage.json`, `completion.json`, `dispositions.json`, `rounds.json`, `progress.txt` and `sample.json`. Its status is the result's (complete with a blocking finding counts as complete). `requestedModel` is the model each call asked for, and `servedModel` the one the provider named as answering: null when it named none, or more than one. The score reads the review's cost and tokens from the sample's `usage` (the library's totals over every model call), and each configuration's `servedModels` lists every model the provider named as serving its reviews.
+- The run stops when a review changes its clone (a write outside its workDir), when a review throws, or when a saved file holds the endpoint's key or base URL. Every text a sample would hold is checked for the key and the address before anything of it is written or printed; when one holds either, the sample keeps only the line `refused: the provider's answer held the endpoint's key or address`, and the run stops. Laptop and model reviewers never share a run.
 
 ### Outside runs: the package under test, halts, smoke runs and proofs
 
 These flags serve the runs that go to outside boards, and the development runs before them.
 
-- `--package local|npm:<version>|file:<path.tgz>` names the build under test. `local`, the default, is the build `build-cli.mjs` made of this checkout, and the manifest's `package` records its commit. `npm:<version>` is the published `openqodex` at that version: `npm pack` fetches it once into the clone cache (`$OPENQODEX_BENCH_CACHE/packages/`), and the registry's integrity is checked against the tarball every time it is used. `file:<path.tgz>` is a packed build, as `npm pack` writes it, such as a release candidate. A package build is recorded by its name, version, sha256, integrity and size; its build names no commit, and the run's folder is named after `v<version>`. The server path needs a library whose result carries `rounds` and `timings`: the published 0.12.0 does not, so `--package npm:0.12.0` can scan but not review with a model.
-- Model runs stop on their own when the setup looks broken, and say which rule stopped them (`ended.halt` in the manifest, `{ rule, why }`): the endpoint refuses the key or the quota (HTTP 401 or 403, a 429 that names a quota, or `insufficient_quota`), at once; a model reviewer's served model changes during the run, or one review names two; two reviews in a row do not complete for the same reason (the same kind of provider error, budget refusal, deadline, answer that fails its checks, and so on); and, from the tenth review of an invocation on, more than 20% of reviews did not complete, the mean cost per review is past 1.5 times the estimate, or what is spent plus that mean for each review left passes `--max-usd`. A saved file that holds this machine's home folder stops the run too. A halt starts no new review; the reviews running finish and are saved with their cost, and `--resume` runs the rest. The counts start again on a resume; the served models seen before do not.
+- `--package local|npm:<version>|file:<path.tgz>` names the build under test. `local`, the default, is the build `build-cli.mjs` made of this checkout, and the manifest's `package` records its commit. `npm:<version>` is the published `openqodex` at that version: the run reads the registry's answer from https://registry.npmjs.org itself (no npm setting or variable changes the host), takes the tarball it names on that host, checks the downloaded bytes against the registry's sha512 integrity, and keeps both in the clone cache (`$OPENQODEX_BENCH_CACHE/packages/`), where the integrity is checked again on every use. No npm command runs, so nothing is written to `~/.npm`. `file:<path.tgz>` is a packed build, as `npm pack` writes it, such as a release candidate. A tarball is read once, and the run reads those same bytes: it refuses a member with an absolute path, a `..`, a link or anything but a file or a folder under `package/`, before anything is written. The unpacked folder's `record.json` holds the sha256 of every file, and each run checks them all first: a changed, missing or added file means the package is unpacked again from the tarball. A package build is recorded by its name, version, sha256, integrity, size and file count; its build names no commit, and the run's folder is named after `v<version>`. The server path needs a library whose result carries `rounds` and `timings`: the published 0.12.0 does not, so `--package npm:0.12.0` can scan but not review with a model.
+- Model runs stop on their own when the setup looks broken, and say which rule stopped them (`ended.halt` in the manifest, `{ rule, why }`): the endpoint refuses the key, the quota or the billing (HTTP 401 or 403, `insufficient_quota`, or a reply that names billing), at once; a model reviewer's served model changes during the run, or one review names two; two reviews in a row do not complete for the same reason (the same kind of provider error, budget refusal, deadline, answer that fails its checks, and so on); and, from the tenth review of an invocation on, more than 20% of reviews did not complete, the mean cost of a finished review is past 1.5 times the estimate, or what the finished reviews cost plus that mean for each review left passes `--max-usd`. Both cost rules count each finished review's own spend; what reviews in flight hold reserved is named apart and never counted. Any other HTTP 429 is a rate limit, not a refusal: the review is tried once more, in its next attempt folder, after the wait the provider names or 10 seconds, never more than a minute; a rate limit that outlasts its retry counts as the review's reason. A saved file that holds this machine's home folder stops the run too. A halt starts no new review; the reviews running finish and are saved with their cost, and `--resume` runs the rest. The counts start again on a resume; the served models seen before do not.
 - Every model call holds its worst case in the run's ledger before it is sent (above), so a review whose next call would pass `--review-max-usd` ends incomplete with that call never sent, and a review the run's `--max-usd` has no room for never starts: it leaves no sample and spends nothing, and the run ends `budget`.
-- `--smoke` checks that the runner works; it is never a measurement. It takes development cases only (`--split test` and any held-out case are refused), at most 5 reviews per configuration (one repeat unless `--repeat` says otherwise), and the manifest says `smoke: true`, so `publish-run.mjs` refuses it and it is never indexed. For example, the five AACR development cases of `dev-smoke` with the scripted model:
+- `--smoke` checks that the runner works; it is never a measurement. It takes development cases only (`--split test` and any held-out case are refused), at most 5 reviews per configuration (one repeat unless `--repeat` says otherwise, and no `--add-repeats`), and it stops once the reviewer was invoked 5 times for a configuration, retries and a resumed run's earlier attempts included, saying how many were retries; and the manifest says `smoke: true`, so `publish-run.mjs` refuses it and it is never indexed. For example, the five AACR development cases of `dev-smoke` with the scripted model:
 
 ```
 node benchmark/run.mjs --reviewers model:scripted --suite aacr --subset dev-smoke --smoke --max-usd 1 --max-minutes 30 --review-max-usd 0.5 --allow-missing-scanners
@@ -122,6 +122,13 @@ node benchmark/run.mjs --reviewers model:scripted --suite aacr --subset dev-smok
 
 ```
 node benchmark/run.mjs --materialise-only --reviewers model:gpt-6.1-sol --suite aacr --split test
+```
+
+- When the clone cache's commit history is too shallow for git to say whether the merge base is an ancestor of the head, the proof deepens that repository's commits cache from the head: 64 commits, then twice as deep each time, up to the merge base search's own bound of 1,048,576. This happens when a later case of the same repository fetched at a smaller depth, which cuts history, or when the commits cache was moved away. The proof records the depths fetched and the commits added (`ancestor.deepening`), and a case still unanswered at the bound is not proved.
+- `benchmark/proof.mjs` proves the outside suites before any model is spent on them. It runs `run.mjs --materialise-only` on every Martian case (all held out) and on both sides of AACR's split, in the shape a model review reads (`--shape laptop` for the other), into `benchmark/results/proof-<time>/`. It then writes one summary per suite, committed as `benchmark/index/proof/<suite>-<date>.json`: per case its licence class, upstream's base, head and merge base, the merge base's and the head's tree ids beside the built ones, whether the merge base is an ancestor of the head, any deepening, and the reason when the case did not build or prove. A case counts as proved only when its proof is ok, it has a licence class, its built tree ids equal upstream's (the summary compares the ids itself, not only the proof's flags) and its merge base is proved an ancestor of its head. A usable case with no proof is a failure. The summary names this machine's folders by placeholders (`<cache>`, `<tmp>`, `<home>`, `<checkout>`) and any other absolute path as `<path>`, a drive letter path or one right after a colon included, and it is not written while one remains. `--split test` (or `dev`) proves one side only, and its summary is named `<suite>-<side>-<date>.json`, so it never takes a whole suite's name. The proof folder's `proof-run.json` records the commit the proofs ran on. `--from <folder>` summarises an earlier proof folder again, and refuses a folder whose `proof-run.json` records no commit. A summary's `commit` is the commit the proofs ran on, and `summarisedAt` the commit of the checkout that wrote it. It exits 0 when every case is proved, 1 when one is not, and 2 when the proof could not run.
+
+```
+node benchmark/proof.mjs [--suite martian|aacr] [--split test|dev] [--shape server|laptop] [--from <folder>]
 ```
 
 - The manifest of a model run also names the board a real suite comes from, with the commit `benchmark/outside/boards.json` pins (`board`), and the models the provider named as answering, per configuration (`servedModels`).
@@ -196,6 +203,28 @@ node benchmark/score.mjs benchmark/results/<old> --specs benchmark/results/<new>
 
 This scores the old run's saved reviews against the newer specs. It writes `score-cases.json` and `outcomes-cases.jsonl` into the old run's folder (for a legacy run, into the folder `--out <folder>` names) and names every case whose specs differ from that run's own. Such a case compares fairly only when the code under review is the same in both runs. When the case's code changed, as the Rails case's did after the first run, the old reviews read other code, and that case's numbers do not compare.
 
+## Replays
+
+Three replays use saved reviewer submissions without calling a reviewer:
+
+- `threshold` shows findings down to info severity at the product's confidence floor.
+- `union` merges repeats 1 and 2 for each case and configuration, counting each planted bug once. It needs more than one repeat: both repeats must be saved for every case, or it reports `insufficient repeats`.
+- `floor` compares confidence floors of 0.6, 0.7, 0.8 and 0.9. A lens's higher floor still applies.
+
+They import the product's own `checkSubmission` and `mergeFindings` from the built packages. Counts use the planted matching rules, without human rulings. They never write into a run folder: output is printed, and optional `--out <file>` must name a file outside the run folders.
+
+```
+node benchmark/loop/replay.mjs threshold benchmark/results/<run>
+node benchmark/loop/replay.mjs union benchmark/results/<run>
+node benchmark/loop/replay.mjs floor benchmark/results/<run>
+```
+
+Each command accepts more runs; `--specs <folder>` follows the run it applies to.
+
+Saved inventory lengths take priority. Missing lengths come from `buildCase` in `lib/cases.mjs`, using the supplied specs and source folders pinned to the run's build commit (or source folders saved beside the specs). The replay builds each planted case once per run in a temporary folder outside any repository and removes that folder afterwards. It hashes the built head files by path and content, without modes, and compares them with a reference built from the recorded case. It computes both legacy case hash rules, with and without executable modes, when checking the manifest. A missing manifest hash uses the pinned source as the reference. Scoring amendments and mode changes are accepted when built content matches; different content refuses the case by name.
+
+Line counts follow `snapshot.ts`'s `lineCounter`: count LF bytes and add one for a nonempty final line without LF, for files up to 5 MiB. That helper is not exported. In core's `finalize.ts`, `citesChange` and `checkSubmission` consume these counts to check findings and dropped citations. A pull request case stays unresolved with a reason because this branch has no pull request builder through the clone cache.
+
 ## Scanner-only runs
 
 ```
@@ -213,6 +242,8 @@ A pull request case (`--suite aacr`, with `--subset` or `--cases`, as for model 
 
 The manifest's `external` records what the scans used besides the build: the scanner toolchain hash and versions, the Semgrep rule packs each sample read (by name and the sha256 of their rules, as `scanners` documents), and a hash of what osv-scanner got from osv.dev. Nothing is downloaded again to record them. When two samples read different rules of one pack, the packs are `mixed`, and the accept step refuses the run; `unknown` (a sample recorded no packs) is refused for a scanner-only run too. A comparison of two runs lists a difference there as an input, not as a product change.
 
+Every Monday, `.github/workflows/bench-weekly.yml` scans AACR-Bench's `dev-smoke` pull requests twice in CI, with every scanner installed (the same setup as the `bench-scan` job, `.github/actions/bench-setup`). It compares the run with the accepted scanner-only run of its group, writes the trend table with each run's location recall into the job summary, and keeps the run folders and the run's index entry as an artifact for 14 days. The clone cache and AACR-Bench's two data files (`node benchmark/ingest/aacr.mjs --data-only`, which fetches nothing else and writes nothing in the repository) are kept in the Actions cache, keyed on the suite, its split and the board pins. The job has an hour: every step before the trend has its own limit (the dev-smoke scan 12 minutes, the full pass 14), so at least 8 minutes stay for the trend, the summary and the artifact, which run after a cancel too. A manual run (`gh workflow run bench-weekly.yml -f full-dev=true`) also scans every development pull request in one pass, scored in the summary and neither compared nor indexed. Until a person accepts the first AACR scanner-only entry from the artifact, the trend step fails: a group with nothing accepted cannot be judged.
+
 `--check-identical` runs a second pass on the same build into `<out>-pass2`, with fresh case repositories, and compares the two scores and every sample's files with the time fields left out. Each Semgrep pack's raw size is left out too: the registry serves one rule set as JSON or as YAML, and the sha256 of the rules is compared instead. `identical.json` in both folders holds the result and the minutes each pass took. The run exits 3 when the passes differ, and says whether their inputs differed or the product's output did.
 
 `--scanner-config <file>` passes `--config <file>` to every scan. The run first runs `openqodex trust --yes` with that file in its own home, for the one repository path each case is built at in turn, and does not start when the trust step fails. The manifest records the file's sha256 and every custom scanner the step approved.
@@ -226,6 +257,21 @@ node benchmark/judge.mjs benchmark/results/<run> [--configs a,b] [--limit N] [--
 A model reads each finding that the script matched to a planted bug, with the bug's planted truth, and says whether its problem, consequence and fix sentences are plain and correct. It judges wording only, never whether the bug was found. It writes `judge.json`, with each review's verdicts, its cost and the model that answered, and prints a table. `score.mjs` copies the totals into each configuration's `wording` in `score.json`. No rule reads them, so the verdict never changes a hit, a count, an exit code or an accept.
 
 The judge is the deployment `benchmark/outside/boards.json` gives the wording role (GPT-5.2), called through the model adapter on the endpoint in `~/.config/openqodex-bench/azure.env` (or the file `OPENQODEX_BENCH_MODEL_ENV` names). Without that file the pass refuses in one line and calls nothing; it never falls back to other settings in the environment. Every call holds its worst case against the run's `--max-usd` in `budget.jsonl` before it is sent, and the pass stops when the cap has no room for the next call; a run that records no cap, such as a legacy run, cannot be judged. A failed call stops the pass and keeps its reservation as spent. Each answer is saved in `judge-raw/` before its verdict goes into `judge.json`, and every file is written beside its place and renamed into it, so a pass cut off part way keeps the last whole `judge.json`. `--resume` judges only the reviews `judge.json` lacks, and takes an answer `judge-raw/` already holds for the same model and findings without calling or charging again; without it an existing `judge.json` or `judge-raw/` is refused. One judge works on a run at a time: it holds `judge.lock` in the run folder, and a second one is refused. Exit codes: 0 judged, 1 stopped by the cap, a failed call or a failed write, 2 refused before any call. The legacy run `2026-10-08-752b77f` keeps the verdicts `claude-sonnet-5` gave it.
+
+## AACR-Bench's own evaluator
+
+```
+benchmark/outside/boards/aacr.sh --prepare                        # their pinned checkout and its venv, once
+benchmark/outside/boards/aacr.sh benchmark/results/<run> --dry-run
+benchmark/outside/boards/aacr.sh benchmark/results/<run> [--rounds 3]
+node benchmark/score.mjs benchmark/results/<run> --outside aacr
+```
+
+A review run of AACR cases can also be scored by AACR-Bench's own evaluation code, at the commit `benchmark/outside/boards.json` pins. `benchmark/outside/convert/aacr.mjs` writes each planned review's first attempt as one file per pull request, in the shape their reader for generic comments takes, under `<run>/outside/aacr/<config>/r<repeat>/`. The board's tool name is `openqodex-<config>-r<repeat>`. Every shown finding is written once, with the path and line range our scorer reads. A finding with no line keeps null lines, which their evaluator reads as the whole file. A failed or never-started review is written as an empty file, so it stays in their denominators. The converter refuses a run of another suite, a sample of a case outside AACR-Bench, a held-out case, and a case whose licence is not verified, before it writes anything. Every board step writes only in `<run>/outside/aacr/`, and refuses a link that leads out of the run.
+
+Their evaluator takes each reference comment in order and finds the first unused finding on the same path and side whose lines overlap or lie within one line. It then asks a judge whether the two say the same thing. The judge is the GPT-5.2 deployment that boards.json names for AACR. `benchmark/outside/boards/aacr-judge.mjs` reads the endpoint's base URL and key with `lib/model-env.mjs`, and puts them only into their evaluator's environment as JUDGE_BASE_URL and JUDGE_API_KEY. They never go into argv, a shell variable, a log or a file, and a filter hides them in everything their evaluator prints. Their client sends the key as a bearer token. Their evaluator runs with core files off, so a crash cannot write the key anywhere. Their mock judge is never used: the wrapper refuses JUDGE_USE_MOCK and a `.env` in their checkout, and `eval.json` records the judge mode their evaluator printed and every failed judge call. The wrapper refuses a checkout that differs from the pinned commit in any file, and `eval.json` records its commit and tree. The bench cache, which holds their checkout and its venv, must lie outside this repository.
+
+`score.mjs --outside aacr` adds `outside.aacr` to score.json and changes nothing else in it. The block holds their line and semantic precision, recall and F1 per configuration and repeat, and the noise rate (unmatched findings over generated ones, as their docs/metrics.md defines it). It also holds the share of references on the left side, which no finding can match by line, since their reader puts every finding on the right side. Semantic numbers are reported only for a folder that the wrapper evaluated with a model and no failed judge call. Their line counts are compared with our location numbers: on the same files they are equal, and theirs can be lower only where the judge's yes on a finding that an earlier reference took by line ends a reference's search. Nothing in the block decides an accept.
 
 ## Why scanner candidates were dropped
 
@@ -245,7 +291,29 @@ A script puts each scanner candidate the reviewer dropped into one class, from t
 | low-value | style, a nitpick, size, hygiene, no impact | the rule's default or severity |
 | rule-fp | anything else: the rule was wrong here | the rule, when one rule holds many |
 
-A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+A drop of any class is tagged `framework-mismatch` when its reason names a framework the scan can detect and found in no project of the change. Flask is detected but never tagged: a scan saved before Flask was detected records a Flask project with no framework. The script prints the counts per run and the rule false positives by rule. `--audit N` prints instead N drops drawn at random (seed 1 unless `--seed` names another) from every run given, as a sheet for a person to rule on. The sheet names no run, build, configuration or case.
+
+## What each scanner contributed
+
+```
+node benchmark/scanners.mjs <run> [--specs <folder>] [--out <folder>] [--json]
+node benchmark/scanners.mjs <run> --against <baseline> [--specs <folder>] [--input-change pin-bump:<scanner>|semgrep-packs]
+```
+
+A script reads each planned job's first attempt that saved a `scan.json`, in a review run or a scanner-only run, and prints six tables: each scanner (what it raised, what each filter and the reviewer did with it, the truth it found), each rule, the drop classes above, the gaps by language and class, the time, and what the ensemble loses without each scanner. It writes them to `scanners.json` in the run folder, or in the folder `--out` names. A legacy run's folder is the published original, so its `scanners.json` is written only with `--out`. `--specs` applies to the run named before it, as in `causes.mjs`.
+
+- A scanner finds a truth item when one of its candidates sits on the item's lines and either the spec expects that scanner or the candidate's rule or message names the item's words. This is the scanner-only scorer's rule. A finding that dedup merged into another scanner's candidate counts for its own scanner, at the lines the scan's trail recorded for it. Where the scan saved no trail, it is placed at the candidate's lines, and the tables say how many were placed so. A candidate on the lines that names nothing of the item is a location match: shown in its own column, never counted as finding it.
+- Counts are (sample, truth item) pairs. Every ratio is summed hits over summed checks, never an average of ratios, and every time carries its sample count.
+- Unique: a scanner found the item and no other scanner did. Leave one out: the items only that scanner found, and its candidates that absorbed no other scanner's finding.
+- The remit is the files the scan handed the scanner (the scan's `selection`), for items on lines the change touched. A miss is an item in the remit of a scanner that ran and did not find it. An item in the remit of a scanner that did not run (not installed, failed, disabled) is an infra miss, counted apart. A scan saved before the selection existed leaves the remit unknown, and the table says so rather than guess.
+- A rule meets the default-off bar with at least 30 kept candidates, at least 90% of them dropped, from at least 3 repositories, and no truth item found. Evidence from planted cases alone is provisional.
+- A language is a gap when it has at least 10 reachable truth items (or 5% of the run's) and no scanner but semgrep or gitleaks has any in its remit, or those scanners find under 30% of the ones in their remit.
+
+Runs saved before the scan recorded `selection`, `trail`, `stages` and `timings` still print. The script names what they lack first, and reads the scanner stage's time as the slowest scanner's.
+
+`--against <baseline>` judges the run as a change to the scanners. It exits 2, and judges nothing, when either run is from the test split, when the runs differ in suite or mode, when their Semgrep rule packs or scanner toolchains differ or are not recorded, when a scanner did not run where truth lies or may lie in its remit (a scanner a scan names no status for, in a scan that recorded no selection, counts as one that did not run), or when a planned scan is missing. One input may differ: the one the change under test names with `--input-change`, either a version bump of one scanner (`pin-bump:<scanner>`) or the pack list (`semgrep-packs`). A pin bump is checked entry by entry: the script reads the toolchain table and lock files of each run's build commit with git, checks that they hash to the toolchain hash the run recorded, and refuses when any entry or lock file other than the named scanner's differs. Otherwise it applies the first clause of the keep rule, K1. K1 holds when every truth item the baseline found is still found in every sample. A location match on a lost item's lines does not keep it. The script exits 1 when K1 fails and names each lost item, and 0 when K1 holds. The other clauses (a gain, the guards, and a review run when a candidate on a truth item changed) belong to the acceptance rule in `benchmark/loop/decide.mjs`, which is not built yet.
+
+A test-split run prints its tables only with `--release <version>` naming its own release, and is never judged.
 
 ## The review queue
 
@@ -273,33 +341,6 @@ node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <t
 | `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
-
-## Why a truth item was missed
-
-```
-node benchmark/causes.mjs <run> [--specs <folder>] [<run> [--specs <folder>]]... [--decisions <file>] [--json]
-```
-
-A script gives every truth item a review missed, and every finding counted in precision that finds none, one cause, from the saved files and the rulings only. `score.mjs` writes the same causes into `score.json` (`perBug.<config>.<case>.<bug>.cause`, one per repeat, and the counts per configuration in `byConfig.<config>.causes`) and into `outcomes.jsonl`. `causes.mjs` prints them per run and configuration, then one table across the runs with the reviews each cause holds. `--specs` applies to the run named before it. A scanner-only run has no reviewer, so it gets no causes.
-
-For a miss, the first cause that holds wins:
-
-| Cause | When |
-|---|---|
-| incomplete | the review did not complete, failed or never started |
-| spec-disputed | a person ruled the truth item wrong |
-| not-in-brief | no line of the item was in the brief's diff, a correction round or a read |
-| not-read | the item's proof outside the change (its `evidence`) was in none of them |
-| finalize-floor | the reviewer submitted a finding that finds it, under the confidence floor |
-| finalize-threshold | the same, below the severity threshold, so counted and not listed |
-| finalize-rejected | a correction round's answer held such a finding, and the final answer left it out |
-| line-off | a shown finding finds it but for its lines |
-| wrong-kind | a shown finding finds it but for its kind |
-| unresolved | a finding nobody has ruled on may be it: one on its lines, or one in its file that names it, of its kind, by a word no other truth item lists |
-| candidate-dropped | a dropped scanner candidate located it; each drop is kept with its reason and its class above |
-| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it. Each part must be on record (a complete trace or the brief for the lines, `submission.json`, and `rounds.json` when the review took correction rounds); a file the review did not save makes the miss unresolved, never judged wrong |
-
-A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
 
 ## Martian's offline set
 
@@ -329,6 +370,103 @@ benchmark/outside/boards/martian.sh <run> [--dry-run]
 - It writes `<run>/outside/martian/<tool>/evaluation.json` per tool name, in the shape `readMartianEvaluation` reads, and `eval.json` with the checkout's commit and tree, each step's exit code, the candidates per finding, and the problems. A tool name gets no evaluation when one of its reviews was judged on something other than its extracted candidates, has no dedup groups, was never judged, or has a failed judge call. The same holds for every tool name when the dedup step fell back to no grouping.
 - A script, not a model, links each candidate Martian extracted to the finding it came from: the finding whose text holds the longest run of the candidate's words. That link feeds only our own counts beside the official ones.
 - `benchmark/outside/fixtures/martian/` holds three saved reviews of pull requests that a golden file written for the tests describes. It holds no Martian pull request. It also holds the entries the converter writes for them, and what Martian's pipeline wrote for them with a stand-in judge.
+
+## Why a truth item was missed
+
+```
+node benchmark/causes.mjs <run> [--specs <folder>] [<run> [--specs <folder>]]... [--decisions <file>] [--json]
+```
+
+A script gives every truth item a review missed, and every finding counted in precision that finds none, one cause, from the saved files and the rulings only. `score.mjs` writes the same causes into `score.json` (`perBug.<config>.<case>.<bug>.cause`, one per repeat, and the counts per configuration in `byConfig.<config>.causes`) and into `outcomes.jsonl`. `causes.mjs` prints them per run and configuration, then one table across the runs with the reviews each cause holds. `--specs` applies to the run named before it. A scanner-only run has no reviewer, so it gets no causes.
+
+For a miss, the first cause that holds wins:
+
+| Cause | When |
+|---|---|
+| incomplete | the review did not complete, failed or never started |
+| spec-disputed | a person ruled the truth item wrong |
+| not-in-brief | no line of the item was in the brief's diff, a correction round or a read |
+| not-read | the item's proof outside the change (its `evidence`) was in none of them |
+| finalize-floor | the reviewer submitted a finding that finds it, under the confidence floor |
+| finalize-threshold | the same, below the severity threshold, so counted and not listed |
+| finalize-rejected | a correction round's answer held such a finding, and the final answer left it out |
+| line-off | a shown finding finds it but for its lines |
+| wrong-kind | a shown finding finds it but for its kind |
+| unresolved | a finding nobody has ruled on may be it: one on its lines, or one in its file that names it, of its kind, by a word no other truth item lists |
+| candidate-dropped | a dropped scanner candidate located it; each drop is kept with its reason and its class above |
+| judged-wrong | none of these: its lines were in front of the reviewer and nothing raised finds it. Each part must be on record (a complete trace or the brief for the lines, `submission.json`, and `rounds.json` when the review took correction rounds); a file the review did not save makes the miss unresolved, never judged wrong |
+
+A counted finding that finds no truth item is `line-off` (a near miss), `wrong-kind`, `real-unlisted` (a person ruled it real), `false` (a person ruled it false, or the spec decides it) or `unresolved` (nobody has ruled). An unresolved cause never points at a change to the reviewer.
+
+## The acceptance rule
+
+A change to the reviewer is kept only when the benchmark shows it is better at what it set out to do and loses no more than it said it might on everything else. Three scripts apply the rule. None of them calls a model.
+
+```
+node benchmark/loop/compare.mjs <parent run> <candidate run> [--config <c>] [--parent-repeats 1] [--candidate-repeats 2] [--specs <folder>]
+node benchmark/loop/decide.mjs --change <RC-id> --pair <parent run>=<candidate run> [--pair ...] [--stage 1|2|3] [--aa <run a>=<run b>]
+node benchmark/loop/validate.mjs --run <saved run> [--specs <folder>]
+```
+
+`compare.mjs` scores both runs from their saved files and prints, for each metric, the parent, the candidate, the change with its bounds, and a verdict: better, worse, mixed or no change. A metric with two bounds (recall and precision while some findings are unresolved) has two readings, so each is tested at half the error share: two readings never get two chances to call a change. Splitting is chosen over asking both bounds to agree, because a change in one bound alone, such as new findings nobody has ruled on, is a change worth reporting. When nothing is unresolved, the two bounds are the same and are tested once at the whole share. `decide.mjs` applies the rule to a change recorded by `benchmark/loop/propose.mjs` and appends one line to `benchmark/index/ledger/reviewer.jsonl`, by writing the whole ledger to a temp file and renaming it into place under the ledger's lock, so a reader never sees half a line. A side may name a configuration and repeats: `<run>#<config>@<repeats>`.
+
+The rule:
+
+- Before any run, the change's record names one primary metric and an acceptable loss for every metric. The losses never change after that.
+- The candidate is compared with the parent on the same cases, under the same scoring rules, review by review on first attempts. The unit is the case on planted suites and the repository group on real ones, with every repeat inside it. Three reviews of one case that agree count as one case, not three.
+- The test is a paired sign-flip test. If the change did nothing, either run's result for a case is as likely to be the other's, so swapping them case by case shows how large a change noise alone makes. A bootstrap is not used: it calls a change carried by a few cases significant however many cases there are.
+- Each point where a change can be accepted is a look: stage 2 and stage 3 of every change. Stage 1 can only stop a change and takes none. The t-th look in the ledger may be wrong with a chance of 0.05 / (t (t + 1)), split equally across the nine metrics. All looks together spend at most 0.05, so a loop that decides often does not accept noise sooner or later.
+- Unresolved findings count against the change. The candidate's precision is read at its lower bound and the parent's at its upper bound, and a truth item an unresolved finding may have found counts as missed by the candidate and found by the parent.
+- A change is accepted only when the primary is better on the target path, every other metric (and the primary everywhere else) stays strictly inside its loss (a bound on the loss fails) on every path the change touches, every reviewer and each stratum (planted, real and both pooled), no hard rule breaks, every pair has three repeats, and the laptop path has both Claude Code and Codex.
+- The hard rules refuse a change whatever the bounds say: a critical issue found in two or more of three reviews is found in one or fewer; a clean change draws findings in two or more of three reviews; a review is newly cut short by the budget; a review is complete while a changed range was not delivered.
+- A change is reverted when a metric is past its loss even at its better bound, the primary is clearly worse, or a hard rule breaks. Otherwise a bound wider than its loss is inconclusive, and an inconclusive change is reverted too.
+- Stage 1 (one repeat) can only stop a change. At stage 2, a change whose only open question is the primary may add repeats 4 to 6 (stage 3). Stage 3 is final.
+- An A/A pair (two runs of the parent build) only sets how many cases and repeats a decision needs. Where its half-width is wider than a loss, the decision is inconclusive until cases or repeats are added. It never widens a loss.
+- A metric no review measures, such as findings on clean changes in a run with no clean case, is named in the reason and does not decide.
+
+`validate.mjs` must pass before the first live decision, and again after any change to the rule's files. `decide.mjs` refuses to write while the last `validation` line in the ledger fails or names an older version of the rule. The version is a hash of the rule's files, which `validate.mjs` takes before it loads them and again before it writes its line; a file edited in between refuses the line. It tests the rule two ways:
+
+- Simulated: 1,000 sequences of 10 looks, each look a change that does nothing, drawn from a world shaped like the saved runs (50 cases with three truth items each, 20 clean cases, three repeats). None may be accepted. The same world must accept a real gain at least once, and a constructed harmful change must be reverted.
+- Saved: each pair of disjoint repeats of each configuration of a saved run is a change that does nothing, and the same pair with every hit removed from half the cases is a harmful one. Neither may be accepted.
+
+The validation of the rule as it stands, `VAL-0002`, ran on `2026-10-08-752b77f` scored with `--specs cases-v2`, after review fixes to the first version (`VAL-0001`, the same results). No simulated change that does nothing was accepted in 1,000 sequences: the primary passed by chance at 1 of 10,000 looks, and a guard stopped it. The constructed harmful change was reverted, and the simulated gain was accepted in 4 of 40 tries. On the saved run, none of 18 decisions on changes that do nothing and none of 18 on harmful changes accepted anything, and all 18 harmful ones were reverted on evidence. On the same run, graph off against graph on is inconclusive on recall (1.8 points better at the bound worse for the change, one-sided p 0.25), and repeat 1 against 2, 1 against 3 and 2 against 3 show no change on any metric in either configuration.
+
+The simulation also says how many cases a decision needs. With about 50 cases and 20 clean ones, the size of the laptop acceptance set, the rule accepted a gain that finds three quarters of what the parent missed in 4 of 40 tries: precision and severity agreement vary too much there for their 2 and 3 point losses at one ninth of a look's error budget. With 200 cases it accepted about half. The A/A pairs say how many cases or repeats each decision needs before it runs.
+
+## The loop
+
+`benchmark/loop.mjs` takes one change to the reviewer from its record to a decision, one step at a time. It never calls a model itself: it runs `run.mjs`, which reviews with the reviewer the parent's runs used, and it applies the acceptance rule above.
+
+```
+node benchmark/loop.mjs propose <record.json>
+node benchmark/loop.mjs step --change <RC-id> --parent <run> [--parent <run> ...] [--candidate <run>] [--checkout <dir>] [--parent-checkout <dir>]
+node benchmark/loop.mjs status
+```
+
+`propose` is the only way in. It checks the change as `benchmark/loop/propose.mjs` does and writes its record to `benchmark/index/ledger/reviewer.jsonl`.
+
+`step` runs the stage that is due for the change and writes one line to the same ledger. Each `--parent` is a saved run of the parent build: one per path (laptop or server) and group of reviewers the change runs on. The loop makes the change's own runs with the parent's settings: the same cases, reviewers, model settings, scanner folder and repeats. It runs them with `run.mjs` from `--checkout`, a checkout of the change's commit built with `node benchmark/build-cli.mjs` (this repository by default). `--candidate` names a run already made for the change (`run.mjs --change <RC-id>`), so a stage whose runs exist costs nothing. Its run folders go to `benchmark/results/<RC-id>-<parent run>`.
+
+The three stages:
+
+- Stage 1, the screen: one repeat of the change on the path it targets, against the parent's saved runs. It can only stop a change. It stops it when the primary metric is not better than zero for some reviewer on that path, when another metric is worse by more than twice its acceptable loss, when a critical issue the parent found in every review of a case is missed in two or more cases, when the change has spent 40 percent of its cap, or when the rule above already reads harm.
+- Stage 2, the decision: three repeats of every reviewer on every path the change runs on, Claude Code and Codex both on the laptop path. The rule decides: accepted, reverted, inconclusive and reverted, or stage 3 when only the primary metric is still open.
+- Stage 3, the confirmation: repeats 4 to 6 on the target path, for the change and the parent (`--parent-checkout` names the parent's build). The rule decides, and an inconclusive change is reverted.
+
+Runs of the scripted model are no evidence about a change: it reads no code, so the parent and the change it reviewed agree whatever the change did. A step on them records the spend and "no evidence", takes no look, and neither stops nor passes the change. Only a real reviewer's runs decide.
+
+What the loop refuses, before it runs anything:
+
+- A change that is decided. A stop at stage 1 is a decision, so nothing more runs for it.
+- Any held-out run, as a parent or a change's run: a test split run, or a run of a suite held out of the loop. It reads each run's manifest first and refuses before it reads a single review.
+- Any change while the earliest-failure signal says stop. The last baseline line in the ledger must carry the signal, and it must say go.
+- A decision before a passing validation of the rule as it stands.
+- A second change in stage 2 or 3 while one is there, checked again as the line is written. Changes are decided one at a time, so each is compared with the parent the last decision left.
+- A parent built from another commit, made more than 7 days ago, a draft, or not finished, and a change's run built from another commit. A parent whose settings differ from the change's runs in anything but the build (another reviewer version, model, script or machine) is not compared: the line says so, and the parent is run again.
+
+A look is a point where a change can be accepted. Stage 2 and stage 3 each take one, and the look number in the line is the one due when the line was written: the loop reads the ledger and writes under one lock, so two changes deciding at once take two numbers. Stage 1 can only stop a change, so it takes no look and spends none of the error budget. Its line records no look number. It reads the rule at the alpha of the look that is due.
+
+Money. Each line records what its runs spent since the ledger last named them, read from each run's `budget.jsonl`, and every run's total, so nothing is counted twice. A run made with the scripted model costs what its script's prices say, which is what a real model would cost for the same tokens. The server path may spend 60 dollars a day (UTC), counted from the day's lines, plus anything the step's own runs spent that the ledger has not recorded yet (a run made before the step). A server run gets as its hard cap the smaller of what is left of the day and what is left of the change's own cap (40 dollars by default), and `budget.mjs` holds every model call to it before the call is sent. So a run stops at the cap even when the forecast said it would fit. The loop starts a stage only when the forecast (what the change's reviews have cost so far, else the parent's) fits in that room. A stage cut short by the day's cap takes no look: the next step, on a later day, finishes it. A stage cut short by the change's own cap is inconclusive and reverted. On the laptop path, a run is held to what is left of the change's 240 reviews. One stage runs reviews at a time. Each `run.mjs` the loop starts runs in a process group of its own, named beside the lock. If a step dies, the next step that runs reviews waits until that `run.mjs` has ended too, then records what the runs spent before it reads the day's room.
 
 ## What it does not measure
 

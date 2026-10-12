@@ -33,8 +33,8 @@
 //    without naming the value. A dry run loads and checks the settings,
 //    prints the commands with the values hidden, and starts nothing.
 // 2. A crash of the pipeline writes a core file holding the key and URL:
-//    every step runs with a core file limit of zero (lib/board-files.mjs
-//    withoutCore); a dry run reports the limit the steps would get.
+//    every step runs with a core file limit of zero (withoutCore, from
+//    aacr-judge.mjs); a dry run reports the limit the steps would get.
 // 3. Another commit's code, or a modified one, scores the run: the checkout
 //    must be the pinned commit with nothing git sees as changed, and
 //    eval.json records its commit and tree.
@@ -69,11 +69,12 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { boardFolder, checkoutState, leaksIn, outsideRepo, redactor, withoutCore } from "../../lib/board-files.mjs";
+import { boardFolder, checkoutState, leaksIn, outsideRepo, redactor } from "../../lib/board-files.mjs";
 import { MARTIAN_BETA, MARTIAN_BOARD, MARTIAN_PROFILES, MARTIAN_STEPS, martianEvaluations, releaseGate } from "../../lib/martian-board.mjs";
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
 import { canonicalJson } from "../../lib/suites.mjs";
 import { accessLogPath } from "../convert/martian.mjs";
+import { withoutCore } from "./aacr-judge.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
 const shown = (p) => (p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);

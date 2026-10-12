@@ -11,6 +11,13 @@
 // summary names each pack it consumed by the sha256 of its rules (rulePackHash)
 // and the size of the bytes semgrep read, taken from that folder before it is
 // removed.
+//
+// The packs' framework rule families fire on other frameworks' apps (on a
+// Flask app, django's rules raise the SQL injection flask's own rule raises
+// on the same line). Leaving a family out by framework was measured and
+// rejected (benchmark/index/ledger/scanner.jsonl, SC-0002): what it removes
+// are true findings, and on Fastify, Next.js, Sinatra and FastAPI apps a
+// sister framework's family is the only one that finds some bugs.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
