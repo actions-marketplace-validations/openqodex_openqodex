@@ -1,0 +1,77 @@
+name: Gate
+description: >-
+  Node 22 and the workspace, Go 1.26, Rust on macOS, the scanner cache, and
+  the steps scripts/gate.sh runs, one for one. The one recipe for the Linux
+  and the macOS gate jobs in ci.yml. The calling job checks the repository
+  out first.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 22
+        cache: pnpm
+    # golangci-lint needs Go on PATH; the end-to-end tests fail in CI when
+    # any scanner is skipped.
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        # golangci-lint 2.12.2 is built with Go 1.26 and cannot check a newer Go.
+        go-version: "1.26"
+        cache: false
+    # cargo-deny needs Cargo, and the macOS runner image has no Rust
+    # toolchain; the end-to-end tests fail in CI when any scanner is missing.
+    - if: runner.os == 'macOS'
+      shell: bash
+      run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
+    - shell: bash
+      run: pnpm install --frozen-lockfile
+    # The end-to-end tests install the pinned scanners once into this folder.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/openqodex-e2e-home
+        key: scanners-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
+    # The steps below mirror scripts/gate.sh one for one.
+    - name: Build
+      shell: bash
+      run: pnpm build
+    - name: Typecheck
+      shell: bash
+      run: pnpm typecheck
+    - name: Lint
+      shell: bash
+      run: pnpm lint
+    # Only the two test steps get the token: the custom scanner tests read a
+    # release from the GitHub API, and hosted runners share addresses, so the
+    # anonymous rate limit is often spent. Install and build never see it.
+    - name: Unit tests
+      shell: bash
+      run: pnpm test
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    - name: End-to-end tests
+      shell: bash
+      run: pnpm test:e2e
+      env:
+        OPENQODEX_E2E_HOME: ${{ runner.temp }}/openqodex-e2e-home
+        GITHUB_TOKEN: ${{ github.token }}
+    # The review of the demo's planted change with both reviewer drivers,
+    # compared file by file with tests/golden/expected.
+    - name: Golden run
+      shell: bash
+      run: pnpm golden:check
+    - name: Skill and plugin manifests
+      shell: bash
+      run: node scripts/validate-skill.mjs
+    - name: Config docs
+      shell: bash
+      run: node scripts/config-docs.mjs --check
+    - name: Docs index
+      shell: bash
+      run: node scripts/docs-index.mjs --check
+    - name: Docs facts
+      shell: bash
+      run: node scripts/docs-facts.mjs
+    - name: Private material scrub
+      shell: bash
+      run: node scripts/scrub.mjs
