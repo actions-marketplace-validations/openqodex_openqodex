@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
 import type { CompletionRecord, Config, ImpactSummary, Report } from "../types.js";
-import { renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
+import { renderHtml, renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
 
 function review(submission = makeSubmission(), config: Partial<Config> = {}): Report {
   const change = makeChange();
@@ -52,7 +52,7 @@ describe("renderTerminal", () => {
   it("has no escape codes with colour off and puts the verdict first", () => {
     const out = renderTerminal(fullReview(), { color: false });
     expect(out).not.toContain(ESC);
-    expect(out.split("\n")[0]).toBe("Passed with warnings: 2 findings (1 critical, 1 nitpick)");
+    expect(out.split("\n")[0]).toBe("Passed with warnings: 2 findings (1 critical, 1 nitpick); 1 of 4 scanners did not run");
   });
 
   it("shows every section and the coverage line", () => {
@@ -72,12 +72,12 @@ describe("renderTerminal", () => {
 
   it("says Blocked when the threshold is met", () => {
     const out = renderTerminal(fullReview({ blockOnSeverity: "critical" }), { color: false });
-    expect(out.split("\n")[0]).toBe("Blocked: 1 finding at or above critical (1 critical, 1 nitpick)");
+    expect(out.split("\n")[0]).toBe("Blocked: 1 finding at or above critical (1 critical, 1 nitpick); 1 of 4 scanners did not run");
   });
 
   it("says Passed with no findings on a clean change", () => {
     const report = review(makeSubmission({ findings: [], dropped: [] }));
-    const clean = { ...report, not_reviewed: [] };
+    const clean = { ...report, not_reviewed: [], scanners: report.scanners.filter((s) => s.status !== "not_installed") };
     expect(renderTerminal(clean, { color: false }).split("\n")[0]).toBe("Passed: no findings");
   });
 
@@ -270,5 +270,45 @@ describe("no rendered output contains a secret", () => {
     ]) {
       expect(out).not.toContain(SECRET);
     }
+  });
+});
+
+// Failure cases: failed scanners say Passed; idle scanners inflate selected counts;
+// finding verdicts lose their coverage clause; all-ran verdicts change; outputs disagree.
+describe("verdict scanner coverage", () => {
+  function outputs(r: Report): string[] {
+    return [renderTerminal(r, { color: false }), renderMarkdown(r), renderHtml({ report: r, display: null, version: "test" })];
+  }
+  it("reports a failed scanner without claiming Passed or counting idle scanners", () => {
+    const scan = makeScan({ candidates: [], scanners: makeScan().scanners.map((s) => s.scanner === "brakeman" ? { ...s, status: "failed", reason: "process exited 1" } : s) });
+    const r = scanReport({ change: makeChange(), scan, config: makeConfig() });
+    for (const output of outputs(r)) {
+      expect(output).toContain("No findings from 3 of 4 scanners; 1 did not run (1 failed)");
+      expect(output).not.toContain("Passed");
+    }
+    expect(r.verdict).toBe("passed");
+  });
+  it("lists only applicable reasons when missing and failed scanners occur together", () => {
+    const r = review(makeSubmission({ findings: [], dropped: [] }));
+    r.not_reviewed = [];
+    r.scanners[0] = { ...r.scanners[0]!, status: "failed" };
+    for (const output of outputs(r)) expect(output).toContain("No findings from 2 of 4 scanners; 2 did not run (1 not installed, 1 failed)");
+  });
+  it.each([
+    ["Passed with warnings", () => fullReview()],
+    ["Blocked", () => fullReview({ blockOnSeverity: "critical" })],
+    ["Passed", () => review(makeSubmission({ findings: [finding({ severity: "minor" })] }), { blockOnSeverity: "major" })],
+  ] as const)("keeps the %s verdict and appends how many scanners did not run", (word, make) => {
+    const r = make();
+    const line = renderTerminal(r, { color: false }).split("\n")[0]!;
+    expect(line.startsWith(`${word}: `), line).toBe(true);
+    expect(line.endsWith("; 1 of 4 scanners did not run"), line).toBe(true);
+    for (const output of outputs(r)) expect(output).toContain(line);
+  });
+  it("keeps the verdict unchanged when every selected scanner ran", () => {
+    const r = review(makeSubmission({ findings: [], dropped: [] }));
+    r.not_reviewed = [];
+    r.scanners = r.scanners.filter((s) => s.status !== "not_installed");
+    for (const output of outputs(r)) expect(output).toContain("Passed: no findings");
   });
 });

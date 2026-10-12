@@ -34,12 +34,19 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-// "7 scanners ran, 4 had nothing to check, 2 not included (brakeman: needs
-// Ruby 2.7 or newer; semgrep: first run only, still installing)"
-export function coverageLine(scanners: ScannerRunSummary[]): string {
+// The receipt and verdict use the same selection: a scanner with nothing
+// to check is idle, and every other scanner either ran or was left out.
+function scannerCoverage(scanners: ScannerRunSummary[]) {
   const ran = scanners.filter((s) => s.status === "ran").length;
   const idle = scanners.filter((s) => s.status === "no_matching_files").length;
   const out = scanners.filter((s) => s.status !== "ran" && s.status !== "no_matching_files");
+  return { ran, idle, out, selected: ran + out.length };
+}
+
+// "7 scanners ran, 4 had nothing to check, 2 not included (brakeman: needs
+// Ruby 2.7 or newer; semgrep: first run only, still installing)"
+export function coverageLine(scanners: ScannerRunSummary[]): string {
+  const { ran, idle, out } = scannerCoverage(scanners);
   const parts = [`${plural(ran, "scanner", "scanners")} ran`];
   if (idle > 0) parts.push(`${idle} had nothing to check`);
   if (out.length > 0) {
@@ -67,13 +74,24 @@ export function verdictLine(report: Report): string {
   const counted = countedSeverities(report);
   const threshold = report.block_on_severity;
   const what = (n: number) => plural(n, "finding", "findings");
+  const { ran, out, selected } = scannerCoverage(report.scanners);
+  const ofSelected = plural(selected, "scanner", "scanners");
+  const clause = out.length > 0 ? `; ${out.length} of ${ofSelected} did not run` : "";
   if (report.verdict === "blocked" && threshold) {
     const over = counted.filter((s) => atOrAbove(s, threshold));
-    return `Blocked: ${what(over.length)} at or above ${threshold} (${severityBreakdown(counted)})`;
+    return `Blocked: ${what(over.length)} at or above ${threshold} (${severityBreakdown(counted)})${clause}`;
   }
-  if (counted.length === 0) return "Passed: no findings";
-  if (!threshold) return `Passed with warnings: ${what(counted.length)} (${severityBreakdown(counted)})`;
-  return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${severityBreakdown(counted)})`;
+  if (counted.length === 0) {
+    if (out.length === 0) return "Passed: no findings";
+    const reasons = ["not_installed", "failed", "installing", "disabled", "untrusted"]
+      .map((status) => [status, out.filter((s) => s.status === status).length] as const)
+      .filter(([, n]) => n > 0)
+      .map(([status, n]) => `${n} ${status.replace(/_/g, " ")}`)
+      .join(", ");
+    return `No findings from ${ran} of ${ofSelected}; ${out.length} did not run (${reasons})`;
+  }
+  if (!threshold) return `Passed with warnings: ${what(counted.length)} (${severityBreakdown(counted)})${clause}`;
+  return `Passed: nothing at or above ${threshold}, ${what(counted.length)} below it (${severityBreakdown(counted)})${clause}`;
 }
 
 // The coverage label for files the reviewer did not open. With every changed

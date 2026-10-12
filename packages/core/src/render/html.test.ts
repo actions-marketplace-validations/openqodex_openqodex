@@ -278,7 +278,7 @@ describe("report.html", () => {
   it("6. writes a page for a review with no findings that says so", () => {
     const change = fixtureChange();
     const html = page(report(change, { findings: [] }), change);
-    expect(html).toContain("Passed: no findings");
+    expect(html).toContain("No findings from 3 of 4 scanners; 1 did not run (1 not installed)");
     expect(html).toContain("No findings on the changed lines.");
     expect(html).not.toContain('id="f1"');
     expect(html).toContain('id="file-1"');
@@ -361,7 +361,7 @@ describe("the receipt", () => {
       findings: [agentFinding({ severity: "minor", title: "Second", line_number: 15, line_end: 15 }), agentFinding({ severity: "critical", title: "First" })],
     });
     const out = renderReceipt(r, { ...paths, color: false }).trimEnd().split("\n");
-    expect(out[0]).toBe("Passed with warnings: 2 findings (1 critical, 1 minor)");
+    expect(out[0]).toBe("Passed with warnings: 2 findings (1 critical, 1 minor); 1 of 4 scanners did not run");
     expect(out).toContain("Summary: Builds the search query from the request and adds a settings module.");
     expect(out).toContain("1. Critical security: First (app/search.py:14)");
     expect(out).toContain("2. Minor security: Second (app/search.py:15)");
@@ -385,7 +385,7 @@ describe("the receipt", () => {
   it("12. says when there is nothing to fix", () => {
     const change = fixtureChange();
     const out = renderReceipt(report(change, { findings: [] }), { ...paths, color: false });
-    expect(out.split("\n")[0]).toBe("Passed: no findings");
+    expect(out.split("\n")[0]).toBe("No findings from 3 of 4 scanners; 1 did not run (1 not installed)");
     expect(out).toContain("No findings on the changed lines.");
   });
 });
