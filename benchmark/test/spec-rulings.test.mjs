@@ -17,6 +17,10 @@
 //    finding on a line the change added in the item's file, is recorded with
 //    that item and the spec version, and scores as the item's hit on that
 //    version only.
+// 4. A bug ruling is recorded against a held-out spec version (sol review
+//    of PR 172): decide refuses a run of the test split, or one whose case
+//    the committed split holds out, before it looks for a spec, with
+//    --specs too, in one line.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,6 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
+import { readSuite, realCaseId } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -196,6 +201,36 @@ describe("a disputed ruling recorded on one spec version labels the item on ever
       const r = queue("decide", ...args, "--by", "Sid", "--queue", q);
       expect(r.status, args.join(" ")).toBe(2);
       expect(r.stderr).toMatch(why);
+    }
+    expect(existsSync(join(q, "decisions.jsonl"))).toBe(false);
+  });
+});
+
+describe("a bug ruling is recorded against a held-out spec version", () => {
+  // A run's manifest as the runner writes it, for decide to read; the
+  // ruling is refused before any spec is looked for.
+  function manifestRun(settings, caseName, caseId) {
+    const run = tempDir("oq-spec-rulings-heldout-");
+    const { jobs } = planJobs({ cases: [caseName], caseIds: { [caseName]: caseId }, reviewers: ["claude"], graph: ["on"], repeat: 1 });
+    write(join(run, "manifest.json"), JSON.stringify(runManifest({ startedAt: "2026-10-11T10:00:00.000Z", settings: { cases: [caseName], caseIds: [caseId], configs: [CONFIG], repeat: 1, ...settings }, jobs })));
+    return run;
+  }
+
+  it("refuses a run of the test split, or one whose case the committed split holds out, with or without --specs", () => {
+    const suite = readSuite("aacr");
+    const heldOut = suite.split.cases.test.find((n) => suite.byName.get(n)?.status === "usable");
+    const runs = [
+      [manifestRun({ suite: "planted", split: "test" }, "users", CASE_ID), CASE_ID],
+      [manifestRun({ suite: "aacr", split: "dev" }, heldOut, realCaseId("aacr", heldOut, suite.byName.get(heldOut).hash)), realCaseId("aacr", heldOut, suite.byName.get(heldOut).hash)],
+    ];
+    const q = queueDir();
+    for (const [run, caseId] of runs) {
+      for (const specs of [[], ["--specs", run]]) {
+        const r = queue("decide", "disputed", caseId, "--bug", "sqli", "--run", run, ...specs, "--by", "Sid", "--queue", q);
+        expect(r.status, `${caseId} ${specs.join(" ")}`).toBe(2);
+        expect(r.stderr).toMatch(/held out/);
+        expect(r.stderr.trim().split("\n")).toHaveLength(1);
+      }
     }
     expect(existsSync(join(q, "decisions.jsonl"))).toBe(false);
   });

@@ -73,6 +73,10 @@
 //    scored that case and the spec lists that item. A queue item from
 //    before the spec version was recorded is refused until its run is added
 //    again.
+// 10. A bug ruling is recorded against a held-out spec version: --run
+//    refuses a run of the test split, of a suite whose every case is held
+//    out, or of a case the committed split holds out, before any spec is
+//    read, --specs or not (add refuses held-out items the same way, 7).
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,6 +85,7 @@ import { drawAudit, redactor } from "./lib/drops.mjs";
 import { mergeQueue, openAsks } from "./lib/queue.mjs";
 import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems, specHashOf } from "./lib/rulings.mjs";
 import { plannedJobs } from "./lib/score.mjs";
+import { SUITES, readSuite } from "./lib/suites.mjs";
 
 export const queueRoot = join(benchRoot, "review-queue");
 const DECISIONS = "decisions.jsonl";
@@ -247,6 +252,19 @@ const shownPath = (p) => {
   return r !== "" && !r.startsWith("..") && !isAbsolute(r) ? r : p;
 };
 
+// Why a run is held out, or null: a run of the test split, a run of a suite
+// whose every case is held out, or a run of a case the committed split puts
+// on its test side.
+function heldOutOf(manifest, jobs) {
+  if ((manifest.split ?? "dev") !== "dev") return `is a run of the ${manifest.split} split, which is held out`;
+  const suite = manifest.suite ?? "planted";
+  if (!SUITES[suite]) return null;
+  if (SUITES[suite].heldOutOnly) return `is a run of the ${suite} suite, whose every case is held out`;
+  const test = new Set(readSuite(suite).split?.cases?.test ?? []);
+  const held = [...new Set(jobs.map((j) => j.case))].filter((name) => test.has(name)).sort();
+  return held.length === 0 ? null : `ran ${held.join(", ")}, held out by the ${suite} split`;
+}
+
 // The case and spec version a bug ruling judges, from the run it names: the
 // run's id for the case (its own, or the one a bare <suite>/<name> names),
 // and the case's spec in the run's cases/ copy or in the folder `specs`
@@ -259,6 +277,8 @@ function specOfRun(run, caseId, bug, specs) {
     throw new Error(`refused: ${run} holds no manifest.json that can be read, so it names no run`);
   }
   const jobs = plannedJobs(manifest, []).jobs;
+  const held = heldOutOf(manifest, jobs);
+  if (held !== null) throw new Error(`refused: ${run} ${held}, so its spec is never ruled on`);
   const bare = (id) => {
     const p = parseCaseId(id);
     return p ? `${p.suite}/${p.name}` : id;
