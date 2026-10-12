@@ -1,0 +1,109 @@
+{
+  "https://github.com/oq-fixture/ledger/pull/7": {
+    "openqodex-library-r1": {
+      "skipped": false,
+      "true_positives": [
+        {
+          "golden_comment": "The migration deletes the archived ledger rows instead of moving them to the archive table.",
+          "severity": "High",
+          "category": "data",
+          "matched_candidate": "Archive migration loses rows. The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty. Archived history is lost for good.",
+          "confidence": 0.9,
+          "reasoning": "8 shared words"
+        },
+        {
+          "golden_comment": "No test covers the archive endpoint when the ledger is empty.",
+          "severity": "Low",
+          "category": "test_gap",
+          "matched_candidate": "Archive migration loses rows. The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty. Archived history is lost for good.",
+          "confidence": 0.75,
+          "reasoning": "5 shared words"
+        }
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "errors": [],
+      "total_candidates": 1,
+      "total_golden": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "errors_count": 0,
+      "precision": 2.0,
+      "recall": 1.0,
+      "tool": "openqodex-library-r1",
+      "repo_name": null,
+      "pr_url": "https://github.com/oq-fixture/ledger/pull/7"
+    }
+  },
+  "https://github.com/oq-fixture/shop/pull/11": {
+    "openqodex-library-r1": {
+      "skipped": false,
+      "true_positives": [
+        {
+          "golden_comment": "The cart total is read before the discount lock is taken, so two concurrent checkouts can apply one coupon twice.",
+          "severity": "High",
+          "category": "concurrency",
+          "matched_candidate": "Coupon can be applied twice. The cart total is read before the discount lock is taken",
+          "confidence": 0.8,
+          "reasoning": "6 shared words"
+        },
+        {
+          "golden_comment": "The refund handler writes the full card number into the application log.",
+          "severity": "Critical",
+          "category": "security",
+          "matched_candidate": "the refund handler logs the full card number. Both put customers at risk.",
+          "confidence": 0.65,
+          "reasoning": "3 shared words"
+        }
+      ],
+      "false_positives": [],
+      "false_negatives": [],
+      "errors": [],
+      "total_candidates": 3,
+      "total_golden": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "errors_count": 0,
+      "precision": 0.6666666666666666,
+      "recall": 1.0,
+      "tool": "openqodex-library-r1",
+      "repo_name": null,
+      "pr_url": "https://github.com/oq-fixture/shop/pull/11"
+    }
+  },
+  "https://github.com/oq-fixture/shop/pull/12": {
+    "openqodex-library-r1": {
+      "skipped": false,
+      "true_positives": [
+        {
+          "golden_comment": "The pagination offset multiplies the page number without subtracting one, so the first page of orders is never shown.",
+          "severity": "High",
+          "category": "bug",
+          "matched_candidate": "First page of orders is skipped. The pagination offset multiplies the page number without subtracting one. The first page of orders is never shown.",
+          "confidence": 0.99,
+          "reasoning": "10 shared words"
+        }
+      ],
+      "false_positives": [
+        {
+          "candidate": "Vague constant name. The constant is named VALUE. A reader cannot tell what it holds."
+        }
+      ],
+      "false_negatives": [],
+      "errors": [],
+      "total_candidates": 2,
+      "total_golden": 1,
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "errors_count": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "tool": "openqodex-library-r1",
+      "repo_name": null,
+      "pr_url": "https://github.com/oq-fixture/shop/pull/12"
+    }
+  }
+}

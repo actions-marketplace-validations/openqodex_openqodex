@@ -1,0 +1,50 @@
+{
+  "https://github.com/oq-fixture/ledger/pull/7": {
+    "openqodex-library-r1": [
+      {
+        "text": "Archive migration loses rows. The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty. Archived history is lost for good.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/oq-fixture/shop/pull/11": {
+    "openqodex-library-r1": [
+      {
+        "text": "Coupon can be applied twice. The cart total is read before the discount lock is taken",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "the refund handler logs the full card number. Both put customers at risk.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Discount lock taken after the total is read. The cart total is read before the discount lock is taken. One coupon can be applied twice.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/oq-fixture/shop/pull/12": {
+    "openqodex-library-r1": [
+      {
+        "text": "First page of orders is skipped. The pagination offset multiplies the page number without subtracting one. The first page of orders is never shown.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Vague constant name. The constant is named VALUE. A reader cannot tell what it holds.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  }
+}
