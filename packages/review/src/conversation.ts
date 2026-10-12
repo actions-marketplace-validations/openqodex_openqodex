@@ -4,7 +4,7 @@
 // redaction, and the check on every changed range the tool sends itself.
 import { lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OpenQodexError, outsideSnapshot, redactSecrets, redactSecretsKeepingLines, removedRuns, secretTexts } from "@openqodex/core";
+import { DELIVERY_ROW_BYTES, OpenQodexError, deliveryRow, outsideSnapshot, redactSecrets, redactSecretsKeepingLines, removedRuns, secretTexts } from "@openqodex/core";
 import type { Change, Hunk, Report, TraceEntry } from "@openqodex/core";
 import { TIMED_OUT } from "./agents/driver.js";
 import type { Turn } from "./agents/driver.js";
@@ -82,12 +82,9 @@ export function parseAnswer(text: string): { value: unknown } | { error: string 
   return { error: "the answer is not one JSON object; answer with the JSON object only" };
 }
 
-// The most lines and bytes a correction round carries of changed ranges the
-// reviewer was not given, context included; a range holding a line longer
-// than MAX_DELIVER_LINE_CHARS is never carried.
+// The most rows and bytes a correction round carries, context included.
 export const DELIVER_LINES = 4000;
 const DELIVER_BYTES = 512 * 1024;
-const MAX_DELIVER_LINE_CHARS = 2000;
 const CONTEXT = 3;
 
 // The parts of `h` no earlier delivery covered.
@@ -113,8 +110,8 @@ function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
 // and DELIVER_BYTES bytes; a range split at the bound continues next round,
 // and a deletion goes whole or waits. Never carried, so left unread: a
 // deletion whose removed lines the change does not hold (its file was past
-// the diff cap), a file the snapshot dropped, a binary file, a range with a
-// very long line. `later`: how many of `left` may still come in a round.
+// the diff cap), a file the snapshot dropped, or a binary file. `later`:
+// how many of `left` may still come in a round.
 // The text then goes through the brief's redaction once more; if a found
 // secret is still in it, nothing is sent and `leak` is set, which makes the
 // run incomplete.
@@ -125,6 +122,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   const out: string[] = [];
   const delivered: Hunk[] = [];
   const left: Hunk[] = [];
+  let leak = false;
   const files = new Map<string, string[] | null>();
   const fileLines = (path: string): string[] | null => {
     if (!files.has(path)) {
@@ -134,7 +132,12 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
         const st = lstatSync(full);
         if (st.isFile() && st.size <= MAX_FILE_BYTES) {
           const buf = readFileSync(full);
-          if (!buf.includes(0) && Buffer.from(buf.toString("utf8"), "utf8").equals(buf)) lines = buf.toString("utf8").split("\n");
+          if (!buf.includes(0) && Buffer.from(buf.toString("utf8"), "utf8").equals(buf)) {
+            const text = buf.toString("utf8");
+            // Check before chunking, since chunk labels can split a secret.
+            if (secretTexts(args.secrets).some((secret) => text.includes(secret))) leak = true;
+            else lines = text.split("\n");
+          }
         }
       } catch {
         lines = null;
@@ -143,7 +146,10 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     }
     return files.get(path) ?? null;
   };
-  const runs = new Map<string, { after: number; lines: string[] }[]>();
+  // A context line is never a changed line: one over the byte budget is
+  // named as not shown, so it cannot keep the changed lines beside it unsent.
+  const context = (path: string, i: number, text: string): string[] => deliveryRow(path, i, text, `${i}\t`) ?? [`${i}\t(not shown: a context line over ${DELIVERY_ROW_BYTES / 1024} KB)`];
+  const runs = new Map<string, { after: number; oldStart: number; lines: string[] }[]>();
   // The lines that show deletion `h`, or null when the change does not hold
   // what it removed. A deleted file has no snapshot copy, so no context.
   const removedBlock = (h: Hunk): string[] | null => {
@@ -159,7 +165,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     const block: string[] = [];
     for (const p of points) {
       // A deleted empty text file removed no line, and git shows it no hunk.
-      const run = p.lines === 0 && gone && !file.binary ? { after: p.after, lines: [] } : runs.get(h.path)?.find((r) => r.after === p.after && r.lines.length === p.lines);
+      const run = p.lines === 0 && gone && !file.binary ? { after: p.after, oldStart: 1, lines: [] } : runs.get(h.path)?.find((r) => r.after === p.after && r.lines.length === p.lines);
       if (run === undefined) return null;
       const n = run.lines.length;
       if (n === 0) {
@@ -170,10 +176,15 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
       const to = Math.min(count, p.after + CONTEXT);
       const where = gone ? "with the file, which was deleted" : count === 0 ? "and the file is now empty" : p.after === 0 ? "above line 1" : p.after < count ? `between lines ${p.after} and ${p.after + 1}` : `below line ${p.after}`;
       block.push(`${h.path}: ${n} ${n === 1 ? "line" : "lines"} removed ${where}${to >= from ? ` (with context ${from} to ${to})` : ""}:`);
-      for (let i = from; i <= Math.min(p.after, to); i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+      for (let i = from; i <= Math.min(p.after, to); i++) block.push(...context(h.path, i, lines[i - 1] ?? ""));
       // Redacted as the brief redacts its diff: the snapshot never held these lines.
-      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) block.push(`-\t${r}`);
-      for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
+      const removed = redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n");
+      for (let i = 0; i < removed.length; i++) {
+        const rows = deliveryRow(args.change?.files.find((f) => f.path === h.path)?.oldPath ?? h.path, run.oldStart + i, removed[i]!, "-\t", true);
+        if (rows === null) return null;
+        block.push(...rows);
+      }
+      for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(...context(h.path, i, lines[i - 1] ?? ""));
     }
     return block;
   };
@@ -185,15 +196,14 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
         continue;
       }
       const size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
-      const long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
-      if (!long && block.length + 1 <= room && size <= bytes) {
+      if (block.length + 1 <= room && size <= bytes) {
         out.push(...block, "");
         room -= block.length + 1;
         bytes -= size;
         delivered.push(h);
       } else {
         left.push(h);
-        if (!long && block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
+        if (block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
       }
       continue;
     }
@@ -204,7 +214,8 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
     }
     for (const [first, last] of gaps(h, args.earlier ?? [])) {
       let at = first;
-      let long = false;
+      // A part no round can carry, such as a line over the byte budget, is never promised.
+      let never = false;
       while (at <= last && room > 2 * CONTEXT + 2) {
         // Halved until it fits the bytes left, so a range of wide lines is
         // sent in parts rather than promised for a round that cannot carry it.
@@ -215,13 +226,20 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
           const from = Math.max(1, at - CONTEXT);
           const to = Math.min(lines.length, at + n - 1 + CONTEXT);
           block = [`${h.path} lines ${at} to ${at + n - 1} (with context ${from} to ${to}):`];
-          for (let i = from; i <= to; i++) block.push(`${i}\t${lines[i - 1] ?? ""}`);
-          size = block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
-          long = block.some((l) => l.length > MAX_DELIVER_LINE_CHARS);
-          if (long || size <= bytes || n === 1) break;
+          let omitted = false;
+          for (let i = from; i <= to; i++) {
+            const rows = i < at || i >= at + n ? context(h.path, i, lines[i - 1] ?? "") : deliveryRow(h.path, i, lines[i - 1] ?? "", `${i}\t`);
+            if (rows === null) { omitted = true; break; }
+            block.push(...rows);
+          }
+          size = omitted ? Infinity : block.reduce((k, l) => k + Buffer.byteLength(l, "utf8") + 1, 1);
+          if ((size <= bytes && block.length + 1 <= room) || n === 1) break;
           n = Math.ceil(n / 2);
         }
-        if (long || size > bytes) break;
+        if (size > bytes || block.length + 1 > room) {
+          never = size > DELIVER_BYTES || block.length + 1 > DELIVER_LINES;
+          break;
+        }
         out.push(...block, "");
         room -= block.length + 1;
         bytes -= size;
@@ -230,13 +248,13 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
       }
       if (at <= last) {
         left.push({ ...h, start: at, end: last });
-        if (!long) later++;
+        if (!never) later++;
       }
     }
   }
-  const text = redactSecrets(out.join("\n").trimEnd(), args.secrets);
+  const text = redactSecrets(out.join("\n").replace(/\n$/, ""), args.secrets);
   const usable = secretTexts(args.secrets);
-  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, later: 0, leak: true };
+  if (leak || usable.some((x) => text.includes(x)) || text !== out.join("\n").replace(/\n$/, "")) return { text: "", delivered: [], left: args.unread, later: 0, leak: true };
   return { text, delivered, left, later, leak: false };
 }
 

@@ -843,10 +843,10 @@ describe("25. what a correction message may carry", () => {
     expect(r.delivered).toEqual([]);
   });
 
-  it("never delivers a deletion whose removed lines the change does not hold, a dropped file, a binary file or a very long line, and promises none for a later round", () => {
+  it("never delivers a deletion whose removed lines the change does not hold, a dropped file, a binary file or a line over the byte budget, and promises none for a later round", () => {
     const dir = snap();
     writeFileSync(join(dir, "bin.dat"), Buffer.from([0, 1, 2, 10, 3, 10]));
-    writeFileSync(join(dir, "long.js"), `${"a".repeat(20_000)}\n`);
+    writeFileSync(join(dir, "long.js"), `${"a".repeat(220_000)}\n`);
     const unread = [
       { path: "gone.py", start: 1, end: 1, deletion: false },
       { path: "bin.dat", start: 1, end: 2, deletion: false },
@@ -862,10 +862,12 @@ describe("25. what a correction message may carry", () => {
 
   it("a range whose lines pass the byte bound before the line bound is sent in a part that fits, not promised for a round that could never carry it", () => {
     const dir = snap();
-    writeFileSync(join(dir, "wide.txt"), `${Array.from({ length: 1000 }, (_, i) => `${i} ${"w".repeat(1500)}`).join("\n")}\n`);
+    writeFileSync(join(dir, "wide.txt"), `${Array.from({ length: 1000 }, (_, i) => `${i} ${"w".repeat(2500)}`).join("\n")}\n`);
     const r = deliverRanges({ snapshotDir: dir, unread: [{ path: "wide.txt", start: 1, end: 1000, deletion: false }], secrets: [] });
     expect(r.delivered.length).toBeGreaterThan(0);
     expect(Buffer.byteLength(r.text, "utf8")).toBeLessThanOrEqual(512 * 1024);
+    expect(r.text).toContain("wide.txt: line 1, part 1 of 2\t");
+    expect(r.text).toContain("wide.txt: line 1, part 2 of 2\t");
     expect(r.left).toEqual([{ path: "wide.txt", start: r.delivered.at(-1)!.end + 1, end: 1000, deletion: false }]);
     expect(r.later).toBe(1);
   });
