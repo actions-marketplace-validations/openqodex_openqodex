@@ -27,6 +27,10 @@
 // 11. A held-out (test split) case in a saved run is converted and exported.
 // 12. A modified evaluator runs while eval.json records the pinned commit.
 // 13. The bench cache under the repository puts their venv in the repository.
+// 14. An assume-unchanged edit or ignored file passes the checkout check
+//     or a dry run starts without checking an existing evaluator.
+// 15. A split or URL-encoded key reaches output; sharing a buffer between
+//     stdout and stderr hides the pieces from the redactor.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -221,7 +225,7 @@ function ourLineCounts(out) {
 // ---------- AACR-Bench's own code, when its pinned checkout is in the cache ----------
 
 const EVALUATION = join(cacheRoot(), "upstream", `aacr-bench@${COMMIT}`, "evaluation");
-const PYTHON = join(EVALUATION, ".venv", "bin", "python");
+const PYTHON = join(cacheRoot(), "upstream", `aacr-bench@${COMMIT}.venv`, "bin", "python");
 const live = existsSync(join(EVALUATION, "evaluate.py")) && existsSync(PYTHON);
 const RECORD = process.env.AACR_BOARD_RECORD === "1";
 
@@ -667,3 +671,57 @@ function copyRecordedMetrics(out) {
     cpSync(join(FIXTURES, "metrics", name), join(out, "outside", "aacr", config, `r${repeat}`, "metrics_ocr_20261011_000000.json"));
   }
 }
+
+describe("an edit hidden from git runs as the pinned evaluator", () => {
+  it("refuses an assume-unchanged edit on a dry run and names an ignored file", async () => {
+    const dir = tempDir("oq-aacr-hidden-");
+    git(dir, "init", "-q");
+    write(join(dir, ".gitignore"), "*.pth\n");
+    write(join(dir, "evaluation", "evaluate.py"), "print('pinned')\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "pinned");
+    git(dir, "update-index", "--assume-unchanged", "evaluation/evaluate.py");
+    write(join(dir, "evaluation", "evaluate.py"), "print('patched')\n");
+    expect(git(dir, "status", "--porcelain")).toBe("");
+    expect(judgeRunner.checkoutState(dir).problems.join(" ")).toMatch(/differ[^;]*evaluate\.py/);
+    const out = await savedRun();
+    convertRun(out);
+    await expect(judgeRunner.main([out, "--dry-run", "--evaluation", join(dir, "evaluation"), "--python", process.execPath])).rejects.toThrow(/differ[^;]*evaluate\.py/);
+    expect(existsSync(join(out, "outside", "aacr", "eval.json"))).toBe(false);
+    git(dir, "update-index", "--no-assume-unchanged", "evaluation/evaluate.py");
+    git(dir, "checkout", "--", ".");
+    write(join(dir, "evaluation", "patch.pth"), "import os\n");
+    expect(git(dir, "status", "--porcelain")).toBe("");
+    expect(judgeRunner.checkoutState(dir).problems.join(" ")).toMatch(/not in the pinned tree[^;]*patch\.pth/);
+  });
+});
+
+describe("a split or encoded key reaches AACR output", () => {
+  it("redacts split keys and encoded URLs at every chunk size", () => {
+    const key = "synthetic-key-abcdefghijklmnopqrstuvwxyz";
+    const base = "https://synthetic.example.test/v1";
+    const secrets = endpointSecrets(base, key);
+    const line = `key ${key} encoded ${encodeURIComponent(base)}\nplain text\n`;
+    for (const size of [1, 2, 3, 7, 13, 64, line.length]) {
+      let text = "";
+      const filter = judgeRunner.redactor(secrets, (t) => (text += t));
+      for (let i = 0; i < line.length; i += size) filter.write(Buffer.from(line.slice(i, i + size)));
+      filter.end();
+      expect(text).toBe("key [hidden] encoded [hidden]\nplain text\n");
+    }
+  });
+
+  it("keeps stderr from interrupting a split key on stdout in the evaluator log", async () => {
+    const key = "synthetic-key-abcdefghijklmnopqrstuvwxyz";
+    const dir = tempDir("oq-aacr-streams-");
+    const log = join(dir, "eval.log");
+    const script = `process.stdout.write(${JSON.stringify(key.slice(0, 12))}); setTimeout(() => { process.stderr.write("progress\\n"); setTimeout(() => process.stdout.write(${JSON.stringify(key.slice(12) + '\n')}), 50); }, 50);`;
+    const result = await judgeRunner.run(process.execPath, ["-e", script], { cwd: dir, env: process.env, log, secrets: [key] });
+    expect(result.code).toBe(0);
+    const text = readFileSync(log, "utf8");
+    expect(text).toContain("[hidden]");
+    expect(text).toContain("progress\n");
+    expect(text).not.toContain(key.slice(0, 12));
+    expect(text).not.toContain(key.slice(12));
+  });
+});
