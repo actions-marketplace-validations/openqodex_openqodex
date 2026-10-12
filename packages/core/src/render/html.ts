@@ -497,7 +497,9 @@ ${missing}
 }
 
 function verdictBar(report: Report, complete: boolean, findings: Numbered[], filesTotal: number): string {
-  const counted = countedSeverities(report);
+  // An incomplete review counts its findings so far only: a scanner
+  // candidate no reviewer checked is not a finding.
+  const counted = complete ? countedSeverities(report) : (report.findings ?? []).map((f) => f.severity as string);
   const verdictCls = complete && report.verdict !== "blocked" ? "verdict-passed" : "verdict-failed";
   const counts = `${plural(counted.length, "finding")}${counted.length > 0 ? `: ${breakdown(counted)}` : ""}`;
   const dropped = `${plural((report.dropped ?? []).length, "scanner candidate")} dropped`;
@@ -611,7 +613,8 @@ function accounting(report: Report): string {
   const rows: string[][] = [
     ["Raised by the reviewer", num(findings.length), esc(`${own} from its own reading, ${fromScanners} from scanner candidates`)],
     ["Dropped by the reviewer", num(dropped.length), dropped.length === 0 ? esc("none") : dropped.map((d) => `${text(d.candidate.id)}: ${text(d.reason)}`).join("; ")],
-    ["Not reviewed, counted at scanner severity", num(notReviewed.length), notReviewed.length === 0 ? esc("none") : notReviewed.map((c) => `${text(c.id)} ${text(c.token)} at ${text(candidateLocation(c))}`).join("; ")],
+    // An incomplete review counts nothing: the candidates it lists are unchecked.
+    [!isComplete(report) && notReviewed.length > 0 ? "Unchecked scanner candidates, not a review" : "Not reviewed, counted at scanner severity", num(notReviewed.length), notReviewed.length === 0 ? esc("none") : notReviewed.map((c) => `${text(c.id)} ${text(c.token)} at ${text(candidateLocation(c))}`).join("; ")],
     ["Below the confidence floor", num(low.length), low.length === 0 ? esc("none") : low.map((l) => `${text(l.file_path)}: ${text(l.title)} (${num(l.confidence)}, floor ${num(l.floor)})`).join("; ")],
     ["Below the severity threshold", num(report.below_threshold || 0), esc("left out of the findings, never counted")],
     ["Outside the changed lines", num(outsideChange.length), outsideChange.length > 0 ? esc("shown for information, never counted") : esc("none")],

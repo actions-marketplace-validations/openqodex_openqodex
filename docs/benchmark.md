@@ -250,6 +250,29 @@ Every Monday, `.github/workflows/bench-weekly.yml` scans AACR-Bench's `dev-smoke
 
 `--scanner-config <file>` passes `--config <file>` to every scan. The run first runs `openqodex trust --yes` with that file in its own home, for the one repository path each case is built at in turn, and does not start when the trust step fails. The manifest records the file's sha256 and every custom scanner the step approved.
 
+## The release check
+
+```
+node benchmark/build-cli.mjs
+node benchmark/release-check.mjs                                      # the published package against this checkout, scanners only
+node benchmark/release-check.mjs --base npm:0.12.0 --candidate file:openqodex-0.13.0.tgz
+node benchmark/release-check.mjs --reviewers claude --max-usd 15 --max-minutes 120
+```
+
+Before every release, `release-check.mjs` compares the published package with the build about to be released, on the same cases: the planted cases and AACR-Bench's development subset `dev-laptop`. The base is the version npm's latest tag names, read from https://registry.npmjs.org itself; the candidate is this checkout's build. `--base` and `--candidate` take any `--package` value of `run.mjs`, so a release candidate packed with `npm pack` is `file:<path.tgz>`. `--suites planted` checks the planted cases alone, `--subset` names another AACR subset, and `--cases` names cases of one suite.
+
+Each build runs the scanner-only benchmark twice (`run.mjs --mode scan --check-identical`), with no reviewer and no model, so the check spends nothing. The two builds' scores are compared case by case, the way the `bench-scan` job compares a run with its accepted run: a scanner-only score does not vary from run to run, so every planted bug the published package found and the build misses, every clean control lost, every extra false or unresolved candidate and every scan lost is a loss, whatever its size. The reverse of each is a gain. Inputs that differ between the two runs (a scanner a build pins at another version, other Semgrep rule packs, other osv.dev data) are listed as notes. When the packs differ and something was lost, run the check again before reading the loss as the product's.
+
+Both builds must run the same scanners, or a scanner's bugs would read as lost or gained. `--install-scanners` first runs each build's own `doctor --install --all-scanners`, so a scanner one build pins at another version is installed for both. On a machine that cannot install some scanners (no Ruby, Go or Cargo), `--allow-missing-scanners` runs without them; both builds must then miss the same ones, and the report names them as compared by neither. The scanner pins are part of each package, so a build that pins a scanner at another version is judged with that version: a loss it brings is a loss for the people who install the release, and the report lists each pin that differs.
+
+The install step and the scanner-only runs get a small environment: what node, git and tar need, `HOME`, the OpenQodex home, the benchmark cache, and the Go, Cargo and Ruby variables the scanners' runtimes read. No API key, token or cloud variable of yours reaches the published package's code there. Review runs keep your environment, because the reviewers need their accounts.
+
+`--reviewers` adds review runs, which the caller names and pays for. Each build reviews each suite those reviewers review (Claude Code and Codex the planted cases, model reviewers every suite named), and `--max-usd`, `--max-minutes`, `--review-max-usd` and `--repeat` go to each of those runs as given. The two runs are compared by `loop/compare.mjs`. A gate metric is a loss when its change is in the worse direction and, by `decide.mjs`'s guard rule, past the acceptable loss `benchmark/loop/levers.json` declares for it (2 points of recall or precision, 15% of the base's cost per review, 20% of its time), or when a hard rule breaks. A change the comparison cannot rule out at that size is a note. A gate metric one build measures and the other does not (reviews with no cost on one side) cannot be compared: the check exits 2 naming it, or 1 when it also shows a loss. The published 0.12.0 cannot review with a model (see `--package` above), so `--reviewers model:<id>` against it ends with exit 2.
+
+The check writes `release-check.md` (the report it also prints) and `release-check.json` into `--out` (by default `benchmark/results/<date>-release-check-<base>-<candidate>`), beside each run's folder and its log under `logs/`. `--summary <file>` appends the report to that file, such as a CI job summary. It exits 0 when nothing changed or the build gained (or changed in a way that is neither), 1 with each loss named, and 2 when it could not run: a package that is not there, a run that failed or stopped, two passes that differ, or runs that cannot be compared. On 2 the report says nothing was concluded, never "no change".
+
+The release workflow runs the check on the planted cases before every publish: its `release-check` job works only on a push that publishes (no changeset waits and the version is not on npm yet), installs every scanner both builds pin, and the publishing job waits on it, so any exit but 0 refuses the publish. The job has no secret, a token that can only read and no Actions cache, because it runs the published package's code. The AACR subset is a step of the release checklist in `CONTRIBUTING.md`: its clones and dataset files do not fit the job.
+
 ## The wording pass
 
 ```

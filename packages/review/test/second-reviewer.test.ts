@@ -22,6 +22,9 @@
 //     disagreements change the primary's outcome.
 //  7. The rendered report (JSON, markdown, SARIF) leaves out who found each
 //     finding, the candidates the second reviewer dropped, or the notes.
+//  8. A primary whose answer never passes, then a second reviewer that
+//     completes: the candidates the second disposed of are still listed as
+//     unchecked, beside its own drops.
 import { afterAll, describe, expect, it } from "vitest";
 import { reviewChange } from "../src/review-change.js";
 import type { AuthorizeRequest, ReviewChangeOptions } from "../src/reviewer.js";
@@ -46,9 +49,9 @@ const SUBTRACTION: Finding = {
   candidate: null,
 };
 
-async function run(second: FixtureOptions, refuseAt?: number, big = false) {
+async function run(second: FixtureOptions, refuseAt?: number, big = false, first: FixtureOptions = { findings: [SUBTRACTION] }) {
   const repo = changeRepo({ big });
-  const primary = fixtureModel({ findings: [SUBTRACTION] });
+  const primary = fixtureModel(first);
   const other = fixtureModel({ model: "second-model", ...second });
   const asked: AuthorizeRequest[] = [];
   const options: ReviewChangeOptions = {
@@ -157,5 +160,17 @@ describe("a second reviewer through reviewChange", () => {
     // Markdown escapes the brackets around the model's name.
     expect(failed.result.render.markdown()).toContain("did not complete: the model call failed: connection reset by the provider");
     expect(JSON.parse(failed.result.render.sarif()).runs[0].properties.completion.notes).toEqual([note]);
+  });
+
+  it("8. a second reviewer that completes after a primary that never passed leaves no candidate it disposed of unchecked", async () => {
+    // The primary's first answer and both correction answers are not JSON;
+    // the second drops every candidate.
+    const { result } = await run({}, undefined, false, { answers: { 1: "not json", 2: "not json", 3: "not json" } });
+    expect(result.status).toBe("incomplete");
+    expect(result.completion?.second?.status).toBe("complete");
+    const json = JSON.parse(result.render.json()) as { not_reviewed: unknown[]; second_dropped: unknown[] };
+    expect(json.second_dropped.length).toBeGreaterThan(0);
+    expect(json.not_reviewed).toEqual([]);
+    expect(result.render.markdown()).not.toContain("Unchecked scanner candidates");
   });
 });
