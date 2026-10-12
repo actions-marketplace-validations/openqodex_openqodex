@@ -2,8 +2,8 @@
 // The proof that every case of the outside suites builds, before any model
 // is spent on them (PLAN-benchmark P4-03):
 //
-//   node benchmark/proof.mjs [--suite martian|aacr] [--shape server|laptop]
-//                            [--from <folder>]
+//   node benchmark/proof.mjs [--suite martian|aacr] [--split test|dev]
+//                            [--shape server|laptop] [--from <folder>]
 //
 // For each suite (both when --suite is left out) and each side of its split
 // (the held-out test side first; every Martian case is held out, so its
@@ -15,10 +15,12 @@
 // read (the change uncommitted). run.mjs logs each suite's held-out cases in
 // benchmark/index/heldout-access.jsonl before it builds any. --from <folder>
 // reads the proof.json files of an earlier proof folder instead of running
-// again.
+// again. --split proves one side only.
 //
 // It then writes one summary per suite, which is committed:
-// benchmark/index/proof/<suite>-<date>.json. Per case: its licence class,
+// benchmark/index/proof/<suite>-<date>.json, or <suite>-<side>-<date>.json
+// for one side, so a summary of one side never takes a whole suite's name.
+// Per case: its licence class,
 // upstream's base, head and merge base, the merge base's and the head's tree
 // ids beside the built ones, whether the merge base is an ancestor of the
 // head (with the deepening of the commits cache that answer took, if any),
@@ -47,7 +49,7 @@ import { indexRoot, resultsRoot } from "./lib/index.mjs";
 import { cacheRoot } from "./lib/licence.mjs";
 import { SUITES, listCases } from "./lib/suites.mjs";
 
-const USAGE = "usage: node benchmark/proof.mjs [--suite martian|aacr] [--shape server|laptop] [--from <folder>]";
+const USAGE = "usage: node benchmark/proof.mjs [--suite martian|aacr] [--split test|dev] [--shape server|laptop] [--from <folder>]";
 const RUN = join(benchRoot, "run.mjs");
 
 // ---------- machine paths ----------
@@ -174,7 +176,7 @@ export function writeSummary(path, doc, { cache = cacheRoot() } = {}) {
 // ---------- the command ----------
 
 function parseArgs(argv) {
-  const o = { suites: [], shape: "server", from: null };
+  const o = { suites: [], split: null, shape: "server", from: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -183,12 +185,15 @@ function parseArgs(argv) {
       return v;
     };
     if (a === "--suite") o.suites.push(...next().split(",").filter(Boolean));
+    else if (a === "--split") o.split = next();
     else if (a === "--shape") o.shape = next();
     else if (a === "--from") o.from = resolve(next());
     else throw new Error(`unknown flag ${a}`);
   }
   if (o.suites.length === 0) o.suites = Object.keys(SUITES);
   for (const s of o.suites) if (!SUITES[s]) throw new Error(`--suite takes ${Object.keys(SUITES).join(" or ")}, not ${s}`);
+  if (o.split !== null && o.split !== "test" && o.split !== "dev") throw new Error(`--split takes test or dev, not ${o.split}`);
+  for (const s of o.suites) if (o.split === "dev" && SUITES[s].heldOutOnly) throw new Error(`--split dev: every ${s} case is held out, so ${s} has no development side`);
   if (o.shape !== "server" && o.shape !== "laptop") throw new Error(`--shape takes server or laptop, not ${o.shape}`);
   if (o.from !== null && !existsSync(o.from)) throw new Error(`--from: there is no folder ${o.from}`);
   return o;
@@ -211,7 +216,7 @@ function main(argv) {
   for (const suite of o.suites) {
     const def = SUITES[suite];
     // The held-out side first: it is the side a release run needs proved.
-    const sides = def.heldOutOnly ? ["test"] : ["test", "dev"];
+    const sides = (def.heldOutOnly ? ["test"] : ["test", "dev"]).filter((side) => o.split === null || side === o.split);
     const proofs = [];
     for (const side of sides) {
       const folder = join(runRoot, `${suite}-${side}`);
@@ -243,7 +248,7 @@ function main(argv) {
     const sources = { cases: `benchmark/${def.cases}`, casesSha256: fileSha(suiteFile), split: `benchmark/${def.split}`, splitSha256: fileSha(splitFile) };
     const date = (proofs.map((p) => p.startedAt).filter(Boolean).sort()[0] ?? stamp).slice(0, 10);
     const summary = summariseProofs({ suite, date, shape: shapes[0], proofs, expected, commit, sources, excluded });
-    const out = join(indexRoot, "proof", `${suite}-${date}.json`);
+    const out = join(indexRoot, "proof", `${suite}-${o.split === null || def.heldOutOnly ? "" : `${o.split}-`}${date}.json`);
     try {
       writeSummary(out, summary);
     } catch (error) {
