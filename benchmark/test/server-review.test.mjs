@@ -20,6 +20,15 @@
 //    model asked for, or a model when the provider named none.
 // 4. A model id that boards.json neither records as probed nor maps as an
 //    alias is reviewed with.
+// From the review of the first version:
+// 5. The endpoint's key or address, in a provider's answer, reaches a saved
+//    file, rows.jsonl or stdout before the run's check of the saved files.
+// 6. The manifest names the model the run asked for, while the samples name
+//    the one that answered, so the score and the index see a model that
+//    never answered; and a run goes on when a later review is served by
+//    another model.
+// 7. A resume reaches another endpoint than the run's, because the settings
+//    file now names another base URL for the same deployment.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,9 +37,10 @@ import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, git, readLock, repoRoot } from "../lib/cases.mjs";
 import { runBudget } from "../lib/budget.mjs";
-import { executeRun, planJobs, runManifest } from "../lib/runner.mjs";
+import { loadModelEnv } from "../lib/model-env.mjs";
+import { executeRun, planJobs, resumeProblems, runManifest } from "../lib/runner.mjs";
 import { materialise } from "../lib/suites.mjs";
-import { resolveModelReviewer, serverAttempt } from "../lib/server-review.mjs";
+import { createModelReviewer, LEAK_REFUSED, recordServed, resolveModelReviewer, serverAttempt } from "../lib/server-review.mjs";
 import { createScriptedReviewer, SCRIPTED_PRICES } from "../lib/scripted-model.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -68,7 +78,7 @@ const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: tru
 // One server review of the flask case as run.mjs runs it: a run folder with
 // its manifest, the spec copy and the budget ledger, and one job whose
 // attempt is the driver's. Returns the run folder and the job's sample.
-async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PRICES } } = {}) {
+async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PRICES }, appearsIn = null } = {}) {
   const out = join(root, "run");
   const repo = serverRepo(root);
   const workRoot = join(root, "w");
@@ -86,7 +96,7 @@ async function oneRun(root, reviewer, { prices = { [reviewer.model]: SCRIPTED_PR
     jobs,
     budget: runBudget({ dir: out, caps: CAPS, path: "server", prices }),
     runJob: async (job, k, meter) => {
-      saved = await serverAttempt({ reviewChange, job, attempt: k, out, repo, reviewer, meter, deadlineMs: 120_000, workRoot, installRoot });
+      saved = await serverAttempt({ reviewChange, job, attempt: k, out, repo, reviewer, meter, deadlineMs: 120_000, workRoot, installRoot, appearsIn });
     },
   });
   return { out, repo, workRoot, sample: saved, job: jobs[0] };
@@ -251,6 +261,128 @@ describe("a model id that boards.json neither records as probed nor maps as an a
     expect(p.status).toBe(2);
     expect(p.stderr).toMatch(/gpt-6\.1.*alias/);
     expect(existsSync(out)).toBe(false);
+  });
+});
+
+// A settings file for a deployment's endpoint: a loopback address, so no
+// call could leave this machine, and a key made for this test.
+function endpointSettings(dir, baseUrl = "http://127.0.0.1:9/openai/v1/", key = `test-endpoint-key-${createHash("sha256").update(dir).digest("hex").slice(0, 24)}`) {
+  const file = join(dir, "azure.env");
+  writeFileSync(file, `AZURE_OPENAI_BASE_URL=${baseUrl}\nAZURE_OPENAI_KEY=${key}\n`);
+  return { file, key, baseUrl, env: { OPENQODEX_BENCH_MODEL_ENV: file } };
+}
+
+describe("the endpoint's key or address, in a provider's answer, reaches a saved file, rows.jsonl or stdout", () => {
+  for (const [what, place] of [
+    ["served model name", (s) => script({ served: s })],
+    ["summary", (s) => script({ summary: `Reviewed against ${s}.` })],
+  ]) {
+    it(`writes nothing of a review whose ${what} holds it, and records only the refusal`, { timeout: 180_000 }, async () => {
+      const root = tempDir("oq-server-leak-");
+      // An address no case text holds, as a real endpoint's host is (the
+      // flask case's own spec names 127.0.0.1).
+      const settings = loadModelEnv({ env: endpointSettings(root, "http://[::1]:9/openai/v1/").env });
+      for (const secret of [settings.apiKey, new URL(settings.baseUrl).host]) {
+        const dir = join(root, secret === settings.apiKey ? "key" : "host");
+        mkdirSync(dir);
+        const { out, sample } = await oneRun(dir, createScriptedReviewer(place(secret)), { appearsIn: settings.appearsIn });
+        expect(sample.leaked).toBe(true);
+        expect(sample.record.failure).toBe(LEAK_REFUSED);
+        expect(sample.record.status).toBe("failed");
+        const sampleDir = join(out, "samples", CASE, "model-scripted-graph-on", "1");
+        expect(filesUnder(sampleDir)).toEqual(["sample.json"]);
+        for (const f of filesUnder(out)) expect(settings.appearsIn(readFileSync(join(out, f), "utf8")), f).toBe(false);
+        expect(settings.appearsIn(JSON.stringify(sample.record))).toBe(false);
+        // Nothing from the answer stays in the record.
+        expect(sample.record).toMatchObject({ servedModel: null, servedModels: [], findings: null, usage: null });
+      }
+    });
+  }
+});
+
+describe("the manifest names the model the run asked for as the one that answered", () => {
+  const entry = () => ({ name: "model:gpt-6.1-sol", kind: "model", requestedModel: "gpt-6.1-sol", model: null, settings: { effort: "low", maxOutputTokens: 32000 } });
+  const manifestAt = (dir) => {
+    const path = join(dir, "manifest.json");
+    writeFileSync(path, JSON.stringify({ version: 3, reviewer: entry(), reviewers: { "model:gpt-6.1-sol": entry() }, jobs: [] }));
+    return path;
+  };
+  const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+  const served = (...ids) => ({ servedModel: ids.length === 1 ? ids[0] : null, servedModels: ids });
+
+  it("sets the manifest's model to the id the first answered review was served by, and keeps the one asked for", () => {
+    const path = manifestAt(tempDir("oq-server-manifest-"));
+    expect(recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served() })).toEqual({ why: null, model: null });
+    expect(read(path).reviewers["model:gpt-6.1-sol"].model).toBeNull();
+    expect(recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served("gpt-6.1-sol-2026-10-01") })).toEqual({ why: null, model: "gpt-6.1-sol-2026-10-01" });
+    const m = read(path);
+    expect(m.reviewers["model:gpt-6.1-sol"]).toMatchObject({ requestedModel: "gpt-6.1-sol", model: "gpt-6.1-sol-2026-10-01" });
+    expect(m.reviewer).toMatchObject({ requestedModel: "gpt-6.1-sol", model: "gpt-6.1-sol-2026-10-01" });
+    expect(recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served("gpt-6.1-sol-2026-10-01") }).why).toBeNull();
+  });
+
+  it("refuses a later review served by another id, or by two, and leaves the manifest as it was", () => {
+    const path = manifestAt(tempDir("oq-server-manifest-"));
+    recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served("gpt-6.1-sol-2026-10-01") });
+    const before = readFileSync(path, "utf8");
+    expect(recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served("gpt-6.1-sol-2026-11-01") }).why).toMatch(/gpt-6\.1-sol-2026-11-01.*gpt-6\.1-sol-2026-10-01/);
+    expect(recordServed({ manifestPath: path, name: "model:gpt-6.1-sol", record: served("gpt-6.1-sol-2026-10-01", "gpt-6.1-sol-2026-11-01") }).why).toMatch(/one served model/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("resumes a run whose manifest names the served model, and refuses one that asks for another", () => {
+    const earlier = { reviewers: { "model:gpt-6.1-sol": { ...entry(), model: "gpt-6.1-sol-2026-10-01" } } };
+    expect(resumeProblems(earlier, { reviewers: { "model:gpt-6.1-sol": entry() } })).toEqual([]);
+    expect(resumeProblems(earlier, { reviewers: { "model:gpt-6.1-sol": { ...entry(), requestedModel: "gpt-6.2-sol" } } }).join("\n")).toMatch(/requested model/);
+  });
+});
+
+// Every piece of a text at least `n` characters long.
+const pieces = (text, n = 4) => Array.from({ length: Math.max(0, text.length - n + 1) }, (_, i) => text.slice(i, i + n));
+
+describe("a resume reaches another endpoint than the run's", () => {
+  // Two base URLs and two keys, every pairing of them in a settings file.
+  const URL_A = "http://127.0.0.1:9/openai/v1/";
+  const URL_B = "http://localhost:9/openai/v1";
+  const KEY_A = "key-for-endpoint-one";
+  const KEY_B = "key-for-endpoint-two";
+  const records = () => {
+    const dir = tempDir("oq-server-endpoint-");
+    const resolved = resolveModelReviewer("model:gpt-6.1-sol");
+    const make = (name, url, key) => {
+      mkdirSync(join(dir, name));
+      return createModelReviewer(resolved, { env: endpointSettings(join(dir, name), url, key).env }).record;
+    };
+    return { name: resolved.name, one: make("one", URL_A, KEY_A), again: make("again", URL_A, KEY_A), otherUrl: make("url", URL_B, KEY_A), otherKey: make("key", URL_A, KEY_B) };
+  };
+
+  it("keeps the endpoint as an identity the key alone can check: it changes with the URL or the key, and holds nothing of either", () => {
+    const { one, again, otherUrl, otherKey } = records();
+    expect(one.endpoint).toMatch(/^[0-9a-f]{64}$/);
+    expect(again.endpoint).toBe(one.endpoint);
+    expect(otherUrl.endpoint).not.toBe(one.endpoint);
+    expect(otherKey.endpoint).not.toBe(one.endpoint);
+    // Anyone who guesses the URL cannot match it: it is not the URL's own hash, with or without its trailing slash.
+    for (const url of [URL_A, URL_A.replace(/\/+$/, "")]) expect(one.endpoint).not.toBe(createHash("sha256").update(url).digest("hex"));
+    for (const r of [one, otherUrl, otherKey]) {
+      // The identity holds no piece of either; the record holds neither, nor a host.
+      for (const secret of [URL_A, URL_B, KEY_A, KEY_B]) for (const piece of pieces(secret)) expect(r.endpoint, piece).not.toContain(piece);
+      const text = JSON.stringify(r);
+      for (const secret of [URL_A, URL_A.replace(/\/+$/, ""), URL_B, KEY_A, KEY_B, "127.0.0.1", "localhost"]) expect(text).not.toContain(secret);
+    }
+    expect(one.requestedModel).toBe("gpt-6.1-sol");
+    expect(one.model).toBeNull();
+  });
+
+  it("accepts a resume on the same URL and key, and refuses one on another URL or key with a line that names neither", () => {
+    const { name, one, again, otherUrl, otherKey } = records();
+    expect(resumeProblems({ reviewers: { [name]: one } }, { reviewers: { [name]: again } })).toEqual([]);
+    for (const other of [otherUrl, otherKey]) {
+      const problems = resumeProblems({ reviewers: { [name]: one } }, { reviewers: { [name]: other } });
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/endpoint/);
+      for (const secret of [URL_A, URL_B, KEY_A, KEY_B, "127.0.0.1", "localhost", one.endpoint, other.endpoint]) expect(problems[0]).not.toContain(secret);
+    }
   });
 });
 

@@ -29,15 +29,33 @@
 //    log.
 // 7. A run on a package build is recorded as the checkout's commit, or
 //    without the package's version and sha.
+// From the code review of the first version (sol):
+// 8. A published package is taken from wherever the caller's npm points,
+//    or from a tarball on another host, or under a version the registry
+//    does not list.
+// 9. A package run writes outside the run and the bench cache (npm's own
+//    cache and logs under the home folder).
+// 10. An unpacked package edited after it was unpacked runs under the
+//    tarball's sha256.
+// 11. A tarball member is written outside the package's folder, or as a
+//    link.
+// 12. A per-minute rate limit halts the run as a quota refusal, or is
+//    retried without a bound.
+// 13. The cost rules divide the spend of reviews still running by the
+//    reviews finished.
+// 14. Retries let a smoke run invoke the reviewer more than five times per
+//    configuration.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { benchRoot, casesRoot, git, gitEnv, listCases, repoRoot } from "../lib/cases.mjs";
 import { readLedger } from "../lib/budget.mjs";
-import { haltRules, reasonClass } from "../lib/halts.mjs";
+import { haltRules, rateLimitRetry, reasonClass, smokeCap } from "../lib/halts.mjs";
 import { materialiseOnly } from "../lib/materialise-only.mjs";
+import { preparePackage, tarballOf } from "../lib/package.mjs";
 import { readSuite } from "../lib/suites.mjs";
 import { publishRun } from "../publish-run.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -168,35 +186,51 @@ describe("burning budget on a broken setup", () => {
 describe("a provider refusal, a served-model change, a share of incomplete reviews or a cost past the estimate is read as one more sample", () => {
   const complete = (more = {}) => ({ config: "model-x-graph-on", status: "complete", failure: null, servedModels: ["m-1"], usage: { cost_usd: 0.1 }, ...more });
   const incomplete = (failure, more = {}) => complete({ status: "incomplete", failure, ...more });
+  const own = (usd = 0.1) => ({ ownUsd: usd, reservedUsd: 0 });
 
-  it("stops at once on a key or quota refusal from the endpoint", () => {
-    for (const failure of ["the reviewer failed: the model call failed: HTTP 401: Access denied due to invalid subscription key", "the model call failed: HTTP 403: Forbidden", "the model call failed: HTTP 429 (insufficient_quota): You exceeded your current quota"]) {
-      expect(haltRules({ maxUsd: 10, toRun: 20 }).after(incomplete(failure), { spentUsd: 0.1 })).toMatchObject({ rule: "provider-blocked" });
+  it("stops at once on a key, quota or billing refusal from the endpoint", () => {
+    for (const failure of ["the reviewer failed: the model call failed: HTTP 401: Access denied due to invalid subscription key", "the model call failed: HTTP 403: Forbidden", "the model call failed: HTTP 429 (insufficient_quota): You exceeded your current quota", "the model call failed: HTTP 429: You exceeded your current quota, please check your plan and billing details"]) {
+      expect(haltRules({ maxUsd: 10, toRun: 20 }).after(incomplete(failure), own())).toMatchObject({ rule: "provider-blocked" });
     }
-    // A rate limit without a quota is a reason class, stopped by the same reason twice.
+  });
+
+  it("reads a per-minute rate limit as retryable after a bounded wait, never as a quota refusal", () => {
+    const perMinute = incomplete("the model call failed: HTTP 429: per-minute quota exceeded; retry after 2 seconds");
+    const limited = incomplete("the model call failed: HTTP 429 (rate_limit_exceeded): Rate limit is exceeded");
+    expect(haltRules({ maxUsd: 10, toRun: 20 }).after(perMinute, own())).toBeNull();
+    expect(reasonClass(perMinute.failure)).toBe("provider-rate-limit");
+    // One retry per review, after the wait the provider names, or a fixed one, never past a minute.
+    expect(rateLimitRetry(perMinute, 0)).toEqual({ waitMs: 2000 });
+    expect(rateLimitRetry(limited, 0)).toEqual({ waitMs: 10_000 });
+    expect(rateLimitRetry(incomplete("the model call failed: HTTP 429: Please retry after 900 seconds"), 0)).toEqual({ waitMs: 60_000 });
+    expect(rateLimitRetry(perMinute, 1)).toBeNull();
+    expect(rateLimitRetry(incomplete("the model call failed: HTTP 429 (insufficient_quota): You exceeded your current quota"), 0)).toBeNull();
+    expect(rateLimitRetry(incomplete("budget refused before correction call 3"), 0)).toBeNull();
+    expect(rateLimitRetry(complete(), 0)).toBeNull();
+    // A rate limit that outlasts its retry, twice in a row, halts.
     const rules = haltRules({ maxUsd: 10, toRun: 20 });
-    expect(rules.after(incomplete("the model call failed: HTTP 429: Rate limit is exceeded"), { spentUsd: 0.1 })).toBeNull();
-    expect(rules.after(incomplete("the model call failed: HTTP 429: Rate limit is exceeded. Try again in 2 seconds"), { spentUsd: 0.2 })).toMatchObject({ rule: "same-reason-twice" });
+    expect(rules.after(limited, own())).toBeNull();
+    expect(rules.after(perMinute, own())).toMatchObject({ rule: "same-reason-twice" });
   });
 
   it("stops when the served model changes during the run, or a review names two", () => {
     const rules = haltRules({ maxUsd: 10, toRun: 20, servedBefore: { "model-x-graph-on": ["m-1"] } });
-    expect(rules.after(complete(), { spentUsd: 0.1 })).toBeNull();
-    expect(rules.after(complete({ servedModels: ["m-2"] }), { spentUsd: 0.2 })).toMatchObject({ rule: "served-model-changed" });
-    expect(haltRules({ maxUsd: 10, toRun: 20 }).after(complete({ servedModels: ["m-1", "m-2"] }), { spentUsd: 0.1 })).toMatchObject({ rule: "served-model-changed" });
+    expect(rules.after(complete(), own())).toBeNull();
+    expect(rules.after(complete({ servedModels: ["m-2"] }), own())).toMatchObject({ rule: "served-model-changed" });
+    expect(haltRules({ maxUsd: 10, toRun: 20 }).after(complete({ servedModels: ["m-1", "m-2"] }), own())).toMatchObject({ rule: "served-model-changed" });
   });
 
   it("does not halt when two model reviewers of one run are answered by their own models", () => {
     const rules = haltRules({ maxUsd: 10, toRun: 20, servedBefore: { "model-x-graph-on": ["m-1"] } });
-    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-2"] }), { spentUsd: 0.1 })).toBeNull();
-    expect(rules.after(complete(), { spentUsd: 0.2 })).toBeNull();
-    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-3"] }), { spentUsd: 0.3 })).toMatchObject({ rule: "served-model-changed" });
+    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-2"] }), own())).toBeNull();
+    expect(rules.after(complete(), own())).toBeNull();
+    expect(rules.after(complete({ config: "model-y-graph-on", servedModels: ["m-3"] }), own())).toMatchObject({ rule: "served-model-changed" });
   });
 
   it("does not halt on two incomplete reviews in a row with different reasons", () => {
     const rules = haltRules({ maxUsd: 10, toRun: 20 });
-    expect(rules.after(incomplete("budget refused before correction call 3"), { spentUsd: 0.1 })).toBeNull();
-    expect(rules.after(incomplete("the reviewer's answer still failed 2 checks after the correction rounds"), { spentUsd: 0.2 })).toBeNull();
+    expect(rules.after(incomplete("budget refused before correction call 3"), own())).toBeNull();
+    expect(rules.after(incomplete("the reviewer's answer still failed 2 checks after the correction rounds"), own())).toBeNull();
     expect(reasonClass("budget refused before brief call 1")).toBe(reasonClass("budget refused before correction call 3"));
   });
 
@@ -204,20 +238,47 @@ describe("a provider refusal, a served-model change, a share of incomplete revie
     const failures = ["budget refused before brief call 1", "the reviewer timed out and was stopped", "the reviewer's answer still failed 1 check after the correction rounds"];
     const share = haltRules({ maxUsd: 100, toRun: 40 });
     const said = [];
-    for (let i = 0; i < 10; i++) said.push(share.after(i % 3 === 0 && i < 9 ? incomplete(failures[i / 3]) : complete(), { spentUsd: 0.1 * (i + 1) }));
+    for (let i = 0; i < 10; i++) said.push(share.after(i % 3 === 0 && i < 9 ? incomplete(failures[i / 3]) : complete(), own()));
     expect(said.slice(0, 9).every((x) => x === null)).toBe(true);
     expect(said[9]).toMatchObject({ rule: "incomplete-share" });
 
     const fine = haltRules({ maxUsd: 100, toRun: 40 });
-    for (let i = 0; i < 10; i++) expect(fine.after(i < 2 ? incomplete(failures[i]) : complete(), { spentUsd: 0.1 * (i + 1) })).toBeNull();
+    for (let i = 0; i < 10; i++) expect(fine.after(i < 2 ? incomplete(failures[i]) : complete(), own())).toBeNull();
 
     const dear = haltRules({ maxUsd: 100, toRun: 40, estimatePerReview: 0.05 });
-    for (let i = 0; i < 9; i++) expect(dear.after(complete(), { spentUsd: 0.1 * (i + 1) })).toBeNull();
-    expect(dear.after(complete(), { spentUsd: 1 })).toMatchObject({ rule: "cost-over-estimate" });
+    for (let i = 0; i < 9; i++) expect(dear.after(complete(), own(0.1))).toBeNull();
+    expect(dear.after(complete(), own(0.1))).toMatchObject({ rule: "cost-over-estimate" });
 
     const forecast = haltRules({ maxUsd: 3, toRun: 40 });
-    for (let i = 0; i < 9; i++) expect(forecast.after(complete(), { spentUsd: 0.1 * (i + 1) })).toBeNull();
-    expect(forecast.after(complete(), { spentUsd: 1 })).toMatchObject({ rule: "forecast-past-cap" });
+    for (let i = 0; i < 9; i++) expect(forecast.after(complete(), own(0.1))).toBeNull();
+    const past = forecast.after(complete(), { ownUsd: 0.1, reservedUsd: 0.7 });
+    expect(past).toMatchObject({ rule: "forecast-past-cap" });
+    // Reservations of reviews in flight are named apart, never counted as spend.
+    expect(past.why).toMatch(/\$0\.7 .*in flight/);
+  });
+
+  it("takes the mean cost over the finished reviews' own spend, never over the spend of reviews still running", () => {
+    // Ten reviews at $0.05 each finish while reviews still running have
+    // spent $2 more (in the ledger's total) and hold $2 in reservations.
+    const rules = haltRules({ maxUsd: 3, toRun: 40, estimatePerReview: 0.05 });
+    for (let i = 0; i < 10; i++) expect(rules.after(complete(), { ownUsd: 0.05, reservedUsd: 2, spentUsd: 0.05 * (i + 1) + 2 })).toBeNull();
+  });
+});
+
+describe("retries let a smoke run invoke the reviewer more than five times per configuration", () => {
+  it("counts every invocation, retries included, and stops at the cap saying how many were retries", () => {
+    const cap = smokeCap(5);
+    expect(cap.take("model-x-graph-on")).toBeNull();
+    expect(cap.take("model-x-graph-on", { retry: true })).toBeNull();
+    for (let i = 0; i < 3; i++) expect(cap.take("model-x-graph-on")).toBeNull();
+    expect(cap.take("model-y-graph-on")).toBeNull();
+    const stop = cap.take("model-x-graph-on");
+    expect(stop).toMatchObject({ rule: "smoke-cap" });
+    expect(stop.why).toMatch(/5 times.*1 of them a retry/);
+    // A resumed smoke run counts the invocations its earlier attempts made.
+    const resumed = smokeCap(5, { rows: [{ config: "c", attempt: 1 }, { config: "c", attempt: 2 }, { config: "c", attempt: 1 }, { config: "c", attempt: 1 }] });
+    expect(resumed.take("c")).toBeNull();
+    expect(resumed.take("c", { retry: true })).toMatchObject({ rule: "smoke-cap" });
   });
 });
 
@@ -265,6 +326,125 @@ describe("a held-out case runs before a release", () => {
     const runs = tempDir("oq-outside-smoke-runs-");
     expect(() => publishRun(runFolder, { dryRun: true, writeIndex: true, runs, out: tempDir("oq-outside-smoke-asset-") })).toThrow(/smoke run/);
     expect(readdirSync(runs)).toEqual([]);
+  });
+});
+
+// A gzipped tar of `members` ({ name, type: file, dir, symlink or hardlink,
+// body, link }), written header by header in the ustar layout npm pack
+// writes.
+function tgz(members) {
+  const blocks = [];
+  for (const m of members) {
+    const h = Buffer.alloc(512);
+    const body = Buffer.from(m.body ?? "");
+    h.write(m.name, 0, 100, "utf8");
+    h.write("0000644\0", 100);
+    h.write("0000000\0", 108);
+    h.write("0000000\0", 116);
+    h.write(`${body.length.toString(8).padStart(11, "0")}\0`, 124);
+    h.write("00000000000\0", 136);
+    h.write("        ", 148);
+    h.write({ file: "0", dir: "5", symlink: "2", hardlink: "1" }[m.type ?? "file"], 156);
+    if (m.link) h.write(m.link, 157, 100, "utf8");
+    h.write("ustar\0", 257);
+    h.write("00", 263);
+    let sum = 0;
+    for (const b of h) sum += b;
+    h.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+    blocks.push(h, body, Buffer.alloc((512 - (body.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(blocks));
+}
+
+// The files a package build must hold.
+const minimal = (version = "9.9.9") => [
+  { name: "package/package.json", body: JSON.stringify({ name: "openqodex", version }) },
+  { name: "package/dist/bin.js", body: "console.log('bin');\n" },
+  { name: "package/dist/lib.js", body: "export const x = 1;\n" },
+];
+
+describe("a published package is taken from elsewhere than the registry", () => {
+  const packument = (dist) => ({ name: "openqodex", versions: { "0.12.0": { dist } } });
+  const good = { tarball: "https://registry.npmjs.org/openqodex/-/openqodex-0.12.0.tgz", integrity: "sha512-abc sha1-def" };
+
+  it("takes the tarball and its sha512 integrity from the registry's own answer, and refuses an absent version, another host or plain http", () => {
+    expect(tarballOf(packument(good), "0.12.0")).toEqual({ url: good.tarball, integrity: "sha512-abc" });
+    expect(() => tarballOf(packument(good), "0.13.0")).toThrow(/lists no openqodex@0\.13\.0/);
+    expect(() => tarballOf(packument({ ...good, tarball: "https://registry.npmjs.org.evil.example/openqodex/-/openqodex-0.12.0.tgz" }), "0.12.0")).toThrow(/https:\/\/registry\.npmjs\.org/);
+    expect(() => tarballOf(packument({ ...good, tarball: "http://registry.npmjs.org/openqodex/-/openqodex-0.12.0.tgz" }), "0.12.0")).toThrow(/https:\/\/registry\.npmjs\.org/);
+    expect(() => tarballOf(packument({ ...good, integrity: "sha1-def" }), "0.12.0")).toThrow(/sha512/);
+  });
+});
+
+describe("a package run writes outside the run and the bench cache", () => {
+  it("runs a published version from the bench cache and writes nothing to the home folder or the temp folder", { timeout: 300_000 }, () => {
+    const version = readJson(join(repoRoot, "packages/cli/package.json")).version;
+    const cache = tempDir("oq-outside-cache-");
+    mkdirSync(join(cache, "packages", "npm"), { recursive: true });
+    copyFileSync(tarball, join(cache, "packages", "npm", `openqodex-${version}.tgz`));
+    const integrity = `sha512-${createHash("sha512").update(readFileSync(tarball)).digest("base64")}`;
+    // The registry's answer as a first fetch saves it; the packed build
+    // stands in for the published one, so the run needs no network.
+    write(join(cache, "packages", "npm", `openqodex-${version}.json`), JSON.stringify({ name: "openqodex", version, tarball: `https://registry.npmjs.org/openqodex/-/openqodex-${version}.tgz`, integrity, fetchedAt: "2026-10-11T00:00:00.000Z" }));
+    const home = tempDir("oq-outside-home-");
+    const tmp = tempDir("oq-outside-tmp-");
+    const oq = tempDir("oq-outside-oqhome-");
+    mkdirSync(join(oq, "tools"));
+    const out = join(tempDir("oq-outside-npm-"), "run");
+    const p = spawnSync(process.execPath, [RUN, "--package", `npm:${version}`, "--reviewers", "model:scripted", "--install-root", join(oq, "tools"), "--allow-missing-scanners", "--cases", "flask-path-traversal", "--repeat", "1", "--max-usd", "1", "--max-minutes", "30", "--review-max-usd", "0.5", "--model-script", script(), "--out", out], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: home, TMPDIR: tmp, OPENQODEX_BENCH_CACHE: cache }, timeout: 300_000 });
+    expect(p.status, p.stderr).toBe(0);
+    expect(readJson(join(out, "manifest.json")).package).toMatchObject({ spec: `npm:${version}`, version, sha256: sha256(tarball), integrity, registryIntegrity: integrity });
+    expect(readdirSync(home)).toEqual([]);
+    expect(readdirSync(tmp)).toEqual([]);
+    expect(readdirSync(cache)).toEqual(["packages"]);
+  });
+});
+
+describe("an unpacked package edited after it was unpacked runs under the tarball's sha256", () => {
+  it("checks every unpacked file against the record before use, and unpacks again on any difference", async () => {
+    const cache = tempDir("oq-outside-cache-");
+    const first = await preparePackage(`file:${tarball}`, { cache });
+    expect(first.extracted).toBe("now");
+    const original = readFileSync(first.lib);
+    expect(first.record.files["package/dist/lib.js"]).toBe(createHash("sha256").update(original).digest("hex"));
+    expect((await preparePackage(`file:${tarball}`, { cache })).extracted).toBe("reused");
+    appendFileSync(first.lib, "\nprocess.exit(0);\n");
+    const again = await preparePackage(`file:${tarball}`, { cache });
+    expect(again.extracted).toBe("again");
+    expect(readFileSync(again.lib).equals(original)).toBe(true);
+    // A file added to the folder is a difference too.
+    writeFileSync(join(again.dir, "dist", "extra.js"), "planted");
+    expect((await preparePackage(`file:${tarball}`, { cache })).extracted).toBe("again");
+    expect(existsSync(join(again.dir, "dist", "extra.js"))).toBe(false);
+  });
+});
+
+describe("a tarball member is written outside the package's folder, or as a link", () => {
+  it("refuses an absolute path, a path through .., a symbolic link and a hard link, and writes nothing", async () => {
+    const bad = [
+      [{ name: "/tmp/oq-outside-absolute-evil.txt", body: "x" }, /absolute/],
+      [{ name: "package/../../evil.txt", body: "x" }, /\.\./],
+      [{ name: "package/dist/link.js", type: "symlink", link: "/etc/passwd" }, /symbolic link/],
+      [{ name: "package/dist/hard.js", type: "hardlink", link: "package/dist/bin.js" }, /hard link/],
+    ];
+    for (const [member, why] of bad) {
+      const dir = tempDir("oq-outside-tar-");
+      const file = join(dir, "openqodex-9.9.9.tgz");
+      writeFileSync(file, tgz([...minimal(), member]));
+      const cache = join(dir, "cache");
+      await expect(preparePackage(`file:${file}`, { cache })).rejects.toThrow(why);
+      // The tarball is refused before anything is written, the cache folder included.
+      expect(existsSync(cache)).toBe(false);
+      expect(existsSync(join(dir, "evil.txt"))).toBe(false);
+    }
+    expect(existsSync("/tmp/oq-outside-absolute-evil.txt")).toBe(false);
+    // The same package without the bad member unpacks.
+    const dir = tempDir("oq-outside-tar-");
+    writeFileSync(join(dir, "openqodex-9.9.9.tgz"), tgz(minimal()));
+    const ok = await preparePackage(`file:${join(dir, "openqodex-9.9.9.tgz")}`, { cache: join(dir, "cache") });
+    expect(ok.record).toMatchObject({ name: "openqodex", version: "9.9.9" });
+    expect(readFileSync(ok.lib, "utf8")).toBe("export const x = 1;\n");
   });
 });
 

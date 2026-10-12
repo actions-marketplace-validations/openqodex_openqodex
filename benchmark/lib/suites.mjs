@@ -20,26 +20,26 @@
 // 5. A truth item is read with a severity, a class or matching words nobody
 //    froze: real truth has severity, class and mentions null; matchSignatures
 //    come only from the committed entry.
-// Selecting a run's cases and the truth copy each run saves (run.mjs):
-// 6. A held-out (test split) case is run before a release: selectCases
-//    refuses the test split and any case on it, before anything is fetched,
-//    unless the caller builds and proves cases only (heldOut, run.mjs
-//    --materialise-only), which reviews none and logs the access.
-// 7. A case outside the subset a run names, or one the suite excludes, is
-//    run under that subset's name: every case --cases names is checked
-//    against the split and the subset, and each refusal names its reason.
-// 8. A run's truth copy lacks a comment the suite lists, or holds a
-//    rejected one, so recall is counted over the wrong set: specCopy copies
-//    the accepted comments only and refuses a truth whose accepted comments
-//    are not exactly the ones the suite entry counts; realSpecProblems checks
-//    a saved copy the same way, and against the committed suite while it
-//    still holds the case.
-// 9. A Martian case runs on the dev split: its golden comments are public,
+// 6. A Martian case runs on the dev split: its golden comments are public,
 //    so tuning on them is contamination. A suite marked heldOutOnly lists no
 //    development cases (a request for them is refused), and a split file
 //    that places one of its cases in development is refused on every read.
 //    Martian's prose truth keeps the dataset's severity, mapped to the
 //    product's scale, beside the raw value.
+// Selecting a run's cases and the truth copy each run saves (run.mjs):
+// 7. A held-out (test split) case is run before a release: selectCases
+//    refuses the test split and any case on it, before anything is fetched,
+//    unless the caller builds and proves cases only (heldOut, run.mjs
+//    --materialise-only), which reviews none and logs the access.
+// 8. A case outside the subset a run names, or one the suite excludes, is
+//    run under that subset's name: every case --cases names is checked
+//    against the split and the subset, and each refusal names its reason.
+// 9. A run's truth copy lacks a comment the suite lists, or holds a
+//    rejected one, so recall is counted over the wrong set: specCopy copies
+//    the accepted comments only and refuses a truth whose accepted comments
+//    are not exactly the ones the suite entry counts; realSpecProblems checks
+//    a saved copy the same way, and against the committed suite while it
+//    still holds the case.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -363,7 +363,7 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
 
 const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
 
-// The cases of a real suite one run uses (failures 6 and 7): every usable
+// The cases of a real suite one run uses (failures 7 and 8): every usable
 // case on the split's development side, or the subset the split file names,
 // or the cases `refs` names (<suite>/<name> or a full case id), each of
 // which must be on that side and in that subset. The test split is held
@@ -411,7 +411,7 @@ export function selectCases({ suite, split = "dev", subset = null, refs = null, 
 
 // The truth copy of a real case that a run saves as cases/<name>.json and
 // scores against: the case record with its accepted comments as `bugs`
-// (failure 8). The rejected comments are left out, so recall counts over the
+// (failure 9). The rejected comments are left out, so recall counts over the
 // accepted set. The location diagnostic's knownNoise (candidates on a
 // rejected comment's lines and on no accepted one) therefore reads 0 for
 // now: lib/score.mjs lineMatches finds rejected comments only among `bugs`,
@@ -430,7 +430,7 @@ export function specCopy(c, truth) {
 }
 
 // What is wrong with a real case's saved truth copy, as cases/<name>.json
-// holds it (failure 8): a list of problems, empty when it can be scored.
+// holds it (failure 9): a list of problems, empty when it can be scored.
 // Checked on its own, then against the committed suite while the suite
 // still holds the case at the copy's hash.
 export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
