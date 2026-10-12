@@ -29,7 +29,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mulberry32, seedOf } from "../lib/interval.mjs";
 import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { changeVerdict, comparePairs, makeSide } from "../loop/compare.mjs";
-import { alphaAt, appendLedgerLine, decide, guardVerdict, ruleHash } from "../loop/decide.mjs";
+import { alphaAt, appendLedgerLine, decide, guardVerdict, lookOf, ruleHash } from "../loop/decide.mjs";
+import { changeState } from "../loop/stages.mjs";
 import { HASH_AT_LOAD, SIM_DEFAULTS, simulateHarm, simulateNull, simulatePower, simulatedWorld, drawSide, validateSaved, validationLine, writeValidationLine } from "../loop/validate.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -310,6 +311,39 @@ describe("a later look uses the same bound as the first", () => {
     write(stale, [{ ...passingValidation(), ruleHash: "0".repeat(64) }, proposed("RC-0001", "c".repeat(40))].map((l) => `${JSON.stringify(l)}\n`).join(""));
     expect(node(DECIDE, ["--change", "RC-0001", "--pair", `${parentRun}=${candidateRun}`, "--stage", "3", "--ledger", stale]).status).toBe(2);
     expect(readLines(stale)).toHaveLength(2);
+  });
+});
+
+// Plan amendment A2: a look is a point where a change can be accepted.
+// Stage 1 can only stop a change, so a stage 1 line spends no error budget.
+describe("stage 1 leaves the look counter unchanged", () => {
+  let root;
+  let parentRun;
+  let candidateRun;
+  beforeAll(async () => {
+    root = tempDir("oq-bench-decide-stage1-");
+    parentRun = await savedRun({ parent: root, runId: "2026-10-11-ppppppp-parent", commit: "p".repeat(40), found: (c) => c >= 10 });
+    candidateRun = await savedRun({ parent: root, runId: "2026-10-11-ccccccc-candidate", commit: "c".repeat(40), found: () => true });
+  });
+
+  it("writes the stage 1 line with no look, read at the alpha of the look that is due, and the next decision takes that look", () => {
+    const ledger = join(root, "ledger.jsonl");
+    write(ledger, [passingValidation(), proposed("RC-0001", "c".repeat(40))].map((l) => `${JSON.stringify(l)}\n`).join(""));
+    expect(lookOf(readLines(ledger))).toBe(1);
+    const pair = ["--pair", `${parentRun}=${candidateRun}`];
+
+    const one = node(DECIDE, ["--change", "RC-0001", ...pair, "--stage", "1", "--ledger", ledger]);
+    expect(one.status, one.stdout + one.stderr).toBe(0);
+    const line = readLines(ledger).at(-1);
+    expect(line).toMatchObject({ id: "RC-0001", stage: 1, look: null, alpha: null });
+    expect(line.screenAlpha).toBeCloseTo(0.05 / 2, 15);
+    expect(lookOf(readLines(ledger))).toBe(1);
+    // Taking no look still finishes stage 1: the loop moves the change on to stage 2.
+    expect(changeState(readLines(ledger), "RC-0001").due).toBe(2);
+
+    const two = node(DECIDE, ["--change", "RC-0001", ...pair, "--stage", "3", "--ledger", ledger]);
+    expect(two.status, two.stdout + two.stderr).toBe(0);
+    expect(readLines(ledger).at(-1)).toMatchObject({ id: "RC-0001", event: "decided", look: 1, decision: "accepted" });
   });
 });
 

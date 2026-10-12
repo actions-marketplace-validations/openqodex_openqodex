@@ -1,0 +1,25 @@
+[
+  {
+    "pr_title": "Checkout applies coupons",
+    "url": "https://github.com/oq-fixture/shop/pull/11",
+    "comments": [
+      { "comment": "The cart total is read before the discount lock is taken, so two concurrent checkouts can apply one coupon twice.", "severity": "High", "category": "concurrency" },
+      { "comment": "The refund handler writes the full card number into the application log.", "severity": "Critical", "category": "security" }
+    ]
+  },
+  {
+    "pr_title": "Paged order history",
+    "url": "https://github.com/oq-fixture/shop/pull/12",
+    "comments": [
+      { "comment": "The pagination offset multiplies the page number without subtracting one, so the first page of orders is never shown.", "severity": "High", "category": "bug" }
+    ]
+  },
+  {
+    "pr_title": "Archive old ledger rows",
+    "url": "https://github.com/oq-fixture/ledger/pull/7",
+    "comments": [
+      { "comment": "The migration deletes the archived ledger rows instead of moving them to the archive table.", "severity": "High", "category": "data" },
+      { "comment": "No test covers the archive endpoint when the ledger is empty.", "severity": "Low", "category": "test_gap" }
+    ]
+  }
+]

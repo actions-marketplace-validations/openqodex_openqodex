@@ -83,6 +83,12 @@ export const TAGS = ["needs-callers", "deletion"];
 const FIXED_DATE = "2026-01-01T00:00:00Z";
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+// A planted case's name, which is also its folder under benchmark/cases:
+// lower case letters, digits and dashes. A name from a run's manifest is
+// checked against it before any path is built from it, since a separator
+// or a dot would reach outside the folder it is joined to.
+export const CASE_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
 export function listCases(root = casesRoot) {
   return readdirSync(root, { withFileTypes: true })
     .filter((e) => e.isDirectory() && existsSync(join(root, e.name, "case.json")))

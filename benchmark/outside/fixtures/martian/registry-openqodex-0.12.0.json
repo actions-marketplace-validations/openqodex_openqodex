@@ -1,0 +1,12 @@
+{
+  "note": "The npm registry's answer for openqodex 0.12.0 (https://registry.npmjs.org/openqodex/0.12.0, read 2026-10-11), trimmed to the fields the release gate reads. The tests' runs record this release and its tarball (sha256 computed from the published tarball).",
+  "name": "openqodex",
+  "version": "0.12.0",
+  "dist": {
+    "integrity": "sha512-rY6T5qdsl2wN3MUR1glOqRt2kuAsD8lFURI5J9mHI+UcDYDF6/xUhqnHER6ZwCUeXmlWiPYR/CPCXi/j1NLgAA==",
+    "shasum": "f40517b83d612a59e566af8845cc84f85e973578",
+    "tarball": "https://registry.npmjs.org/openqodex/-/openqodex-0.12.0.tgz"
+  },
+  "tarballSha256": "8050be05d8be692b6f6a5f747d16a3dfa3c032f4e105a065798f5f0266452624",
+  "tarballBytes": 2959885
+}
