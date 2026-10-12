@@ -310,7 +310,7 @@ node benchmark/queue.mjs decide <status> <target>... --by <your name> [--note <t
 | `true`, `false` (or `spec-candidate-accepted`, `spec-candidate-rejected`) | a finding, or an issue a person consolidated | correct or wrong in precision, in every later scoring of that case |
 | `consolidate` | two or more findings of one case | one issue in unique-issue precision and redundancy; a ruling on the issue applies to each finding |
 | `confirmed`, `disputed` | a truth item of a case | labelled in the score's per-bug results; recall is unchanged, since a wrong truth item is fixed by a new case version |
-| `clean`, `not-clean` | a case | recorded for the clean-control ingest; the scorer does not read it |
+| `clean`, `not-clean` | a candidate clean control | the latest ruling decides whether `clean.mjs admit` puts the candidate in the clean suite, and every read of that suite refuses an entry without a standing `clean` ruling; the scorer does not read it |
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
@@ -327,6 +327,30 @@ node benchmark/ingest/martian.mjs [--offline]
 - At this pin, all 50 pull requests are usable. GitHub names no licence it can classify for Sentry's licence file (NOASSERTION), so Sentry's 10 carry the licence class `unverified`, with a person's reading of that file noted beside it (FSL-1.1-Apache-2.0). An unverified case may run privately but is never published: `publish-run.mjs` refuses a run that holds one and names each such case, and every outside converter and board submission must refuse it the same way (`publishRefusal` in `benchmark/lib/licence.mjs`). The AACR ingest applies the same rule. A pull request with no licence file is still excluded.
 - Martian's own pipeline judges a run: it extracts issues from the findings, groups duplicates, judges each against the golden comments, and sums the totals. `readMartianEvaluation` in `benchmark/lib/score.mjs` reads that result back. It keeps Martian's candidate ids, extraction provenance, matches and official totals unchanged. Beside them it adds its own counts: golden comments found, findings matched, and the severity of the first finding behind each found golden comment against the golden severity (Critical critical, High major, Medium minor, Low nitpick). It refuses a finding saved for the judge without a title, problem, consequence or fix. It also refuses official totals that lack any field of Martian's shape, a match that links a candidate of one pull request to a golden comment of another, and matches that name fewer golden comments than the official totals count.
 - No Martian run is scored yet. The converter and the wrapper that run Martian's pipeline come next.
+
+## Clean controls from real pull requests
+
+A clean control is a real change with nothing a reviewer should raise: a review of it should end with no finding. The `clean` suite holds real pull requests that a person ruled clean. Every case is in the development split, and a run selects it with `--suite clean`.
+
+```
+node benchmark/ingest/clean.mjs list [--offline]     # candidates and their evidence
+node benchmark/ingest/clean.mjs sheet [--seed S]     # the candidates for a person, with the commands to rule
+node benchmark/queue.mjs decide clean|not-clean <case id> --by <your name> --sheet clean@S
+node benchmark/ingest/clean.mjs admit                # the suite, from the rulings
+```
+
+- `list` takes pull requests from the development repository groups of the AACR split only. It reads GitHub through `gh api` and caches every answer. In each group, it takes the pull requests merged into the default branch from 2026-01-01 to 2026-03-31 in a seeded order, and lists at most 2 (checking at most 12).
+- A pull request is a candidate when it passes every check. It is not by a bot. It changes as many lines as AACR's usable cases, from the fewest to the most. Someone other than its author reviewed it, and no review asked for changes. Its licence is usable. In the 90 days after its merge:
+  - no later commit names it as a fix, revert or follow-up (a line that only quotes its title, as a backport or a release note does, does not count);
+  - no later issue or pull request that links it is labelled or titled as a bug, fix or revert;
+  - none of its files is renamed (a later fix under the new name would be missed);
+  - no later commit on the default branch that reads as a fix, revert or follow-up changes one of its lines, or inserts next to one.
+- To place the pull request's lines in a later commit's parent, `list` diffs the file at the pull request's head against that parent. A line that cannot be placed counts as touched.
+- `list` writes `benchmark/suites/clean/candidates.json` (each candidate as a suite entry with its evidence: links, dates and the commits checked) and `benchmark/suites/clean/ingest-report.txt` (the inclusion and exclusion counts, by reason).
+- A candidate is not a case. `admit` writes `benchmark/suites/clean/cases.json` and `benchmark/splits/clean-v1.json` from the candidates whose latest ruling is `clean`, signed by a person on `people.json`. It refuses a candidate from a held-out group.
+- A ruling names the candidate's id, which hashes its commits and size. A candidate that changes gets a new id and needs a new ruling.
+- Every read of the suite refuses an entry without a standing `clean` ruling, so an entry added by hand stops every run of the suite.
+- No candidate has been ruled yet, so the suite holds no case.
 
 ## Why a truth item was missed
 
