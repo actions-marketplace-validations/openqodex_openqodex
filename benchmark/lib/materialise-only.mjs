@@ -7,7 +7,8 @@
 // The proof of each case:
 //   caseId, suite, name, split, licence (class, SPDX id, the option chosen)
 //   upstream  a pull request case's dataset base and head, its merge base
-//             and where that came from, and the merge base's and the head's
+//             and where that came from (git, or frozen in the entry), every
+//             merge base git found, and the merge base's and the head's
 //             trees, from the case repository's record
 //   built     the base and the head a review would name, the base's tree,
 //             the head's tree as the review sees it, and the fsck the case
@@ -75,7 +76,7 @@ function prove(c, into, { shape, cache, casesDir, allowFileUrl }) {
     shape,
     ok: problems.length === 0,
     error: problems.length === 0 ? null : problems.join("; "),
-    upstream: { baseSha: u.baseSha, headSha: u.headSha, mergeBaseSha: u.mergeBaseSha, mergeBaseFrom: u.mergeBaseFrom, mergeBaseTree: u.mergeBaseTree, headTree: u.headTree },
+    upstream: { baseSha: u.baseSha, headSha: u.headSha, mergeBaseSha: u.mergeBaseSha, mergeBaseFrom: u.mergeBaseFrom, mergeBases: u.mergeBases ?? null, mergeBaseTree: u.mergeBaseTree, headTree: u.headTree },
     built,
     trees,
     ancestor,

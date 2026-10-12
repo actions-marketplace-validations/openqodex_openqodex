@@ -7,11 +7,19 @@
 //                               clone without trees or files): the history
 //                               finding each merge base took
 //   repos/<owner>__<name>.git   bare and shallow: each case's merge base and
-//                               head with their whole trees, nothing else
+//                               head with their whole trees, nothing else,
+//                               each kept by a ref refs/openqodex/<sha>
 //   cases/<case hash>.git       bare and complete: two commits, B with the
 //                               merge base's tree and H with the head's tree,
 //                               and materialised.json, which records both
 //                               and the upstream commits and trees they copy
+//
+// How the cache grows: a tree fetch sends every commit the tree cache holds
+// as a have, so the server sends only the objects the new tree does not
+// share with those commits' trees. A repository's tree cache holds one whole
+// tree and then each later commit's changes, and each case repository holds
+// one tree (B and H share every file the pull request leaves alone): n cases
+// of one repository keep about n + 1 trees, where they kept about 3n.
 //
 // Each attempt then clones the case repository into its own folder:
 //   laptop  B committed, the head's files in the working tree as the
@@ -26,7 +34,9 @@
 // commits, then 128, and so on) until the merge base is found and every
 // commit between it and either tip is present. Only the merge base and the
 // head are then fetched with their trees. A merge base frozen in the entry
-// must be one git finds.
+// must be one git finds. When git finds more than one, the entry must
+// freeze one (the ingest's --freeze-merge-base freezes the one `git
+// merge-base` prints; docs/benchmark.md).
 //
 // Failure list, written before the code:
 // 1. The built head differs from the pull request head, so AACR's lines
@@ -39,7 +49,8 @@
 //    proved to show exactly H.
 // 2. The target branch's tip is used as the base after the target moved:
 //    B is the merge base, found by git and proved complete; a frozen merge
-//    base git does not find, or more than one merge base, is refused.
+//    base git does not find, or more than one merge base with none frozen,
+//    is refused, and the record names every merge base git found.
 // 3. A shallow or partial clone reaches reviewChange: the case repository
 //    is a fresh repository holding B, H and every object they name, copied
 //    out of the shallow cache (no alternates, no promisor, not shallow).
@@ -95,6 +106,11 @@
 //    commits, then 128, and so on, up to the merge base search's bound),
 //    and records the depths it fetched and the commits it added; at the
 //    bound it answers unknown and says so.
+// 17. The tree fetches send no haves, so the server sends each merge base's
+//    and each head's whole tree again, and the cache keeps about three trees
+//    per case (21 GB after 56 AACR cases; issue #160): every commit fetched
+//    into the tree cache gets a ref, and a cache filled before the refs gets
+//    one for each commit its shallow list names, before the next fetch.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -340,23 +356,60 @@ function chosenMergeBase(c, bases) {
   const m = c.materialise;
   const list = bases.map((b) => b.slice(0, 12)).join(", ");
   if (m.mergeBaseSha && !bases.includes(m.mergeBaseSha)) throw new Error(`${c.id}: the frozen mergeBaseSha ${m.mergeBaseSha.slice(0, 12)} is not the merge base of ${m.baseSha.slice(0, 12)} and ${m.headSha.slice(0, 12)}; git finds ${list}`);
-  if (!m.mergeBaseSha && bases.length > 1) throw new Error(`${c.id}: ${m.baseSha.slice(0, 12)} and ${m.headSha.slice(0, 12)} have ${bases.length} merge bases (${list}); freeze the one to use as mergeBaseSha in the suite entry`);
+  if (!m.mergeBaseSha && bases.length > 1) throw new Error(`${c.id}: ${m.baseSha.slice(0, 12)} and ${m.headSha.slice(0, 12)} have ${bases.length} merge bases (${list}); the suite entry must freeze one: node benchmark/ingest/${c.suite}.mjs --freeze-merge-base ${c.name}`);
   return m.mergeBaseSha ?? bases[0];
 }
 
+// The merge bases git finds for a pull request case, on commits only (the
+// search a build runs, failure 9), and `pick`, the one `git merge-base
+// <base> <head>` prints: of several, the one with the newest committer
+// date, which `git diff <base>...<head>` diffs against. The ingest freezes
+// `pick` when there are several (lib/suites.mjs freezeMergeBase). No tree,
+// file or truth is read, so a held-out case is not logged.
+export function mergeBasesOf(c, { cache = cacheRoot(), allowFileUrl = false } = {}) {
+  const why = prRefusal(c, { heldOut: true, allowFileUrl });
+  if (why !== null) throw new Error(why);
+  const repo = repoCachePath(cache, c, ".commits");
+  mkdirSync(dirname(repo), { recursive: true });
+  return withLock(`${repoCachePath(cache, c)}.lock`, () => {
+    const { bases } = findMergeBases(repo, c);
+    const pick = g(repo, ["merge-base", c.materialise.baseSha, c.materialise.headSha], commitsEnv());
+    if (!bases.includes(pick)) throw new Error(`${c.id}: git merge-base prints ${pick.slice(0, 12)}, which is not one of the merge bases ${bases.map((b) => b.slice(0, 12)).join(", ")}`);
+    return { bases, pick };
+  });
+}
+
+// The ref that keeps a fetched commit in repos/<owner>__<name>.git, so each
+// later fetch sends it as a have (failure 17).
+const HAVE_REFS = "refs/openqodex/";
+
+// Gives every commit the tree cache holds a ref, when it has none: a cache
+// filled before the refs existed holds its commits only in its shallow list,
+// where every commit fetched at depth 1 is named.
+function refEveryCommit(repo) {
+  const refs = new Set(g(repo, ["for-each-ref", "--format=%(objectname)", HAVE_REFS]).split("\n").filter(Boolean));
+  const missing = shallowOf(repo).filter((sha) => SHA.test(sha) && !refs.has(sha) && hasCommit(repo, sha));
+  if (missing.length > 0) execFileSync("git", [...FLAGS, "update-ref", "--stdin"], { cwd: repo, env: gitEnv(), input: missing.map((sha) => `update ${HAVE_REFS}${sha} ${sha}\n`).join(""), stdio: ["pipe", "ignore", "pipe"] });
+}
+
 // Fetches the merge base and the head with their whole trees into
-// repos/<owner>__<name>.git, each at depth 1, unless they are there.
+// repos/<owner>__<name>.git, each at depth 1, unless they are there. Every
+// commit there has a ref, so the fetch sends them all as haves and the
+// server sends only the objects the new tree does not share with a tree
+// already held (failure 17).
 function fetchTrees(repo, c, mergeBaseSha, headWant) {
   const { cloneUrl, headSha } = c.materialise;
   initBare(repo);
   for (const [sha, want] of [[headSha, headWant], [mergeBaseSha, mergeBaseSha]]) {
     if (hasCommit(repo, sha)) continue;
+    refEveryCommit(repo);
     try {
       g(repo, ["fetch", "-q", "--no-tags", "--no-recurse-submodules", "--depth=1", "--end-of-options", cloneUrl, want]);
     } catch (error) {
       throw new Error(`${c.id}: fetching ${sha.slice(0, 12)} with its files from ${cloneUrl} failed: ${said(error)}`);
     }
     if (!hasCommit(repo, sha)) throw new Error(`${c.id}: ${want} at ${cloneUrl} no longer gives ${sha.slice(0, 12)}`);
+    g(repo, ["update-ref", `${HAVE_REFS}${sha}`, sha]);
   }
 }
 
@@ -404,8 +457,9 @@ export function verifyCaseRepo(c, { cache = cacheRoot(), heldOut = false, allowF
 
 // Builds cases/<case hash>.git from the cache: B and H are commits of the
 // upstream merge base's and head's own trees, with the harness's fixed
-// author and date, so their ids are fixed per case.
-function buildCaseRepo(cache, c, repo, mergeBaseSha) {
+// author and date, so their ids are fixed per case. The record names every
+// merge base git found beside the one the case is built on.
+function buildCaseRepo(cache, c, repo, mergeBaseSha, bases) {
   const m = c.materialise;
   const upstream = {
     cloneUrl: m.cloneUrl,
@@ -413,6 +467,7 @@ function buildCaseRepo(cache, c, repo, mergeBaseSha) {
     headSha: m.headSha,
     mergeBaseSha,
     mergeBaseFrom: m.mergeBaseSha ? "entry" : "git",
+    mergeBases: bases,
     mergeBaseTree: g(repo, ["rev-parse", `${mergeBaseSha}^{tree}`]),
     headTree: g(repo, ["rev-parse", `${m.headSha}^{tree}`]),
   };
@@ -468,7 +523,7 @@ export function caseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl
     const { bases, headWant } = findMergeBases(repoCachePath(cache, c, ".commits"), c);
     const mergeBaseSha = chosenMergeBase(c, bases);
     fetchTrees(repo, c, mergeBaseSha, headWant);
-    return { path, record: buildCaseRepo(cache, c, repo, mergeBaseSha), built: true };
+    return { path, record: buildCaseRepo(cache, c, repo, mergeBaseSha, bases), built: true };
   });
 }
 

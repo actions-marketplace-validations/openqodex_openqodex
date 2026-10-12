@@ -26,6 +26,10 @@
 // 5. A summary names the checkout that summarised a saved proof folder as
 //    the commit the proof ran on, or summarises a folder that records no
 //    commit.
+// 6. A case whose base and head have two merge bases (ClickHouse/ClickHouse
+//    #80345) is never built, or is built on a merge base nobody chose: the
+//    ingest freezes the one `git merge-base` prints, the case builds on it,
+//    and the proof records it beside every merge base git found.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -35,6 +39,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, git, gitEnv, repoRoot } from "../lib/cases.mjs";
 import { mergeBaseAncestry } from "../lib/materialise.mjs";
 import { materialiseOnly } from "../lib/materialise-only.mjs";
+import { SUITES, entryHash, freezeMergeBase, readCase, realCaseId } from "../lib/suites.mjs";
 import { machinePathsIn, readProofRun, summariseProofs, writeSummary } from "../proof.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -241,5 +246,89 @@ describe("a summary of a saved proof folder names the summariser's checkout as t
     const commit = "c".repeat(40);
     writeFileSync(join(folder, "proof-run.json"), `${JSON.stringify({ version: 1, commit, startedAt: "1999-01-01T00:00:00.000Z", shape: "server" })}\n`);
     expect(readProofRun(folder)).toMatchObject({ commit, shape: "server" });
+  });
+});
+
+// A criss-cross history, as ClickHouse/ClickHouse#80345 has: main and the
+// pull request each merged the other's first commit, so the dataset's base
+// and the head have two merge bases. `newer` has the later committer date:
+// it is the one `git merge-base` prints alone, and the one `git diff
+// base...head` diffs against.
+function crissCross() {
+  const dir = join(tempDir("oq-proof-up-"), "widget");
+  mkdirSync(dir);
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "uploadpack.allowFilter", "true");
+  let day = 0;
+  const commit = (...args) => {
+    const date = `2025-05-${String(++day).padStart(2, "0")}T12:00:00Z`;
+    execFileSync("git", ["-c", "user.name=Upstream", "-c", "user.email=up@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env: { ...gitEnv(), GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }, stdio: "ignore" });
+    return out(dir, "rev-parse", "HEAD");
+  };
+  writeFileSync(join(dir, "a.txt"), "root\n");
+  git(dir, "add", "-A");
+  commit("commit", "-q", "-m", "Root");
+  writeFileSync(join(dir, "main.txt"), "main one\n");
+  git(dir, "add", "-A");
+  const older = commit("commit", "-q", "-m", "Main one");
+  git(dir, "checkout", "-q", "-b", "feature", "HEAD~1");
+  writeFileSync(join(dir, "feature.txt"), "feature one\n");
+  git(dir, "add", "-A");
+  const newer = commit("commit", "-q", "-m", "Feature one");
+  commit("merge", "-q", "--no-ff", "-m", "Merge main's first commit", older);
+  writeFileSync(join(dir, "feature.txt"), "feature two\n");
+  const headSha = commit("commit", "-q", "-am", "Feature two");
+  git(dir, "checkout", "-q", "main");
+  commit("merge", "-q", "--no-ff", "-m", "Merge the feature's first commit", newer);
+  writeFileSync(join(dir, "main.txt"), "main two\n");
+  const baseSha = commit("commit", "-q", "-am", "Main two");
+  git(dir, "update-ref", "refs/pull/7/head", headSha);
+  git(dir, "branch", "-q", "-D", "feature");
+  return { dir, baseSha, headSha, older, newer };
+}
+
+// A benchmark folder holding an AACR suite of one entry, written the way the
+// ingest writes it, and a split that puts it in development.
+function oneCaseSuite(up) {
+  const root = tempDir("oq-proof-root-");
+  const name = "acme__widget-7";
+  const entry = { name, id: null, hash: null, status: "usable", excludedWhy: null, prUrl: "https://github.com/acme/widget/pull/7", repo: "acme/widget", cloneUrl: `file://${up.dir}`, prRef: "refs/pull/7/head", baseSha: up.baseSha, headSha: up.headSha, mergeBaseSha: null, language: "Text", changeLines: 2, repoGroup: "acme/widget", licence: MIT, truth: { kind: "lines", accepted: 1, rejected: 0 }, truthHash: "0".repeat(64), matchSignatures: {} };
+  entry.hash = entryHash(entry);
+  entry.id = realCaseId("aacr", name, entry.hash);
+  for (const rel of [SUITES.aacr.cases, SUITES.aacr.split]) mkdirSync(join(root, rel, ".."), { recursive: true });
+  writeFileSync(join(root, SUITES.aacr.cases), `${JSON.stringify({ version: 1, suite: "aacr", cases: [entry] }, null, 2)}\n`);
+  writeFileSync(join(root, SUITES.aacr.split), `${JSON.stringify({ version: 1, name: "aacr-v1", suite: "aacr", cases: { dev: [name], test: [] }, subsets: {} }, null, 2)}\n`);
+  return { root, name, id: entry.id };
+}
+
+describe("a case whose base and head have two merge bases is never built, or is built on a merge base nobody chose", () => {
+  it("is refused until the ingest freezes the one git merge-base prints, then builds on it, and the proof records it beside both", { timeout: 120_000 }, () => {
+    const up = crissCross();
+    const both = [up.older, up.newer].sort();
+    expect(out(up.dir, "merge-base", "--all", up.baseSha, up.headSha).split("\n").sort()).toEqual(both);
+    expect(out(up.dir, "merge-base", up.baseSha, up.headSha)).toBe(up.newer);
+    const cache = tempDir("oq-proof-cache-");
+    const s = oneCaseSuite(up);
+    const refused = prove([readCase(s.id, { root: s.root })], cache).cases[0];
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/2 merge bases .*--freeze-merge-base acme__widget-7/);
+
+    const frozen = freezeMergeBase("aacr", s.name, { root: s.root, cache, allowFileUrl: true });
+    expect(frozen).toMatchObject({ frozen: true, from: s.id, mergeBaseSha: up.newer, bases: both });
+    const entry = JSON.parse(readFileSync(join(s.root, SUITES.aacr.cases), "utf8")).cases[0];
+    expect(entry.mergeBaseSha).toBe(up.newer);
+    expect(entry.hash).toBe(entryHash(entry));
+    expect(entry.id).toBe(frozen.to);
+    // A changed case is a new case: the old id no longer reads.
+    expect(frozen.to).not.toBe(s.id);
+    expect(() => readCase(s.id, { root: s.root })).toThrow(/a changed case is a new case/);
+
+    const c = readCase(frozen.to, { root: s.root });
+    const proof = prove([c], cache);
+    expect(proof.cases[0]).toMatchObject({ ok: true, upstream: { mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both, mergeBaseTree: out(up.dir, "rev-parse", `${up.newer}^{tree}`) } });
+    const summary = summariseProofs({ suite: "aacr", date: "2026-10-11", shape: "server", proofs: [proof], expected: expected([c]), cache });
+    expect(summary.cases[0]).toMatchObject({ ok: true, mergeBaseSha: up.newer, mergeBaseFrom: "entry", mergeBases: both });
+    // Freezing again changes nothing.
+    expect(freezeMergeBase("aacr", s.name, { root: s.root, cache, allowFileUrl: true })).toMatchObject({ frozen: false, from: frozen.to, to: frozen.to });
   });
 });
