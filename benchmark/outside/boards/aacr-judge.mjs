@@ -36,8 +36,8 @@
 //    sets it and then becomes the evaluator); a dry run reports the limit
 //    the evaluator would get.
 // 6. A modified evaluator runs while eval.json records the pinned commit:
-//    the checkout must be the pinned commit with nothing git sees as
-//    changed (an edit, a staged change, an untracked file), and eval.json
+//    every working file must match the pinned tree, including edits
+//    hidden from git and ignored files. A dry run checks it too. eval.json
 //    records its commit and tree.
 // 7. Files leave the run through a symbolic link: everything is written in
 //    lib/aacr-board.mjs boardFolder(run).
@@ -47,6 +47,8 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AACR_BOARD, AACR_K, AACR_READER, boardFolder } from "../../lib/aacr-board.mjs";
+import { checkoutState, leaksIn, redactor } from "../../lib/board-files.mjs";
+export { checkoutState, redactor };
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
@@ -68,54 +70,23 @@ export function aacrJudge(boards = BOARDS) {
 /** A command run with core files off: a shell sets the limit to zero, then becomes the command. */
 export const withoutCore = (command, args) => ["/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', command, ...args]];
 
-/**
- * A checkout as it stands: its commit, its tree, and what git sees as
- * changed (an edit, a staged change, an untracked file), one problem each.
- */
-export function checkoutState(dir) {
-  const git = (...args) => spawnSync("git", ["-C", dir, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8" });
-  const problems = [];
-  const status = git("status", "--porcelain=v1", "--untracked-files=all");
-  if (status.status !== 0) problems.push(`git status failed: ${status.stderr.trim()}`);
-  const changed = status.stdout.split("\n").filter((l) => l !== "").map((l) => l.slice(3));
-  if (changed.length > 0) problems.push(`git sees ${changed.length} changed or untracked file${changed.length === 1 ? "" : "s"}: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", ..." : ""}`);
-  if (git("diff", "--quiet", "HEAD").status !== 0) problems.push("its files differ from its commit (git diff HEAD)");
-  return { commit: git("rev-parse", "HEAD").stdout.trim(), tree: git("rev-parse", "HEAD^{tree}").stdout.trim(), problems };
-}
-
-// A line filter that replaces every secret before the text goes anywhere.
-function redactor(secrets, sink) {
-  let rest = "";
-  const clean = (s) => secrets.reduce((t, x) => t.split(x).join("[hidden]"), s);
-  return {
-    write(chunk) {
-      rest += chunk.toString("utf8");
-      const cut = rest.lastIndexOf("\n");
-      if (cut === -1) return;
-      sink(clean(rest.slice(0, cut + 1)));
-      rest = rest.slice(cut + 1);
-    },
-    end() {
-      if (rest !== "") sink(clean(rest));
-      rest = "";
-    },
-  };
-}
-
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map((p) => join(dir, String(p))).filter((p) => statSync(p).isFile());
 
-function run(command, args, { cwd, env, log, secrets }) {
+export function run(command, args, { cwd, env, log, secrets }) {
   return new Promise((done) => {
     const file = createWriteStream(log);
-    const out = redactor(secrets, (t) => {
+    const sink = (t) => {
       process.stdout.write(t);
       file.write(t);
-    });
+    };
+    const out = redactor(secrets, sink);
+    const err = redactor(secrets, sink);
     const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (c) => out.write(c));
-    child.stderr.on("data", (c) => out.write(c));
+    child.stderr.on("data", (c) => err.write(c));
     child.on("close", (code, signal) => {
       out.end();
+      err.end();
       file.end(() => done({ code, signal }));
     });
   });
@@ -142,6 +113,14 @@ export async function main(argv = process.argv.slice(2)) {
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; aacr.sh converts the run first`);
   const convert = JSON.parse(readFileSync(join(out, "convert.json"), "utf8"));
   if (convert.commit !== AACR_BOARD.commit) throw new Error(`${out}/convert.json was written for AACR-Bench at ${convert.commit}, and boards.json now pins ${AACR_BOARD.commit}; convert the run again`);
+  let checkout = null;
+  if (existsSync(evaluation)) {
+    if (existsSync(join(evaluation, ".env"))) throw new Error(`${shown(join(evaluation, ".env"))} exists; their evaluator would read it and could answer with its mock judge. Move it to the Trash.`);
+    const state = checkoutState(dirname(evaluation));
+    if (state.problems.length > 0) throw new Error(`their checkout ${shown(dirname(evaluation))} is not the pinned commit as it stands: ${state.problems.join("; ")}. Their code is never patched: move the checkout to the Trash and run aacr.sh --prepare`);
+    if (state.commit !== AACR_BOARD.commit) throw new Error(`their checkout is at ${state.commit || "no commit"}, not the commit boards.json pins (${AACR_BOARD.commit})`);
+    checkout = state;
+  }
   const judge = aacrJudge();
   // Refuses, naming the file or the field and never a value, when the settings are missing.
   const settings = loadModelEnv();
@@ -163,10 +142,6 @@ export async function main(argv = process.argv.slice(2)) {
   if (existsSync(join(out, "eval.json"))) throw new Error(`${out}/eval.json exists: the run was evaluated before. Move outside/aacr to the Trash and run aacr.sh again to evaluate it anew.`);
   if (!existsSync(dataset)) throw new Error(`${dataset} is missing; aacr.sh writes it from their dataset converter`);
   if (!existsSync(join(evaluation, "evaluate.py")) || !existsSync(python)) throw new Error(`their evaluator or its python is not in ${shown(evaluation)}; run benchmark/outside/boards/aacr.sh --prepare`);
-  if (existsSync(join(evaluation, ".env"))) throw new Error(`${shown(join(evaluation, ".env"))} exists; their evaluator would read it and could answer with its mock judge. Move it to the Trash.`);
-  const checkout = checkoutState(dirname(evaluation));
-  if (checkout.commit !== AACR_BOARD.commit) throw new Error(`their checkout is at ${checkout.commit || "no commit"}, not the commit boards.json pins (${AACR_BOARD.commit})`);
-  if (checkout.problems.length > 0) throw new Error(`their checkout ${shown(dirname(evaluation))} is not the pinned commit as it stands: ${checkout.problems.join("; ")}. Their code is never patched: move the checkout to the Trash and run aacr.sh --prepare`);
 
   // The child's environment: ours without any judge or OpenAI setting, plus the three their judge reads.
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(JUDGE_|OPENAI_)/.test(k)));
@@ -186,7 +161,7 @@ export async function main(argv = process.argv.slice(2)) {
     const requests = /总请求数: (\d+)/.exec(text);
     folders.push({ config: f.config, repeat: f.repeat, tool: f.tool, exit: code, signal, mode, judgeErrors: text.split(JUDGE_FAILED).length - 1, requests: requests ? Number(requests[1]) : null, metrics, log: "eval.log" });
   }
-  const leaks = filesUnder(out).filter((p) => settings.appearsIn(readFileSync(p, "latin1")));
+  const leaks = filesUnder(out).filter((p) => leaksIn(readFileSync(p, "latin1"), secrets));
   const record = { version: 1, board: "aacr", repo: AACR_BOARD.repo, commit: AACR_BOARD.commit, checkout: { commit: checkout.commit, tree: checkout.tree }, reader: AACR_READER, lineK: AACR_K, rounds, judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null }, python: `${version.stdout}${version.stderr}`.trim(), startedAt, endedAt: new Date().toISOString(), folders };
   writeFileSync(join(out, "eval.json"), `${JSON.stringify(record, null, 2)}\n`);
   const problems = [

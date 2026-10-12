@@ -2,15 +2,11 @@
 // processes: the one folder of a run a board step writes in, the bench
 // cache their pinned checkouts live in, the state of such a checkout, and
 // the filter that keeps the judge's key and base URL out of everything
-// printed or saved. The AACR-Bench board holds its own copies
-// (lib/aacr-board.mjs boardFolder, outside/convert/aacr.mjs benchCache,
-// outside/boards/aacr-judge.mjs checkoutState and redactor). Only what
-// differs from those is here: a folder for any board, a cache check that
-// also follows a link under the cache, a checkout check that hashes every
-// file instead of asking git's index, and a filter that holds back a secret
-// split across chunks. The one rule both share unchanged, a command started
-// with core files off, is aacr-judge.mjs withoutCore, and the Martian judge
-// imports it from there.
+// printed or saved. AACR and Martian share these checks and filters.
+// AACR's boardFolder fixes the board name to aacr; its converter re-exports
+// benchCache, and its judge re-exports checkoutState and redactor. The
+// command started with core files off is aacr-judge.mjs withoutCore,
+// which the Martian judge imports from there.
 //
 // Failure list, written before the code:
 // 1. Board files leave the run through a symbolic link: boardFolder(run,

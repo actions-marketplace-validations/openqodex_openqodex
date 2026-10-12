@@ -190,6 +190,7 @@ function recordProblems(record) {
   return out;
 }
 
+const missingParent = (metric, r) => metricOf(metric).unit === "fraction" && r.parent === 0;
 const higher = (metric) => metricOf(metric).better === "higher";
 const likeReadings = (r) => (r.like ? [r.like.lower, r.like.upper] : [r]);
 
@@ -207,8 +208,10 @@ export function primaryVerdict(r, share) {
 // inside the loss; a bound on the loss is a loss of that much, and fails.
 // Breaks when both like for like readings put even the better bound on the
 // loss or past it. The rounding allowance only narrows what holds.
+// A fraction guard with a zero parent has no measured baseline and does
+// not decide, including when an A/A pair is read for sample size.
 export function guardVerdict(metric, r, lossAbs) {
-  if (!r.measured) return "not measured";
+  if (!r.measured || missingParent(metric, r)) return "not measured";
   if (!r.comparable) return "unclear";
   const up = higher(metric);
   if (up ? r.lo > -lossAbs + EPS : r.hi < lossAbs - EPS) return "holds";
@@ -224,7 +227,7 @@ export function aaHalfWidths(cell, losses) {
   const out = {};
   for (const m of GATE_METRICS) {
     const r = cell.strata.pooled.metrics[m];
-    if (!r || !r.measured) continue;
+    if (!r || !r.measured || missingParent(m, r)) continue;
     const x = r.like?.lower ?? r;
     const halfWidth = Math.max(x.delta - x.lo, x.hi - x.delta);
     const loss = lossIn(m, losses[m], x.parent);
@@ -288,7 +291,7 @@ export function decide({ id, record, pairs, look, stage = 2, final = false, aaPa
         const said = `${at} ${v} (change ${fmt(m, r.delta)}, bounds ${fmt(m, r.lo)} to ${fmt(m, r.hi)}, loss ${fmt(m, lossAbs)})`;
         if (v === "breaks") harms.push({ kind: "guard", text: said });
         else if (v === "unclear") open.push({ kind: "guard", text: said });
-        else if (v === "not measured" && stratum === "pooled") notMeasured.push(`${where}: ${m}`);
+        else if (v === "not measured" && stratum === "pooled") notMeasured.push(missingParent(m, r) ? `${where}: ${m === "costPerReview" ? "cost" : "time"} not measured on the parent` : `${where}: ${m}`);
       }
     }
     for (const stratum of ["planted", "real"]) if (cell.strata[stratum] !== null && cell.strata[stratum] === cell.strata.pooled) verdicts[stratum] = verdicts.pooled;
@@ -337,7 +340,7 @@ export function decide({ id, record, pairs, look, stage = 2, final = false, aaPa
   else if (stage3) lines.push(`inconclusive with every guard holding: stage 3 adds repeats 4 to 6 on the ${record.target} path; without it the change reverts. ${open.map((o) => o.text).join("; ")}`);
   else if (decision === null) lines.push(`stage 1 continues: nothing stops the change. Open: ${open.filter((o) => o.kind !== "requirement").map((o) => o.text).join("; ") || "none"}`);
   else lines.push(`inconclusive, so reverted: ${open.map((o) => o.text).join("; ")}`);
-  if (notMeasured.length > 0) lines.push(`not measured by any review: ${notMeasured.join(", ")}`);
+  if (notMeasured.length > 0) lines.push(`not measured guards: ${notMeasured.join(", ")}`);
 
   return { id, look, alpha, share, stage, final, aim: record.aim ?? "quality", primary, target: record.target, acceptableLoss: { ...losses }, cells, requirements: { met: missing.length === 0, missing }, harms: harms.map((h) => h.text), open: open.map((o) => o.text), stage3, decision, event, reason: lines.join(" ") };
 }

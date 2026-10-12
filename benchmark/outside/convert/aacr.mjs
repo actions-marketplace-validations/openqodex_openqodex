@@ -50,17 +50,18 @@
 //    refuses the whole run, named.
 // 9. The bench cache lies in the repository, so their checkout and its venv
 //    land there: `cache` refuses a cache whose real path is inside it.
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
-import { parseCaseId, repoRoot } from "../../lib/cases.mjs";
+import { parseCaseId } from "../../lib/cases.mjs";
+import { benchCache } from "../../lib/board-files.mjs";
 import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.mjs";
 import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
 
-export { instanceIdOf, readAacrOutside };
+export { benchCache, instanceIdOf, readAacrOutside };
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const text = (s) => (typeof s === "string" ? s.trim() : "");
@@ -223,37 +224,6 @@ export function rawDataset({ cache = cacheRoot() } = {}) {
   if (!existsSync(path)) throw new Error(`${pin.path} is not in the cache (${path}); run node benchmark/ingest/aacr.mjs to fetch it`);
   checkPinned(readFileSync(path), pin, path);
   return path;
-}
-
-/**
- * The bench cache (lib/licence.mjs cacheRoot), or a thrown refusal when its
- * real path, or the real path of the deepest folder of it that is there,
- * lies in this repository: their checkout and its venv would land there.
- */
-export function benchCache() {
-  const cache = resolve(cacheRoot());
-  let head = cache;
-  const rest = [];
-  for (;;) {
-    let there = true;
-    try {
-      lstatSync(head);
-    } catch {
-      there = false;
-    }
-    if (there) break;
-    rest.unshift(basename(head));
-    head = dirname(head);
-  }
-  let real;
-  try {
-    real = join(realpathSync(head), ...rest);
-  } catch {
-    throw new Error(`refused: the bench cache ${cache} passes through a link that leads nowhere`);
-  }
-  const repo = realpathSync(repoRoot);
-  if (real === repo || real.startsWith(`${repo}${sep}`)) throw new Error(`refused: the bench cache ${cache} is inside the repository (${real}); set OPENQODEX_BENCH_CACHE to a folder outside it`);
-  return cache;
 }
 
 function main() {

@@ -5,7 +5,9 @@
 #   benchmark/outside/boards/aacr.sh --prepare
 #       fetches their pinned checkout into the bench cache
 #       ($OPENQODEX_BENCH_CACHE/upstream/aacr-bench@<commit>) and builds its
-#       venv there with uv and Python 3.11; nothing is installed globally.
+#       venv beside it (aacr-bench@<commit>.venv) with uv and Python 3.11, so
+#       the checkout holds nothing but the pinned tree; nothing is installed
+#       globally.
 #   benchmark/outside/boards/aacr.sh <run folder> [--rounds N] [--dry-run]
 #       1. converts the run (outside/convert/aacr.mjs) into
 #          <run>/outside/aacr/, unless it holds a conversion already;
@@ -65,7 +67,8 @@ read -r repo commit <<<"$pin"
 cache=$(node "$convert" cache 2>&1) || die "${cache#refused: }"
 checkout="$cache/upstream/aacr-bench@$commit"
 evaluation="$checkout/evaluation"
-python="$evaluation/.venv/bin/python"
+venv="$checkout.venv"
+python="$venv/bin/python"
 
 prepare() {
   if [ ! -d "$checkout/.git" ]; then
@@ -79,7 +82,7 @@ prepare() {
   [ ! -e "$evaluation/.env" ] || die "$evaluation/.env exists; their evaluator would read it. Move it to the Trash"
   if [ ! -x "$python" ]; then
     command -v uv >/dev/null || die "uv builds their evaluator's venv and is not on PATH (https://docs.astral.sh/uv/)"
-    uv venv -q --python 3.11 "$evaluation/.venv"
+    uv venv -q --python 3.11 "$venv"
     uv pip install -q --python "$python" -r "$evaluation/requirements.txt"
   fi
 }

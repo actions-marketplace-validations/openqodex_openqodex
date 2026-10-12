@@ -20,6 +20,9 @@
 // is never accepted over 1,000 simulated look sequences, a constructed
 // harmful pair is reverted, and the validation run on saved data writes its
 // ledger line with no false accept and no missed harm.
+// 5. A zero parent fraction guard reverts or blocks an A/A comparison.
+// 6. Ignoring zero parents also disables positive parent fraction guards.
+// 7. An absolute guard with a zero parent is mistakenly ignored.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -28,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mulberry32, seedOf } from "../lib/interval.mjs";
 import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
-import { changeVerdict, comparePairs, makeSide } from "../loop/compare.mjs";
+import { changeVerdict, comparePairs, lossIn, makeSide } from "../loop/compare.mjs";
 import { alphaAt, appendLedgerLine, decide, guardVerdict, lookOf, ruleHash } from "../loop/decide.mjs";
 import { changeState } from "../loop/stages.mjs";
 import { HASH_AT_LOAD, SIM_DEFAULTS, simulateHarm, simulateNull, simulatePower, simulatedWorld, drawSide, validateSaved, validationLine, writeValidationLine } from "../loop/validate.mjs";
@@ -537,5 +540,38 @@ describe("the validation line names the hash of files other than the code that r
     const line = writeValidationLine({ ledger, build: (id) => ({ ...build(id), ruleHash: HASH_AT_LOAD }), hashAtLoad: HASH_AT_LOAD });
     expect(line.id).toBe("VAL-0001");
     expect(readLines(ledger)).toHaveLength(1);
+  });
+});
+
+describe("a zero parent fraction guard reverts or blocks a comparison", () => {
+  it("does not judge a fraction guard without a parent baseline", () => {
+    for (const metric of ["costPerReview", "secondsPerReview"]) {
+      for (const candidate of [0, 1]) {
+        const reading = { measured: true, comparable: true, parent: 0, candidate, delta: candidate, lo: candidate, hi: candidate, like: null };
+        expect(guardVerdict(metric, reading, lossIn(metric, LOSSES[metric], 0))).toBe("not measured");
+      }
+    }
+  });
+
+  it("accepts a primary gain with zero parent cost, including an A/A comparison", () => {
+    const pair = tenOfTwelve();
+    for (const side of [pair.parent, pair.candidate]) for (const job of side.jobs) job.costUsd = 0;
+    const out = decide({ id: "zero-cost", record: record(), pairs: [pair], aaPairs: [{ parent: pair.parent, candidate: { ...pair.parent, runId: "parent-aa" } }], look: 1, stage: 3 });
+    expect(out.decision).toBe("accepted");
+    expect(out.cells[0].verdicts.pooled.costPerReview).toBe("not measured");
+    expect(out.cells[0].aa.costPerReview).toBeUndefined();
+    expect(out.reason).toContain("cost not measured on the parent");
+    expect(out.harms).toEqual([]);
+    expect(out.open).toEqual([]);
+    const harmful = tenOfTwelve({ wrong: () => 2 });
+    harmful.parent = pair.parent;
+    for (const job of harmful.candidate.jobs) job.costUsd = 0;
+    expect(decide({ id: "zero-cost-harm", record: record(), pairs: [harmful], look: 1, stage: 3 }).decision).toBe("reverted");
+  });
+
+  it("still enforces positive parent fraction guards and zero parent absolute guards", () => {
+    const reading = { measured: true, comparable: true, parent: 1, candidate: 2, delta: 1, lo: 1, hi: 1, like: null };
+    expect(guardVerdict("costPerReview", reading, lossIn("costPerReview", 0.15, 1))).toBe("breaks");
+    expect(guardVerdict("cleanFindings", { ...reading, parent: 0 }, 0.1)).toBe("breaks");
   });
 });
