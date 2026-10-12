@@ -315,7 +315,8 @@ describe("a rule constant changes without a version bump, and old and new scores
     // Pull request truth: matched on its categories when it has no kind, and no severity tally without a severity.
     6: "b796da57c0aae63538f12bf8f3aa1139219da6a2f2a8ef7e4ccdd04c0b737536",
     // Issue 143: a custom scanner's rule is that scanner's whatever its id, and own rules are a map with no prototype.
-    7: "33245506cb6445cc5cc98a45b5257a90b8b4064575fb479c55f8b02afe074ee7",
+    // Issue 142: a model review's cost and tokens are its sample record's usage.
+    7: "6aaf49035cb10f73a3129b8abfe6d976eece2d29f70935432d07528432d17a48",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

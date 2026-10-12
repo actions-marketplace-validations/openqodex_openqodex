@@ -276,7 +276,12 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
   // A clean change passes only a review that completed with no finding.
   const controls = spec.clean ? { hit: status === "complete" && counted === 0 ? 1 : 0, of: 1 } : ratio();
   const brief_ = scoreBrief(spec, brief);
-  const usage = report?.completion?.reviewer?.usage ?? null;
+  // What the review used. A laptop reviewer's completion record holds it. A
+  // model review's record holds none: its sample record (lib/server-review.mjs)
+  // holds the library's totals over every model call, and the models the
+  // provider named as answering them.
+  const server = row.path === "server";
+  const usage = report?.completion?.reviewer?.usage ?? (server ? row.usage : null) ?? null;
   return {
     case: spec.id,
     config: row.config ?? null,
@@ -309,6 +314,8 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
     inputTokens: usage?.input_tokens ?? null,
     outputTokens: usage?.output_tokens ?? null,
     costUsd: usage?.cost_usd ?? null,
+    // Null for a laptop review, whose record names no served model.
+    servedModels: server ? (Array.isArray(row.servedModels) ? row.servedModels : []) : null,
     rounds: report?.completion?.reviewer?.rounds ?? null,
   };
 }
@@ -552,6 +559,11 @@ export function regressions(oldSamples, newSamples) {
 //     names a property every object inherits (constructor) gives a function
 //     as its finder (issue 143): only a built-in scanner's candidate is
 //     OpenQodex's own, and own rules are a map with no prototype.
+// 41. A model review scores with no cost and no tokens, since its completion
+//     record holds none (issue 142): a server sample's cost and tokens are
+//     its sample record's usage, the library's totals over every call, and
+//     each configuration of model reviews names the models that served them.
+//     A laptop review's are read as before.
 export const RULES_VERSION = 7;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
@@ -952,6 +964,7 @@ export function scoreJob({ job, spec, report = null, brief = null, scan = null, 
     turns: base.turns,
     inputTokens: base.inputTokens,
     outputTokens: base.outputTokens,
+    servedModels: base.servedModels,
   };
 }
 
@@ -977,6 +990,8 @@ export function summarizeJobs(jobs, retries = []) {
   const planted = jobs.filter((j) => j.origin === "planted");
   const clean = jobs.filter((j) => j.clean);
   const retryCosts = nums(retries.map((s) => s.costUsd));
+  // The jobs whose sample record names the models that served them: a model review's.
+  const served = jobs.filter((j) => Array.isArray(j.servedModels));
   const hits = jobs.flatMap((j) => j.findings.filter((f) => f.outcome === "hit"));
   const outcomes = {};
   for (const o of OUTCOMES) {
@@ -1013,6 +1028,8 @@ export function summarizeJobs(jobs, retries = []) {
     turns: stats(jobs.map((j) => j.turns)),
     inputTokens: stats(jobs.map((j) => j.inputTokens)),
     outputTokens: stats(jobs.map((j) => j.outputTokens)),
+    // Model reviews only: every model the provider named as serving them. A laptop configuration has no such list.
+    ...(served.length > 0 ? { servedModels: [...new Set(served.flatMap((j) => j.servedModels))].sort() } : {}),
   };
 }
 
@@ -1257,6 +1274,8 @@ const RULES_BLOCK = {
   rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged. A ruled hit is judged for severity and finder like any hit.",
   // Version 6.
   truthWithoutKind: "A truth item with no kind, a pull request comment, is matched on the categories it names; one with no severity on the scale counts in recall and in no severity's tally.",
+  // Version 7.
+  usage: "A review's cost and tokens are its laptop completion record's usage; a model review's, whose completion record holds none, are its sample record's usage, the library's totals over every model call. No rule reads them.",
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });
