@@ -14,17 +14,26 @@
 //   node benchmark/outside/convert/martian.mjs convert <run>
 //   node benchmark/outside/convert/martian.mjs pin     (the board's repository and commit)
 //   node benchmark/outside/convert/martian.mjs cache   (the bench cache, refused inside the repository)
+//   node benchmark/outside/convert/martian.mjs paths   (their checkout and its venv in the cache, each
+//                                                       refused when its real path is in the repository)
+//
+// The access log is benchmark/index/heldout-access.jsonl, or the file
+// OPENQODEX_BENCH_ACCESS_LOG names (for tests; a release run uses the
+// committed log, and martian-judge.mjs looks for the line in the same file).
 //
 // Every Martian case is held out (its golden comments are public), so this
 // converter is the one path that reads them, and only for a release run: a
 // run whose manifest names its release (the `release` field of
 // PLAN-benchmark 4.3, a version, which lib/index.mjs already requires of a
-// held-out entry). run.mjs writes no release run yet; the field is the gate.
+// held-out entry), that reviewed the published package of that release, as
+// the npm registry confirms (lib/martian-board.mjs releaseGate). run.mjs
+// writes no release run yet; the field and the package record are the gate.
 //
 // Failure list, written before the code:
 // 1. A run that is not a release run reads Martian's cases: a manifest with
 //    no release, or a smoke run, is refused before anything is read or
-//    written.
+//    written; so is one whose release is not the published package it
+//    reviewed (failure 6 of lib/martian-board.mjs).
 // 2. A held-out access goes unlogged: one line per conversion ({ at, suite,
 //    caseCount, purpose: "release-run", runId, release, by }) is appended to
 //    benchmark/index/heldout-access.jsonl before any golden comment is
@@ -46,16 +55,22 @@
 // 7. Board files leave the run through a symbolic link, or a second
 //    conversion mixes with the first: everything is written in
 //    lib/board-files.mjs boardFolder(run, "martian"), which must not exist.
-// 8. The bench cache lies in the repository: `cache` refuses it.
+// 8. The bench cache lies in the repository, or a link under it leads there:
+//    `cache` and `paths` refuse it.
+// From the review of PR 161:
+// 9. A conversion made outside the gate, or of another manifest, is judged:
+//    convert.json records the sha256 of the manifest it converted and the
+//    access line it wrote, which martian-judge.mjs checks before it judges.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { benchCache, boardFolder } from "../../lib/board-files.mjs";
+import { createHash } from "node:crypto";
+import { benchCache, boardFolder, outsideRepo } from "../../lib/board-files.mjs";
 import { benchRoot, parseCaseId, repoRoot } from "../../lib/cases.mjs";
 import { heldOutAccessPath } from "../../lib/index.mjs";
 import * as licence from "../../lib/licence.mjs";
-import { boardConfigOf, MARTIAN_BOARD, martianBody, martianToolName } from "../../lib/martian-board.mjs";
+import { boardConfigOf, MARTIAN_BOARD, martianBody, martianToolName, npmRegistryAnswer, REGISTRY, releaseGate } from "../../lib/martian-board.mjs";
 import { attemptOf, findingId, judgeFieldsMissing, normPath, population, shownFindings } from "../../lib/score.mjs";
 import { readCase, readPinned, truthOf } from "../../lib/suites.mjs";
 
@@ -91,17 +106,18 @@ const statusOf = (first) => (first === null ? "unstarted" : first.report === nul
  * keeps private, a sample the run did not plan, a configuration the board
  * cannot name, or a run converted before. `root` and `cache` are the suite
  * root and the bench cache the cases and golden files are read from;
- * `accessLog` the held-out access log; `by` who converts.
+ * `accessLog` the held-out access log; `by` who converts; `registry`
+ * answers as the npm registry does (lib/martian-board.mjs releaseGate).
  */
-export function convertRun(folder, { root = benchRoot, cache = licence.cacheRoot(), accessLog = heldOutAccessPath(), by = null, now = () => new Date().toISOString() } = {}) {
+export async function convertRun(folder, { root = benchRoot, cache = licence.cacheRoot(), accessLog = accessLogPath(), by = null, now = () => new Date().toISOString(), registry = npmRegistryAnswer } = {}) {
   folder = resolve(folder);
-  const manifest = readJsonOr(join(folder, "manifest.json"));
-  if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
+  if (!existsSync(join(folder, "manifest.json"))) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
+  const manifestBytes = readFileSync(join(folder, "manifest.json"));
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
   const suite = manifest.suite ?? "planted";
   if (suite !== "martian") throw new Error(`${folder}: the run is of suite ${suite}, not martian; only a run on Martian's cases is converted for its board`);
   if (manifest.mode === "scan") throw new Error(`${folder}: a scanner-only run shows the developer no finding, so it has nothing to convert for the board`);
-  if (manifest.smoke === true) throw new Error(`refused: ${folder} is a smoke run, which checks the runner and is never a measurement; nothing of it goes to a board, and it never reads a held-out case`);
-  if (typeof manifest.release !== "string" || manifest.release.trim() === "") throw new Error(`refused: ${folder} is not a release run (its manifest names no release). Every Martian case is held out, and only a release run's samples are converted, the one way their golden comments are read`);
+  const gate = await releaseGate(manifest, { registry });
   const out = boardFolder(folder, "martian");
   if (existsSync(out)) throw new Error(`${out} exists already: the run was converted before (and maybe judged). Move that folder to the Trash to convert it again.`);
 
@@ -204,6 +220,10 @@ export function convertRun(folder, { root = benchRoot, cache = licence.cacheRoot
     suite,
     split: manifest.split ?? null,
     splitHash: manifest.splitHash ?? null,
+    // What a judging checks before it judges (failure 9): the manifest converted, by its bytes.
+    manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+    package: { spec: gate.package.spec, version: gate.package.version, sha256: gate.package.sha256, integrity: gate.package.integrity },
+    registry: REGISTRY,
     tool: "openqodex-<config>-r<repeat>",
     access,
     cases: caseRows,
@@ -216,27 +236,46 @@ export function convertRun(folder, { root = benchRoot, cache = licence.cacheRoot
   return { out, record, data };
 }
 
+/** The held-out access log: OPENQODEX_BENCH_ACCESS_LOG (tests), else benchmark/index/heldout-access.jsonl. */
+export const accessLogPath = (env = process.env) => env.OPENQODEX_BENCH_ACCESS_LOG || heldOutAccessPath();
+
+/**
+ * Where Martian's pinned checkout and its venv live in the bench cache:
+ * { checkout, offline, venv, python }, each refused when its real path is in
+ * the repository (a link under the cache can lead there).
+ */
+export function boardPaths(env = process.env) {
+  const cache = benchCache(env);
+  const upstream = outsideRepo(join(cache, "upstream"), "the cache folder of pinned checkouts");
+  const checkout = outsideRepo(join(upstream, `code-review-benchmark@${MARTIAN_BOARD.commit}`), "Martian's checkout");
+  const venv = outsideRepo(`${checkout}.venv`, "the venv of Martian's pipeline");
+  return { checkout, offline: join(checkout, "offline"), venv, python: join(venv, "bin", "python") };
+}
+
 // Who converts, for the access line: this repository's git user, or null.
 function gitUserName() {
   const r = spawnSync("git", ["config", "user.name"], { cwd: repoRoot, encoding: "utf8" });
   return r.status === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : null;
 }
 
-function main() {
+async function main() {
   const [command, ...args] = process.argv.slice(2);
   try {
     if (command === "pin" && args.length === 0) {
       console.log(`${MARTIAN_BOARD.repo} ${MARTIAN_BOARD.commit}`);
     } else if (command === "cache" && args.length === 0) {
       console.log(benchCache());
+    } else if (command === "paths" && args.length === 0) {
+      const p = boardPaths();
+      console.log(`${p.checkout}\n${p.venv}`);
     } else if (command === "convert" && args.length === 1) {
-      const { out, record } = convertRun(args[0], { by: gitUserName() });
+      const { out, record } = await convertRun(args[0], { by: gitUserName() });
       const sent = record.tools.filter((t) => !t.held);
-      console.log(`Converted ${record.cases.length} pull requests for ${sent.length} tool names (${sent.map((t) => t.tool).join(", ") || "none"}) under ${out}; the access is logged in ${heldOutAccessPath()}.`);
+      console.log(`Converted ${record.cases.length} pull requests for ${sent.length} tool names (${sent.map((t) => t.tool).join(", ") || "none"}) under ${out}; the access is logged in ${accessLogPath()}.`);
       console.log(`Failed or never-started reviews written as empty: ${record.tools.reduce((n, t) => n + (t.statuses.failed ?? 0) + (t.statuses.unstarted ?? 0), 0)}.`);
       for (const t of record.tools.filter((x) => x.held)) console.log(`Held, not sent: ${t.tool}: ${t.why}`);
     } else {
-      console.error("usage: node benchmark/outside/convert/martian.mjs convert <run> | pin | cache");
+      console.error("usage: node benchmark/outside/convert/martian.mjs convert <run> | pin | cache | paths");
       process.exit(2);
     }
   } catch (error) {

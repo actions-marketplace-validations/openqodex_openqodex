@@ -92,13 +92,24 @@ export const fixtureReport = (name) => report({ findings: REPORTS[name].findings
 
 export const MODEL = "model-scripted-graph-on";
 export const CLAUDE = "claude-graph-on";
-const BUILD = { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersion: "0.15.0" };
+
+// The published package a release run reviews (run.mjs --package
+// npm:<release> records it so), and the npm registry's answer for it, saved.
+export const REGISTRY_ANSWER = readJson(join(FIXTURES, "registry-openqodex-0.12.0.json"));
+export const RELEASE = REGISTRY_ANSWER.version;
+export const PACKAGE = { spec: `npm:${RELEASE}`, name: "openqodex", version: RELEASE, sha256: REGISTRY_ANSWER.tarballSha256, integrity: REGISTRY_ANSWER.dist.integrity, bytes: REGISTRY_ANSWER.tarballBytes, registryIntegrity: REGISTRY_ANSWER.dist.integrity };
+const BUILD = { commit: null, short: null, dirty: null, cliVersion: RELEASE };
+/** The registry as the tests ask it: the saved answer for RELEASE, and a 404 for any other version. */
+export const savedRegistry = async (version) => {
+  if (version === RELEASE) return structuredClone(REGISTRY_ANSWER);
+  throw new Error(`it answered 404 for openqodex@${version}`);
+};
 
 // A run folder made by the runner's own code. `plan` maps "<config>/<repeat>"
 // to case name to a report, "failed" (an attempt with no report),
 // "unstarted" (no attempt), or "retried" (a failed first attempt and a
 // second with a finding, which never counts). `settings` overrides the
-// manifest's settings (release, smoke, suite).
+// manifest's settings (release, package, smoke, suite).
 export async function savedRun(ctx, { plan, configs = [MODEL], repeat = 1, settings = {} }) {
   const names = [...ctx.ids.keys()].sort();
   const reviewers = configs.map((c) => (c === MODEL ? "model:scripted" : c === CLAUDE ? "claude" : c.replace(/-graph-(on|off)$/, "").replace(/^model-/, "model:")));
@@ -109,7 +120,7 @@ export async function savedRun(ctx, { plan, configs = [MODEL], repeat = 1, setti
   const first = readCase(ctx.ids.get(names[0]), { root: ctx.root });
   const manifest = runManifest({
     startedAt: "2026-10-11T10:00:00.000Z",
-    settings: { runId: "martian-board-test", mode: "review", path: "server", suite: "martian", split: "test", splitHash: first.splitHash, subset: null, release: "0.15.0", smoke: false, build: BUILD, reviewers: Object.fromEntries(reviewers.map((r) => [r, { name: r }])), cases: names, caseIds: names.map((n) => ctx.ids.get(n)), configs, repeat, concurrency: 1, ...settings },
+    settings: { runId: "martian-board-test", mode: "review", path: "server", suite: "martian", split: "test", splitHash: first.splitHash, subset: null, release: RELEASE, smoke: false, package: PACKAGE, build: BUILD, reviewers: Object.fromEntries(reviewers.map((r) => [r, { name: r }])), cases: names, caseIds: names.map((n) => ctx.ids.get(n)), configs, repeat, concurrency: 1, ...settings },
     jobs: kept,
   });
   await executeRun({
@@ -137,7 +148,7 @@ export async function savedRun(ctx, { plan, configs = [MODEL], repeat = 1, setti
 
 // The three-sample fixture run: one tool name, the three fixture reviews.
 export const fixturePlan = () => ({ [`${MODEL}/1`]: Object.fromEntries(Object.keys(REPORTS).map((n) => [n, fixtureReport(n)])) });
-export const convertOpts = (ctx, extra = {}) => ({ root: ctx.root, cache: ctx.cache, accessLog: join(tempDir("oq-martian-board-index-"), "heldout-access.jsonl"), by: "tester", ...extra });
+export const convertOpts = (ctx, extra = {}) => ({ root: ctx.root, cache: ctx.cache, accessLog: join(tempDir("oq-martian-board-index-"), "heldout-access.jsonl"), by: "tester", registry: savedRegistry, ...extra });
 
 // ---------- a model provider for Martian's judge ----------
 

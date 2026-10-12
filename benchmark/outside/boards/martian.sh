@@ -5,16 +5,19 @@
 #   benchmark/outside/boards/martian.sh --prepare
 #       fetches their pinned checkout into the bench cache
 #       ($OPENQODEX_BENCH_CACHE/upstream/code-review-benchmark@<commit>) and
-#       builds its venv there (offline/.venv) with uv, Python 3.11 and their
-#       uv.lock; nothing is installed globally.
+#       builds its venv beside it (code-review-benchmark@<commit>.venv) with
+#       uv, Python 3.11 and their uv.lock, so the checkout holds nothing but
+#       the pinned tree; nothing is installed globally.
 #   benchmark/outside/boards/martian.sh <run folder> [--dry-run]
 #       1. converts the run (outside/convert/martian.mjs) into
 #          <run>/outside/martian/, unless it holds a conversion already;
 #          only a release run converts, and the access is logged;
-#       2. with --dry-run, checks the judge settings and prints the
-#          commands with their values hidden, and stops;
+#       2. with --dry-run, checks the judge settings, the conversion's
+#          manifest and access line, and prints the commands with their
+#          values hidden, and stops;
 #       3. prepares their checkout and runs their steps 2, 2.5 and 3 and
-#          score_profiles in <run>/outside/martian/work (martian-judge.mjs);
+#          score_profiles in <run>/outside/martian/work (martian-judge.mjs),
+#          which checks the conversion and the release gate again first;
 #       4. leaves <tool>/evaluation.json per tool name and eval.json.
 #
 # The judge's base URL and key never pass through this script:
@@ -22,7 +25,8 @@
 # the environment of the pipeline steps that call the judge. This script
 # holds no secret, so it prints none, even under bash -x. Core files are off
 # for this script and all it starts, so a crash writes none anywhere. The
-# bench cache must lie outside this repository. Their code is never patched.
+# bench cache, and every folder used under it, must lie outside this
+# repository by its real path. Their code is never patched.
 # Run with Node 22 first on PATH. Stops at the first failure.
 set -euo pipefail
 umask 077
@@ -55,24 +59,31 @@ done
 
 pin=$(node "$convert" pin)
 read -r repo commit <<<"$pin"
-cache=$(node "$convert" cache 2>&1) || die "${cache#refused: }"
-checkout="$cache/upstream/code-review-benchmark@$commit"
+
+# The checkout and its venv, each refused when its real path is in the repository.
+where() {
+  local paths
+  paths=$(node "$convert" paths 2>&1) || die "${paths#refused: }"
+  { read -r checkout; read -r venv; } <<<"$paths"
+}
+where
 offline="$checkout/offline"
-python="$offline/.venv/bin/python"
+python="$venv/bin/python"
 
 prepare() {
   if [ ! -d "$checkout/.git" ]; then
     mkdir -p "$checkout"
+    where
     git -C "$checkout" init -q
     git -C "$checkout" fetch -q --depth 1 "https://github.com/$repo.git" "$commit"
     git -C "$checkout" -c advice.detachedHead=false checkout -q FETCH_HEAD
   fi
   [ "$(git -C "$checkout" rev-parse HEAD)" = "$commit" ] || die "$checkout is not at $commit; move it to the Trash and run --prepare again"
-  [ -z "$(git -C "$checkout" status --porcelain --untracked-files=all)" ] || die "$checkout has local edits or untracked files; their code is never patched. Move it to the Trash and run --prepare again"
   if [ ! -x "$python" ]; then
     command -v uv >/dev/null || die "uv builds their pipeline's venv and is not on PATH (https://docs.astral.sh/uv/)"
-    (cd "$offline" && uv sync -q --frozen --no-dev --python 3.11)
+    UV_PROJECT_ENVIRONMENT="$venv" uv sync -q --frozen --no-dev --python 3.11 --project "$offline"
   fi
+  where
 }
 
 if [ "$prepare_only" = 1 ]; then
@@ -88,7 +99,7 @@ run=$(cd "$run" && pwd)
 out="$run/outside/martian"
 
 if [ -f "$out/convert.json" ]; then
-  echo "martian.sh: $out holds a conversion already, and it is used as it is"
+  echo "martian.sh: $out holds a conversion already; martian-judge.mjs checks it against the run's manifest and the access log"
 else
   node "$convert" convert "$run"
 fi

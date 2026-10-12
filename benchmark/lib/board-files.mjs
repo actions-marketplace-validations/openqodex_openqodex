@@ -1,9 +1,10 @@
 // What every outside board's converter and wrapper share about files and
 // processes: the one folder of a run a board step writes in, the bench
-// cache their pinned checkouts live in, the state of such a checkout, and a
-// command started with core files off. The AACR-Bench board (PR 155) holds
-// the same rules in its own files; once both have landed, it can read them
-// from here.
+// cache their pinned checkouts live in, the state of such a checkout, a
+// command started with core files off, and the filter that keeps the
+// judge's key and base URL out of everything printed or saved. The
+// AACR-Bench board (PR 155) holds the same rules in its own files; once both
+// have landed, it can read them from here.
 //
 // Failure list, written before the code:
 // 1. Board files leave the run through a symbolic link: boardFolder(run,
@@ -12,24 +13,36 @@
 //    passes through a link that leads nowhere.
 // 2. The bench cache lies in the repository, so a board's checkout and its
 //    venv land there: benchCache refuses a cache whose real path, or the
-//    real path of the deepest folder of it that is there, is inside it.
+//    real path of the deepest folder of it that is there, is inside it, and
+//    outsideRepo does the same for every folder a board uses under it (a
+//    link under the cache can lead into the repository).
 // 3. A modified evaluator runs while the record names the pinned commit:
-//    checkoutState gives a checkout's commit and tree and names everything
-//    git sees as changed (an edit, a staged change, an untracked file).
+//    checkoutState hashes every working file of the checkout and compares
+//    it with the blob the commit's tree holds, so a file git was told to
+//    assume unchanged, or an ignored file, cannot hide an edit; it names
+//    every file that differs, is missing, or is not in the tree.
 // 4. A crash of a board's evaluator, whose environment holds the judge's key
 //    and base URL, writes a core file: withoutCore starts a command through
 //    a shell that sets the core file limit to zero and then becomes it
 //    (Node cannot set a resource limit itself).
+// 5. A secret reaches the terminal or a log in pieces: a redactor keeps one
+//    buffer per stream and holds back what could still be the start of a
+//    secret (up to its length less one) until the next chunk, so a key or
+//    host split across two chunks is replaced whole; it replaces each
+//    secret and its URL-encoded forms. leaksIn finds a secret in a saved
+//    text also when a line break splits it.
 import { spawnSync } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { repoRoot } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
 
 // `path` by its real location: the deepest part of it that is there
 // resolved (a link counts, even a broken one), the rest joined on. Null
 // when that part is a link that leads nowhere.
-function realLocation(path) {
+export function realLocation(path) {
   let head = path;
   const rest = [];
   for (;;) {
@@ -65,32 +78,144 @@ export function boardFolder(folder, board) {
 }
 
 /**
- * The bench cache (lib/licence.mjs cacheRoot), or a thrown refusal
- * ("refused: ...") when its real path lies in this repository.
+ * `path`, or a thrown refusal ("refused: ...") when its real location (see
+ * realLocation) is this repository or inside it. `what` names it.
  */
-export function benchCache(env = process.env) {
-  const cache = resolve(cacheRoot(env));
-  const real = realLocation(cache);
-  if (real === null) throw new Error(`refused: the bench cache ${cache} passes through a link that leads nowhere`);
+export function outsideRepo(path, what) {
+  const real = realLocation(resolve(path));
+  if (real === null) throw new Error(`refused: ${what} ${path} passes through a link that leads nowhere`);
   const repo = realpathSync(repoRoot);
-  if (real === repo || real.startsWith(`${repo}${sep}`)) throw new Error(`refused: the bench cache ${cache} is inside the repository (${real}); set OPENQODEX_BENCH_CACHE to a folder outside it`);
-  return cache;
+  if (real === repo || real.startsWith(`${repo}${sep}`)) throw new Error(`refused: ${what} ${path} is inside the repository (${real}); set OPENQODEX_BENCH_CACHE to a folder outside it, with no link under it that leads into it`);
+  return path;
 }
 
+/** The bench cache (lib/licence.mjs cacheRoot), or a thrown refusal when it lies in this repository. */
+export function benchCache(env = process.env) {
+  return outsideRepo(resolve(cacheRoot(env)), "the bench cache");
+}
+
+// A blob id as git computes it, for the bytes given.
+const blobId = (bytes) => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+
 /**
- * A checkout as it stands: its commit, its tree, and what git sees as
- * changed (an edit, a staged change, an untracked file), one problem each.
+ * A checkout as it stands: its commit, its tree, and one problem for each
+ * working file that is not the blob its commit's tree holds (by content,
+ * kind and executable bit), each tree file that is missing, and each file
+ * on disk the tree does not hold. Nothing is taken from git's index, so a
+ * file marked assume-unchanged or skip-worktree, or an ignored one, is
+ * still seen.
  */
 export function checkoutState(dir) {
-  const git = (...args) => spawnSync("git", ["-C", dir, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8" });
+  const git = (...args) => spawnSync("git", ["-C", dir, "-c", "core.hooksPath=/dev/null", ...args], { encoding: "utf8", maxBuffer: 1 << 28 });
+  const commit = git("rev-parse", "HEAD").stdout.trim();
+  const tree = git("rev-parse", "HEAD^{tree}").stdout.trim();
   const problems = [];
-  const status = git("status", "--porcelain=v1", "--untracked-files=all");
-  if (status.status !== 0) problems.push(`git status failed: ${status.stderr.trim()}`);
-  const changed = status.stdout.split("\n").filter((l) => l !== "").map((l) => l.slice(3));
-  if (changed.length > 0) problems.push(`git sees ${changed.length} changed or untracked file${changed.length === 1 ? "" : "s"}: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", ..." : ""}`);
-  if (git("diff", "--quiet", "HEAD").status !== 0) problems.push("its files differ from its commit (git diff HEAD)");
-  return { commit: git("rev-parse", "HEAD").stdout.trim(), tree: git("rev-parse", "HEAD^{tree}").stdout.trim(), problems };
+  const listed = git("ls-tree", "-r", "-z", "--full-tree", "HEAD");
+  if (listed.status !== 0) return { commit, tree, problems: [`git ls-tree failed: ${listed.stderr.trim()}`] };
+  const want = new Map();
+  for (const entry of listed.stdout.split("\0").filter(Boolean)) {
+    const tab = entry.indexOf("\t");
+    const [mode, type, id] = entry.slice(0, tab).split(" ");
+    want.set(entry.slice(tab + 1), { mode, type, id });
+  }
+  const changed = [];
+  const missing = [];
+  for (const [path, w] of want) {
+    const full = join(dir, path);
+    let st;
+    try {
+      st = lstatSync(full);
+    } catch {
+      missing.push(path);
+      continue;
+    }
+    if (w.type !== "blob") {
+      changed.push(`${path} (a ${w.type} in the tree)`);
+      continue;
+    }
+    const link = w.mode === "120000";
+    if (link !== st.isSymbolicLink() || (!link && !st.isFile())) {
+      changed.push(`${path} (another kind of file)`);
+      continue;
+    }
+    const got = link ? blobId(Buffer.from(readlinkSync(full))) : blobId(readFileSync(full));
+    if (got !== w.id) changed.push(path);
+    else if (!link && (w.mode === "100755") !== ((st.mode & 0o111) !== 0)) changed.push(`${path} (its executable bit)`);
+  }
+  const extra = [];
+  const walk = (rel) => {
+    for (const d of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      const path = rel === "" ? d.name : `${rel}/${d.name}`;
+      if (rel === "" && d.name === ".git") continue;
+      if (d.isDirectory()) walk(path);
+      else if (!want.has(path)) extra.push(path);
+    }
+  };
+  walk("");
+  const name = (list, what) => {
+    if (list.length > 0) problems.push(`${list.length} ${what}: ${list.slice(0, 5).join(", ")}${list.length > 5 ? ", ..." : ""}`);
+  };
+  name(changed, "files differ from the pinned tree");
+  name(missing, "files of the pinned tree are missing");
+  name(extra, "files are not in the pinned tree");
+  return { commit, tree, problems };
 }
 
 /** A command run with core files off: a shell sets the limit to zero, then becomes the command. */
 export const withoutCore = (command, args) => ["/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', command, ...args]];
+
+/** Each secret with its URL-encoded forms, longest first. */
+export function secretForms(secrets) {
+  const out = new Set();
+  for (const s of secrets) for (const f of [s, encodeURIComponent(s), encodeURI(s)]) if (f !== "") out.add(f);
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * A filter for one stream: write(chunk) and end() pass the text to `sink`
+ * with every secret form replaced by "[hidden]". What could still be the
+ * start of a secret (its length less one) is held until the next chunk or
+ * the end; a whole line is passed as soon as it ends.
+ */
+export function redactor(secrets, sink) {
+  const forms = secretForms(secrets);
+  const hold = Math.max(0, ...forms.map((f) => f.length)) - 1;
+  const decoder = new StringDecoder("utf8");
+  let rest = "";
+  // Passes the text before `cut`, a secret starting there replaced whole
+  // (the longest one that starts at a place), and keeps what follows. Any
+  // secret that starts before the cut is whole in `rest`: a secret holds no
+  // line break, and the cut leaves at least its length less one behind.
+  const flush = (final) => {
+    const cut = final ? rest.length : Math.min(rest.length, Math.max(rest.lastIndexOf("\n") + 1, rest.length - hold));
+    if (cut <= 0) return;
+    let shown = "";
+    let i = 0;
+    while (i < cut) {
+      const hit = forms.find((f) => rest.startsWith(f, i));
+      if (hit) {
+        shown += "[hidden]";
+        i += hit.length;
+      } else shown += rest[i++];
+    }
+    if (shown !== "") sink(shown);
+    rest = rest.slice(i);
+  };
+  return {
+    write(chunk) {
+      rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
+      flush(false);
+    },
+    end() {
+      rest += decoder.end();
+      flush(true);
+    },
+  };
+}
+
+/** True when `text` holds a secret form, also with its line breaks taken out. */
+export function leaksIn(text, secrets) {
+  const forms = secretForms(secrets);
+  const joined = text.replace(/[\r\n]/g, "");
+  return forms.some((f) => text.includes(f) || joined.includes(f));
+}

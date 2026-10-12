@@ -54,7 +54,19 @@
 //    run of its words, then the most of its words; a tie keeps every tied
 //    finding, and the method and score are recorded beside it. This feeds
 //    only our own counts (lib/score.mjs ours), never the official ones.
+// From the review of PR 161:
+// 6. A forged or local manifest reads Martian's held-out golden comments by
+//    naming a release: releaseGate takes a run as a release run only when
+//    its manifest names a release, is no smoke run, and records the
+//    published package of that release (run.mjs --package npm:<release>:
+//    openqodex at that version, its tarball's sha256 and sha512 integrity),
+//    and the npm registry, asked again at its fixed address, gives that
+//    version the same integrity. The registry serves no sha256 of a
+//    tarball, only its sha512 integrity (and a sha1), so the integrity is
+//    what ties the record to the published build. A local build is never a
+//    release run.
 import { readFileSync } from "node:fs";
+import { PACKAGE_NAME } from "./package.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const MARTIAN_BOARD = Object.freeze({ repo: BOARDS.boards.martian.repo, commit: BOARDS.boards.martian.commit, source: BOARDS.boards.martian.source });
@@ -65,6 +77,42 @@ export const MARTIAN_STEPS = Object.freeze({ extract: "step2_extract_comments", 
 // Step 2 extracts a review only when its joined text has this many characters.
 const EXTRACT_MIN = 20;
 const SEPARATOR = "\n\n---\n\n";
+
+// ---------- the release gate ----------
+
+// The npm registry, at its fixed address.
+export const REGISTRY = "https://registry.npmjs.org";
+const firstLine = (error) => String(error?.message ?? error).split("\n")[0];
+
+/** The registry's record of openqodex at `version` (its dist holds the integrity). */
+export async function npmRegistryAnswer(version) {
+  const r = await fetch(`${REGISTRY}/${PACKAGE_NAME}/${encodeURIComponent(version)}`, { headers: { accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(30_000) });
+  if (!r.ok) throw new Error(`it answered ${r.status} for ${PACKAGE_NAME}@${version}`);
+  return r.json();
+}
+
+/**
+ * The release a run's manifest makes it, checked: { release, package }, or
+ * a thrown refusal ("refused: ..."). `registry(version)` answers as the npm
+ * registry does (npmRegistryAnswer).
+ */
+export async function releaseGate(manifest, { registry = npmRegistryAnswer } = {}) {
+  if (manifest?.smoke === true) throw new Error("refused: the run is a smoke run, which checks the runner and is never a measurement; nothing of it goes to a board, and it never reads a held-out case");
+  const release = manifest?.release;
+  if (typeof release !== "string" || release.trim() === "") throw new Error("refused: the run is not a release run (its manifest names no release). Every Martian case is held out, and only a release run's samples are converted, the one way their golden comments are read");
+  const p = manifest.package ?? null;
+  const named = p === null ? "no package record" : p.spec === "local" ? `the local build${p.commit ? ` at ${String(p.commit).slice(0, 12)}` : ""}` : `${p.spec ?? "an unnamed package"} (${p.name ?? "no name"}@${p.version ?? "no version"})`;
+  if (p === null || p.spec !== `npm:${release}` || p.name !== PACKAGE_NAME || p.version !== release) throw new Error(`refused: the run names the release ${release}, but it reviewed ${named}, not ${PACKAGE_NAME}@${release} from npm (run.mjs --package npm:${release}); a release run reviews the published package of its release, and a local build is never one`);
+  if (!/^[0-9a-f]{64}$/.test(String(p.sha256)) || !String(p.integrity).startsWith("sha512-") || p.registryIntegrity !== p.integrity) throw new Error(`refused: the run's package record of ${PACKAGE_NAME}@${release} does not hold a tarball sha256 and a sha512 integrity that equals the one the registry gave when it was fetched`);
+  let answer;
+  try {
+    answer = await registry(release);
+  } catch (error) {
+    throw new Error(`refused: the npm registry (${REGISTRY}) could not confirm ${PACKAGE_NAME}@${release}: ${firstLine(error)}`);
+  }
+  if (answer?.name !== PACKAGE_NAME || answer?.version !== release || answer?.dist?.integrity !== p.integrity) throw new Error(`refused: the npm registry (${REGISTRY}) gives ${answer?.name}@${answer?.version} the integrity ${answer?.dist?.integrity}, and the run's package record of ${PACKAGE_NAME}@${release} holds ${p.integrity}; the run did not review the published build of its release`);
+  return { release, package: p };
+}
 
 /**
  * The board configuration a run's configuration id (<reviewer>-graph-<on|off>,

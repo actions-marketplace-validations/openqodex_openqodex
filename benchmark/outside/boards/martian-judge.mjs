@@ -50,14 +50,30 @@
 //    made new, so it holds no .env.
 // 6. Files leave the run through a symbolic link: everything is written in
 //    lib/board-files.mjs boardFolder(run, "martian").
+// From the review of PR 161:
+// 7. A conversion made outside the gate, or of another manifest, is judged:
+//    the run's manifest must hash to the sha256 convert.json recorded, the
+//    access line convert.json recorded must be in the held-out access log,
+//    and the release gate (lib/martian-board.mjs releaseGate, the npm
+//    registry asked again) runs again before anything is judged.
+// 8. A secret is printed in pieces: each stream of each step has its own
+//    filter (lib/board-files.mjs redactor), which holds back a possible
+//    start of a secret until the next chunk and replaces the URL-encoded
+//    forms too; pipeline.log is written only through such a filter, and the
+//    leak check also reads each saved file with its line breaks taken out.
+// 9. Their checkout or its venv lies in the repository through a link
+//    under the cache: both are refused unless their real paths lie outside.
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { boardFolder, checkoutState, withoutCore } from "../../lib/board-files.mjs";
-import { MARTIAN_BETA, MARTIAN_BOARD, MARTIAN_PROFILES, MARTIAN_STEPS, martianEvaluations } from "../../lib/martian-board.mjs";
+import { createHash } from "node:crypto";
+import { boardFolder, checkoutState, leaksIn, outsideRepo, redactor, withoutCore } from "../../lib/board-files.mjs";
+import { MARTIAN_BETA, MARTIAN_BOARD, MARTIAN_PROFILES, MARTIAN_STEPS, martianEvaluations, releaseGate } from "../../lib/martian-board.mjs";
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
+import { canonicalJson } from "../../lib/suites.mjs";
+import { accessLogPath } from "../convert/martian.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
 const shown = (p) => (p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);
@@ -99,39 +115,20 @@ function steps(model) {
   ];
 }
 
-// A line filter that replaces every secret before the text goes anywhere.
-function redactor(secrets, sink) {
-  let rest = "";
-  const clean = (s) => secrets.reduce((t, x) => t.split(x).join("[hidden]"), s);
-  return {
-    write(chunk) {
-      rest += chunk.toString("utf8");
-      const cut = Math.max(rest.lastIndexOf("\n"), rest.lastIndexOf("\r"));
-      if (cut === -1) return;
-      sink(clean(rest.slice(0, cut + 1)));
-      rest = rest.slice(cut + 1);
-    },
-    end() {
-      if (rest !== "") sink(clean(rest));
-      rest = "";
-    },
-  };
-}
-
-// Runs one step, its output through the filter into the terminal and the
-// log; with `stdout`, its standard output (filtered) is kept apart and
-// returned instead. Returns { code, signal, text, stdout }.
-function runStep(command, args, { cwd, env, log, secrets, keepStdout }) {
+// Runs one step, each of its two streams through a filter of its own into
+// the terminal and the log (`emit`); with `stdout`, its standard output
+// (filtered) is kept apart and returned instead. Returns { code, signal,
+// text, stdout }, text being what was emitted.
+function runStep(command, args, { cwd, env, emit, secrets, keepStdout }) {
   return new Promise((done) => {
     let text = "";
     let kept = "";
     const sink = (t) => {
       text += t;
-      process.stdout.write(t);
-      log.write(t);
+      emit(t);
     };
     const err = redactor(secrets, sink);
-    const out = keepStdout ? redactor(secrets, (t) => (kept += t)) : err;
+    const out = redactor(secrets, keepStdout ? (t) => (kept += t) : sink);
     const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (c) => out.write(c));
     child.stderr.on("data", (c) => err.write(c));
@@ -161,6 +158,21 @@ export async function main(argv = process.argv.slice(2)) {
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; martian.sh converts the run first`);
   const convert = JSON.parse(readFileSync(join(out, "convert.json"), "utf8"));
   if (convert.commit !== MARTIAN_BOARD.commit) throw new Error(`${out}/convert.json was written for Martian's board at ${convert.commit}, and boards.json now pins ${MARTIAN_BOARD.commit}; convert the run again`);
+  // The conversion is the one the gate let through, of this very manifest (failure 7).
+  const manifestBytes = readFileSync(join(folder, "manifest.json"));
+  if (createHash("sha256").update(manifestBytes).digest("hex") !== convert.manifestSha256) throw new Error(`refused: the run's manifest is not the one ${out}/convert.json was written for (its sha256 differs); convert the run again`);
+  const accessLog = accessLogPath();
+  const logged = existsSync(accessLog) ? readFileSync(accessLog, "utf8").split("\n").filter((l) => l.trim() !== "") : [];
+  const same = (line) => {
+    try {
+      return canonicalJson(JSON.parse(line)) === canonicalJson(convert.access);
+    } catch {
+      return false;
+    }
+  };
+  if (!convert.access || !logged.some(same)) throw new Error(`refused: the held-out access the conversion recorded is not in ${accessLog}; a conversion is judged only when its access is logged`);
+  outsideRepo(checkout, "Martian's checkout");
+  outsideRepo(dirname(dirname(resolve(python))), "the venv of Martian's pipeline");
   const judge = martianJudge();
   // Refuses, naming the file or the field and never a value, when the settings are missing.
   const settings = loadModelEnv();
@@ -174,11 +186,13 @@ export async function main(argv = process.argv.slice(2)) {
     for (const s of plan) console.log(`  ${shown(python)} ${(s.shownArgs ?? s.args).join(" ")}${s.stdout ? ` > ${s.stdout}` : ""}`);
     console.log(`with MARTIAN_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and MARTIAN_BASE_URL and MARTIAN_API_KEY from ${shown(modelEnvPath())} (values hidden), set for the first three steps only.`);
     for (const t of held) console.log(`Held by the converter, not judged: ${t.tool}: ${t.why}`);
+    console.log(`The run's manifest is the one converted, and its access line is in ${shown(accessLog)}. Before judging, the release gate runs again: the npm registry is asked for ${convert.package?.spec ?? "the run's package"}.`);
     const [sh, probe] = withoutCore("/bin/sh", ["-c", "ulimit -c"]);
     console.log(`core file limit for the pipeline: ${spawnSync(sh, probe, { encoding: "utf8" }).stdout.trim()}. Nothing was started.`);
     return 0;
   }
 
+  await releaseGate(JSON.parse(manifestBytes.toString("utf8")));
   if (!existsSync(join(checkout, "code_review_benchmark", "step3_judge_comments.py")) || !existsSync(python)) throw new Error(`their pipeline or its python is not in ${shown(checkout)}; run benchmark/outside/boards/martian.sh --prepare`);
   const state = checkoutState(dirname(checkout));
   if (state.commit !== MARTIAN_BOARD.commit) throw new Error(`their checkout is at ${state.commit || "no commit"}, not the commit boards.json pins (${MARTIAN_BOARD.commit})`);
@@ -214,13 +228,22 @@ export async function runPipeline({ out, convert, checkout, python, state, judge
   const version = spawnSync(python, ["--version"], { encoding: "utf8" });
   const startedAt = new Date().toISOString();
   const log = createWriteStream(join(work, "pipeline.log"));
+  // Everything shown and logged, already filtered: runStep's filters and say() call it.
+  const emit = (t) => {
+    process.stdout.write(t);
+    log.write(t);
+  };
+  const say = (t) => {
+    const r = redactor(secrets, emit);
+    r.write(t);
+    r.end();
+  };
   const ran = [];
   const problems = [];
   let dedupFallbacks = null;
   for (const s of plan) {
-    console.log(`\n== ${s.step} ==`);
-    log.write(`\n== ${s.step} ==\n`);
-    const r = await runStep(...withoutCore(python, s.args), { cwd: work, env: s.judge ? withJudge : base, log, secrets, keepStdout: Boolean(s.stdout) });
+    say(`\n== ${s.step} ==\n`);
+    const r = await runStep(...withoutCore(python, s.args), { cwd: work, env: s.judge ? withJudge : base, emit, secrets, keepStdout: Boolean(s.stdout) });
     if (s.stdout) writeFileSync(join(work, s.stdout), r.stdout);
     if (s.step === MARTIAN_STEPS.dedup) dedupFallbacks = Number(/Fallbacks\s*:\s*(\d+)/.exec(r.text)?.[1] ?? NaN);
     ran.push({ step: s.step, exit: r.code, signal: r.signal });
@@ -255,7 +278,7 @@ export async function runPipeline({ out, convert, checkout, python, state, judge
     tools.push({ tool: t.tool, evaluation: ok ? relative(out, path) : null, problems: t.problems, core: t.evaluation?.totals?.core ?? null });
   }
   for (const t of held) tools.push({ tool: t.tool, evaluation: null, problems: [`held by the converter: ${t.why}`], core: null });
-  const leaks = filesUnder(out).filter((p) => settings.appearsIn(readFileSync(p, "latin1")));
+  const leaks = filesUnder(out).filter((p) => leaksIn(readFileSync(p, "latin1"), secrets));
   problems.push(...read.tools.flatMap((t) => t.problems), ...leaks.map((p) => `${relative(out, p)} holds the judge's key or base URL; move outside/martian to the Trash`));
   const record = {
     version: 1,

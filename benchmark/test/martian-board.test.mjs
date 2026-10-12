@@ -32,13 +32,22 @@
 // configurations go by one tool name; result files leave the run through a
 // symbolic link; a modified evaluator runs as the pinned one; the bench
 // cache lies in the repository.
+// From the review of PR 161 (each test checked red by taking its guard out):
+// 6. A forged or local manifest reads the golden comments by naming a
+//    release: the run must have reviewed the published package of that
+//    release, as the npm registry confirms (a saved answer stands in for it).
+// 7. A conversion made outside the gate, or of another manifest, is judged.
+// 8. A secret reaches the terminal or a log in pieces, or URL-encoded.
+// 9. A file marked assume-unchanged, or an ignored file, hides an edit of
+//    the evaluator.
+// 10. A link under the bench cache puts their checkout in the repository.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, git, repoRoot } from "../lib/cases.mjs";
-import { checkoutState } from "../lib/board-files.mjs";
+import { checkoutState, leaksIn, redactor } from "../lib/board-files.mjs";
 import { cacheRoot } from "../lib/licence.mjs";
 import { MARTIAN_BOARD, martianBody, martianEvaluations } from "../lib/martian-board.mjs";
 import { endpointSecrets } from "../lib/model-env.mjs";
@@ -46,7 +55,7 @@ import { findingId, martianFindings, martianGolden, readMartianEvaluation } from
 import { readCase, truthOf } from "../lib/suites.mjs";
 import { convertRun } from "../outside/convert/martian.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
-import { CLAUDE, COMMIT, convertOpts, fakeProvider, finding, FIXTURES, fixturePlan, fixtureReport, GOLDEN, MODEL, readJson, REPORTS, report, savedRun, suite, write } from "./martian-board-fixture.mjs";
+import { CLAUDE, COMMIT, convertOpts, fakeProvider, finding, FIXTURES, fixturePlan, fixtureReport, GOLDEN, MODEL, PACKAGE, readJson, RELEASE, REPORTS, report, savedRun, suite, write } from "./martian-board-fixture.mjs";
 
 afterAll(removeTempDirs);
 
@@ -55,9 +64,9 @@ const JUDGE = join(benchRoot, "outside", "boards", "martian-judge.mjs");
 const RECORD = process.env.MARTIAN_BOARD_RECORD === "1";
 
 const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map((p) => join(dir, String(p))).filter((p) => statSync(p).isFile()) : []);
-const refusal = (fn) => {
+const refusal = async (fn) => {
   try {
-    fn();
+    await fn();
   } catch (error) {
     return error.message;
   }
@@ -69,10 +78,10 @@ const refusal = (fn) => {
 describe("a run that is not a release run reads Martian's cases", () => {
   it("refuses a run whose manifest names no release, and a smoke run, before any truth is read or any access logged", async () => {
     const ctx = await suite();
-    for (const settings of [{ release: null }, { release: undefined }, { release: "" }, { release: "0.15.0", smoke: true }]) {
+    for (const settings of [{ release: null }, { release: undefined }, { release: "" }, { smoke: true }]) {
       const out = await savedRun(ctx, { plan: fixturePlan(), settings });
       const opts = convertOpts(ctx);
-      const why = refusal(() => convertRun(out, opts));
+      const why = await refusal(() => convertRun(out, opts));
       expect(why, JSON.stringify(settings)).toMatch(settings.smoke ? /smoke/ : /release/);
       expect(existsSync(join(out, "outside"))).toBe(false);
       expect(existsSync(opts.accessLog)).toBe(false);
@@ -84,12 +93,69 @@ describe("a run that is not a release run reads Martian's cases", () => {
     const out = await savedRun(ctx, { plan: fixturePlan() });
     const blocked = join(tempDir("oq-martian-board-index-"), "heldout-access.jsonl");
     mkdirSync(blocked);
-    expect(refusal(() => convertRun(out, convertOpts(ctx, { accessLog: blocked })))).toMatch(/held-out access/);
+    expect(await refusal(() => convertRun(out, convertOpts(ctx, { accessLog: blocked })))).toMatch(/held-out access/);
     expect(existsSync(join(out, "outside"))).toBe(false);
     const opts = convertOpts(ctx, { now: () => "2026-10-11T12:00:00.000Z" });
-    convertRun(out, opts);
+    await convertRun(out, opts);
     const lines = readFileSync(opts.accessLog, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    expect(lines).toEqual([{ at: "2026-10-11T12:00:00.000Z", suite: "martian", caseCount: 3, purpose: "release-run", runId: "martian-board-test", release: "0.15.0", by: "tester" }]);
+    expect(lines).toEqual([{ at: "2026-10-11T12:00:00.000Z", suite: "martian", caseCount: 3, purpose: "release-run", runId: "martian-board-test", release: RELEASE, by: "tester" }]);
+  });
+
+  it("refuses a release that is not the published package the run reviewed, as the npm registry confirms, before anything is read or logged", async () => {
+    const ctx = await suite();
+    const forged = [
+      [{ package: { spec: "local", commit: "a".repeat(40), dirty: false } }, null, /local build/],
+      [{ package: undefined }, null, /no package record/],
+      [{ package: { ...PACKAGE, version: "0.11.0", spec: "npm:0.11.0" } }, null, /0\.11\.0/],
+      [{ release: "0.11.0" }, null, /0\.12\.0/],
+      [{ package: { ...PACKAGE, integrity: "sha512-forged", registryIntegrity: "sha512-forged" } }, null, /integrity/],
+      [{}, async () => ({ name: "openqodex", version: RELEASE, dist: { integrity: "sha512-another" } }), /registry[^\n]*integrity sha512-another/],
+      [
+        {},
+        async () => {
+          throw new Error("it answered 503");
+        },
+        /registry[^\n]*could not confirm[^\n]*503/,
+      ],
+    ];
+    for (const [settings, registry, why] of forged) {
+      const out = await savedRun(ctx, { plan: fixturePlan(), settings });
+      const opts = convertOpts(ctx, registry ? { registry } : {});
+      expect(await refusal(() => convertRun(out, opts)), JSON.stringify(settings)).toMatch(why);
+      expect(existsSync(join(out, "outside"))).toBe(false);
+      expect(existsSync(opts.accessLog)).toBe(false);
+    }
+  });
+});
+
+describe("a conversion made outside the gate, or of another manifest, is judged", () => {
+  const judgeDry = (out, accessLog) => {
+    const home = tempDir("oq-martian-board-gate-");
+    writeFileSync(join(home, "azure.env"), "AZURE_OPENAI_BASE_URL=https://judge.example.test/v1\nAZURE_OPENAI_KEY=fake-key\n");
+    return spawnSync(process.execPath, [JUDGE, out, "--dry-run", "--checkout", join(home, "offline"), "--python", join(home, "venv", "bin", "python")], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: accessLog }, timeout: 60_000 });
+  };
+
+  it("refuses to judge when the run's manifest changed after the conversion, or the access line is not in the log", async () => {
+    const ctx = await suite();
+    const out = await savedRun(ctx, { plan: fixturePlan() });
+    const opts = convertOpts(ctx);
+    await convertRun(out, opts);
+    expect(readJson(join(out, "outside", "martian", "convert.json")).manifestSha256).toMatch(/^[0-9a-f]{64}$/);
+    const ok = judgeDry(out, opts.accessLog);
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(ok.stdout).toMatch(/release gate runs again/);
+    // An access log without the conversion's line.
+    const other = join(tempDir("oq-martian-board-index-"), "heldout-access.jsonl");
+    writeFileSync(other, readFileSync(opts.accessLog, "utf8").replace(/"by":"tester"/, '"by":"someone else"'));
+    const unlogged = judgeDry(out, other);
+    expect(unlogged.status).toBe(2);
+    expect(unlogged.stderr).toMatch(/access[^\n]*not in/);
+    // A manifest edited after the conversion.
+    const manifest = readJson(join(out, "manifest.json"));
+    writeFileSync(join(out, "manifest.json"), `${JSON.stringify({ ...manifest, release: "9.9.9" }, null, 2)}\n`);
+    const edited = judgeDry(out, opts.accessLog);
+    expect(edited.status).toBe(2);
+    expect(edited.stderr).toMatch(/manifest is not the one/);
   });
 });
 
@@ -99,7 +165,7 @@ describe("a finding without a title, problem, consequence or fix is dropped", ()
     const plan = fixturePlan();
     plan[`${CLAUDE}/1`] = { "oq-fixture__shop-12": report({ findings: [finding(), finding({ title: "Second", fix: "  " })] }) };
     const out = await savedRun(ctx, { plan, configs: [MODEL, CLAUDE] });
-    const { record, data } = convertRun(out, convertOpts(ctx));
+    const { record, data } = await convertRun(out, convertOpts(ctx));
     const caseId = ctx.ids.get("oq-fixture__shop-12");
     expect(record.held).toEqual([{ tool: "openqodex-cli-claude-r1", caseId, case: "oq-fixture__shop-12", goldenUrl: "https://github.com/oq-fixture/shop/pull/12", index: 1, findingId: expect.stringMatching(/^[0-9a-f]{64}$/), lacking: ["fix"] }]);
     expect(record.tools.find((t) => t.tool === "openqodex-cli-claude-r1")).toMatchObject({ held: true, why: expect.stringMatching(/fix/) });
@@ -115,7 +181,7 @@ describe("a case whose licence nobody verified, or a sample outside Martian, is 
     const ctx = await suite(GOLDEN, { "oq-fixture/ledger": "NOASSERTION" });
     const out = await savedRun(ctx, { plan: fixturePlan() });
     const opts = convertOpts(ctx);
-    const why = refusal(() => convertRun(out, opts));
+    const why = await refusal(() => convertRun(out, opts));
     expect(why).toMatch(/oq-fixture__ledger-7/);
     expect(why).not.toMatch(/oq-fixture__shop-11/);
     expect(why).toMatch(/private run/);
@@ -126,10 +192,10 @@ describe("a case whose licence nobody verified, or a sample outside Martian, is 
   it("refuses a run of another suite and a sample folder of a case the run did not plan", async () => {
     const ctx = await suite();
     const other = await savedRun(ctx, { plan: fixturePlan(), settings: { suite: "aacr" } });
-    expect(refusal(() => convertRun(other, convertOpts(ctx)))).toMatch(/aacr/);
+    expect(await refusal(() => convertRun(other, convertOpts(ctx)))).toMatch(/aacr/);
     const out = await savedRun(ctx, { plan: fixturePlan() });
     write(join(out, "samples", "flask-path-traversal", MODEL, "1", "sample.json"), JSON.stringify({ case: "flask-path-traversal", config: MODEL, repeat: 1, attempt: 1 }));
-    expect(refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/flask-path-traversal/);
+    expect(await refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/flask-path-traversal/);
     expect(existsSync(join(out, "outside"))).toBe(false);
   });
 });
@@ -143,7 +209,7 @@ describe("a failed or never-started review vanishes from Martian's denominators,
       [`${MODEL}/2`]: { "oq-fixture__shop-11": "retried" },
     };
     const out = await savedRun(ctx, { plan, configs: [MODEL, CLAUDE], repeat: 2 });
-    const { record, data } = convertRun(out, convertOpts(ctx));
+    const { record, data } = await convertRun(out, convertOpts(ctx));
     expect(record.tools.map((t) => [t.tool, t.config, t.reviews, t.held])).toEqual([
       ["openqodex-cli-claude-r1", CLAUDE, 3, false],
       ["openqodex-cli-claude-r2", CLAUDE, 3, false],
@@ -165,9 +231,9 @@ describe("a failed or never-started review vanishes from Martian's denominators,
   it("refuses a configuration the board cannot name (graph off) and two configurations that would share a tool name", async () => {
     const ctx = await suite();
     const off = await savedRun(ctx, { plan: {}, configs: ["claude-graph-off"] });
-    expect(refusal(() => convertRun(off, convertOpts(ctx)))).toMatch(/claude-graph-off[^\n]*graph/);
+    expect(await refusal(() => convertRun(off, convertOpts(ctx)))).toMatch(/claude-graph-off[^\n]*graph/);
     const two = await savedRun(ctx, { plan: {}, configs: [MODEL, "model-gpt-6.1-sol-graph-on"] });
-    expect(refusal(() => convertRun(two, convertOpts(ctx)))).toMatch(/openqodex-library-r1/);
+    expect(await refusal(() => convertRun(two, convertOpts(ctx)))).toMatch(/openqodex-library-r1/);
     expect(existsSync(join(two, "outside"))).toBe(false);
   });
 });
@@ -178,15 +244,15 @@ describe("result files leave the run through a symbolic link", () => {
     const out = await savedRun(ctx, { plan: fixturePlan() });
     const elsewhere = tempDir("oq-martian-board-elsewhere-");
     symlinkSync(elsewhere, join(out, "outside"));
-    expect(refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/outside the run/);
+    expect(await refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/outside the run/);
     expect(readdirSync(elsewhere)).toEqual([]);
   });
 
   it("refuses to convert a run twice", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    convertRun(out, convertOpts(ctx));
-    expect(refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/already/);
+    await convertRun(out, convertOpts(ctx));
+    expect(await refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/already/);
   });
 });
 
@@ -200,7 +266,7 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
   it("converts the three saved reviews to the saved benchmark_data.json, byte for byte", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    convertRun(out, convertOpts(ctx));
+    await convertRun(out, convertOpts(ctx));
     const written = readFileSync(join(out, "outside", "martian", "benchmark_data.json"), "utf8");
     if (RECORD) write(join(FIXTURES, "benchmark_data.json"), written);
     expect(written).toBe(readFileSync(join(FIXTURES, "benchmark_data.json"), "utf8"));
@@ -299,11 +365,12 @@ describe("the wrapper echoes the judge's key or base URL", () => {
   it("leaves nothing of the key, the base URL or its host in its output or any file on a dry run, even traced by bash -x", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    convertRun(out, convertOpts(ctx));
+    const opts = convertOpts(ctx);
+    await convertRun(out, opts);
     const home = tempDir("oq-martian-board-wrapper-");
     writeFileSync(join(home, "azure.env"), `AZURE_OPENAI_BASE_URL=${BASE}\nAZURE_OPENAI_KEY=${KEY}\n`);
     mkdirSync(join(home, "tmp"));
-    const env = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), TMPDIR: join(home, "tmp") };
+    const env = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: opts.accessLog, TMPDIR: join(home, "tmp") };
     const r = spawnSync("bash", ["-x", WRAPPER, out, "--dry-run"], { encoding: "utf8", env, timeout: 120_000 });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/MARTIAN_MODEL=gpt-5\.2/);
@@ -319,23 +386,72 @@ describe("the wrapper echoes the judge's key or base URL", () => {
   });
 });
 
+describe("a secret reaches the terminal or a log in pieces, or URL-encoded", () => {
+  const KEY = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+  const BASE = "https://judge-host.example.test/openai/v1";
+  const secrets = endpointSecrets(BASE, KEY);
+  const through = (chunks) => {
+    let text = "";
+    const r = redactor(secrets, (t) => (text += t));
+    for (const c of chunks) r.write(Buffer.from(c));
+    r.end();
+    return text;
+  };
+
+  it("replaces a key, a base URL and a host split across chunks, and their URL-encoded forms, and passes the rest unchanged", () => {
+    const line = `Base URL: ${BASE}\nkey ${KEY} and host judge-host.example.test\nencoded ${encodeURIComponent(BASE)}\nplain text stays\n`;
+    for (const size of [1, 2, 3, 7, 13, 64, line.length]) {
+      const chunks = [];
+      for (let i = 0; i < line.length; i += size) chunks.push(line.slice(i, i + size));
+      const text = through(chunks);
+      expect(leaksIn(text, secrets), `chunks of ${size}`).toBe(false);
+      expect(text).toBe("Base URL: [hidden]\nkey [hidden] and host [hidden]\nencoded [hidden]\nplain text stays\n");
+    }
+    // A long line with no line break still flows, and the end flushes what was held.
+    const long = `${"x".repeat(5000)}${KEY.slice(0, 10)}`;
+    expect(through([long, KEY.slice(10), " tail"])).toBe(`${"x".repeat(5000)}[hidden] tail`);
+  });
+
+  it("keeps one buffer per stream, so a key split across two chunks of one stream survives the other stream writing between them", () => {
+    let text = "";
+    const sink = (t) => (text += t);
+    const out = redactor(secrets, sink);
+    const err = redactor(secrets, sink);
+    out.write(Buffer.from(`token ${KEY.slice(0, 12)}`));
+    err.write(Buffer.from("progress 50%\n"));
+    out.write(Buffer.from(`${KEY.slice(12)}\n`));
+    out.end();
+    err.end();
+    expect(leaksIn(text, secrets)).toBe(false);
+    expect(text).toMatch(/token \[hidden\]/);
+  });
+
+  it("finds a secret in a saved file when a line break splits it", () => {
+    expect(leaksIn(`key ${KEY.slice(0, 9)}\n${KEY.slice(9)}`, secrets)).toBe(true);
+    expect(leaksIn(`url ${encodeURIComponent(BASE)}`, secrets)).toBe(true);
+    expect(leaksIn("nothing here", secrets)).toBe(false);
+  });
+});
+
 // ---------- Martian's own pipeline, when its pinned checkout is in the cache ----------
 
-const OFFLINE = join(cacheRoot(), "upstream", `code-review-benchmark@${COMMIT}`, "offline");
-const PYTHON = join(OFFLINE, ".venv", "bin", "python");
+const CHECKOUT = join(cacheRoot(), "upstream", `code-review-benchmark@${COMMIT}`);
+const OFFLINE = join(CHECKOUT, "offline");
+const PYTHON = join(`${CHECKOUT}.venv`, "bin", "python");
 const live = existsSync(join(OFFLINE, "code_review_benchmark", "step3_judge_comments.py")) && existsSync(PYTHON);
 
 describe("Martian's own pipeline judges the converted fixture", () => {
-  it.skipIf(!live)(`runs steps 2, 2.5 and 3 and score_profiles at ${COMMIT.slice(0, 7)} with the judge settings, writes an evaluation.json the reader takes, and leaves the key and base URL nowhere (needs their checkout from martian.sh --prepare; skipped without it)`, async () => {
+  it.skipIf(!live)(`runs steps 2, 2.5 and 3 and score_profiles at ${COMMIT.slice(0, 7)} with the judge settings, writes an evaluation.json the reader takes, and leaves the key and base URL nowhere (needs their checkout from martian.sh --prepare, and the npm registry for the release gate; skipped without the checkout)`, async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    convertRun(out, convertOpts(ctx));
+    const opts = convertOpts(ctx);
+    await convertRun(out, opts);
     const provider = await fakeProvider();
     const key = `fake-judge-key-${randomBytes(16).toString("hex")}`;
     const home = tempDir("oq-martian-board-judged-");
     writeFileSync(join(home, "azure.env"), `AZURE_OPENAI_BASE_URL=${provider.base}\nAZURE_OPENAI_KEY=${key}\n`);
     chmodSync(join(home, "azure.env"), 0o600);
-    const env = { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), TMPDIR: home, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
+    const env = { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: opts.accessLog, TMPDIR: home, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
     const r = await new Promise((done) => {
       const child = spawn(process.execPath, [JUDGE, out, "--checkout", OFFLINE, "--python", PYTHON], { env });
       let stdout = "";
@@ -395,6 +511,24 @@ describe("a modified evaluator runs while eval.json records the pinned commit", 
     write(join(dir, "offline", "json.py"), "raise SystemExit\n");
     expect(checkoutState(dir).problems.join(" ")).toMatch(/offline\/json\.py/);
   });
+
+  it("names a file marked assume-unchanged that was edited, and an ignored file, which git status does not show", () => {
+    const dir = tempDir("oq-martian-board-hidden-");
+    git(dir, "init", "-q");
+    write(join(dir, ".gitignore"), "*.pth\n");
+    write(join(dir, "offline", "code_review_benchmark", "step3_judge_comments.py"), "print('pinned')\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "pinned");
+    git(dir, "update-index", "--assume-unchanged", "offline/code_review_benchmark/step3_judge_comments.py");
+    write(join(dir, "offline", "code_review_benchmark", "step3_judge_comments.py"), "print('patched')\n");
+    expect(git(dir, "status", "--porcelain")).toBe("");
+    expect(checkoutState(dir).problems.join(" ")).toMatch(/differ[^;]*step3_judge_comments\.py/);
+    git(dir, "update-index", "--no-assume-unchanged", "offline/code_review_benchmark/step3_judge_comments.py");
+    git(dir, "checkout", "--", ".");
+    write(join(dir, "offline", "patch.pth"), "import os\n");
+    expect(git(dir, "status", "--porcelain")).toBe("");
+    expect(checkoutState(dir).problems.join(" ")).toMatch(/not in the pinned tree[^;]*offline\/patch\.pth/);
+  });
 });
 
 describe("the bench cache lies in the repository", () => {
@@ -405,6 +539,17 @@ describe("the bench cache lies in the repository", () => {
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
     expect(r.stderr).toMatch(/inside the repository/);
     expect(existsSync(inside)).toBe(false);
+  });
+
+  it("refuses a cache outside the repository whose upstream folder is a link into it, creating nothing there", () => {
+    const cache = tempDir("oq-martian-board-cache-link-");
+    symlinkSync(join(repoRoot, "benchmark", "suites"), join(cache, "upstream"));
+    const before = readdirSync(join(repoRoot, "benchmark", "suites"));
+    const r = spawnSync("bash", [WRAPPER, "--prepare"], { encoding: "utf8", env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}`, OPENQODEX_BENCH_CACHE: cache }, timeout: 60_000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr).toMatch(/inside the repository/);
+    expect(readdirSync(join(repoRoot, "benchmark", "suites"))).toEqual(before);
   });
 });
 
