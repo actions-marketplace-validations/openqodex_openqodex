@@ -63,6 +63,9 @@ export const resultsRoot = join(benchRoot, "results");
 // The two loops' ledgers: append-only JSON lines, one per event
 // (PLAN-benchmark 4.8): ledger/scanner.jsonl and ledger/reviewer.jsonl.
 export const ledgerPath = (loop) => join(indexRoot, "ledger", `${loop}.jsonl`);
+// One line per touch of a held-out case (PLAN-benchmark 4.6): { at, suite,
+// caseCount, purpose, runId, release, by }.
+export const heldOutAccessPath = (index = indexRoot) => join(index, "heldout-access.jsonl");
 // Where published runs live: one pre-release of the public repository,
 // never marked latest. A second container is used when this one is full.
 export const REPOSITORY = "openqodex/openqodex";

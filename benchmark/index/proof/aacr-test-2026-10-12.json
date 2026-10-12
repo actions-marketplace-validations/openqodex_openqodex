@@ -1,0 +1,727 @@
+{
+  "version": 1,
+  "purpose": "materialise-only proof",
+  "suite": "aacr",
+  "date": "2026-10-12",
+  "shape": "server",
+  "commit": "000e95bd39ccdca76a0e235281def626fec90543",
+  "summarisedAt": "b44e951aa8febd0b9d332a766076db4646577e0d",
+  "sources": {
+    "cases": "benchmark/suites/aacr/cases.json",
+    "casesSha256": "48cfc3c60ebd8a763194f8b87f230f5a24d0767dfbe014e1cff153922b9bb451",
+    "split": "benchmark/splits/aacr-v1.json",
+    "splitSha256": "edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4"
+  },
+  "runs": [
+    {
+      "split": "test",
+      "startedAt": "2026-10-12T00:13:15.986Z",
+      "proved": 28,
+      "failed": 0,
+      "heldOut": 28,
+      "access": [
+        {
+          "at": "2026-10-12T00:13:15.986Z",
+          "suite": "aacr",
+          "caseCount": 28,
+          "purpose": "materialise-only",
+          "runId": null,
+          "release": null,
+          "by": "Sid"
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "cases": 28,
+    "proved": 28,
+    "failed": 0,
+    "excluded": 11,
+    "licence": {
+      "copyleft": 5,
+      "permissive": 23
+    },
+    "ancestorOfHead": {
+      "yes": 28,
+      "no": 0,
+      "unknown": 0
+    },
+    "deepened": 0,
+    "commitsAdded": 0
+  },
+  "failures": [],
+  "cases": [
+    {
+      "caseId": "aacr/CherryHQ__cherry-studio-5540@15a54d79",
+      "name": "CherryHQ__cherry-studio-5540",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "f258f5b2cb4a4cf9012e106837aba409b383e367",
+      "headSha": "83a25941859179b635105c9b4fd79d5542e3701e",
+      "mergeBaseSha": "ac0fe75078940c44159e83713558b899db8639b3",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "060113fbf7eeb4dcbf684066a5600d96ccfb72e7",
+        "head": "e6c2cdeab3869b4255016b6ecd13eccad0537ed2",
+        "builtBase": "060113fbf7eeb4dcbf684066a5600d96ccfb72e7",
+        "builtHead": "e6c2cdeab3869b4255016b6ecd13eccad0537ed2"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/CherryHQ__cherry-studio-5637@29c7ea0a",
+      "name": "CherryHQ__cherry-studio-5637",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "636c788e2ba413d21a5fd385c3ea4cc7e134e1be",
+      "headSha": "5644b00b87e07fa1acd84d4ec93f9f2fb1205090",
+      "mergeBaseSha": "227ea3e39be11684d1720e9bf604539541f21a36",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "f6d39dbbe99a82a29ab8429e37f690b0a0981feb",
+        "head": "f93d9cd48c0bbdb584b2a17a52a478b1b5524116",
+        "builtBase": "f6d39dbbe99a82a29ab8429e37f690b0a0981feb",
+        "builtHead": "f93d9cd48c0bbdb584b2a17a52a478b1b5524116"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/appwrite__appwrite-9999@0d2a11df",
+      "name": "appwrite__appwrite-9999",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "BSD-3-Clause"
+      },
+      "baseSha": "d205ac457960f73d781547540cde1732f69076ac",
+      "headSha": "710b8bda565c411ecb23e8b670d0ba7f45d2b3f3",
+      "mergeBaseSha": "e267283fa9981f6f1e7af73d77437ad0bec5a255",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "69751d08a92d557cbcbd1e565bc5241084a29fdc",
+        "head": "fc620df0db51858e1472eda04bf11572636e5adc",
+        "builtBase": "69751d08a92d557cbcbd1e565bc5241084a29fdc",
+        "builtHead": "fc620df0db51858e1472eda04bf11572636e5adc"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/astral-sh__uv-12941@7aab58de",
+      "name": "astral-sh__uv-12941",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "041c7a5e63d5559ce5571a30e177c072b1b357b2",
+      "headSha": "61b521f4e9a1e8bdba760394740814f25cc108c2",
+      "mergeBaseSha": "041c7a5e63d5559ce5571a30e177c072b1b357b2",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "34c1a8ebe9de701869ee7d538e0351d7a62d7042",
+        "head": "6e175009282f63ba46ac3abaa2fc865a8de4e198",
+        "builtBase": "34c1a8ebe9de701869ee7d538e0351d7a62d7042",
+        "builtHead": "6e175009282f63ba46ac3abaa2fc865a8de4e198"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/bluewave-labs__Checkmate-1897@68246f7d",
+      "name": "bluewave-labs__Checkmate-1897",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "7c369e84052aaee15a6dedf8928b5af4c869037b",
+      "headSha": "29e03a6294edfe43b49eba20fe49099cef601d34",
+      "mergeBaseSha": "7c369e84052aaee15a6dedf8928b5af4c869037b",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "1c8b6265519f426a3acd5a34a5022796e084b9a2",
+        "head": "7492d9b7d57ec67001654570a51ac3979757d0d0",
+        "builtBase": "1c8b6265519f426a3acd5a34a5022796e084b9a2",
+        "builtHead": "7492d9b7d57ec67001654570a51ac3979757d0d0"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/bluewave-labs__Checkmate-2883@39f8bb86",
+      "name": "bluewave-labs__Checkmate-2883",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "05dd5f7de27ae7f2139714f0bc577484642e2c77",
+      "headSha": "32b54ddf11ea27b8ed85d2139fe38e0dcb7f3d43",
+      "mergeBaseSha": "841251d09eb6d512cf27806b5ed089a9ce873b68",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "80c32873bdc233acfbdea24f180e11bd1b75c730",
+        "head": "d103643397de26c6d70d9e419742f8d1931d471d",
+        "builtBase": "80c32873bdc233acfbdea24f180e11bd1b75c730",
+        "builtHead": "d103643397de26c6d70d9e419742f8d1931d471d"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/electron__electron-45671@8be9e052",
+      "name": "electron__electron-45671",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "d6f4982522efd5917b44d1ceed418e4a0ee7824e",
+      "headSha": "2cc56562e22cd36c70f0b632c3297d62c3c58b06",
+      "mergeBaseSha": "22b7403cd1beb2aa95bec223ddd6f328c18b7f8c",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3be16d43b3fd61560d2131105b437052588f0a9c",
+        "head": "16ca1fe29d2452118e440d89d42773ac89476a26",
+        "builtBase": "3be16d43b3fd61560d2131105b437052588f0a9c",
+        "builtHead": "16ca1fe29d2452118e440d89d42773ac89476a26"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/electron__electron-46660@0e23bde6",
+      "name": "electron__electron-46660",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "7083419361385dfcd762656f0227581aedc4f514",
+      "headSha": "100ad244b742d221ad129e96bef934e8128403a9",
+      "mergeBaseSha": "32fea719b393c2757c4737386564c910d49b529e",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "fd31b7ab45e53273aaab6c8343d6a4ec96329f8c",
+        "head": "49961470b7fb270d4af68a3fb9c37ced14e8ae14",
+        "builtBase": "fd31b7ab45e53273aaab6c8343d6a4ec96329f8c",
+        "builtHead": "49961470b7fb270d4af68a3fb9c37ced14e8ae14"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/electron__electron-46982@02fe131b",
+      "name": "electron__electron-46982",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "9f8a629126a31224f6b1aa90d650cdc61f7568f2",
+      "headSha": "c4864570586f4c2f019797d3b0a9c4c76e93396b",
+      "mergeBaseSha": "924a8da940ec0acefeb6d43e74f5669a8704d159",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "c241fba3c4c67bb1f8c96324300a6da0adfe1225",
+        "head": "ca8c2f282d2c157e24fe61906ec160d4b496ffd5",
+        "builtBase": "c241fba3c4c67bb1f8c96324300a6da0adfe1225",
+        "builtHead": "ca8c2f282d2c157e24fe61906ec160d4b496ffd5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/electron__electron-47361@dbc77ff4",
+      "name": "electron__electron-47361",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "a42afaa8665b6d1b3a344918c60853184a97060e",
+      "headSha": "6084595c5608226e961d251bfb5ec138de8022ca",
+      "mergeBaseSha": "2a51a997ebd60d9e093ecb58dfb791361e87c161",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "b8d3095fbb59d491b6ab4be9e1ecca6e88cc0546",
+        "head": "309df953beffdf656969b0913b4c1eae4152fbaf",
+        "builtBase": "b8d3095fbb59d491b6ab4be9e1ecca6e88cc0546",
+        "builtHead": "309df953beffdf656969b0913b4c1eae4152fbaf"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/keycloak__keycloak-38723@7f8c711e",
+      "name": "keycloak__keycloak-38723",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "8521b9952a989d0dac17697278610b053c613528",
+      "headSha": "805c204a9dbfb5b8128de8f70c9f3fbd6d6583f9",
+      "mergeBaseSha": "b3b30a8620dcce0b0d5caee429d07789afbad147",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "71f56582072b7c9f8961f26097d109778235e35a",
+        "head": "ca36dde7390c80dec4b87bcd787c61ba5fc07069",
+        "builtBase": "71f56582072b7c9f8961f26097d109778235e35a",
+        "builtHead": "ca36dde7390c80dec4b87bcd787c61ba5fc07069"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/keycloak__keycloak-40283@0bdfe6f4",
+      "name": "keycloak__keycloak-40283",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "ad511cbc538f1d9727d17cc423420abc50367af4",
+      "headSha": "04ad5d530007517b60e2bf8706542556078d17f7",
+      "mergeBaseSha": "00d556d747d61d20bbc92185e9d63da20bb85200",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "17ea0d6f6ec13efba404c68bd1244ba62b6c11b5",
+        "head": "2af716ad8acc1d86575bcb6ec56aca6a8d5f1057",
+        "builtBase": "17ea0d6f6ec13efba404c68bd1244ba62b6c11b5",
+        "builtHead": "2af716ad8acc1d86575bcb6ec56aca6a8d5f1057"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/langflow-ai__langflow-5388@36a3971f",
+      "name": "langflow-ai__langflow-5388",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "f9b2ce18a4945c04ab786e66e6fc10e4b49e2677",
+      "headSha": "b1cbdbad29eb3fe3895de1663b2e77b3943b1aef",
+      "mergeBaseSha": "4b0c42e52076fb7cdca084a1ab06d46f87fecff1",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "bf25937a4475a5caf57c4044212544223d7aa54d",
+        "head": "9a4ddf1e72963166033771810f03e02231cfb0b4",
+        "builtBase": "bf25937a4475a5caf57c4044212544223d7aa54d",
+        "builtHead": "9a4ddf1e72963166033771810f03e02231cfb0b4"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/langflow-ai__langflow-5896@bed41176",
+      "name": "langflow-ai__langflow-5896",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "d035e41e631f0da97bdc0e93e7afdae78d5e94da",
+      "headSha": "9513d152197e5336fbc00eb6b891f1ffb25ad62d",
+      "mergeBaseSha": "22e24fa718a511e657c7c120721fa129f3c3b677",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "01b3d099fdad1046bb0560e6b0968916fe1dcd65",
+        "head": "95d600dd38f480a28c863fa9b33f0885088b01db",
+        "builtBase": "01b3d099fdad1046bb0560e6b0968916fe1dcd65",
+        "builtHead": "95d600dd38f480a28c863fa9b33f0885088b01db"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/langflow-ai__langflow-6044@c7281644",
+      "name": "langflow-ai__langflow-6044",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "5bcf4d001f1174ed9e63b7115f10e5dbe1bcca9f",
+      "headSha": "bcfe6f9ded091cd360b3212b6e9f5a58cbcdac5e",
+      "mergeBaseSha": "e15fddd3aaac4b1773ea09f60d63b81591894f7a",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d207fcbbe4327b878635dcecfaf0c5b868075d75",
+        "head": "c246ae7e98ab412f0f4a7070d6c1d9128f2978e1",
+        "builtBase": "d207fcbbe4327b878635dcecfaf0c5b868075d75",
+        "builtHead": "c246ae7e98ab412f0f4a7070d6c1d9128f2978e1"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/langflow-ai__langflow-6652@bd133727",
+      "name": "langflow-ai__langflow-6652",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "a8f6ee4af97fe594eb2c84b655abc549f6d7c741",
+      "headSha": "623929065f9ae45792afce2eb3185dad353df78e",
+      "mergeBaseSha": "3d5c00c613cbeb162044778ec2ad15b3032e4d02",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "77c43bd8352f735f976a8ccef0cdb0afa2a86442",
+        "head": "3313c31d9e3ce9fe1b0fbd364c3618a8b1984518",
+        "builtBase": "77c43bd8352f735f976a8ccef0cdb0afa2a86442",
+        "builtHead": "3313c31d9e3ce9fe1b0fbd364c3618a8b1984518"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/libsdl-org__SDL-12718@872b137b",
+      "name": "libsdl-org__SDL-12718",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Zlib"
+      },
+      "baseSha": "ab34ea5a2684766e510de1daf8ae44c41b6af704",
+      "headSha": "96dfef35c4b0b89f2f8d9c2ecc4f5e3a25d3e7a0",
+      "mergeBaseSha": "ab34ea5a2684766e510de1daf8ae44c41b6af704",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "da898f54e57a80490f102b0b1608e7e6fab3f497",
+        "head": "d8be7429d6ab065bc8740116c4748387722636de",
+        "builtBase": "da898f54e57a80490f102b0b1608e7e6fab3f497",
+        "builtHead": "d8be7429d6ab065bc8740116c4748387722636de"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/libsdl-org__SDL-12964@b93660bf",
+      "name": "libsdl-org__SDL-12964",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Zlib"
+      },
+      "baseSha": "71303b41bf89c4bb68dbe1bed12fd2ee1dc0dd41",
+      "headSha": "15267271865f73c996719238425f1604fc2fa205",
+      "mergeBaseSha": "71303b41bf89c4bb68dbe1bed12fd2ee1dc0dd41",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "375dcc471bafd6ad180940278fca48cd57200563",
+        "head": "4d8b5e4951812f252222688014037cb4a0814257",
+        "builtBase": "375dcc471bafd6ad180940278fca48cd57200563",
+        "builtHead": "4d8b5e4951812f252222688014037cb4a0814257"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__PowerToys-40814@8731d00d",
+      "name": "microsoft__PowerToys-40814",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "e1474c1f3020e2615c438d82b29f48626f456a9f",
+      "headSha": "c1cedce10cfe7436da12580ea231d5837520ef69",
+      "mergeBaseSha": "e1474c1f3020e2615c438d82b29f48626f456a9f",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "d4aae008cfef96f31e599bd6ef804b9a9b112965",
+        "head": "3a692110212de264d497bda004c2488cdb74dc8c",
+        "builtBase": "d4aae008cfef96f31e599bd6ef804b9a9b112965",
+        "builtHead": "3a692110212de264d497bda004c2488cdb74dc8c"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/microsoft__semantic-kernel-11361@c25d4b5e",
+      "name": "microsoft__semantic-kernel-11361",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "fa96214dbc167080bec90a917c7d911a1f3539e4",
+      "headSha": "a712b62f7804121730a95d34195cad365eb350b7",
+      "mergeBaseSha": "78a67933e3acb418a21f6794a0d25aca519eaff9",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "291d11f13af9aefd88de206ce8a4f47ab16f6bc5",
+        "head": "d5a9c5387df4d011e051f4967966417f75b64907",
+        "builtBase": "291d11f13af9aefd88de206ce8a4f47ab16f6bc5",
+        "builtHead": "d5a9c5387df4d011e051f4967966417f75b64907"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/mudler__LocalAI-4577@11370eff",
+      "name": "mudler__LocalAI-4577",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "MIT"
+      },
+      "baseSha": "78533d7230bdb5e352e325c15d0d53f38428b08e",
+      "headSha": "e466450c007539a2b1e4d2951c6756ff004a2b52",
+      "mergeBaseSha": "20edd44463c15baa305d8cb988f05a5600baa13b",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "30858dadbb3c0773c3907c4189822ff5d1bc7ae1",
+        "head": "49b8ef7b11556128ff760cc6e905501bcd8df9e8",
+        "builtBase": "30858dadbb3c0773c3907c4189822ff5d1bc7ae1",
+        "builtHead": "49b8ef7b11556128ff760cc6e905501bcd8df9e8"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/nextcloud__server-52846@e5a30b27",
+      "name": "nextcloud__server-52846",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "copyleft",
+        "spdx": "AGPL-3.0"
+      },
+      "baseSha": "4aa4972550bec08faf477113f223475f7fb3e5d2",
+      "headSha": "51b5ea92ccb5f4683b0f52840a01031e1ed0baa3",
+      "mergeBaseSha": "c3ddd1da46c9f75071f61d3cf7381570297a74d6",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "16030cf003d2f8255289c149ab3379a878ad6517",
+        "head": "a0ca7b08826335fb8b51b5ed22320d430ce10bff",
+        "builtBase": "16030cf003d2f8255289c149ab3379a878ad6517",
+        "builtHead": "a0ca7b08826335fb8b51b5ed22320d430ce10bff"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/opencv__opencv-26815@5417c19c",
+      "name": "opencv__opencv-26815",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "459bb12466abdade062607ae54f3267adaef8063",
+      "headSha": "e3e45c86baa3c51def49961f5d77201ee97e4385",
+      "mergeBaseSha": "fe9405e8c0341f67da8d804494d642cf296899c8",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "6464496ce19a686321ac86d805e8c17b026f43c0",
+        "head": "09914aeea564d69ae704d664e4c28e92b624a8d5",
+        "builtBase": "6464496ce19a686321ac86d805e8c17b026f43c0",
+        "builtHead": "09914aeea564d69ae704d664e4c28e92b624a8d5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/opencv__opencv-27284@589b3d9f",
+      "name": "opencv__opencv-27284",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "868fc5c581228f8f47bf4bc3ee84427acc99226a",
+      "headSha": "79afad939ecfaa332af0541db473fa94f8f425b6",
+      "mergeBaseSha": "4ad4bd5dc09b343b2be6c8137b563f143d68584d",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "e0e2856befd1d8bbbd3fed36b21350f062fcb6a0",
+        "head": "6e01aff6dba625c4eb366e8f169df7ae79671ac5",
+        "builtBase": "e0e2856befd1d8bbbd3fed36b21350f062fcb6a0",
+        "builtHead": "6e01aff6dba625c4eb366e8f169df7ae79671ac5"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/opencv__opencv-27297@a8f1e647",
+      "name": "opencv__opencv-27297",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "16a3d37dc159dbcaaf8ee74cf63669f0203f9655",
+      "headSha": "e546382fc1cbb61a7679c0511303729844a70111",
+      "mergeBaseSha": "16a3d37dc159dbcaaf8ee74cf63669f0203f9655",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "010d5d25a836cecba2d9cdbd9ef026667019f987",
+        "head": "e9b4e3e5dd9af87857a610806e00b5333d69ebd0",
+        "builtBase": "010d5d25a836cecba2d9cdbd9ef026667019f987",
+        "builtHead": "e9b4e3e5dd9af87857a610806e00b5333d69ebd0"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/wavetermdev__waveterm-1755@05209a4c",
+      "name": "wavetermdev__waveterm-1755",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "3beb14aa6bdd9118c43cdd75adca32616619451b",
+      "headSha": "61b0fb4baec87c6fa91bdeadc43fab75fd29eb61",
+      "mergeBaseSha": "07d07472db28fc6f4e3cd5cf71305cd9cffc0cef",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "3f026acdb0cfeae9831c8f6ff97b19400420d7a3",
+        "head": "e5f7be5d66ebb360af56cc064359445ec5040363",
+        "builtBase": "3f026acdb0cfeae9831c8f6ff97b19400420d7a3",
+        "builtHead": "e5f7be5d66ebb360af56cc064359445ec5040363"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/wavetermdev__waveterm-1793@d651b2d9",
+      "name": "wavetermdev__waveterm-1793",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "286783fb8e71cec6d2294bd871e5ccf8c798c646",
+      "headSha": "90a57d552d15f1b2a4d92cdfc3a4308efcf5c57b",
+      "mergeBaseSha": "900f4a3ff7574246b188a716f55afe65694d5c40",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "ef3909eebc8439efd1bc42694a9dd5949b5743bb",
+        "head": "adb4b76ac8dddcc4739f101cd345ff07a9b35b1a",
+        "builtBase": "ef3909eebc8439efd1bc42694a9dd5949b5743bb",
+        "builtHead": "adb4b76ac8dddcc4739f101cd345ff07a9b35b1a"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    },
+    {
+      "caseId": "aacr/wavetermdev__waveterm-1998@7b623ebc",
+      "name": "wavetermdev__waveterm-1998",
+      "split": "test",
+      "ok": true,
+      "licence": {
+        "class": "permissive",
+        "spdx": "Apache-2.0"
+      },
+      "baseSha": "ce9775c00c36ba290c7a6f5134c0ff7759def6eb",
+      "headSha": "4b7637fb17fb0f937d67f12a63f3f370a3343117",
+      "mergeBaseSha": "ce9775c00c36ba290c7a6f5134c0ff7759def6eb",
+      "mergeBaseFrom": "git",
+      "ancestorOfHead": true,
+      "deepening": null,
+      "trees": {
+        "mergeBase": "83822fb3ecd6abf058ea97257e508e2899454a86",
+        "head": "847c41fe9773e2a405751169833a357d412d1c86",
+        "builtBase": "83822fb3ecd6abf058ea97257e508e2899454a86",
+        "builtHead": "847c41fe9773e2a405751169833a357d412d1c86"
+      },
+      "fsck": "git fsck --no-dangling: no problems",
+      "error": null
+    }
+  ]
+}

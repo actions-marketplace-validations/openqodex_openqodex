@@ -87,6 +87,14 @@
 //    entry point appends { at, caseId, argv1, cwd } to
 //    <cache>/held-out-access.log first, and a line that cannot be written
 //    refuses the build.
+// 16. The ancestry proof answers "history unknown" and stops: a fetch at an
+//    absolute depth also shortens history, so a later case of the same
+//    repository can cut the path from an earlier head back to its merge
+//    base, and a commits cache may have been moved away. mergeBaseAncestry
+//    then deepens that repository's commits cache from the head (64
+//    commits, then 128, and so on, up to the merge base search's bound),
+//    and records the depths it fetched and the commits it added; at the
+//    bound it answers unknown and says so.
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -243,45 +251,67 @@ function provedMergeBases(repo, tips) {
   return between.some((sha) => shallow.has(sha)) ? null : bases;
 }
 
-// Finds the case's merge bases in repos/<owner>__<name>.commits.git, which
-// holds commits only. Returns { bases, headWant }, headWant being what the
-// server gives the head by: its id, or its pull request ref.
-function findMergeBases(repo, c) {
-  const { cloneUrl, prRef, baseSha, headSha } = c.materialise;
+// repos/<owner>__<name>.commits.git, made when missing and pointed at the
+// case's clone URL; refused while it carries the filter refusal mark.
+function initCommitsCache(repo, c) {
+  const { cloneUrl } = c.materialise;
   const env = commitsEnv();
   initBare(repo, [["core.repositoryformatversion", "1"], ["extensions.partialClone", "origin"], ["remote.origin.url", cloneUrl], ["remote.origin.promisor", "true"], ["remote.origin.partialclonefilter", "tree:0"]]);
   if (g(repo, ["config", "remote.origin.url"], env) !== cloneUrl) g(repo, ["config", "remote.origin.url", cloneUrl], env);
   const refused = join(repo, FILTER_REFUSED);
   if (existsSync(refused)) throw new Error(`${c.id}: ${readFileSync(refused, "utf8").trim()}`);
-  // git only warns, and fetches everything, when the server ignores the
-  // filter (failure 12), so its words are read on success too.
-  const fetch = (args, wants) => {
-    const r = spawnSync("git", [...FLAGS, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--filter=tree:0", ...args, "--end-of-options", "origin", ...wants], { cwd: repo, env, encoding: "utf8", maxBuffer: 1 << 30 });
-    if (r.error) throw r.error;
-    if (r.status !== 0) throw Object.assign(new Error(`git fetch exited ${r.status}`), { stderr: r.stderr });
-    const warning = r.stderr.split("\n").find((l) => /filtering not recognized by server/i.test(l));
-    if (warning) {
-      const why = `${cloneUrl} ignored the commits-only filter (git: "${warning.trim()}") and sent trees and files, so ${repo} is no longer commits only; it is not used until a person moves it to the Trash`;
-      writeFileSync(refused, `${why}\n`);
-      throw new Error(`${c.id}: ${why}`);
-    }
-  };
+}
+
+// Fetches `wants` into the commits cache, commits only. git only warns, and
+// fetches everything, when the server ignores the filter (failure 12), so
+// its words are read on success too.
+function commitsFetch(repo, c, args, wants) {
+  const { cloneUrl } = c.materialise;
+  const r = spawnSync("git", [...FLAGS, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--filter=tree:0", ...args, "--end-of-options", "origin", ...wants], { cwd: repo, env: commitsEnv(), encoding: "utf8", maxBuffer: 1 << 30 });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw Object.assign(new Error(`git fetch exited ${r.status}`), { stderr: r.stderr });
+  const warning = r.stderr.split("\n").find((l) => /filtering not recognized by server/i.test(l));
+  if (warning) {
+    const why = `${cloneUrl} ignored the commits-only filter (git: "${warning.trim()}") and sent trees and files, so ${repo} is no longer commits only; it is not used until a person moves it to the Trash`;
+    writeFileSync(join(repo, FILTER_REFUSED), `${why}\n`);
+    throw new Error(`${c.id}: ${why}`);
+  }
+}
+
+// Fetches the head into the commits cache with `args`, by its id, or by its
+// pull request ref when the server serves it only there and the ref's tip is
+// still the head (failure 8). Returns what it was fetched by, which a later
+// fetch passes back as `want`.
+function fetchHead(repo, c, args, want = c.materialise.headSha) {
+  const { cloneUrl, prRef, headSha } = c.materialise;
+  if (want !== headSha) {
+    commitsFetch(repo, c, args, [want]);
+    return want;
+  }
+  try {
+    commitsFetch(repo, c, args, [headSha]);
+    return headSha;
+  } catch (bySha) {
+    if (existsSync(join(repo, FILTER_REFUSED))) throw bySha;
+    const tip = (tryG(repo, ["ls-remote", "--end-of-options", cloneUrl, prRef], commitsEnv()) ?? "").split(/\s/)[0] || null;
+    if (tip !== headSha) throw new Error(`${c.id}: the head ${headSha.slice(0, 12)} is gone from ${cloneUrl}: the server refuses it by id (${said(bySha)}), and ${prRef} ${tip ? `now points at ${tip.slice(0, 12)}, so the pull request was pushed over after the dataset was made` : "is not there"}`);
+    commitsFetch(repo, c, args, [prRef]);
+    return prRef;
+  }
+}
+
+// Finds the case's merge bases in repos/<owner>__<name>.commits.git, which
+// holds commits only. Returns { bases, headWant }, headWant being what the
+// server gives the head by: its id, or its pull request ref.
+function findMergeBases(repo, c) {
+  const { cloneUrl, baseSha, headSha } = c.materialise;
+  const env = commitsEnv();
+  initCommitsCache(repo, c);
+  const fetch = (args, wants) => commitsFetch(repo, c, args, wants);
   // The head first: when the server no longer has it, the case stops
   // before any tree is downloaded (failure 8).
   let headWant = headSha;
-  if (!hasCommit(repo, headSha, env)) {
-    try {
-      fetch(["--depth=1"], [headSha]);
-    } catch (bySha) {
-      if (existsSync(refused)) throw bySha;
-      // A server may serve a pull request's head only through its pull
-      // request ref: fetch the ref when its tip is the head.
-      const tip = (tryG(repo, ["ls-remote", "--end-of-options", cloneUrl, prRef], env) ?? "").split(/\s/)[0] || null;
-      if (tip !== headSha) throw new Error(`${c.id}: the head ${headSha.slice(0, 12)} is gone from ${cloneUrl}: the server refuses it by id (${said(bySha)}), and ${prRef} ${tip ? `now points at ${tip.slice(0, 12)}, so the pull request was pushed over after the dataset was made` : "is not there"}`);
-      fetch(["--depth=1"], [prRef]);
-      headWant = prRef;
-    }
-  }
+  if (!hasCommit(repo, headSha, env)) headWant = fetchHead(repo, c, ["--depth=1"]);
   if (!hasCommit(repo, baseSha, env)) {
     try {
       fetch(["--depth=1"], [baseSha]);
@@ -440,6 +470,70 @@ export function caseRepo(c, { cache = cacheRoot(), heldOut = false, allowFileUrl
     fetchTrees(repo, c, mergeBaseSha, headWant);
     return { path, record: buildCaseRepo(cache, c, repo, mergeBaseSha), built: true };
   });
+}
+
+// git's answer in the commits cache to "is the merge base an ancestor of
+// the head": true; false when git says no on a history with no cut; or null
+// when that history cannot answer (a missing commit, or a no on a shallow
+// history, where the path may lie behind a cut).
+function ancestryAnswer(repo, mergeBaseSha, headSha) {
+  const r = spawnSync("git", [...FLAGS, "merge-base", "--is-ancestor", mergeBaseSha, headSha], { cwd: repo, env: commitsEnv(), encoding: "utf8" });
+  if (r.status === 0) return { isAncestor: true, why: null };
+  if (r.status === 1 && shallowOf(repo).length === 0) return { isAncestor: false, why: `git answers that ${mergeBaseSha.slice(0, 12)} is not an ancestor of ${headSha.slice(0, 12)}` };
+  if (r.status === 1) return { isAncestor: null, why: "history unknown: the commits cache is shallow, and git found no path within it" };
+  return { isAncestor: null, why: `history unknown: git merge-base --is-ancestor failed (${`${r.stderr ?? ""}`.trim().split("\n")[0] || `exit ${r.status}`})` };
+}
+
+// The number of objects in the commits cache, every one a commit.
+const commitCount = (repo) => (tryG(repo, ["cat-file", "--batch-all-objects", "--unordered", "--batch-check=%(objectname)"], commitsEnv()) ?? "").split("\n").filter(Boolean).length;
+
+// Deepens the commits cache from the head until git answers (failure 16):
+// the head and the merge base by id when missing, then the head at
+// `depthFirst` commits, twice as deep each time, up to `depthLast`.
+function deepenForAncestry(repo, c, mergeBaseSha, { depthFirst, depthLast }) {
+  const { headSha } = c.materialise;
+  const env = commitsEnv();
+  const depths = [];
+  let before = null;
+  const deepening = (answered) => ({ bound: depthLast, depths, commitsAdded: before === null ? 0 : commitCount(repo) - before, answered });
+  try {
+    initCommitsCache(repo, c);
+    before = commitCount(repo);
+    let headWant = headSha;
+    if (!hasCommit(repo, headSha, env)) headWant = fetchHead(repo, c, ["--depth=1"]);
+    if (!hasCommit(repo, mergeBaseSha, env)) commitsFetch(repo, c, ["--depth=1"], [mergeBaseSha]);
+    let answer = ancestryAnswer(repo, mergeBaseSha, headSha);
+    for (let depth = depthFirst; answer.isAncestor === null && depth <= depthLast; depth *= 2) {
+      headWant = fetchHead(repo, c, [`--depth=${depth}`], headWant);
+      depths.push(depth);
+      answer = ancestryAnswer(repo, mergeBaseSha, headSha);
+    }
+    if (answer.isAncestor === null) return { isAncestor: null, why: `history unknown: git found no path from ${headSha.slice(0, 12)} back to ${mergeBaseSha.slice(0, 12)} after the commits cache was deepened to ${depthLast} commits from the head, its bound (${answer.why})`, deepening: deepening(false) };
+    return { ...answer, deepening: deepening(true) };
+  } catch (error) {
+    return { isAncestor: null, why: `history unknown: deepening the commits cache failed: ${said(error)}`, deepening: deepening(false) };
+  }
+}
+
+// Whether the case's merge base is an ancestor of its head, as git answers
+// in the commits cache's history (run.mjs --materialise-only records it):
+// { isAncestor, why, deepening }. isAncestor is true, false when git says
+// no on a history with no cut, or null when the history cannot answer even
+// after deepening. When git cannot answer at first, the commits cache of
+// that repository only is deepened from the head (failure 16), up to
+// `depthLast` commits (the merge base search's own bound by default), and
+// `deepening` records { bound, depths, commitsAdded, answered }; it is null
+// when git answered without a fetch.
+export function mergeBaseAncestry(c, mergeBaseSha, { cache = cacheRoot(), allowFileUrl = false, depthFirst = DEPTH_FIRST, depthLast = DEPTH_LAST } = {}) {
+  const repo = repoCachePath(cache, c, ".commits");
+  if (existsSync(join(repo, "HEAD"))) {
+    const answer = ancestryAnswer(repo, mergeBaseSha, c.materialise.headSha);
+    if (answer.isAncestor !== null) return { ...answer, deepening: null };
+  }
+  const why = prRefusal(c, { heldOut: true, allowFileUrl });
+  if (why !== null) return { isAncestor: null, why: `history unknown, and the commits cache is not deepened: ${why}`, deepening: null };
+  mkdirSync(dirname(repo), { recursive: true });
+  return withLock(`${repoCachePath(cache, c)}.lock`, () => deepenForAncestry(repo, c, mergeBaseSha, { depthFirst, depthLast }));
 }
 
 // ---------- one attempt's repository ----------
