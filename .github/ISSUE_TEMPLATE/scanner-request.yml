@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Any scanner can already run as a custom scanner, by its GitHub link. See docs/custom-scanners.md. Ask here when a scanner should ship built in.
+        A compatible scanner can already run as a custom scanner, by its GitHub link: one that writes SARIF or one JSON document. See docs/custom-scanners.md. Ask here when a scanner should ship built in.
   - type: input
     id: source
     attributes:

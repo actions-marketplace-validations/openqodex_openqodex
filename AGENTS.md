@@ -1,5 +1,7 @@
 # Working in this repo
 
+To install or use OpenQodex in another repository, read `docs/for-agents.md`. This file is for work on OpenQodex itself.
+
 OpenQodex is open source AI code review for Claude Code and Codex. It runs before you push, from your coding agent or your terminal. This file tells a coding agent how the repo is built and tested.
 
 ## Setup
@@ -10,18 +12,19 @@ OpenQodex is open source AI code review for Claude Code and Codex. It runs befor
 
 ## Commands
 
-- `pnpm build`: builds `@openqodex/core`, then `@openqodex/scanners`, then the `openqodex` CLI, then copies the shipped assets beside the bundle.
+- `pnpm build`: builds `@openqodex/core`, `@openqodex/scanners`, `@openqodex/graph`, `@openqodex/review` and `@openqodex/mcp`, then the `openqodex` CLI, then copies the shipped assets beside the bundle.
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` (unit), `pnpm test:e2e` (runs the built CLI as a real subprocess).
 - `pnpm gate`: every check in order, stopping at the first failure. It must be green before any push. CI (`.github/workflows/ci.yml`) runs the same steps on Linux and macOS.
 - `pnpm changeset`: add a changeset to any pull request with a change a user can see.
-- `pnpm docs:index`: regenerates `docs/llms.txt`.
+- `pnpm docs:index`: regenerates `docs/llms.txt`. The gate checks it with `--check`, and checks the README's facts with `scripts/docs-facts.mjs`.
 
 ## Where things live
 
 - `packages/cli`: the `openqodex` binary. It is published as one bundled file, `dist/bin.js`, with no runtime dependencies; every library it uses is a dev dependency that the bundler inlines.
 - `packages/core`: the change source, the config parser, the lenses, the review brief, the renderers.
 - `packages/scanners`: the scanner adapters, the changed-line filter and the pinned scanner table (`toolchain.json`).
-- `skills/openqodex/`: the agent skill. `plugins/claude-code/`: the Claude Code plugin. `docs/`: the docs, shipped in the package. `examples/demo-repo/`: the sample repo with planted bugs.
+- `packages/graph`: the code graph. `packages/review`: the review engine the library uses. `packages/mcp`: the code graph's MCP server.
+- `skills/openqodex/`: the agent skill. `plugins/claude-code/` and `plugins/codex/`: the Claude Code and Codex plugins. `docs/`: the docs, shipped in the package. `examples/demo-repo/`: the sample repo with planted bugs.
 - Assets that ship beside the bundle (lenses, docs, skill, templates, toolchain table, demo) are found at run time relative to the installed package through `assetPath()` in `packages/cli/src/assets.ts`, never from the current directory. `scripts/copy-assets.mjs` copies them into `packages/cli` after the build; the copies are gitignored.
 
 ## Exit codes

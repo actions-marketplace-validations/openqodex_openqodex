@@ -67,6 +67,10 @@ jobs:
         run: node scripts/validate-skill.mjs
       - name: Config docs
         run: node scripts/config-docs.mjs --check
+      - name: Docs index
+        run: node scripts/docs-index.mjs --check
+      - name: Docs facts
+        run: node scripts/docs-facts.mjs
       - name: Private material scrub
         run: node scripts/scrub.mjs
 

@@ -1,6 +1,6 @@
 // Writes the CLI package version into every file that pins it: the skill, its
-// plugin copies, the three plugin manifests, the plugin hook and MCP server, and the agent
-// install line in the README and the quickstart. Run after `changeset
+// plugin copies, the three plugin manifests, the plugin hook and MCP server, the agent
+// install line in the README and the quickstart, and the agent guide. Run after `changeset
 // version`; the gate fails when any of them differs from the package version.
 // It also gives each release notice marked "next" (packages/cli/src/notices.ts)
 // the version changesets just chose, so the notice prints after the update
@@ -21,6 +21,7 @@ for (const rel of [
   ".pre-commit-hooks.yaml",
   "README.md",
   "docs/quickstart.md",
+  "docs/for-agents.md",
 ]) {
   const file = join(root, rel);
   const before = readFileSync(file, "utf8");

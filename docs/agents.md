@@ -45,8 +45,8 @@ The section goes into `CLAUDE.md` and `AGENTS.md` at the root of the repository,
 ```
 <!-- openqodex:start -->
 ## Review with OpenQodex before you push
-- Before any `git push`, run `npx -y openqodex@<version> review` from the repository root. It takes one to three minutes: allow it up to ten minutes, or run it in the background and wait for it to exit.
-- Show the developer the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell me which?" Fix only the findings they name (`npx -y openqodex@<version> findings 1,3` prints them in full), then review again and show the new receipt. OpenQodex starts its own reviewer process: the agent that wrote the code does not judge its own work.
+- Before any `git push`, run `npx -y openqodex@<version> review` from the repository root. It can take minutes, and OpenQodex stops the reviewer after 30 minutes. Run it in the background and wait for it to exit.
+- Show the developer the receipt it prints: the verdict, one line per finding and the absolute path of `report.html`. Ask: "Fix all, or tell me which?" Fix only the findings they name (`npx -y openqodex@<version> findings 1,3` prints them in full), then review again and show the new receipt. OpenQodex starts its own reviewer process, so by default the agent that wrote the code does not judge its own work.
 - Do not push on a blocked verdict unless the developer says so after seeing the findings.
 - The report is in `.openqodex/reviews/`.
 <!-- openqodex:end -->
@@ -58,7 +58,7 @@ The two files show in `git status`, and `init` says to commit them. When git ign
 
 The skill tells the agent to run one command, `review`, wait for it, and show you what it prints: a receipt with the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. The agent then asks you "Fix all, or tell me which?" and fixes only the findings you name; `findings <numbers>` prints those in full for it. When you already said what to fix, such as "review and fix everything", it does that without asking again. This is an instruction to the agent, not a lock: the agent can open the report files, and the push gate and your own permission prompts still apply. The agent does not review the change itself and starts no subagent. `review` starts a fresh reviewer process with no memory of the agent's session, inside a frozen copy of the change. Claude Code starts with none of your settings or instruction files and read, search and list tools only. Codex starts in a read-only sandbox with none of your config or the repository's instruction files; it still loads your global `~/.codex/AGENTS.md`. The report says which reviewer ran; the tool writes that line, never the model.
 
-A review takes one to three minutes. Agents often stop a command after two minutes, so the skill tells the agent to allow up to ten minutes or run it in the background; `review` prints a line every 15 seconds while the reviewer works.
+A review can take minutes. OpenQodex stops the reviewer after 30 minutes for a change and after 2 hours for `--all`. Agents often stop a command sooner, so the skill tells the agent to run it in the background; `review` prints a line every 15 seconds while the reviewer works.
 
 The reviewer edits nothing and runs none of the repository's code. Claude Code has no shell. Codex has a shell whose commands can read the copy of the change and the system folders, and cannot write or reach the network.
 

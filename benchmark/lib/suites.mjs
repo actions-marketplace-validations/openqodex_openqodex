@@ -28,7 +28,9 @@
 //    product's scale, beside the raw value.
 // Selecting a run's cases and the truth copy each run saves (run.mjs):
 // 7. A held-out (test split) case is run before a release: selectCases
-//    refuses the test split and any case on it, before anything is fetched.
+//    refuses the test split and any case on it, before anything is fetched,
+//    unless the caller builds and proves cases only (heldOut, run.mjs
+//    --materialise-only), which reviews none and logs the access.
 // 8. A case outside the subset a run names, or one the suite excludes, is
 //    run under that subset's name: every case --cases names is checked
 //    against the split and the subset, and each refusal names its reason.
@@ -365,12 +367,14 @@ const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
 // case on the split's development side, or the subset the split file names,
 // or the cases `refs` names (<suite>/<name> or a full case id), each of
 // which must be on that side and in that subset. The test split is held
-// out: only a release run reads it, and there is none yet. Throws one error
+// out: only a release run reads it, and there is none yet. `heldOut` true
+// (run.mjs --materialise-only, which builds and proves cases and reviews
+// none, and logs the access) may select the test split. Throws one error
 // whose lines name every refusal; nothing is fetched or built here.
-export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot }) {
+export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot, heldOut = false }) {
   if (!SUITES[suite]) throw new Error(`no real suite named ${suite}; the real suites are ${Object.keys(SUITES).join(", ")}`);
-  if (split === "test") throw new Error(`the ${suite} test split is held out: no held-out case runs before a release, and run.mjs has no release run yet`);
-  if (split !== "dev") throw new Error(`--split takes dev (test is held out), not ${JSON.stringify(split)}`);
+  if (split === "test" && !heldOut) throw new Error(`the ${suite} test split is held out: no held-out case runs before a release, and run.mjs has no release run yet; run.mjs --materialise-only builds and proves held-out cases without a review`);
+  if (split !== "dev" && split !== "test") throw new Error(`--split takes dev or test, not ${JSON.stringify(split)}`);
   const s = readSuite(suite, { root });
   if (!s.split) throw new Error(`${s.def.split} is missing; run node benchmark/ingest/${suite}.mjs`);
   const subsets = Object.keys(s.split.subsets ?? {}).sort();
@@ -392,8 +396,9 @@ export function selectCases({ suite, split = "dev", subset = null, refs = null, 
       : !entry ? `suite ${suite} holds no case named ${name}`
       : full && !entry.hash.startsWith(ref.slice(-8)) ? `suite ${suite} now holds ${name} at ${entry.hash.slice(0, 8)}, and a changed case is a new case`
       : entry.status !== "usable" ? `is excluded: ${entry.excludedWhy ?? "no reason recorded"}`
-      : sideIn(s.split, name) === "test" ? "is held out: only a release run runs it"
       : sideIn(s.split, name) === null ? "is on no side of its split"
+      : sideIn(s.split, name) === "test" && split !== "test" ? "is held out: only a release run runs it"
+      : sideIn(s.split, name) !== split ? `is on the development side, and this run selects the ${split} split`
       : chosen.some((c) => c.name === name) ? "is named twice"
       : !ids.includes(realCaseId(suite, name, entry.hash)) ? `is not in the subset ${subset}`
       : null;
@@ -472,9 +477,10 @@ export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
 // Returns { dir, shape, base, head }, the commits a server review names
 // (head is null in the laptop shape of a planted case, whose change is
 // never committed). A pull request case goes through the clone cache
-// (lib/materialise.mjs), and its result also names upstream's commits.
-export function materialise(c, into, { shape = "laptop", cache = cacheRoot(), heldOut = false, casesDir = casesRoot } = {}) {
-  if (c.materialise?.kind === "pr") return materialisePr(c, into, { shape, cache, heldOut });
+// (lib/materialise.mjs), and its result also names upstream's commits;
+// `allowFileUrl` lets a test fetch it from a local upstream.
+export function materialise(c, into, { shape = "laptop", cache = cacheRoot(), heldOut = false, casesDir = casesRoot, allowFileUrl = false } = {}) {
+  if (c.materialise?.kind === "pr") return materialisePr(c, into, { shape, cache, heldOut, allowFileUrl });
   if (shape !== "laptop" && shape !== "server") throw new Error(`the shape is laptop or server, not ${JSON.stringify(shape)}`);
   const { dir } = buildCase(c.name, into, casesDir);
   if (shape === "server") {
