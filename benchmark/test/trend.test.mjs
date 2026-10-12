@@ -431,7 +431,7 @@ describe("per-review models at accept", () => {
     if (mixed) row.model = ["claude-opus-5-5", "claude-sonnet-5"];
     else { delete row.model; delete row.modelFrom; delete row.modelStatus; }
     write(join(dir, "sample.json"), JSON.stringify(row));
-    publish(folder, index);
+    await publish(folder, index);
     const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
     expect(result.status, result.stderr).toBe(2);
     expect(result.stderr.trim()).toMatch(mixed ? /samples.*mixed.*claude-opus-5-5, claude-sonnet-5/ : /samples.*unknown/);
@@ -443,7 +443,7 @@ describe("per-review models at accept", () => {
     const index = tempDir("oq-bench-model-index-");
     const reviewers = { claude: { name: "claude", version: "2.1.300", model: "claude-opus-5-5", requestedModel: "claude-sonnet-5" } };
     const folder = await savedRun({ parent: root, ...NEWER, cases: TWENTY.slice(0, 2), repeat: 1, found: () => true, manifest: { reviewers } });
-    publish(folder, index);
+    await publish(folder, index);
     const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
     expect(result.status, result.stderr).toBe(2);
     expect(result.stderr.trim()).toMatch(/requested model claude-sonnet-5, but samples were served by claude-opus-5-5/);
