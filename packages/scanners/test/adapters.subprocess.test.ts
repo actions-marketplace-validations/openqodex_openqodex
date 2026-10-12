@@ -84,6 +84,25 @@ describe("builtin scanner subprocesses", () => {
     expect(second.scan.candidates).toContainEqual(expect.objectContaining({ source: "golangci", ruleId: spec.rule, filePath: spec.anchor }));
   }, 300_000);
 
+  // A package golangci-lint cannot type-check is never linted. The pinned
+  // binary must report that in a form the adapter reads, or the scan reads clean.
+  it("golangci reports a type-check failure instead of a clean scan", async () => {
+    const result = await scan({
+      scanner: "golangci",
+      rule: "",
+      files: {
+        "go.mod": "module example.com/broken\n\ngo 1.26\n",
+        "main.go": "package main\nimport \"fmt\"\nfunc main() { fmt.Println(undefinedName) }\n",
+      },
+      anchor: "main.go",
+    });
+    if (result.scan.scanners[0]!.status === "not_installed") { process.stdout.write(`golangci: ${result.scan.scanners[0]!.reason}\n`); return; }
+    expect(result.scan.scanners[0]!.status).toBe("failed");
+    expect(result.scan.scanners[0]!.reason).toContain("could not type-check");
+    expect(result.scan.scanners[0]!.reason).toContain("undefinedName");
+    expect(result.scan.candidates).toEqual([]);
+  }, 300_000);
+
   it("oxlint's React rules stay off for a file outside a React project, and the run says which files had them", async () => {
     const spec: Case = {
       scanner: "oxlint",
