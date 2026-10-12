@@ -28,9 +28,10 @@ export function modelEvidence(args: {
   const { talk, change } = args;
   const sent = args.session?.sentRounds ?? 0;
   const delivered = talk.carried.slice(0, Math.max(0, sent - 1)).flat();
+  const hashed = talk.hashed.slice(0, Math.max(0, sent - 1)).flat();
   const toolLog = structuredClone(args.session?.log ?? []);
   const attempts = structuredClone(args.session?.attempts ?? []);
-  const coverage = modelCoverage({ change, briefSent: sent > 0, briefFiles: args.briefFiles, toolLog: toolLog.map(modelToolEntry), delivered, lineCount: args.lineCount });
+  const coverage = modelCoverage({ change, briefSent: sent > 0, briefFiles: args.briefFiles, toolLog: toolLog.map(modelToolEntry), delivered, hashed, lineCount: args.lineCount });
   // Redacted like the agent record: a path or a tool input may hold a secret.
   return redactStored<ModelReviewEvidence>(
     {

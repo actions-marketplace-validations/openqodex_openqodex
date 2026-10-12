@@ -4,7 +4,7 @@
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
 import type { ModelCompletionRecord, Report, ReportFinding, ReviewerRecord } from "../types.js";
-import { candidateLocation, coverageLine, display, escapeMarkdown, firstLine, location, notOpenedLabel, orderFindings, severityBreakdown, verdictLine } from "./common.js";
+import { candidateLocation, coverageLine, display, escapeMarkdown, firstLine, location, notOpenedLabel, notReadLine, orderFindings, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 type Line =
@@ -94,7 +94,8 @@ function lines(report: Report): Line[] {
   const changeLine = { kind: "text" as const, text: `Change ${report.change_id.slice(0, 12)} against ${report.base.ref}, ${plural(files, "file", "files")}, +${additions} -${deletions}` };
   const complete = c?.status === "complete";
   const ordered = orderFindings(report.findings);
-  const summary: Line[] = hasSummary(report) ? [{ kind: "text", text: `Summary: ${report.summary}` }] : [];
+  const notRead = notReadLine(c?.coverage);
+  const summary: Line[] = [...(hasSummary(report) ? [{ kind: "text" as const, text: `Summary: ${report.summary}` }] : []), ...(notRead ? [{ kind: "text" as const, text: `Not read: ${notRead}` }] : [])];
   if (!complete) {
     // What is missing comes first; the findings that passed every check
     // follow under a heading that says the change was not fully reviewed.
@@ -190,6 +191,8 @@ export function renderReceipt(report: Report, opts: { html: string; md: string; 
   if (report.reviewed_by && record === undefined) out.push(display(report.reviewed_by));
   out.push(display(`Change ${report.change_id.slice(0, 12)} against ${report.base.ref}, ${plural(files, "file", "files")}, +${additions} -${deletions}`));
   if (hasSummary(report)) out.push(display(`Summary: ${report.summary}`));
+  const notRead = notReadLine(record?.coverage);
+  if (notRead) out.push(display(`Not read: ${notRead}`));
   if (!complete) {
     out.push(display(`Missing: ${(record?.missing ?? ["no completion record"]).join("; ")}`));
     out.push(`Findings so far (the change was not fully reviewed): ${ordered.length === 0 ? "none" : ordered.length}`);

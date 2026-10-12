@@ -121,16 +121,18 @@ function gaps(h: Hunk, earlier: Hunk[]): [number, number][] {
 // and a deletion goes whole or waits. Never carried, so left unread: a
 // deletion whose removed lines the change does not hold (its file was past
 // the diff cap), a file the snapshot dropped, or a binary file. `later`:
-// how many of `left` may still come in a round.
+// how many of `left` may still come in a round. `hashed`: the changed lines
+// of `delivered` shown only by length and hash, a deletion as its range.
 // The text then goes through the brief's redaction once more; if a found
 // secret is still in it, nothing is sent and `leak` is set, which makes the
 // run incomplete.
-export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earlier?: Hunk[]; secrets: string[]; change?: Pick<Change, "files" | "deletionPoints" | "diffs"> }): { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean } {
+export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earlier?: Hunk[]; secrets: string[]; change?: Pick<Change, "files" | "deletionPoints" | "diffs"> }): { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean; hashed: Hunk[] } {
   let room = DELIVER_LINES;
   let bytes = DELIVER_BYTES;
   let later = 0;
   const out: string[] = [];
   const delivered: Hunk[] = [];
+  const hashed: Hunk[] = [];
   const left: Hunk[] = [];
   const files = new Map<string, string[] | null>();
   const fileLines = (path: string): string[] | null => {
@@ -153,7 +155,9 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   const runs = new Map<string, { after: number; lines: string[] }[]>();
   // The lines that show deletion `h`, or null when the change does not hold
   // what it removed. A deleted file has no snapshot copy, so no context.
+  let removedLong = false;
   const removedBlock = (h: Hunk): string[] | null => {
+    removedLong = false;
     const points = (args.change?.deletionPoints.get(h.path) ?? []).filter((p) => Math.min(...p.anchors) === h.start && Math.max(...p.anchors) === h.end);
     if (points.length === 0) return null;
     const diff = args.change?.diffs?.find((d) => d.path === h.path);
@@ -179,7 +183,10 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
       block.push(`${h.path}: ${n} ${n === 1 ? "line" : "lines"} removed ${where}${to >= from ? ` (with context ${from} to ${to})` : ""}:`);
       for (let i = from; i <= Math.min(p.after, to); i++) block.push(deliveredLine(String(i), lines[i - 1] ?? ""));
       // Redacted as the brief redacts its diff: the snapshot never held these lines.
-      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) block.push(deliveredLine("-", r));
+      for (const r of redactSecretsKeepingLines(run.lines.join("\n"), args.secrets).split("\n")) {
+        if (r.length > MAX_DELIVER_LINE_CHARS) removedLong = true;
+        block.push(deliveredLine("-", r));
+      }
       for (let i = Math.max(from, p.after + 1); i <= to; i++) block.push(deliveredLine(String(i), lines[i - 1] ?? ""));
     }
     return block;
@@ -197,6 +204,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
         room -= block.length + 1;
         bytes -= size;
         delivered.push(h);
+        if (removedLong) hashed.push(h);
       } else {
         left.push(h);
         if (block.length + 1 <= DELIVER_LINES && size <= DELIVER_BYTES) later++;
@@ -230,6 +238,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
         room -= block.length + 1;
         bytes -= size;
         delivered.push({ path: h.path, start: at, end: at + n - 1, deletion: false });
+        for (let i = at; i < at + n; i++) if ((lines[i - 1] ?? "").length > MAX_DELIVER_LINE_CHARS) hashed.push({ path: h.path, start: i, end: i, deletion: false });
         at += n;
       }
       if (at <= last) {
@@ -240,8 +249,8 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   }
   const text = redactSecrets(out.join("\n").trimEnd(), args.secrets);
   const usable = secretTexts(args.secrets);
-  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, later: 0, leak: true };
-  return { text, delivered, left, later, leak: false };
+  if (usable.some((x) => text.includes(x)) || text !== out.join("\n").trimEnd()) return { text: "", delivered: [], left: args.unread, later: 0, leak: true, hashed: [] };
+  return { text, delivered, left, later, leak: false, hashed };
 }
 
 // How much of one untraced call's input trace.json keeps.
@@ -270,6 +279,8 @@ export type Conversation = {
   // the second answer's message. A model reviewer counts a round's ranges
   // only when the request carrying them was invoked.
   carried: Hunk[][];
+  // The changed lines of each of those rounds shown only by length and hash.
+  hashed: Hunk[][];
   startedAt: number;
   endedAt: number;
 };
@@ -304,7 +315,7 @@ export async function converse(args: {
   // in it ends the conversation. Without that, the trace is diagnostic only.
   traced: boolean;
   check: (submission: unknown, trace: TraceEntry[], delivered: Hunk[]) => { report: Report | null; errors: string[]; unread: Hunk[]; required: number; disposed: number };
-  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean };
+  deliver: (unread: Hunk[], earlier: Hunk[]) => { text: string; delivered: Hunk[]; left: Hunk[]; later: number; leak: boolean; hashed: Hunk[] };
   say: (line: string) => void;
   // The run's clock, epoch milliseconds; `deadline` is on it.
   now: () => number;
@@ -314,7 +325,7 @@ export async function converse(args: {
   timedOut?: string;
 }): Promise<Conversation> {
   const startedAt = args.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
+  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], hashed: [], startedAt, endedAt: startedAt };
   const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
   heartbeat.unref();
   try {
@@ -360,6 +371,7 @@ export async function converse(args: {
       if (problems.length === 0 && given.delivered.length === 0) break;
       c.delivered.push(...given.delivered);
       c.carried.push(given.delivered);
+      c.hashed.push(given.hashed);
       args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
       args.onRound?.({ round: c.rounds, errors: result.errors.map((e) => e.replace(/^\d+\.\s+/, "")), delivered: given.delivered, later: given.later, answer: "value" in parsed ? parsed.value : null });
       text = [

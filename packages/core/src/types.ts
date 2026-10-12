@@ -622,6 +622,9 @@ export type CompletionRecord = {
     unread: { path: string; start: number; end: number; deletion: boolean }[];
     files_read: string[];
     files_not_read: string[];
+    // Changed lines a correction round showed only by their length and hash
+    // (a line over 2,000 characters): given, but not read. Absent when none.
+    hashed?: { path: string; start: number; end: number; deletion: boolean }[];
   };
   outside_reads: string[];
   // Whether the reviewer's event stream shows every tool call (Claude Code).
