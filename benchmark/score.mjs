@@ -450,6 +450,8 @@ export function renderV3(s) {
     ["Cost per review, mean", (c) => usd(c.costUsd)],
     ["Cost, total (retries apart)", (c) => (c.costUsd.n === 0 ? "n/a" : `$${c.costUsd.total.toFixed(2)}`)],
     ["Tokens in / out per review, mean", (c) => (c.inputTokens.n === 0 ? "n/a" : `${Math.round(c.inputTokens.mean / 1000)}k / ${Math.round(c.outputTokens.mean / 1000)}k`)],
+    // Model reviews only: the models the provider named as serving them.
+    ...(configs.some((c) => Array.isArray(s.byConfig[c].servedModels)) ? [["Models that served the reviews", (c) => (Array.isArray(c.servedModels) ? c.servedModels.join(", ") || "none named" : "n/a")]] : []),
   ];
   out.push(table(["Measure", ...configs], rows.map(([label, f]) => [label, ...configs.map((c) => f(s.byConfig[c]))])));
   out.push("");

@@ -15,7 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { RULES, RULES_VERSION, classify, regressions, ruleCodeHash, ruleSources, rulesDifferences, rulesHash, runDifferences, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
+import { RULES, RULES_VERSION, classify, regressions, ruleCodeHash, ruleSources, rulesDifferences, rulesHash, runDifferences, scannerPlaces, scoreBrief, scoreJob, scoreSample, specDifferences, summarize, summarizeJobs, value } from "../lib/score.mjs";
 import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { loadRun, renderV3, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -314,6 +314,9 @@ describe("a rule constant changes without a version bump, and old and new scores
     5: "ff7b2ece2aff21df3b948e5bd849d872dfba298cfa928203e784780061050511",
     // Pull request truth: matched on its categories when it has no kind, and no severity tally without a severity.
     6: "b796da57c0aae63538f12bf8f3aa1139219da6a2f2a8ef7e4ccdd04c0b737536",
+    // Issue 143: a custom scanner's rule is that scanner's whatever its id, and own rules are a map with no prototype.
+    // Issue 142: a model review's cost and tokens are its sample record's usage.
+    7: "6aaf49035cb10f73a3129b8abfe6d976eece2d29f70935432d07528432d17a48",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {
@@ -614,6 +617,35 @@ describe("a bug the spec expects from semgrep, found only by the reviewer, count
     const asSuppression = await reviewed(expecting(["suppression"]), report([SQLI]), scan);
     expect(asSuppression.outcomes[0].locatedBy).toEqual(["suppression"]);
     expect(asSuppression.score.byConfig[CONFIG].finder.byExpected).toEqual({ suppression: { hit: 1, of: 1 } });
+  });
+
+  // Issue 143: only a built-in scanner's candidate is OpenQodex's own (core
+  // finalize.ts isOwnCandidate), since a custom scanner may name a rule
+  // anything; and a rule id that names a property every object inherits is
+  // a rule id like any other, never a lookup into one.
+  it("credits a custom scanner's rules named settings-file and constructor to that custom scanner, and OpenQodex's own settings check keeps its own credit (issue 143)", async () => {
+    const scan = {
+      candidates: [
+        candidate("c1", "custom:mine", "settings-file", "app/search.py", 14, { message: "Possible SQL injection in the search query." }),
+        candidate("c2", "custom:mine", "constructor", "app/server.py", 23, { message: "The page offset skips a row." }),
+        candidate("c3", "bandit", "settings-file", "app/search.py", 14, { message: "This change edits a scanner settings file; findings of bandit, its SQL injection check among them, may be hidden by it" }),
+        candidate("c4", "hadolint", "constructor", "Dockerfile", 3, { message: "apt-get install without -y." }),
+      ],
+    };
+    const findings = [SQLI, finding("app/server.py", 23, "bug", "page offset skips the first page"), finding("Dockerfile", 3, "maintainability", "apt-get install has no -y")];
+    const { score, outcomes } = await reviewed(spec, report(findings), scan);
+    expect(outcomes.map((o) => [o.truthId, o.finder, o.locatedBy])).toEqual([
+      ["sqli", "scanner", ["custom:mine", "settings"]],
+      ["off-by-one", "scanner", ["custom:mine"]],
+      ["apt", "scanner", ["hadolint"]],
+    ]);
+    expect(score.byConfig[CONFIG].finder.byFinder).toEqual({ scanner: 3, reviewer: 0 });
+    // Every place a scanner's find is read from: a kept candidate, a token merged into one, and a merged trail entry.
+    const places = scannerPlaces({
+      candidates: [candidate("c1", "custom:mine", "settings-file", "a.py", 1, { alsoReportedBy: ["custom:mine:constructor", "custom:other:openqodex.suppression-added", "bandit:settings-file", "oxlint:toString", "ruff:__proto__"] })],
+      trail: [entry("custom:mine:hasOwnProperty", "a.py", 1, "merged", { into: "c1" }), entry("semgrep:openqodex.suppression-added", "a.py", 1, "merged", { into: "c1" })],
+    });
+    expect(places.map((p) => p.name)).toEqual(["custom:mine", "custom:mine", "custom:other", "settings", "oxlint", "ruff", "custom:mine", "suppression"]);
   });
 
   it("leaves the finder unjudged, out of every ratio, when the review saved no scan", async () => {
