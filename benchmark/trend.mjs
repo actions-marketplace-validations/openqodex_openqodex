@@ -9,7 +9,8 @@
 // The trend reads every entry under benchmark/index/runs (or <folder>/runs)
 // and the accepted pointer benchmark/index/accepted.json, groups the runs by
 // suite, split, split hash, mode, path, reviewer, model, configuration and
-// rules version (lib/index.mjs groupKeys), and prints each group's runs by
+// rules version, and the subset when the run named one (lib/index.mjs
+// groupKeys), and prints each group's runs by
 // start time with their issue-level numbers and intervals. Legacy runs are
 // listed with their own scorer's numbers and no interval. In every group
 // with an accepted run, the newest run is compared with it on the cases
@@ -405,9 +406,10 @@ function verdict(m) {
 }
 
 function groupLabel(e, g) {
-  if (e.mode === "scan") return `${e.suite}, ${e.split} split${e.splitHash ? ` ${e.splitHash.slice(0, 8)}` : ""}, scanner-only (no reviewer), ${e.path} path, scan rules version ${e.rulesVersion}`;
+  const split = `${e.split} split${e.splitHash ? ` ${e.splitHash.slice(0, 8)}` : ""}${e.subset ? `, subset ${e.subset}` : ""}`;
+  if (e.mode === "scan") return `${e.suite}, ${split}, scanner-only (no reviewer), ${e.path} path, scan rules version ${e.rulesVersion}`;
   const rules = e.rulesVersion === null || e.rulesVersion === undefined ? "legacy rules (each run scored by its own scorer)" : `rules version ${e.rulesVersion}`;
-  return `${e.suite}, ${e.split} split${e.splitHash ? ` ${e.splitHash.slice(0, 8)}` : ""}, ${e.mode}, ${e.path} path, ${g.reviewer} (${g.model}), ${g.config}, ${rules}`;
+  return `${e.suite}, ${split}, ${e.mode}, ${e.path} path, ${g.reviewer} (${g.model}), ${g.config}, ${rules}`;
 }
 
 function row(e, config, current) {

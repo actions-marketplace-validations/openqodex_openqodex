@@ -433,14 +433,20 @@ export function resumeProblems(earlier, now) {
     same(`${n} settings`, e?.settings, w?.settings);
     same(`${n} alias`, e?.alias, w?.alias);
     same(`${n} script`, e?.script?.sha256, w?.script?.sha256);
-    // The endpoint, as the sha256 of its base URL; the line names neither.
-    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL than when the run started`);
+    // The endpoint, as an HMAC-SHA256 of its base URL keyed with its key; the line names neither.
+    if ((e?.endpoint ?? null) !== (w?.endpoint ?? null)) out.push(`${n}: the model endpoint differs from the run's: the settings file names another base URL or another key than when the run started`);
   }
   same("reviewer web access", earlier.review?.web, now.review?.web);
   same("review timeout in seconds", earlier.review?.timeoutSeconds, now.review?.timeoutSeconds);
   // The tools folder a model review reads its scanners from.
   same("install root", earlier.review?.installRoot, now.review?.installRoot);
   same("concurrency", earlier.concurrency, now.concurrency);
+  // The cases' suite and where in it they come from; a run made before the
+  // manifest named them is a planted run on the dev split.
+  same("suite", earlier.suite ?? "planted", now.suite ?? "planted");
+  same("split", earlier.split ?? "dev", now.split ?? "dev");
+  same("split file hash", earlier.splitHash ?? null, now.splitHash ?? null);
+  same("subset", earlier.subset ?? null, now.subset ?? null);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);
   if (earlier.repeat !== undefined || now.repeat !== undefined) same("repeats", earlier.repeat, now.repeat);

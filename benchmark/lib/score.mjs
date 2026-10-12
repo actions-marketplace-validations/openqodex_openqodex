@@ -133,7 +133,7 @@ export function classify(finding, spec, { testOnly = true } = {}) {
     const ds = locations(bug).filter((l) => l.file === file).map((l) => gap(start, end, l.lines));
     return ds.length === 0 ? null : Math.min(...ds);
   };
-  const kindOk = (bug) => bug.kind.includes(finding.category);
+  const kindOk = (bug) => kindsOf(bug).includes(finding.category);
   const said = (bug) => names(bug.mentions, text);
   const hits = bugs
     .map((bug, order) => ({ bug, order, d: dist(bug) }))
@@ -149,10 +149,14 @@ export function classify(finding, spec, { testOnly = true } = {}) {
     .filter(({ bug, d }) => d !== null && d > 0 && d <= NEAR_LINES && kindOk(bug) && said(bug))
     .sort((a, b) => a.d - b.d)[0];
   const wrong = bugs.find((bug) => dist(bug) === 0 && said(bug) && !kindOk(bug));
-  if (wrong) return { outcome: "wrong-kind", bug: wrong.id, expected: wrong.kind };
+  if (wrong) return { outcome: "wrong-kind", bug: wrong.id, expected: kindsOf(wrong) };
   if (near) return { outcome: "near", bug: near.bug.id, distance: near.d };
   return { outcome: "false" };
 }
+
+// The kinds a truth item lists: a planted bug's kind, or the categories a
+// pull request comment names (lib/suites.mjs), which has no kind.
+const kindsOf = (bug) => bug.kind ?? bug.categories ?? [];
 
 // Outcomes left out of precision.
 const UNCOUNTED = new Set(["accepted", "test-gap", "duplicate"]);
@@ -234,11 +238,14 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
     const mine = findings.filter((f) => f.bug === bug.id);
     const hits = mine.filter((f) => f.outcome === "hit" || f.outcome === "duplicate");
     const found = hits.length > 0;
+    // A truth item with no severity on the scale (a pull request comment
+    // has none) counts in recall and in no severity's tally.
+    const tally = Object.hasOwn(bySeverity, bug.severity) ? bySeverity[bug.severity] : null;
     recall.of++;
-    bySeverity[bug.severity].of++;
+    if (tally) tally.of++;
     if (found) {
       recall.hit++;
-      bySeverity[bug.severity].hit++;
+      if (tally) tally.hit++;
     }
     const dropped = (report?.dropped ?? []).filter((d) => {
       const c = d.candidate ?? {};
@@ -532,7 +539,13 @@ export function regressions(oldSamples, newSamples) {
 //     case's truth without a new case version: rulings act only on a
 //     finding nothing frozen decides (unresolved, near or wrong kind); a
 //     disputed truth item is labelled and keeps its recall.
-export const RULES_VERSION = 5;
+// Rules version 6 reads the truth of pull request cases, whose items have
+// no kind and no severity. Failure list, written before the code:
+// 35. A saved sample of a pull request case cannot be scored: a truth item
+//     with no kind is matched on the categories it names, and one with no
+//     severity on the scale is left out of the per-severity tally of format
+//     2 (issue 141). A planted case scores exactly as under version 5.
+export const RULES_VERSION = 6;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -1232,6 +1245,8 @@ const RULES_BLOCK = {
   identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
   rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged. A ruled hit is judged for severity and finder like any hit.",
+  // Version 6.
+  truthWithoutKind: "A truth item with no kind, a pull request comment, is matched on the categories it names; one with no severity on the scale counts in recall and in no severity's tally.",
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });
