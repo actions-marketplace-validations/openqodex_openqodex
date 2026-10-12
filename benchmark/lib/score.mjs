@@ -276,7 +276,12 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
   // A clean change passes only a review that completed with no finding.
   const controls = spec.clean ? { hit: status === "complete" && counted === 0 ? 1 : 0, of: 1 } : ratio();
   const brief_ = scoreBrief(spec, brief);
-  const usage = report?.completion?.reviewer?.usage ?? null;
+  // What the review used. A laptop reviewer's completion record holds it. A
+  // model review's record holds none: its sample record (lib/server-review.mjs)
+  // holds the library's totals over every model call, and the models the
+  // provider named as answering them.
+  const server = row.path === "server";
+  const usage = report?.completion?.reviewer?.usage ?? (server ? row.usage : null) ?? null;
   return {
     case: spec.id,
     config: row.config ?? null,
@@ -309,6 +314,8 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
     inputTokens: usage?.input_tokens ?? null,
     outputTokens: usage?.output_tokens ?? null,
     costUsd: usage?.cost_usd ?? null,
+    // Null for a laptop review, whose record names no served model.
+    servedModels: server ? (Array.isArray(row.servedModels) ? row.servedModels : []) : null,
     rounds: report?.completion?.reviewer?.rounds ?? null,
   };
 }
@@ -545,15 +552,27 @@ export function regressions(oldSamples, newSamples) {
 //     with no kind is matched on the categories it names, and one with no
 //     severity on the scale is left out of the per-severity tally of format
 //     2 (issue 141). A planted case scores exactly as under version 5.
+// Rules version 7 fixes how saved files are read. Failure list, written
+// before the code:
+// 40. A custom scanner's rule named like one of OpenQodex's own
+//     (settings-file) counts as OpenQodex's own check, and a rule id that
+//     names a property every object inherits (constructor) gives a function
+//     as its finder (issue 143): only a built-in scanner's candidate is
+//     OpenQodex's own, and own rules are a map with no prototype.
+// 41. A model review scores with no cost and no tokens, since its completion
+//     record holds none (issue 142): a server sample's cost and tokens are
+//     its sample record's usage, the library's totals over every call, and
+//     each configuration of model reviews names the models that served them.
+//     A laptop review's are read as before.
 // Rules version 8 keys every ruling on a truth item to the spec version it
 // judged. Failure list, written before the code:
-// 36. A ruling on a truth item labels it in every later version of its
+// 42. A ruling on a truth item labels it in every later version of its
 //     case (issue 163): a bug or match ruling names the sha256 of the spec
 //     it judged (lib/rulings.mjs specHashOf), and applies only to a job
 //     scored against a spec with that hash; a line that names none applies
 //     to no version. With no ruling, or only rulings on other versions, a
-//     score is the same as under version 6.
-// 37. A planted bug found at a place its spec does not list can never be
+//     score is the same as under version 7.
+// 43. A planted bug found at a place its spec does not list can never be
 //     ruled found (issue 139): queue.mjs decide records a same-issue ruling
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
@@ -707,8 +726,9 @@ export function severityAgreement(given, expected) {
 // diff, and its reading helped by the code graph's caller list. The data
 // cannot tell the two apart, so both are met by a find no scanner located.
 export const REVIEWER_FINDERS = ["reasoning", "graph"];
-// OpenQodex's own candidates, by rule id, and the finder each counts as.
-export const OWN_RULES = { "openqodex.suppression-added": "suppression", "settings-file": "settings" };
+// OpenQodex's own candidates, by rule id, and the finder each counts as. A
+// map with no prototype, so no rule id reads an inherited property.
+export const OWN_RULES = Object.freeze({ __proto__: null, "openqodex.suppression-added": "suppression", "settings-file": "settings" });
 
 // The scanner and rule of a token "<source>:<ruleId>"; a custom scanner's
 // source is "custom:<name>".
@@ -718,7 +738,9 @@ function tokenParts(token) {
   return cut === -1 ? { source: t, ruleId: "" } : { source: t.slice(0, cut), ruleId: t.slice(cut + 1) };
 }
 
-const finderName = (source, ruleId) => OWN_RULES[ruleId] ?? source;
+// Only a built-in scanner's candidate can be OpenQodex's own (core
+// finalize.ts isOwnCandidate): a custom scanner may name a rule anything.
+const finderName = (source, ruleId) => (!String(source).startsWith("custom:") && Object.hasOwn(OWN_RULES, ruleId) ? OWN_RULES[ruleId] : source);
 
 // Where each scanner put a finding that reached the reviewer or was merged
 // into one, with its words: every kept candidate (its id, rule id and
@@ -957,6 +979,7 @@ export function scoreJob({ job, spec, report = null, brief = null, scan = null, 
     turns: base.turns,
     inputTokens: base.inputTokens,
     outputTokens: base.outputTokens,
+    servedModels: base.servedModels,
   };
 }
 
@@ -982,6 +1005,8 @@ export function summarizeJobs(jobs, retries = []) {
   const planted = jobs.filter((j) => j.origin === "planted");
   const clean = jobs.filter((j) => j.clean);
   const retryCosts = nums(retries.map((s) => s.costUsd));
+  // The jobs whose sample record names the models that served them: a model review's.
+  const served = jobs.filter((j) => Array.isArray(j.servedModels));
   const hits = jobs.flatMap((j) => j.findings.filter((f) => f.outcome === "hit"));
   const outcomes = {};
   for (const o of OUTCOMES) {
@@ -1018,6 +1043,8 @@ export function summarizeJobs(jobs, retries = []) {
     turns: stats(jobs.map((j) => j.turns)),
     inputTokens: stats(jobs.map((j) => j.inputTokens)),
     outputTokens: stats(jobs.map((j) => j.outputTokens)),
+    // Model reviews only: every model the provider named as serving them. A laptop configuration has no such list.
+    ...(served.length > 0 ? { servedModels: [...new Set(served.flatMap((j) => j.servedModels))].sort() } : {}),
   };
 }
 
@@ -1257,15 +1284,17 @@ const RULES_BLOCK = {
   issues: "Findings that find one truth item are one issue, and so are findings on one accepted side issue and findings a person's consolidate line groups; any other finding is its own issue, by findingId. Overlap, category, rule id and recurrence never group findings. An issue counts correct or wrong when all its findings do, else unresolved.",
   // Version 4.
   severity: { order: SEVERITY_ORDER, rule: "Each hit, the first finding in report order to find its truth item, compares its severity with the truth item's on the order above: exact, one-off, or off at two steps or more; over when it is more severe, under when less. A duplicate is not judged; a side without a severity on the scale is unknown." },
-  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0 (a merged entry only when the candidate it went into is a kept one on those lines or one a shown finding raised), and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. OpenQodex's own rules count as the finder named in own. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
+  finder: { reviewer: REVIEWER_FINDERS, own: OWN_RULES, rule: "Each hit's truth item is located by a scanner when a kept candidate of that scanner, a token in a candidate's alsoReportedBy, or a merged trail entry of it in the attempt's scan.json lies on one of the item's locations with a gap of 0 (a merged entry only when the candidate it went into is a kept one on those lines or one a shown finding raised), and either found_by names that scanner or its rule id and message (the rule id alone for a merged token or entry) name one of the item's mentions by the word rule. A built-in scanner's rule whose id is a key of own counts as the finder named there; a custom scanner's rule counts as that custom scanner, whatever its id. The finder is scanner when any scanner located it, reviewer when none did, and unjudged when the attempt saved no scan. found_by is the expectation: a scanner it names is met when that scanner located the item; a reviewer finder is met when no scanner did." },
   // Version 5.
   identity: "A finding's id is the sha256 of its case id, path, lines and whitespace-normalised title, problem, consequence and fix; a finding with none of problem, consequence and fix adds its description and suggested change. Rulings key on it.",
   locationMatch: "An unresolved finding is a location match to the nearest truth item by AACR's line rule (same file and side, lines overlapping or at most AACR_LINE_K apart), then the first in truth order. A location match never finds the item; outcomes.jsonl names it with evidenceKind location-only.",
   rulings: "A ruling counts only from a line of the adjudication file whose by is a name in people.json beside it and names no model, agent or tool (lib/rulings.mjs); spec-candidate-accepted and spec-candidate-rejected are true and false; the latest line per target wins, and a finding in a consolidated issue takes the later of its own and its issue's ruling. Rulings act only on findings nothing frozen decides: same-issue makes a hit on that truth item (a duplicate when the review already found it) unless a later false ruling stands; true makes ruled-true; false makes ruled-false and closes its match; different-issue closes the match. A bug ruling labels the item in perBug and leaves recall unchanged. A ruled hit is judged for severity and finder like any hit.",
-  // Version 8.
-  specVersion: "A bug ruling and a match ruling (same-issue, different-issue) name the spec version they judged as specHash, the sha256 of the spec's JSON with every object's keys sorted, and apply only to a job whose case is scored against a spec with that hash, the run's own copy or the one --specs names; a line that names none applies to no version and is listed as ignored. A same-issue ruling may name a truth item the finding does not sit on by the location rule: queue.mjs decide records it only when the finding is on a line the change added in a file of that item, and it scores as any same-issue ruling.",
   // Version 6.
   truthWithoutKind: "A truth item with no kind, a pull request comment, is matched on the categories it names; one with no severity on the scale counts in recall and in no severity's tally.",
+  // Version 7.
+  usage: "A review's cost and tokens are its laptop completion record's usage; a model review's, whose completion record holds none, are its sample record's usage, the library's totals over every model call. No rule reads them.",
+  // Version 8.
+  specVersion: "A bug ruling and a match ruling (same-issue, different-issue) name the spec version they judged as specHash, the sha256 of the spec's JSON with every object's keys sorted, and apply only to a job whose case is scored against a spec with that hash, the run's own copy or the one --specs names; a line that names none applies to no version and is listed as ignored. A same-issue ruling may name a truth item the finding does not sit on by the location rule: queue.mjs decide records it only when the finding is on a line the change added in a file of that item, and it scores as any same-issue ruling.",
   code: ruleCodeHash(),
 };
 export const RULES = Object.freeze({ ...RULES_BLOCK, hash: rulesHash(RULES_BLOCK) });

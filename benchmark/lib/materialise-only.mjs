@@ -15,8 +15,10 @@
 //   trees     whether the built trees are upstream's
 //   ancestor  whether the merge base is an ancestor of the head: in the
 //             clone cache's history for a pull request case
-//             (lib/materialise.mjs mergeBaseAncestry), in the built
-//             repository for a planted case in the server shape
+//             (lib/materialise.mjs mergeBaseAncestry, which deepens that
+//             repository's commits cache when it is too shallow to answer,
+//             and records the deepening), in the built repository for a
+//             planted case in the server shape
 //   ok        proved; else `error` says why
 //
 // Failure list, written before the code:
@@ -66,7 +68,7 @@ function prove(c, into, { shape, cache, casesDir, allowFileUrl }) {
   const u = record.upstream;
   const built = { base: r.base, head: r.head, baseTree: tree(r.base), headTree, fsck: record.fsck };
   const trees = { base: built.baseTree === u.mergeBaseTree, head: built.headTree === u.headTree };
-  const ancestor = mergeBaseAncestry(c, u.mergeBaseSha, { cache });
+  const ancestor = mergeBaseAncestry(c, u.mergeBaseSha, { cache, allowFileUrl });
   const problems = [...(trees.base ? [] : [`the base tree ${built.baseTree} is not the merge base's ${u.mergeBaseTree}`]), ...(trees.head ? [] : [`the head tree ${built.headTree} is not upstream's ${u.headTree}`]), ...(ancestor.isAncestor === true ? [] : [ancestor.why])];
   return {
     ...about(c),
