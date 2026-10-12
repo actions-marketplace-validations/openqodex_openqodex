@@ -56,7 +56,6 @@ import { fileURLToPath } from "node:url";
 import { benchRoot, buildCase, caseHash, casesRoot, diffOf, parseCaseId, readCase, repoRoot } from "./lib/cases.mjs";
 import { DROP_CLASSES, POINTS_AT } from "./lib/drops.mjs";
 import { resultsRoot } from "./lib/index.mjs";
-import { resolveRulings } from "./lib/rulings.mjs";
 import { ACCEPTANCE_RULE, GAP, INPUT_CHANGES, RULE_OFF, SCANNERS_VERSION, analyseRun, judgeAgainst, runRefusals, scannerReport, toolchainRecord } from "./lib/scanners.mjs";
 import { readRulings, scanSide } from "./loop/compare.mjs";
 import { Refusal, decideScanner } from "./loop/decide.mjs";
@@ -308,7 +307,7 @@ function renderAcceptance(a) {
   for (const [label, list] of groups) {
     if (list.length === 0) continue;
     out.push(`${label}, ${list.length}:`);
-    for (const c of list) out.push(`- ${placeText(c)}`);
+    for (const c of list) out.push(`- ${placeText(c)}${(c.refused ?? []).map((x) => `; the ruling on line ${x.line} of the adjudication file does not count: ${x.why}`).join("")}`);
   }
   if (a.k3) {
     const r = a.k3.redundancy;
@@ -375,7 +374,7 @@ function main() {
     try {
       const record = o.change === null ? null : recordOf(o.ledger, o.change);
       const d = readRulings(o.decisions);
-      acceptance = decideScanner({ base: scanSide({ loaded: base.loaded, runId: base.analysed.name }), cand: scanSide({ loaded: run.loaded, runId: run.analysed.name }), k1: judgement.k1, rulings: resolveRulings(d.lines, d.people), record });
+      acceptance = decideScanner({ base: scanSide({ loaded: base.loaded, runId: base.analysed.name }), cand: scanSide({ loaded: run.loaded, runId: run.analysed.name }), k1: judgement.k1, rulings: { lines: d.lines, people: d.people }, record });
     } catch (e) {
       process.stderr.write(`scanners: refused: ${e instanceof Refusal ? e.message : e.stack}\n`);
       return 2;

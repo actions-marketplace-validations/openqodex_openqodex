@@ -94,9 +94,9 @@ import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveRulings } from "../lib/rulings.mjs";
+import { candidateRuling } from "../lib/rulings.mjs";
 import { decisionsPath } from "../score.mjs";
-import { GATE_METRICS, candidateChanges, candidateRuling, comparePairs, loadSides, lossIn, metricOf, pairsOf, readRulings, scanCaseTotals, scanMsP50 } from "./compare.mjs";
+import { GATE_METRICS, candidateChanges, comparePairs, loadSides, lossIn, metricOf, pairsOf, readRulings, scanCaseTotals, scanMsP50 } from "./compare.mjs";
 import { ToolError } from "./leak-check.mjs";
 import { LEDGER, lockLedger, readLedger } from "./propose.mjs";
 import { RULE_FILES, ruleHash } from "./rule-hash.mjs";
@@ -456,6 +456,11 @@ export function decisionLine(result, { pairs, at = new Date().toISOString(), pr 
 // 7. A candidate the change only altered (its severity, say) reads as
 //    removed, so a true ruling on it reverts the change: a candidate whose
 //    identity its sample still holds is altered, not removed.
+// 8. A false ruling made on one version of a case's spec authorises a
+//    removal under a revised spec, where the candidate may sit on a listed
+//    issue: a ruling counts only on the spec version the parent run is
+//    scored against (lib/rulings.mjs candidateRuling), and one on another
+//    version is named with the reason while the change stays pending.
 
 // question 20: time +20 percent.
 export const SCANNER_TIME_LOSS = 0.2;
@@ -465,7 +470,7 @@ const ratio = (r) => (r.of === 0 ? 1 : r.hit / r.of);
 // K3 of the dominance branch for two scanner sides (compare.mjs scanSide).
 // Returns { pass, redundancy: { pass, rose, share }, cases: { <guard>:
 // { pass, worse } }, time: { measured, parent, candidate, change, loss, pass } }.
-export function scannerGuards({ base, cand, rulings = resolveRulings([]), losses = {} }) {
+export function scannerGuards({ base, cand, rulings = { lines: [], people: [] }, losses = {} }) {
   const A = scanCaseTotals(base, rulings);
   const B = scanCaseTotals(cand, rulings);
   const zero = { recall: { hit: 0, of: 0 }, criticalMajor: { hit: 0, of: 0 }, correct: 0, unresolved: 0, counted: 0, clean: 0, redundant: 0, candidates: 0 };
@@ -505,11 +510,12 @@ const placeOf = (c) => `${c.caseId} ${c.file}:${c.lines[0] === c.lines[1] ? c.li
 const named = (list) => list.map((c) => `${c.ref} (${placeOf(c)})`).join("; ");
 
 // The scanner variant's decision for two sides (compare.mjs scanSide): `k1`
-// is judgeAgainst's K1 ({ pass, lost, checked }), `rulings` the rulings in
-// force (lib/rulings.mjs resolveRulings), `record` the change's scanner
-// ledger line or null. Returns { change, decision, reason, k1, k2, k3, k4 };
+// is judgeAgainst's K1 ({ pass, lost, checked }), `rulings` the adjudication
+// file's lines and people (compare.mjs readRulings), read per candidate on
+// its case's spec version (lib/rulings.mjs candidateRuling), `record` the
+// change's scanner ledger line or null. Returns { change, decision, reason, k1, k2, k3, k4 };
 // throws a Refusal when the sides cannot be compared.
-export function decideScanner({ base, cand, k1, rulings = resolveRulings([]), record = null }) {
+export function decideScanner({ base, cand, k1, rulings = { lines: [], people: [] }, record = null }) {
   const changes = candidateChanges(base, cand);
   if (changes.problems.length > 0) throw new Refusal(`the scanner runs cannot be compared:\n${changes.problems.map((p) => `- ${p}`).join("\n")}`);
   // Failure 5.
@@ -524,15 +530,15 @@ export function decideScanner({ base, cand, k1, rulings = resolveRulings([]), re
   const stillThere = new Set(changes.added.map((c) => `${c.sample}\0${c.candidateId}`));
   const byId = new Map();
   for (const c of changes.removed.filter((r) => !stillThere.has(`${r.sample}\0${r.candidateId}`))) {
-    const x = byId.get(c.candidateId) ?? { ref: c.candidateId.slice(0, 12), candidateId: c.candidateId, caseId: c.caseId, file: c.file, lines: c.lines, token: c.token, message: c.message, outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.truthId, samples: 0 };
+    const x = byId.get(c.candidateId) ?? { ref: c.candidateId.slice(0, 12), candidateId: c.candidateId, caseId: c.caseId, specHash: c.specHash, file: c.file, lines: c.lines, token: c.token, message: c.message, outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.truthId, samples: 0 };
     x.samples++;
     byId.set(c.candidateId, x);
   }
   const removed = [...byId.values()].map((x) => {
     if (x.evidenceKind === "frozen") return { ...x, standing: x.outcome === "false" ? "frozen-false" : "frozen-true" };
-    const r = candidateRuling(x.candidateId, rulings);
-    if (r === null) return { ...x, standing: "pending" };
-    return { ...x, standing: r.status === "false" ? "ruled-false" : "ruled-true", ruling: r.status, ...(r.truthId ? { ruledTruthId: r.truthId } : {}) };
+    const r = candidateRuling(x.candidateId, x.specHash, rulings);
+    if (r.status === null) return { ...x, standing: "pending", refused: r.refused };
+    return { ...x, standing: r.status === "false" ? "ruled-false" : "ruled-true", ruling: r.status, ...(r.truthId ? { ruledTruthId: r.truthId } : {}), refused: r.refused };
   });
   const by = (s) => removed.filter((x) => x.standing === s);
   const [frozenFalse, ruledFalse, ruledTrue, pending, frozenTrue] = ["frozen-false", "ruled-false", "ruled-true", "pending", "frozen-true"].map(by);
@@ -549,7 +555,7 @@ export function decideScanner({ base, cand, k1, rulings = resolveRulings([]), re
     return out("undecided", `undecided: the dominance clause does not apply, since ${why}. The paired K2 for scanner runs is not built, so this rule cannot keep the change yet.`);
   }
   if (pending.length > 0) {
-    return out("pending-rulings", `pending rulings: ${pending.length} of the ${removedSay} ${pending.length === 1 ? "has" : "have"} no ruling from a person, and a reviewer's drop or absence from the truth does not make a candidate false. Queue the parent's candidates (node benchmark/queue.mjs add --candidates ${base.runId}), and rule each on the blind sheet: ${named(pending)}`);
+    return out("pending-rulings", `pending rulings: ${pending.length} of the ${removedSay} ${pending.length === 1 ? "has" : "have"} no ruling from a person, and a reviewer's drop or absence from the truth does not make a candidate false. Queue the parent's candidates (node benchmark/queue.mjs add --candidates ${base.runId}), and rule each on the blind sheet: ${pending.map((c) => `${c.ref} (${placeOf(c)}${c.refused.length > 0 ? `; ${c.refused.map((x) => `the ruling on line ${x.line} of the adjudication file does not count: ${x.why}`).join("; ")}` : ""})`).join("; ")}`);
   }
   k2.pass = true;
   const k3 = scannerGuards({ base, cand, rulings, losses: record?.acceptableLoss ?? {} });

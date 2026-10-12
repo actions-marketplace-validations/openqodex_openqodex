@@ -85,12 +85,19 @@
 // 15. A ruling moves a candidate that frozen evidence decides (a hit, or a
 //    candidate on a clean control): rulings act only on the candidates the
 //    scan scorer left unresolved.
+// 16. A candidate ruled false under one version of its case's spec counts
+//    as false under a revised one, where it may sit on an issue the spec
+//    now lists: a candidate ruling counts only when it names the spec
+//    version (target.specHash, lib/rulings.mjs specHashOf) the run is
+//    scored against, and one naming another version is refused with the
+//    reason. Two runs scored against different versions of a case's spec
+//    are refused.
 import { existsSync, realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resultsRoot } from "../lib/index.mjs";
 import { clusterFn, pairedBounds, seedOf } from "../lib/interval.mjs";
-import { readDecisions, realRuling, resolveRulings } from "../lib/rulings.mjs";
+import { candidateRuling, readDecisions, specHashOf } from "../lib/rulings.mjs";
 import { SCAN_PRECISION, SCAN_RULES, scoreScanAttempts } from "../lib/scan-score.mjs";
 import { PRECISION, canonical, originOf, rulesDifferences } from "../lib/score.mjs";
 import { decisionsPath, loadRun, scoreRun } from "../score.mjs";
@@ -437,24 +444,28 @@ const contentOf = (c) => {
 // candidate's content, its identity (candidateIdOf: the case, the scanner
 // and rule, the file, the lines and the message, which the review queue and
 // the rulings key on) and what the scorer made of it. `loaded` is a run as
-// score.mjs loadRun reads it, a scanner-only run or a review run.
+// score.mjs loadRun reads it, a scanner-only run or a review run. Each
+// sample carries the version of its case's spec (specHashOf) it was scored
+// against.
 export function scanSide({ loaded, runId = null }) {
   const m = loaded.manifest;
   const s = scoreScanAttempts({ manifest: m, attempts: loaded.attempts, specs: loaded.specs });
   const first = new Map(loaded.attempts.filter((a) => a.attempt === 1).map((a) => [`${a.case}\0${a.config}\0${a.repeat}`, a]));
   const samples = s.jobs.map((j) => {
     const raw = first.get(`${j.case}\0${j.config}\0${j.repeat}`)?.scan?.candidates ?? [];
+    const specHash = specHashOf(loaded.specs[j.case]);
     return {
       key: `${j.caseId}\0${j.config}\0${j.repeat}`,
       caseId: j.caseId,
       case: j.case,
       config: j.config,
       repeat: j.repeat,
+      specHash,
       clean: j.clean,
       status: j.status,
       scanMs: j.scanMs,
       job: j,
-      candidates: j.candidates.map((c) => ({ content: contentOf(raw[c.index]), candidateId: c.candidateId, caseId: j.caseId, token: c.token, file: c.file, lines: [c.line, c.end], message: raw[c.index]?.message ?? "", outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.bug ?? null })),
+      candidates: j.candidates.map((c) => ({ content: contentOf(raw[c.index]), candidateId: c.candidateId, caseId: j.caseId, specHash, token: c.token, file: c.file, lines: [c.line, c.end], message: raw[c.index]?.message ?? "", outcome: c.outcome, evidenceKind: c.evidenceKind, truthId: c.bug ?? null })),
     };
   });
   return { runId: runId ?? m.runId ?? basename(loaded.folder), suite: s.suite, split: m.split ?? "dev", splitHash: m.splitHash ?? null, mode: m.mode ?? "review", rules: { version: SCAN_RULES.version, hash: SCAN_RULES.hash }, samples };
@@ -481,6 +492,9 @@ export function candidateChanges(base, cand) {
   const only = (x, y) => [...x.values()].filter((s) => !y.has(s.key)).map((s) => `${s.case} ${s.config} ${s.repeat}`);
   if (only(a, b).length > 0 || only(b, a).length > 0) problems.push(`the samples differ: ${only(a, b).length} only in ${base.runId} (${only(a, b).slice(0, 3).join(", ")}), ${only(b, a).length} only in ${cand.runId} (${only(b, a).slice(0, 3).join(", ")})`);
   for (const [side, map] of [[base, a], [cand, b]]) for (const s of map.values()) if (s.status !== "complete") problems.push(`${side.runId} ${s.case} ${s.config} ${s.repeat} saved no scan (${s.status}), so what it would have raised is unknown`);
+  // Failure 16: one truth for both sides.
+  const differ = [...new Set([...a.values()].filter((s) => b.has(s.key) && b.get(s.key).specHash !== s.specHash).map((s) => s.case))];
+  for (const name of differ) problems.push(`the runs score ${name} against different versions of its spec; score both against one (--specs)`);
   if (problems.length > 0) return { problems, removed: [], added: [] };
   const removed = [];
   const added = [];
@@ -502,27 +516,14 @@ export function candidateChanges(base, cand) {
   return { problems: [], removed, added };
 }
 
-// A person's standing ruling on a scanner candidate, by its identity, from
-// the rulings in force (lib/rulings.mjs resolveRulings): "true" or "false"
-// on whether it is a real issue, or "same-issue" (with the truth item) when
-// a person ruled it the truth item it sits on, the later of the two when
-// both stand. Null when there is neither: a different-issue ruling alone
-// says only what the candidate is not.
-export function candidateRuling(candidateId, R) {
-  const real = realRuling(candidateId, R);
-  let same = null;
-  for (const [truthId, at] of R.matches.get(candidateId) ?? []) if (at.status === "same-issue" && (same === null || at.n > same.n)) same = { truthId, n: at.n };
-  if (same !== null && (real === null || same.n > real.n)) return { status: "same-issue", truthId: same.truthId };
-  return real === null ? null : { status: real.status };
-}
-
 // What one side holds per case, summed over its samples: issue recall (all,
 // and critical plus major), the candidates precision counts (a duplicate
 // set apart, as the scan scorer sets it) as correct, unresolved or wrong
-// under the rulings in force (failure 15), candidates on a clean control,
-// redundant candidates (those the scorer counts as redundancy), and all
-// candidates. A Map by case id.
-export function scanCaseTotals(side, R = resolveRulings([])) {
+// under the rulings on the spec version each sample was scored against
+// (failures 15 and 16; `rulings` as readRulings gives them), candidates on
+// a clean control, redundant candidates (those the scorer counts as
+// redundancy), and all candidates. A Map by case id.
+export function scanCaseTotals(side, rulings = { lines: [], people: [] }) {
   const plus = (x, y) => ({ hit: x.hit + y.hit, of: x.of + y.of });
   const out = new Map();
   for (const s of side.samples) {
@@ -534,9 +535,9 @@ export function scanCaseTotals(side, R = resolveRulings([])) {
       t.counted++;
       if (SCAN_PRECISION.correct.includes(c.outcome)) t.correct++;
       else if (SCAN_PRECISION.unresolved.includes(c.outcome)) {
-        const r = candidateRuling(c.candidateId, R);
-        if (r?.status === "true" || r?.status === "same-issue") t.correct++;
-        else if (r?.status !== "false") t.unresolved++;
+        const r = candidateRuling(c.candidateId, c.specHash, rulings);
+        if (r.status === "true" || r.status === "same-issue") t.correct++;
+        else if (r.status !== "false") t.unresolved++;
       }
     }
     if (s.clean) t.clean += s.candidates.length;

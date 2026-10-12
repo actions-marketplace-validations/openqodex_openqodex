@@ -62,12 +62,18 @@
 // 9. A sheet item for a scanner candidate redacts its own words: the
 //    configuration of a scanner-only run ("scan") names no arm, so it is
 //    not fed to the redactor.
+// 10. A case name from a run's manifest leads a build and a git command
+//    outside the temp folder ("../../somewhere"): add --candidates refuses
+//    a planted run that names anything but a planted case name before any
+//    path is built, and the build path must stay inside the temp folder.
+//    No candidate's file path reaches git or a file read: the code at its
+//    lines is looked up in the parsed diff by key.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { benchRoot, buildCase, caseHash, casesRoot, gitEnv, parseCaseId } from "./lib/cases.mjs";
+import { CASE_NAME, benchRoot, buildCase, caseHash, casesRoot, gitEnv, parseCaseId } from "./lib/cases.mjs";
 import { drawAudit, redactor } from "./lib/drops.mjs";
 import { CONTEXT_LINES, candidateItems, mergeQueue, openAsks, parseDiff } from "./lib/queue.mjs";
 import { REAL, STATUSES, isPersonName, issueOf, readDecisions, resolveRulings, rulingProblems } from "./lib/rulings.mjs";
@@ -107,8 +113,19 @@ export function add(path, { queue = queueRoot, candidates = false, specs = null 
 
 // The change of a case built from the live tree, with CONTEXT_LINES of
 // context, as parseDiff rows by file; untracked files count as added.
-function caseDiff(name, into) {
-  const { dir } = buildCase(name, join(into, name, "repo"));
+// Where a case is built inside the temp folder `into`: a folder of its
+// name. Refused when the name is not a planted case name or the path, with
+// `into` resolved through any link, would leave it (failure 10).
+function buildPathOf(name, into) {
+  const root = realpathSync(into);
+  const target = resolve(root, name, "repo");
+  if (!CASE_NAME.test(name) || !target.startsWith(`${root}${sep}`)) throw new Error(`refused: the case ${JSON.stringify(name)} would be built at ${target}, outside ${root}`);
+  return target;
+}
+
+// The case `name` built at `target` (buildPathOf), its change as parseDiff rows.
+function caseDiff(name, target) {
+  const { dir } = buildCase(name, target);
   const index = mkdtempSync(join(tmpdir(), "oq-bench-queue-index-"));
   try {
     const env = { ...gitEnv(), GIT_INDEX_FILE: join(index, "index") };
@@ -126,6 +143,14 @@ function caseDiff(name, into) {
 function addCandidates(path, { queue, specs }) {
   const folder = resolve(path);
   if (!existsSync(join(folder, "manifest.json"))) throw new Error(`refused: ${folder} holds no manifest.json; add --candidates takes a run folder`);
+  // A planted case's name becomes a path below: every name the manifest
+  // holds is checked before any path is built from one (failure 10).
+  const manifest = JSON.parse(readFileSync(join(folder, "manifest.json"), "utf8"));
+  if ((manifest.suite ?? "planted") === "planted") {
+    const named = [...(Array.isArray(manifest.cases) ? manifest.cases : []), ...[...(Array.isArray(manifest.caseIds) ? manifest.caseIds : []), ...(Array.isArray(manifest.jobs) ? manifest.jobs.map((j) => j?.caseId) : [])].map((id) => parseCaseId(id)?.name ?? id)];
+    const bad = named.find((n) => typeof n !== "string" || !CASE_NAME.test(n));
+    if (bad !== undefined) throw new Error(`refused: ${folder} names the case ${JSON.stringify(bad)}, which is not a planted case name (lower case letters, digits and dashes), so nothing is read or built from the run`);
+  }
   const run = loadRun(folder, { specsDir: specs === null ? null : existsSync(specs) ? resolve(specs) : join(folder, specs) });
   const m = run.manifest;
   if ((m.split ?? "dev") === "test") throw new Error(`refused: ${folder} is a held-out (test split) run, whose per-case detail stays in the run's asset`);
@@ -137,12 +162,13 @@ function addCandidates(path, { queue, specs }) {
   try {
     const names = [...new Set(scored.jobs.filter((j) => j.candidates.some((c) => c.evidenceKind !== "frozen")).map((j) => j.case))];
     for (const name of (m.suite ?? "planted") === "planted" ? names : []) {
+      const target = buildPathOf(name, temp);
       try {
         if (!existsSync(join(casesRoot, name, "case.json"))) continue;
         const live = caseHash(name);
         const recorded = m.caseHashes?.[name] ?? null;
         const hash8 = (m.caseIds ?? []).map(parseCaseId).find((p) => p?.name === name)?.hash8 ?? null;
-        if (recorded === live || (recorded === null && hash8 === live.slice(0, 8))) diffs.set(name, caseDiff(name, temp));
+        if (recorded === live || (recorded === null && hash8 === live.slice(0, 8))) diffs.set(name, caseDiff(name, target));
       } catch {
         // A case that cannot be built shows no code; the sheet says to open it.
       }
@@ -164,7 +190,7 @@ function mergeInto(queue, items, file, what = "findings") {
     if (!/^[a-z][a-z0-9-]*$/.test(String(suite))) throw new Error(`refused: an item names the suite ${JSON.stringify(suite)}`);
     const target = join(queue, `${suite}.jsonl`);
     const before = readJsonl(target);
-    const merged = mergeQueue(before, items.filter((i) => i.suite === suite), R);
+    const merged = mergeQueue(before, items.filter((i) => i.suite === suite), R, d);
     writeJsonl(target, merged);
     const had = new Set(before.map((i) => i.findingId));
     out.push(`${suite}: ${items.filter((i) => i.suite === suite).length} ${what} from ${file}; ${merged.filter((i) => !had.has(i.findingId)).length} new, ${merged.length} awaiting a ruling in ${target}`);
@@ -264,7 +290,7 @@ export function sheet(suite, { seed, queue = queueRoot } = {}) {
   const R = resolveRulings(d.lines, d.people);
   const open = [];
   for (const item of readJsonl(join(queue, `${suite}.jsonl`))) {
-    const asks = openAsks(item, R);
+    const asks = openAsks(item, R, d);
     if (asks.length > 0) open.push({ ...item, issueId: issueOf(item.findingId, R), asks, truth: asks.includes("match") ? item.truth : null });
   }
   return blindSheet(open, { suite, seed });
@@ -276,11 +302,19 @@ export function sheet(suite, { seed, queue = queueRoot } = {}) {
 function knownFindings(queue, lines) {
   const known = new Map();
   const files = existsSync(queue) ? readdirSync(queue).filter((n) => n.endsWith(".jsonl") && n !== DECISIONS) : [];
-  for (const name of files.sort()) for (const i of readJsonl(join(queue, name))) known.set(i.findingId, { caseId: i.caseId, evidence: i.evidence, truth: i.truth, specsFrom: i.specsFrom ?? null });
+  for (const name of files.sort()) for (const i of readJsonl(join(queue, name))) known.set(i.findingId, { caseId: i.caseId, evidence: i.evidence, truth: i.truth, specsFrom: i.specsFrom ?? null, kind: i.kind ?? "finding", specHash: i.specHash ?? null });
+  const fromLines = new Set();
   for (const l of lines) {
     if (!l || typeof l !== "object" || !l.target) continue;
     const ids = [l.target.findingId, ...(Array.isArray(l.target.members) ? l.target.members : [])].filter((x) => typeof x === "string");
-    for (const id of ids) if (!known.has(id)) known.set(id, { caseId: l.caseId, evidence: l.target.findingId === id ? (l.evidence ?? null) : null, truth: null, specsFrom: l.specsFrom ?? null });
+    for (const id of ids) {
+      if (known.has(id)) continue;
+      known.set(id, { caseId: l.caseId, evidence: l.target.findingId === id ? (l.evidence ?? null) : null, truth: null, specsFrom: l.specsFrom ?? null, kind: "finding", specHash: null });
+      fromLines.add(id);
+    }
+    // A candidate known only from its rulings (it left the queue) keeps the
+    // spec version of its latest one, so a person can change their mind.
+    if (l.target.candidate === true && fromLines.has(l.target.findingId)) Object.assign(known.get(l.target.findingId), { kind: "candidate", specHash: l.target.specHash ?? null });
   }
   return known;
 }
@@ -318,6 +352,9 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     target = { kind: "case" };
   } else if (status === "consolidate") {
     const members = targets.map((t) => findingOf(t, known));
+    // A candidate is ruled one by one, on its spec version; an issue ruling would not count for it.
+    const candidate = members.find((m) => m.kind === "candidate");
+    if (candidate) throw new Error(`refused: ${candidate.findingId.slice(0, 12)} is a scanner candidate, which is ruled on its own with true, false, same-issue or different-issue, never consolidated`);
     const ids = [...new Set(members.map((m) => m.findingId))].sort();
     if (ids.length < 2) throw new Error("refused: consolidate names two or more different findings");
     const cases = [...new Set(members.map((m) => m.caseId))];
@@ -340,6 +377,13 @@ export function rulingLine(status, targets, { by, bug = null, note = "", sheet: 
     if (!found.truth) throw new Error(`refused: the queue names no truth item this finding sits on, so there is nothing to rule ${status} against`);
     caseId = found.caseId;
     target = { kind: "match", findingId: found.findingId, truthId: found.truth.id };
+  }
+  // A scanner candidate's ruling says it is one, and names the version of
+  // the spec it was scored against; only that version reads it (lib/
+  // rulings.mjs candidateRuling).
+  if (found?.kind === "candidate") {
+    if (!found.specHash) throw new Error(`refused: the queue item of ${found.findingId.slice(0, 12)} names no spec version; add its run again with queue.mjs add --candidates <run>, then rule`);
+    target = { ...target, candidate: true, specHash: found.specHash };
   }
   const line = { v: 1, caseId, ...(found?.specsFrom ? { specsFrom: found.specsFrom } : {}), fromSheet, target, status, by: by.trim(), at: now.toISOString(), note, evidence: found ? evidenceOf(found) : null };
   const problems = rulingProblems(line, people);

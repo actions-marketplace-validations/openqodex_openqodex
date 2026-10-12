@@ -32,7 +32,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { caseHash } from "../lib/cases.mjs";
+import { caseHash, readCase } from "../lib/cases.mjs";
+import { specHashOf } from "../lib/rulings.mjs";
 import { candidateIdOf } from "../lib/scan-score.mjs";
 import { scanSide } from "../loop/compare.mjs";
 import { scannerGuards } from "../loop/decide.mjs";
@@ -228,12 +229,48 @@ describe("one candidate ruled true reverts the change", () => {
     expect(passed.acceptance.k2.ruledFalse).toHaveLength(2);
     expect(passed.acceptance.decision).toBe("pending-k4");
 
-    // A person changes their mind on one: it is a real issue the change hides.
+    // The ruled candidates leave the queue when it is refreshed; then a
+    // person changes their mind on one: it is a real issue the change hides.
+    expect(node(QUEUE, ["add", "--candidates", base, "--queue", q]).status).toBe(0);
+    expect(readJsonl(join(q, "planted.jsonl"))).toEqual([]);
     expect(rule(q, "true", IMPORTS).status).toBe(0);
     const reverted = against(after, base, "--decisions", decisions);
     expect(reverted.status).toBe(1);
     expect(reverted.acceptance.decision).toBe("revert");
     expect(reverted.acceptance.k2.ruledTrue.map((c) => c.candidateId)).toEqual([candidateIdOf(idOf(DEMO), IMPORTS)]);
+  }, CLI);
+});
+
+describe("a candidate ruled false under spec A leaves the removal pending under spec B", () => {
+  const root = tempDir("oq-bench-dominance-");
+  // Spec B revises the case: it lists an issue on the line the ruff candidate sits on.
+  const reviseSpec = (dir) => {
+    const path = join(dir, "cases", `${DEMO}.json`);
+    const spec = JSON.parse(readFileSync(path, "utf8"));
+    const like = spec.bugs.find((b) => b.id === "pagination-off-by-one");
+    spec.bugs.push({ ...like, id: "relative-db-path", file: "app/search.py", lines: [11, 11], anchor: { line: 11, text: "sqlite3.connect" }, mentions: ["database path"], truth: "The database path is relative to the folder the server starts in." });
+    write(path, JSON.stringify(spec));
+    return dir;
+  };
+  const baseA = writeRun(join(root, "base-a"), { cases: { [DEMO]: [SQL, LONG] } });
+  const afterA = writeRun(join(root, "after-a"), { cases: { [DEMO]: [SQL] } });
+  const baseB = reviseSpec(writeRun(join(root, "base-b"), { cases: { [DEMO]: [SQL, LONG] } }));
+  const afterB = reviseSpec(writeRun(join(root, "after-b"), { cases: { [DEMO]: [SQL] } }));
+
+  it("counts the false ruling under the spec it was made on, and refuses it, with the reason, under the revised one", () => {
+    const q = queueFolder(root);
+    expect(node(QUEUE, ["add", "--candidates", baseA, "--queue", q]).status).toBe(0);
+    expect(rule(q, "false", LONG).status).toBe(0);
+    const decisions = join(q, "decisions.jsonl");
+    expect(readJsonl(decisions)[0].target.specHash).toMatch(/^[0-9a-f]{64}$/);
+
+    expect(against(afterA, baseA, "--decisions", decisions).acceptance.decision).toBe("pending-k4");
+    const b = against(afterB, baseB, "--decisions", decisions);
+    expect(b.status, b.stderr).toBe(0);
+    expect(b.acceptance.decision).toBe("pending-rulings");
+    const pending = b.acceptance.k2.pending;
+    expect(pending.map((c) => c.candidateId)).toEqual([candidateIdOf(idOf(DEMO), LONG)]);
+    expect(pending[0].refused).toEqual([{ line: 1, why: expect.stringMatching(/another version of the case's spec/) }]);
   }, CLI);
 });
 
@@ -257,6 +294,24 @@ describe("K3 passes when no case's duplicate count rises and fails when one does
     expect(g.redundancy.pass).toBe(false);
     expect(g.redundancy.rose).toEqual([{ caseId: idOf(DEMO), parent: 1, candidate: 2 }]);
     expect(g.pass).toBe(false);
+  });
+});
+
+describe("a run's case name leads a build outside the temp folder", () => {
+  const root = tempDir("oq-bench-dominance-");
+  const run = writeRun(join(root, "run"), { cases: { [DEMO]: [SQL, LONG] } });
+  // The manifest names one more case, by a path out of the folder its build is joined to.
+  const manifest = JSON.parse(readFileSync(join(run, "manifest.json"), "utf8"));
+  const escape = "../../escape";
+  write(join(run, "manifest.json"), JSON.stringify({ ...manifest, cases: [...manifest.cases, escape], caseIds: [...manifest.caseIds, `planted/${escape}@00000000`], jobs: [...manifest.jobs, { jobId: `planted/${escape}@00000000/scan/1`, caseId: `planted/${escape}@00000000`, config: "scan", repeat: 1 }] }));
+  const q = queueFolder(root);
+
+  it("refuses the run in one plain line before any path is built from the name", () => {
+    const r = node(QUEUE, ["add", "--candidates", run, "--queue", q]);
+    expect(r.status).toBe(2);
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr).toMatch(/names the case "\.\.\/\.\.\/escape", which is not a planted case name/);
+    expect(existsSync(join(q, "planted.jsonl"))).toBe(false);
   });
 });
 
@@ -287,13 +342,17 @@ describe("a scanner candidate no review raised cannot enter the review queue", (
 
     const refused = node(QUEUE, ["decide", "false", long.findingId.slice(0, 12), "--by", "Claude", "--queue", q]);
     expect(refused.status).toBe(2);
+    // A candidate is ruled on its own spec version, one by one: an issue ruling would not count for it.
+    const grouped = node(QUEUE, ["decide", "consolidate", ...items.map((i) => i.findingId.slice(0, 12)), "--by", "Pat Example", "--queue", q]);
+    expect(grouped.status).toBe(2);
+    expect(grouped.stderr).toMatch(/never consolidated/);
     expect(readJsonl(join(q, "decisions.jsonl"))).toEqual([]);
     expect(rule(q, "false", LONG).status).toBe(0);
     expect(rule(q, "different-issue", LONG_ON_SQL).status).toBe(0);
     const lines = readJsonl(join(q, "decisions.jsonl"));
     expect(lines.map((l) => [l.target, l.status, l.by])).toEqual([
-      [{ kind: "finding", findingId: candidateIdOf(idOf(DEMO), LONG) }, "false", "Pat Example"],
-      [{ kind: "match", findingId: candidateIdOf(idOf(DEMO), LONG_ON_SQL), truthId: "sql-injection" }, "different-issue", "Pat Example"],
+      [{ kind: "finding", findingId: candidateIdOf(idOf(DEMO), LONG), candidate: true, specHash: specHashOf(readCase(DEMO)) }, "false", "Pat Example"],
+      [{ kind: "match", findingId: candidateIdOf(idOf(DEMO), LONG_ON_SQL), truthId: "sql-injection", candidate: true, specHash: specHashOf(readCase(DEMO)) }, "different-issue", "Pat Example"],
     ]);
     // The answered question leaves the queue; the open one stays.
     expect(node(QUEUE, ["add", "--candidates", run, "--queue", q]).status).toBe(0);

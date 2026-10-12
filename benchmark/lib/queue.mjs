@@ -36,7 +36,7 @@
 // The blind sheet is queue.mjs's (failure 6 there).
 import { createHash } from "node:crypto";
 import { generatedValue } from "./cases.mjs";
-import { issueOf, matchRuling, realRuling } from "./rulings.mjs";
+import { candidateRuling, issueOf, matchRuling, realRuling, specHashOf } from "./rulings.mjs";
 import { asksOf, normPath, shownFindings } from "./score.mjs";
 
 export const QUEUE_VERSION = 1;
@@ -204,9 +204,14 @@ export function unresolvedItems({ runId, build = null, commit = null, suite, spl
 //     caseId, suite, split, specsFrom, file, lines, category: null, severity
 //     (the developer's scale), rule: { scanner, id, token, reference },
 //     message, evidence, truth, asks,
-//     occurrences: [{ run, build, commit, config, repeat, outcome, disposition }] }
-// Its rulings are a finding's (true, false, same-issue, different-issue,
-// consolidate), keyed on its identity.
+//     occurrences: [{ run, build, commit, config, repeat, outcome, disposition }],
+//     specHash }
+// Its rulings are a finding's or a match's (true, false, same-issue,
+// different-issue), keyed on its identity and on specHash, the version of
+// the spec it was scored against (lib/rulings.mjs specHashOf), which every
+// ruling on it names: a revised spec may list an issue on its lines, so a
+// ruling on one version never answers another (lib/rulings.mjs
+// candidateRuling). The same item scored against a revised spec asks again.
 //
 // Failure list, written before the code:
 // 7. A scanner candidate no review raised cannot enter the queue, so nobody
@@ -254,6 +259,7 @@ export function candidateItems({ runId, build = null, commit = null, suite, spli
           truth: bug ? { id: bug.id, file: normPath(bug.file), lines: bug.lines, text: clean(bug.truth ?? bug.description ?? "") } : null,
           asks: bug ? ["real", "match"] : ["real"],
           occurrences: [],
+          specHash: specHashOf(spec),
         };
         items.set(c.candidateId, item);
       }
@@ -267,8 +273,16 @@ export function candidateItems({ runId, build = null, commit = null, suite, spli
 // not answered. A same-issue ruling answers both; a ruling on whether it is
 // a real issue answers that; a match ruling, or a false ruling, answers
 // whether it is the truth item.
-export function openAsks(item, R) {
+export function openAsks(item, R, D = { lines: [], people: [] }) {
   const id = item.findingId;
+  // A scanner candidate's questions are answered only by rulings on the
+  // spec version it was scored against (lib/rulings.mjs candidateRuling;
+  // `D` the file's lines and people).
+  if (item.kind === "candidate") {
+    const r = candidateRuling(id, item.specHash, D);
+    if (r.status === "same-issue") return [];
+    return item.asks.filter((a) => (a === "real" ? r.status === null : r.status !== "false" && item.truth !== null && !r.answered.includes(item.truth.id)));
+  }
   const same = [...(R.matches.get(id) ?? new Map()).values()].some((m) => m.status === "same-issue");
   if (same) return [];
   const real = realRuling(id, R);
@@ -282,7 +296,7 @@ const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 // occurrence once, the latest scoring's questions and truth item, only the
 // questions the rulings leave open, the issue a person put it in (or
 // null), sorted so the file diffs well.
-export function mergeQueue(queue, incoming, R) {
+export function mergeQueue(queue, incoming, R, D = { lines: [], people: [] }) {
   const all = new Map(queue.map((i) => [i.findingId, { ...i, occurrences: [...i.occurrences] }]));
   for (const item of incoming) {
     const old = all.get(item.findingId);
@@ -294,10 +308,11 @@ export function mergeQueue(queue, incoming, R) {
     for (const o of item.occurrences) if (!seen.has(occurrenceKey(o))) old.occurrences.push(o);
     old.asks = item.asks;
     old.truth = item.truth;
+    if (item.kind === "candidate") old.specHash = item.specHash;
   }
   const out = [];
   for (const item of all.values()) {
-    const asks = openAsks(item, R);
+    const asks = openAsks(item, R, D);
     if (asks.length === 0) continue;
     item.occurrences.sort((a, b) => byText(occurrenceKey(a), occurrenceKey(b)));
     out.push({ ...item, issueId: issueOf(item.findingId, R), asks, truth: asks.includes("match") ? item.truth : null });
