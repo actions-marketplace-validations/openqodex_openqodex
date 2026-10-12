@@ -7,10 +7,12 @@
 //
 // Definitions, per sample (the first attempt of a planned job that saved a
 // scan.json):
-// - A place: a kept candidate, a token in a candidate's alsoReportedBy (at
-//   the candidate's lines), or a merged trail entry (at its own lines). Each
+// - A place: a kept candidate, or a finding dedup merged into one, at the
+//   lines the trail recorded for it; only where the trail did not record it
+//   (a scan before the trail, or a trail past its cap) at the lines of the
+//   candidate it went into, from alsoReportedBy, and counted. Each place
 //   speaks for its own scanner, so dedup never hides the losing scanner's
-//   work; a merged entry counts only when the candidate it went into is
+//   work; a merged finding counts only when the candidate it went into is
 //   kept. OpenQodex's own candidates speak for "suppression" or "settings"
 //   (lib/scan-score.mjs findersOf), and a custom scanner never does.
 // - Found (issue-level, what K1 and the tables count): a place on one of
@@ -82,11 +84,25 @@
 //    with recall zero: a language scanner's remit counts toward the gap only
 //    where it ran; where only a scanner that did not run holds an item, the
 //    item's language remit is unknown.
+// Found by the gpt-6.1-sol review of this change:
+// 10. A merged finding takes the lines of the candidate it went into, so a
+//    scanner is credited with an item only that candidate sat on, and the
+//    scanner it merged into looks less unique: its own lines in the trail
+//    are used, and the candidate's only where the trail lacks them.
+// 11. A scanner an older scan names no status for, in a scan with no
+//    selection, reads as one that looked and found nothing: a comparison
+//    refuses it as a remit unknown.
+// 12. A pin bump of one scanner lets another scanner's checksum or lock
+//    file change ride along, since the versions alone are compared: the
+//    toolchain records of both builds are read, checked against the hashes
+//    the runs recorded, and compared entry by entry; only the named
+//    scanner's entry and lock files may differ.
+import { createHash } from "node:crypto";
 import { langOf } from "../../packages/graph/dist/index.js";
 import { DROP_CLASSES, classifyReportDrops, countDrops } from "./drops.mjs";
 import { semgrepPacksOf } from "./external.mjs";
 import { OWN_RULES, findersOf } from "./scan-score.mjs";
-import { names, normPath, originOf, population } from "./score.mjs";
+import { canonical, names, normPath, originOf, population } from "./score.mjs";
 
 // Bump on any change to a definition above or a rule below.
 export const SCANNERS_VERSION = 1;
@@ -132,23 +148,38 @@ const onItem = (p, item) => placesOfItem(item).some((l) => l.file === p.file && 
 const expectedOf = (item) => item.found_by ?? item.expectedFinder ?? [];
 const wordsOf = (item) => item.mentions ?? item.matchSignatures ?? [];
 
-// Every place of a scan: kept candidates, their merged tokens, and merged
-// trail entries whose candidate is kept.
+// Every place of a scan: each kept candidate, and each finding merged into
+// a kept one at the lines the trail recorded for it. A merged token in
+// alsoReportedBy that the trail does not hold (no trail, or a trail past its
+// cap) is placed at its candidate's lines and counted in atCandidate.
 function placesOf(scan) {
   const out = [];
+  let atCandidate = 0;
   const kept = new Set((scan.candidates ?? []).map((c) => c.id));
+  const merged = (token, file, start, end, into) => ({ kind: "merged", name: finderOfToken(token), token, file, start, end, text: tokenParts(token).ruleId.toLowerCase(), into });
+  // The trail's merged entries by the candidate they went into and their token.
+  const trailed = new Map();
+  for (const e of scan.trail ?? []) {
+    if (e.stage !== "merged" || !kept.has(e.into)) continue;
+    const key = `${e.into}\0${e.token}`;
+    trailed.set(key, [...(trailed.get(key) ?? []), e]);
+  }
   for (const c of scan.candidates ?? []) {
     const [start, end] = span(c.lineStart, c.lineEnd);
     const file = normPath(c.filePath);
     out.push({ kind: "kept", name: findersOf(c)[0], token: c.token ?? `${c.source}:${c.ruleId}`, file, start, end, text: `${c.ruleId ?? ""}\n${c.message ?? ""}`.toLowerCase(), id: c.id });
-    for (const t of c.alsoReportedBy ?? []) out.push({ kind: "merged", name: finderOfToken(t), token: t, file, start, end, text: tokenParts(t).ruleId.toLowerCase(), into: c.id });
+    for (const t of c.alsoReportedBy ?? []) {
+      const e = trailed.get(`${c.id}\0${t}`)?.shift();
+      if (e) out.push(merged(t, normPath(e.file), ...span(e.lineStart, e.lineEnd), c.id));
+      else {
+        out.push(merged(t, file, start, end, c.id));
+        atCandidate++;
+      }
+    }
   }
-  for (const e of scan.trail ?? []) {
-    if (e.stage !== "merged" || !kept.has(e.into)) continue;
-    const [start, end] = span(e.lineStart, e.lineEnd);
-    out.push({ kind: "merged", name: finderOfToken(e.token), token: e.token, file: normPath(e.file), start, end, text: tokenParts(e.token).ruleId.toLowerCase(), into: e.into });
-  }
-  return out;
+  // A merged entry no alsoReportedBy token names, at its own lines.
+  for (const list of trailed.values()) for (const e of list) out.push(merged(e.token, normPath(e.file), ...span(e.lineStart, e.lineEnd), e.into));
+  return { places: out, atCandidate };
 }
 
 // The truth item a place finds (rule S1), or the side issue it is.
@@ -191,7 +222,7 @@ export const languageOf = (file) => langOf(normPath(file)) ?? extOf(normPath(fil
 export function analyseSample({ job, spec, scan, report = null, submission = null, row = {}, mode = "review", changed = null }) {
   const truthItems = (spec?.bugs ?? []).filter((b) => b.valid !== false);
   const extras = spec?.extras ?? [];
-  const places = placesOf(scan);
+  const { places, atCandidate } = placesOf(scan);
   const finds = places.map((p) => findOf(p, truthItems, extras));
   const selection = Array.isArray(scan.selection) ? new Map(scan.selection.map((s) => [s.scanner, new Set((s.paths ?? []).map(normPath))])) : null;
   const statuses = new Map((scan.scanners ?? []).map((s) => [s.scanner, s]));
@@ -277,6 +308,7 @@ export function analyseSample({ job, spec, scan, report = null, submission = nul
     has: { submission: !reviewed || answered !== null, selection: selection !== null, trail: Array.isArray(scan.trail), stages: ran.every((s) => s.stages !== null), resolveMs: ran.every((s) => s.resolveMs !== null), files: ran.every((s) => s.files !== null), timings: t !== null },
     scanners,
     mergedTokens,
+    mergedAtCandidateLines: atCandidate,
     candidates,
     drops,
     truth,
@@ -298,7 +330,7 @@ export function analyseSample({ job, spec, scan, report = null, submission = nul
 // specs by case name, and `changedOf(case)` the case's changed lines or
 // null. A planned job whose first attempt saved no scan.json is listed in
 // noScan and analysed no further.
-export function analyseRun({ name, manifest, attempts, specs, changedOf = () => null }) {
+export function analyseRun({ name, manifest, attempts, specs, changedOf = () => null, toolchain = null }) {
   const suite = manifest.suite ?? "planted";
   if (originOf(suite) === null) throw new Error(`the run names the suite ${suite}, which the scorer does not know`);
   const pop = population(manifest, attempts);
@@ -325,6 +357,8 @@ export function analyseRun({ name, manifest, attempts, specs, changedOf = () => 
     external: manifest.external ?? null,
     // The packs the run recorded, else what its scans recorded (lib/external.mjs).
     semgrepPacks: manifest.external?.semgrepPacks ?? semgrepPacksOf(scans),
+    // The build's toolchain record (toolchainRecord), or { error }, or null when not read.
+    toolchain,
     planned: pop.jobs.length,
     samples,
     noScan,
@@ -594,6 +628,8 @@ export function scannerReport(run) {
     time,
     misses,
     filterLosses,
+    // Merged findings placed at their candidate's lines, since the trail did not record their own.
+    mergedAtCandidateLines: run.samples.reduce((a, x) => a + x.mergedAtCandidateLines, 0),
   };
 }
 
@@ -670,9 +706,10 @@ function foundByCase(run) {
 }
 
 // Why a run's scanners cannot be judged: a scanner that did not run where
-// truth lies, or may lie, in its remit.
-// One line per scanner, status and reason, naming the samples' cases.
-function notRunRefusals(run) {
+// truth lies, or may lie, in its remit, and a scanner of `expected` (every
+// scanner either run names) that a scan with no selection names no status
+// for. One line per scanner, status and reason, naming the samples' cases.
+function notRunRefusals(run, expected = []) {
   const groups = new Map();
   const add = (sc, kind, s, ids) => {
     const key = `${sc.name}\0${sc.status}\0${kind}`;
@@ -683,6 +720,10 @@ function notRunRefusals(run) {
     groups.set(key, g);
   };
   for (const s of run.samples) {
+    if (!s.has.selection && s.truth.length > 0) {
+      const named = new Set(s.scanners.map((sc) => sc.name));
+      for (const name of expected) if (!named.has(name) && !OWN_FINDERS.has(name)) add({ name, status: "no status" }, "no-status", s, []);
+    }
     for (const sc of s.scanners) {
       if (!NOT_RUN.includes(sc.status) && sc.status !== "left-out") continue;
       if (OWN_FINDERS.has(sc.name) || s.truth.length === 0) continue;
@@ -697,12 +738,61 @@ function notRunRefusals(run) {
     }
   }
   return [...groups.values()].map((g) => {
+    if (g.kind === "no-status") return `${g.name} has no status in ${g.samples} sample${g.samples === 1 ? "" : "s"} of ${run.name} (${[...g.cases].sort(byText).join(", ")}); those scans recorded no selection, so its remit is unknown and truth may lie in it`;
     const head = `${g.name} did not run (${g.status}) in ${g.samples} sample${g.samples === 1 ? "" : "s"} of ${run.name} (${[...g.cases].sort(byText).join(", ")})`;
     const ids = [...g.ids].sort(byText).join(", ");
     if (g.kind === "no-selection") return `${head}; those scans recorded no selection, so its remit is unknown and truth may lie in it`;
     if (g.kind === "in-remit") return `${head}, and truth lies in its remit: ${ids}`;
     return `${head}; ${ids} sit in its files on lines not known to be changed`;
   });
+}
+
+// A scanner toolchain record from the bytes toolchainHash() reads
+// (packages/scanners/src/toolchain/table.ts): the pinned table and each
+// lock file. `hash` is the sha256 toolchainHash() gives for them, `tools`
+// each tool's entry as canonical JSON, `locks` each lock file's sha256.
+export function toolchainRecord({ table, locks = [] }) {
+  const sorted = [...locks].sort((a, b) => byText(a.name, b.name));
+  const hash = createHash("sha256").update(table);
+  for (const l of sorted) hash.update(`\0${l.name}\0`).update(l.bytes);
+  const parsed = JSON.parse(String(table));
+  return {
+    hash: hash.digest("hex"),
+    schema: parsed.schema ?? null,
+    tools: Object.fromEntries(Object.entries(parsed.tools ?? {}).map(([k, v]) => [k, canonical(v)])),
+    locks: Object.fromEntries(sorted.map((l) => [l.name, createHash("sha256").update(l.bytes).digest("hex")])),
+  };
+}
+
+// The tool a lock file pins: "kube-linter-linux-x64.txt" is kube-linter's.
+const lockTool = (file) => file.replace(/-(?:darwin|linux|win32|windows)-[a-z0-9]+\.txt$/, "").replace(/\.txt$/, "");
+
+// Every entry two toolchain records differ in: { tool, what }, sorted, with
+// tool null for the table's own fields.
+function toolchainDifferences(a, b) {
+  const out = [];
+  if (a.schema !== b.schema) out.push({ tool: null, what: `the table's schema ${a.schema} then ${b.schema}` });
+  for (const tool of [...new Set([...Object.keys(a.tools), ...Object.keys(b.tools)])].sort(byText)) if (a.tools[tool] !== b.tools[tool]) out.push({ tool, what: `${tool} entry` });
+  for (const lock of [...new Set([...Object.keys(a.locks), ...Object.keys(b.locks)])].sort(byText)) if (a.locks[lock] !== b.locks[lock]) out.push({ tool: lockTool(lock), what: `${lockTool(lock)} lock file ${lock}` });
+  return out;
+}
+
+// Why a pin bump of `bump` cannot be allowed: a record not read or not the
+// one the run hashed, or an entry beyond the bumped scanner's.
+function pinBumpRefusals(base, cand, bump) {
+  const unchecked = [base, cand].flatMap((r) => {
+    const rec = r.toolchain;
+    if (!rec) return [`${r.name}: its build's toolchain record was not read`];
+    if (rec.error) return [`${r.name}: ${rec.error}`];
+    if (rec.hash !== r.external.toolchainHash) return [`${r.name}: its build's toolchain record hashes to ${rec.hash.slice(0, 12)}, not the ${String(r.external.toolchainHash).slice(0, 12)} the run recorded`];
+    return [];
+  });
+  if (unchecked.length > 0) return [`the pin bump of ${bump} cannot be checked entry by entry: ${unchecked.join("; ")}`];
+  const diff = toolchainDifferences(base.toolchain, cand.toolchain);
+  const beyond = diff.filter((d) => d.tool !== bump);
+  if (beyond.length > 0) return [`the scanner toolchain differs beyond the pin bump of ${bump}: ${beyond.map((d) => d.what).join(", ")}`];
+  if (diff.length === 0) return [`--input-change pin-bump:${bump} names a pin bump, but ${bump}'s toolchain entry and lock files are the same in both builds`];
+  return [];
 }
 
 const describePacks = (p) => (Array.isArray(p) ? (p.length === 0 ? "none" : p.map((x) => `${x.pack} ${String(x.sha256).slice(0, 12)}`).join(", ")) : String(p));
@@ -729,7 +819,8 @@ function inputRefusals(base, cand, change) {
   if (a.toolchainHash !== b.toolchainHash) {
     const what = moved.length === 0 ? "no scanner version" : moved.map((n) => `${n} ${a.scannerVersions?.[n] ?? "none"} then ${b.scannerVersions?.[n] ?? "none"}`).join(", ");
     if (bump === null) out.push(`the scanner toolchain differs (${what}); name the one pin bump under test with --input-change pin-bump:<scanner>`);
-    else if (moved.length !== 1 || moved[0] !== bump) out.push(`the scanner toolchain differs beyond the pin bump of ${bump}: ${what}`);
+    else if (moved.some((n) => n !== bump)) out.push(`the scanner toolchain differs beyond the pin bump of ${bump}: ${what}`);
+    else out.push(...pinBumpRefusals(base, cand, bump));
   } else if (bump !== null) out.push(`--input-change pin-bump:${bump} names a pin bump, but both runs ran the same toolchain`);
   return out;
 }
@@ -743,8 +834,10 @@ export function judgeAgainst(base, cand, { inputChange = null } = {}) {
   for (const [label, r] of [["baseline", base], ["candidate", cand]]) if (r.split === "test") refusals.push(`the ${label} ${r.name} is from the test split: the scanner loop never reads a held-out run`);
   for (const [what, a, b] of [["suite", base.suite, cand.suite], ["mode", base.mode, cand.mode], ["split hash", base.splitHash, cand.splitHash]]) if (a !== b) refusals.push(`the runs differ in ${what}: ${a} then ${b}`);
   refusals.push(...inputRefusals(base, cand, inputChange));
+  // Every scanner either run names, in a scan or as a pinned version.
+  const expected = [...new Set([base, cand].flatMap((r) => [...r.samples.flatMap((x) => x.scanners.map((sc) => sc.name)), ...Object.keys(r.external?.scannerVersions ?? {})]))].sort(byText);
   for (const r of [base, cand]) {
-    refusals.push(...notRunRefusals(r));
+    refusals.push(...notRunRefusals(r, expected));
     for (const j of r.noScan) refusals.push(`${r.name} ${j.jobId}: ${j.why}, so its truth cannot be judged`);
   }
   const before = foundByCase(base);
