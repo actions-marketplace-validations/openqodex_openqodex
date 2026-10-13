@@ -1,11 +1,18 @@
 {
   "version": 1,
-  "runId": "2026-10-12-b43b25b-go126-codex",
+  "runId": "2026-10-12-b43b25b-aacr-gpt61",
   "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
-  "scoreHash": "5d7c0b8a17dab8ac0b76a1ac59db5dac5570546ae0cc8bf16a81d9b772e019a8",
-  "acceptedAt": "2026-10-12T11:58:31.521Z",
+  "scoreHash": "3e0ec4efdee6d2cac0ac44dba04102c001f4dd5f84846918f8251cafbac71e60",
+  "acceptedAt": "2026-10-13T00:02:54.494Z",
   "acceptedBy": "Sid",
   "groups": {
+    "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|server|model-gpt-6.1-sol|unknown|model-gpt-6.1-sol-graph-on|7|dev-laptop": {
+      "runId": "2026-10-12-b43b25b-aacr-gpt61",
+      "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
+      "scoreHash": "3e0ec4efdee6d2cac0ac44dba04102c001f4dd5f84846918f8251cafbac71e60",
+      "acceptedAt": "2026-10-13T00:02:54.494Z",
+      "acceptedBy": "Sid"
+    },
     "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|scan|laptop|none|none|scan|1|dev-smoke": {
       "runId": "2026-10-12-eee3d15-aacr-dev-smoke-scan-ci",
       "commit": "eee3d152b64b96787aa26a06997c0d72164c4c44",
