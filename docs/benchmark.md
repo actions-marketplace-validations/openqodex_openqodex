@@ -386,6 +386,19 @@ node benchmark/queue.mjs decide confirmed|disputed <case id> --bug <truth id> --
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
+## Submitting to a board
+
+```bash
+node benchmark/outside/submit/aacr.mjs <accepted-aacr-run> --out benchmark/results/submit-aacr
+node benchmark/outside/submit/martian.mjs <accepted-martian-run> --out benchmark/results/submit-martian
+```
+
+AACR writes `submissions/openqodex-<configuration>-r<repeat>/meta.yaml` and `results/<instance_id>.json`, one submission per repeat. Metadata names OpenQodex, the configuration, the run's commit and version, and our local judge as `local_judge_mode` and `local_judge_model`. Comments, time and token counts come from the saved conversion. A missing time or token count stops the export. Its leaderboard allows partial coverage but scores missing samples against the full dataset. The accepted development run covers part of that dataset.
+
+Martian writes `benchmark_data.json` and a judge model folder holding `candidates.json`, `evaluations.json` and `dedup_groups.json`, preserving the saved pipeline output. Until an accepted Martian release run exists, use `benchmark/outside/fixtures/martian` as the input. That output is marked as synthetic fixtures with a stand-in judge. It is not a leaderboard score. Martian's maintainers run their own pipeline for leaderboard inclusion, as described in their [README](https://github.com/withmartian/code-review-benchmark#inclusion-criteria).
+
+Both commands validate their output. Run either script with `--check <output-folder>` to check it again. `submission.json` records provenance and expected files. An existing output folder is refused. These commands call no model, send nothing and open no pull request. A person sends a submission by hand.
+
 ## Martian's offline set
 
 Martian's Code Review Bench (https://github.com/withmartian/code-review-benchmark, MIT) publishes 50 pull requests from cal.com, Discourse, Grafana, Keycloak and Sentry, some of them copies with bugs injected, and 173 golden comments: prose with a severity and a category, and no file or line. In this benchmark they are the `martian` suite, origin `injected`.
