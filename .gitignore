@@ -12,6 +12,7 @@ coverage/
 
 # Private charter and local Claude settings
 CLAUDE.md
+WORKFLOW.md
 .claude/
 
 # Assets copied beside the CLI bundle at build time (scripts/copy-assets.mjs)
