@@ -28,6 +28,8 @@
 //    and is accepted all the same.
 // 7. An entry whose board numbers differ from its run's score.json is
 //    accepted, because the run's files still match.
+// 8. A board-scored entry cannot be accepted from a copy fetched from its
+//    asset, which carries no board numbers.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -454,6 +456,10 @@ describe("per-review models at accept", () => {
 
 it("refuses acceptance of a stale board copy in one line naming the run", async () => {
   const { root, index } = await indexWith({ before: () => true, after: () => true });
+  const scoreFile = join(root, NEWER.runId, "score.json");
+  const score = JSON.parse(readFileSync(scoreFile, "utf8"));
+  score.outside = { aacr: { fresh: true } };
+  write(scoreFile, `${JSON.stringify(score, null, 2)}\n`);
   const entry = readEntryAt(index, NEWER.runId);
   entry.outside = { aacr: { stale: true } };
   putEntry(index, entry);
@@ -461,4 +467,16 @@ it("refuses acceptance of a stale board copy in one line naming the run", async 
   expect(result.status).toBe(2);
   expect(result.stderr.trim()).toBe(`refused: ${NEWER.runId}'s board numbers (outside) differ from those in its score.json`);
   expect(readEntryAt(index, NEWER.runId).accepted).toBe(false);
+});
+
+it("accepts a board-scored entry from a copy fetched from its asset", async () => {
+  const { index, published } = await indexWith({ before: () => true, after: () => true });
+  const entry = readEntryAt(index, NEWER.runId);
+  entry.outside = { aacr: { byConfig: { [CONFIG]: { mean: { line: { precision: 0.4, recall: 0.5 }, semantic: null } } } } };
+  putEntry(index, entry);
+  const fetched = tempDir("oq-bench-fetched-");
+  extractAsset(published.next.asset.tarPath, entry.asset, fetched, NEWER.runId);
+  const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", fetched]);
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(readEntryAt(index, NEWER.runId)).toMatchObject({ accepted: true, outside: entry.outside });
 });
