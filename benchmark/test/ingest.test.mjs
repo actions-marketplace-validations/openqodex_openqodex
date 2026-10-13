@@ -228,7 +228,7 @@ describe("an upstream edit to the dataset changes the truth under a frozen id", 
 });
 
 describe("a pull request with no licence is used", () => {
-  it("excludes a repository with no licence file, keeps one whose licence GitHub cannot name for private runs as unverified, and reports both with counts", async () => {
+  it("excludes a repository with no licence file, records a licence GitHub cannot name as unverified, and reports both with counts", async () => {
     const { root, cases, split, report } = await ingestInto(setup());
     const byName = Object.fromEntries(cases.cases.map((e) => [e.name, e]));
     expect(byName["nolicence__none-1"]).toMatchObject({ status: "excluded", licence: { class: "none" } });
@@ -297,7 +297,7 @@ describe("a pull request whose head the host no longer serves is offered to a ru
 
 describe("a pull request that becomes usable moves a case the split already placed, or changes an id", () => {
   // fuzzy/assert first answers with no licence file, then with a licence
-  // GitHub cannot name, which is usable for private runs.
+  // GitHub cannot name, which is used and published in full.
   const answer = (ctx, licence) => saveRepoAnswer(ctx.cache, { asked: "fuzzy/assert", readOn: "2026-10-11", found: true, fullName: "fuzzy/assert", fork: false, source: null, licence });
 
   it("places only the newly usable pull requests, by the same group rule, and keeps every id, side and subset", async () => {

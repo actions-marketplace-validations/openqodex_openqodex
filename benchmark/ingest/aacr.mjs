@@ -51,9 +51,9 @@
 //    list is sorted, and a split file already written is only ever extended
 //    (lib/suites.mjs splitRewriteProblems): a moved case, a dropped case or
 //    a changed subset needs a new split, which is a new file.
-// 9. A pull request that becomes usable (Sid, 2026-10-11: a licence GitHub
-//    cannot name is usable for private runs, as unverified) moves a case the
-//    split already placed, or changes an id: with the split file it read
+// 9. A pull request that becomes usable moves a case the split already
+//    placed, or changes an id: an unverified licence is used and published
+//    like any other (Sid, 2026-10-12). With the split file it read
 //    (previousSplit), the ingest keeps every placed group on its side and
 //    every subset as it was, and places only the new groups, by the same
 //    rule, counting the groups already placed. Licence and status are not
@@ -535,7 +535,7 @@ export async function ingestAacr({ boards, cache = cacheRoot(), offline = false,
   }
   const unverified = usable.filter((e) => e.licence.class === "unverified");
   const unverifiedRepos = [...new Set(unverified.map((e) => e.repo))].map((r) => [r, unverified.filter((e) => e.repo === r).length]).sort((a, b) => b[1] - a[1] || byBytes(a[0], b[0]));
-  say(`Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): ${plural(unverified.length, "pull request")} in ${plural(unverifiedRepos.length, "repository", "repositories")}${unverifiedRepos.length ? `: ${unverifiedRepos.map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
+  say(`Usable with an unverified licence (GitHub names no licence it can classify; recorded as unverified, used and published in full like any other): ${plural(unverified.length, "pull request")} in ${plural(unverifiedRepos.length, "repository", "repositories")}${unverifiedRepos.length ? `: ${unverifiedRepos.map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
   say("Left out before the cases (not cases):");
   say(`  rejected comments of a pull request with no accepted comment: ${plural(negativeOnly.length, "pull request")}, ${plural(negativeOnly.reduce((n, x) => n + x.comments, 0), "rejected comment")}${negativeOnly.length ? `: ${negativeOnly.map((x) => `${x.ref} ${x.comments}`).join(", ")}` : ""}`);
   say(`  malformed or repeated rows: ${notCases.length}${notCases.length ? `: ${notCases.map((x) => `${x.ref} (${x.why})`).join("; ")}` : ""}`);

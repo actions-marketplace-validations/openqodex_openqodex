@@ -91,7 +91,8 @@
 //    evidence hash is not the current one, naming the candidate.
 // The licence class each candidate carries (lib/licence.mjs) travels into
 // the suite entry and every run's case copy, so a case whose licence is
-// unverified runs privately and publishRefusal stops it from leaving.
+// unverified is used and published in full like any other. Outside converters
+// and board submissions still apply publishRefusal.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -817,7 +818,7 @@ export function sheetMarkdown(s) {
   ];
   for (const x of s.items) {
     const e = x.evidence;
-    out.push(`## ${x.item}. ${x.title}`, "", `- Case: ${x.caseId} (evidence ${x.evidenceSha256.slice(0, 12)})`, `- Change: ${x.prUrl}/files (${x.changeLines} changed lines in ${plural(e.pull.changedFiles, "file")}, ${x.language})`, `- Commits: base ${x.baseSha}, head ${x.headSha}; merged ${x.mergedAt} as ${e.pull.mergeCommitUrl ?? "no merge commit GitHub names"}`, `- Licence: ${x.licence}${x.licenceClass === "unverified" ? " (unverified: private runs only)" : ""}`, `- Reviews by others: ${e.reviews.byOthers} (${Object.entries(e.reviews.states).sort((a, b) => byBytes(a[0], b[0])).map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")}); none requested changes`, `- Checked up to ${e.window.until} (read ${e.readOn}): ${plural(e.checked.laterCommits, "later commit")} on its files, each read line by line (${e.checked.fixOrRevertCommits} reading as a fix, revert or follow-up), none touching its lines`);
+    out.push(`## ${x.item}. ${x.title}`, "", `- Case: ${x.caseId} (evidence ${x.evidenceSha256.slice(0, 12)})`, `- Change: ${x.prUrl}/files (${x.changeLines} changed lines in ${plural(e.pull.changedFiles, "file")}, ${x.language})`, `- Commits: base ${x.baseSha}, head ${x.headSha}; merged ${x.mergedAt} as ${e.pull.mergeCommitUrl ?? "no merge commit GitHub names"}`, `- Licence: ${x.licence}${x.licenceClass === "unverified" ? " (unverified: used and published in full)" : ""}`, `- Reviews by others: ${e.reviews.byOthers} (${Object.entries(e.reviews.states).sort((a, b) => byBytes(a[0], b[0])).map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")}); none requested changes`, `- Checked up to ${e.window.until} (read ${e.readOn}): ${plural(e.checked.laterCommits, "later commit")} on its files, each read line by line (${e.checked.fixOrRevertCommits} reading as a fix, revert or follow-up), none touching its lines`);
     for (const f of e.files) {
       if (f.laterCommits.length === 0) continue;
       out.push(`- Later commits on ${f.path}:`);

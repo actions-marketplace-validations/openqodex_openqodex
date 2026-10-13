@@ -30,10 +30,11 @@
 //    (their evaluator leaves out an instance with no result file): every
 //    planned review's first attempt gets a file, with no comment when it
 //    failed or never started; a retry never replaces it, as in our score.
-// 4. A case whose licence nobody verified is converted for a board (Sid,
-//    2026-10-11: such cases are for private runs only): every case's
+// 4. A case whose licence nobody verified is converted for a board: runs
+//    publish these cases in full (Sid, 2026-10-12), but board conversion
+//    still refuses them. Every case's
 //    licence record goes through lib/licence.mjs, licenceExclusion (a class
-//    no run uses) and publishRefusal (a class only private runs use), and
+//    no run uses) and publishRefusal (a class board submissions refuse), and
 //    one refused case refuses the whole run.
 // 5. Our line count differs from AACR's on the same reports: each comment
 //    carries the path and the range our scorer reads (paths normalised, the
@@ -105,7 +106,7 @@ export function convertRun(folder) {
     }
     const record = spec.source?.licence ?? null;
     const why = record === null ? "its truth copy holds no licence record" : (licenceExclusion(record) ?? publishRefusal([{ name, licence: record.class }]));
-    if (why !== null) problems.push(`${name}: ${why}; a case whose licence is not verified is for private runs only, never converted for a board`);
+    if (why !== null) problems.push(`${name}: ${why}; a case whose licence is not verified is never converted for a board`);
     if (spec.split === "test" || heldOut.has(name)) problems.push(`${name}: held out (the test split); a held-out case is never converted or exported before a release`);
   }
   for (const a of run.attempts) if (parseCaseId(run.specs[a.case]?.id)?.suite !== "aacr") problems.push(`samples/${a.case}/${a.config}: a sample of ${a.case}, which is not an AACR-Bench case`);
