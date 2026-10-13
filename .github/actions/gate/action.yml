@@ -72,6 +72,9 @@ runs:
     - name: Docs facts
       shell: bash
       run: node scripts/docs-facts.mjs
+    - name: Benchmark results
+      shell: bash
+      run: node scripts/benchmark-results.mjs --check
     - name: Private material scrub
       shell: bash
       run: node scripts/scrub.mjs

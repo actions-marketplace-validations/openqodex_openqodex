@@ -4,6 +4,16 @@ This page is for contributors and for anyone who wants to check a claim about re
 
 A script runs it and a script scores it. No model decides what runs or how a review scores. A model may judge the wording of findings in a separate, optional pass, and that verdict never blocks anything.
 
+## Published results
+
+[Benchmark results](benchmark-results.md) lists the current accepted run of each group in `benchmark/index/accepted.json`. The full page and the README's Benchmark section are generated from `benchmark/index` only. The script never reads a results folder.
+
+Run `node scripts/benchmark-results.mjs` after an accepted index change, then commit both generated pages. Run `node scripts/benchmark-results.mjs --check` to check them without writing. The gate runs this check locally and in CI. A difference fails with exit 1 and the first differing line in each file. `--root <folder>` selects another repository root.
+
+Each full-page row names its configuration, split, subset when present, mode, path and rules version. A row with a split hash shows its first 12 characters. Repeats come from the entry's `repeat` field. Missing measurements are shown as not measured. A run with findings, every one unresolved and none a hit, shows its issue recall as not yet ruled. The full page also shows location recall. The README leaves out a row of a suite with a board, such as AACR-Bench, until the row has board numbers or a ruled hit. The full page shows every row. Precision bounds describe unresolved findings, not confidence intervals. The recall interval is the saved 95% cluster interval.
+
+An A/A twin uses the parent's run id with `-aa` appended. The script pairs it only when its group, bundle hash, case set hash, rules hash and repeats match. Its noise is the absolute difference in issues found across all repeats, also shown per repeat. AACR board numbers come from the entry's `outside.aacr.byConfig.<config>.mean`, using the shape `score.mjs --outside aacr` writes. A row without that block says "not yet board-scored". The publish step does not copy that block into the index yet (issue #201). Board numbers do not decide acceptance.
+
 ## What it measures
 
 Each case is a small git repository with a base commit and an uncommitted change, the same shape a developer has before a push. The change carries planted bugs, each with a file, a line range, a kind (`bug`, `security`, `performance`, `maintainability` or `style`), a severity and the scanner or the reasoning expected to find it. The benchmark runs the real built CLI on each case, with the real reviewer, with the code graph off and on, three times each.

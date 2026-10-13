@@ -2,6 +2,7 @@
 
 - [OpenQodex for AI agents](for-agents.md)
 - [Agents](agents.md)
+- [Benchmark results](benchmark-results.md)
 - [The review benchmark](benchmark.md)
 - [Code review in Claude Code](claude-code-review.md)
 - [Commands](cli.md)
