@@ -93,6 +93,7 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 
 | Reviewer | Model | Cases | Issue recall | Precision | Clean rate | Cost per review |
 | --- | --- | --- | --- | --- | --- | --- |
+| Library (model-gpt-6.1-sol-graph-on) | gpt-6.1-sol | AACR-Bench, dev split, dev-laptop subset | not yet ruled | 0/176 (0.0%) to 176/176 (100.0%) | not measured | $0.0839 |
 | Scanner only (scan) | no model | AACR-Bench, dev split, dev-smoke subset | 0/16 (0.0%) | not measured | not measured | not measured |
 | Claude Code (claude-graph-on) | claude-opus-5-5 | Planted bugs, dev split | 129/153 (84.3%) | 142/146 (97.3%) to 146/146 (100.0%) | 6/6 (100.0%) | $0.0870 |
 | Codex (codex-graph-on) | gpt-6.1-sol | Planted bugs, dev split | 115/153 (75.2%) | 125/146 (85.6%) to 146/146 (100.0%) | 6/6 (100.0%) | not measured |

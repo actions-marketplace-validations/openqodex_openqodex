@@ -5,13 +5,14 @@
 // 4. A stale full page passes --check, or checking rewrites it.
 // 5. Historical accepted runs appear instead of the current group pointers.
 // 6. Board metrics and A/A noise are lost or mixed with issue recall.
+// 7. A run whose findings all wait for a ruling shows 0% issue recall as if measured.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
-import { groupKeys } from "../lib/index.mjs";
+import { groupKeys, scoreHash } from "../lib/index.mjs";
 
 afterAll(removeTempDirs);
 const repo = fileURLToPath(new URL("../../", import.meta.url));
@@ -127,4 +128,24 @@ it("keeps indexed board metrics and A/A issue noise separate", () => {
   expect(run(root).status).toBe(0);
   expect(page(root)).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
   expect(page(root)).toContain(`The difference is 3 issues across ${parent.repeat} repeats`);
+});
+
+it("shows a run whose findings all wait for a ruling as not yet ruled, never as 0%", () => {
+  const root = fixture();
+  const accepted = pointer(root);
+  const [key, { runId }] = Object.entries(accepted.groups).find(([k]) => k.startsWith("planted|") && k.includes("|review|"));
+  const entry = JSON.parse(readFileSync(entryFile(root, runId), "utf8"));
+  const { config } = groupKeys(entry).find((g) => g.key === key);
+  const s = entry.scores[config];
+  s.issueRecall.all.hit = 0;
+  s.precision.lower.hit = 0;
+  s.precision.upper.hit = s.precision.upper.of;
+  writeFileSync(entryFile(root, runId), JSON.stringify(entry));
+  // The pointer records the changed numbers, as an accept of this entry would.
+  for (const a of [accepted, ...Object.values(accepted.groups)]) if (a.runId === runId) a.scoreHash = scoreHash(entry);
+  writeFileSync(join(root, "benchmark/index/accepted.json"), JSON.stringify(accepted));
+  expect(run(root).status).toBe(0);
+  const row = readFileSync(join(root, "README.md"), "utf8").split("\n").find((l) => l.includes(`(${config})`));
+  expect(row).toContain("not yet ruled");
+  expect(row).not.toContain(`0/${s.issueRecall.all.of}`);
 });
