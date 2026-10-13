@@ -36,3 +36,4 @@ These pages ship inside the npm package. `npx openqodex guide <topic>` prints on
 - `internal-reviewer-drivers`: how the Claude Code and Codex reviewers are started and held to reading.
 - `faq`: short answers.
 - `benchmark`: how review quality is measured, from a clone of the repository, and the rule that a claim about it cites a saved run.
+- `benchmark-results`: the accepted benchmark numbers, written by a script from the results index.

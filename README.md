@@ -88,6 +88,19 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 - No offline copy of the vulnerability databases. osv-scanner asks osv.dev. cargo-deny downloads the RustSec advisory database.
 - No review finds every problem. The report names each stage that did not run.
 
+<!-- benchmark-results:start -->
+## Benchmark
+
+| Reviewer | Model | Cases | Issue recall | Precision | Clean rate | Cost per review |
+| --- | --- | --- | --- | --- | --- | --- |
+| Scanner only (scan) | no model | AACR-Bench, dev split, dev-smoke subset | 0/16 (0.0%) | not measured | not measured | not measured |
+| Claude Code (claude-graph-on) | claude-opus-5-5 | Planted bugs, dev split | 129/153 (84.3%) | 142/146 (97.3%) to 146/146 (100.0%) | 6/6 (100.0%) | $0.0870 |
+| Codex (codex-graph-on) | gpt-6.1-sol | Planted bugs, dev split | 115/153 (75.2%) | 125/146 (85.6%) to 146/146 (100.0%) | 6/6 (100.0%) | not measured |
+| Scanner only (scan) | no model | Planted bugs, dev split | 32/51 (62.7%) | 35/45 (77.8%) to 40/45 (88.9%) | 1/2 (50.0%) | not measured |
+
+[Full results and how to read them](https://github.com/openqodex/openqodex/blob/main/docs/benchmark-results.md)
+<!-- benchmark-results:end -->
+
 ## Built-in scanners
 
 OpenQodex has 22 built-in scanners. A scanner runs only when your change holds a file it reads. Some scanners also read the project or folder around a changed file. Each scanner that needs a download gets it on first use. OpenQodex pins each download to one version.
