@@ -19,7 +19,7 @@
 // Failure list, written before the code:
 // 1. A finding without a line is dropped, so AACR's precision rises: it is
 //    held in the list with null lines, as their format allows, and
-//    convert.json names it. Every finding the developer is shown (on the
+//    convert.json names it. Unless the board excludes test gaps, every finding shown (on the
 //    change and outside it, as our scorer counts them) is written; a
 //    finding with no text gets a sentence saying so, since their reader
 //    skips an empty comment.
@@ -58,11 +58,16 @@ import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, readAacrOut
 import { parseCaseId } from "../../lib/cases.mjs";
 import { benchCache } from "../../lib/board-files.mjs";
 import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.mjs";
-import { normPath, population, shownFindings } from "../../lib/score.mjs";
+import { normPath, population, shownFindings, TEST_ONLY, TEST_ONLY_KINDS } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
 
 export { benchCache, instanceIdOf, readAacrOutside };
+
+const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
+// The brief also produces titles that say only "uncovered" or "lacks coverage".
+const MISSING_COVERAGE = /\buncovered\b|\b(no|missing|lacks?|lacking|without|needs?|add)\b[^.]{0,60}\bcoverage\b/i;
+export const isTestGap = (f) => TEST_ONLY_KINDS.includes(f.category) && (TEST_ONLY.test(String(f.title ?? "")) || MISSING_COVERAGE.test(String(f.title ?? "")));
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const text = (s) => (typeof s === "string" ? s.trim() : "");
@@ -86,7 +91,7 @@ const statusOf = (first) => (first === null ? "unstarted" : first.report === nul
  * run of another suite, a sample of a case outside AACR-Bench, a case the
  * licence rule excludes, or a run converted before.
  */
-export function convertRun(folder) {
+export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.excludeTestGaps === true } = {}) {
   folder = resolve(folder);
   const manifest = existsSync(join(folder, "manifest.json")) ? readJson(join(folder, "manifest.json")) : null;
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
@@ -127,9 +132,11 @@ export function convertRun(folder) {
   }
   const files = new Map();
   const withoutLine = [];
+  // Board-only rule: use the scorer's test-request predicate without changing our score.
+  const forBoard = (report) => shownFindings(report).filter((f) => !excludeTestGaps || !isTestGap(f));
   for (const job of jobs) {
     const first = job.first;
-    const shown = shownFindings(first?.report ?? null);
+    const shown = forBoard(first?.report ?? null);
     const comments = shown.map(commentOf);
     comments.forEach((c, index) => {
       if (c.start_line === null) withoutLine.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, index });
@@ -149,7 +156,7 @@ export function convertRun(folder) {
       const mine = jobs.filter((j) => j.config === config && j.repeat === repeat);
       const statuses = {};
       for (const j of mine) statuses[statusOf(j.first)] = (statuses[statusOf(j.first)] ?? 0) + 1;
-      return { config, repeat, tool: toolName(config, repeat), dir: `${config}/r${repeat}`, files: mine.length, comments: mine.reduce((n, j) => n + shownFindings(j.first?.report ?? null).length, 0), statuses };
+      return { config, repeat, tool: toolName(config, repeat), dir: `${config}/r${repeat}`, files: mine.length, comments: mine.reduce((n, j) => n + forBoard(j.first?.report ?? null).length, 0), leftOutTestGaps: mine.reduce((n, j) => n + shownFindings(j.first?.report ?? null).length - forBoard(j.first?.report ?? null).length, 0), statuses };
     })
     .sort((a, b) => (a.config < b.config ? -1 : a.config > b.config ? 1 : a.repeat - b.repeat));
   const all = [...instances.values()];
@@ -170,6 +177,8 @@ export function convertRun(folder) {
     instances: all,
     folders,
     references: { total, left, share: total === 0 ? 0 : left / total },
+    excludeTestGaps,
+    leftOutTestGaps: folders.reduce((n, f) => n + f.leftOutTestGaps, 0),
     withoutLine,
   };
   for (const [file, body] of files) {
@@ -240,6 +249,7 @@ function main() {
       const { out, record } = convertRun(args[0]);
       const r = record.references;
       console.log(`Converted ${record.instances.length} pull requests into ${record.folders.length} folders (${record.folders.map((f) => f.tool).join(", ")}) under ${out}.`);
+      console.log(`Test-gap findings left out: ${record.leftOutTestGaps}.`);
       console.log(`Findings held with no line: ${record.withoutLine.length}. Failed or never-started reviews written as empty: ${record.folders.reduce((n, f) => n + (f.statuses.failed ?? 0) + (f.statuses.unstarted ?? 0), 0)}.`);
       console.log(`left-side references: ${r.left} of ${r.total} (${Math.round(r.share * 1000) / 10}%), which no finding can match by line, since their reader puts every finding on the right side.`);
     } else if (command === "dataset" && args.length === 2) {

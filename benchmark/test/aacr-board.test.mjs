@@ -45,7 +45,7 @@ import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../
 import { RULES } from "../lib/score.mjs";
 import { aacrTruth, readCase, readSuite, specCopy } from "../lib/suites.mjs";
 import * as judgeRunner from "../outside/boards/aacr-judge.mjs";
-import { convertRun, filterDataset, instanceIdOf, readAacrOutside } from "../outside/convert/aacr.mjs";
+import { commentOf, convertRun, filterDataset, instanceIdOf, readAacrOutside } from "../outside/convert/aacr.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -830,5 +830,35 @@ describe("a split or encoded key reaches AACR output", () => {
     expect(text).toContain("progress\n");
     expect(text).not.toContain(key.slice(0, 12));
     expect(text).not.toContain(key.slice(12));
+  });
+});
+
+// H1 failures, written before the converter rule:
+// 1. A test request survives conversion or its left-out count is missing.
+// 2. A non-test finding changes, or a test-related bug is removed by title alone.
+// 3. Turning the board flag off still drops a finding.
+describe("board conversion drops the wrong findings", () => {
+  const name = "cline__cline-1808";
+  const gap = finding("src/core/task.ts", 13, { category: "maintainability", title: "Changed behaviour has no covering test" });
+  const bug = finding("src/core/task.ts", 14, { title: "Missing test fixture crashes the loader" });
+  const ordinary = finding("src/core/task.ts", 15);
+  const plan = { [`${MODEL}/1`]: { [name]: report([gap, bug, ordinary], { outside: [gap] }) } };
+  const comments = (out) => readJson(join(out, "outside", "aacr", MODEL, "r1", `${instanceIdOf(caseOf(name))}.json`)).review.comments;
+
+  it("leaves out test requests and records their count without changing other comments", async () => {
+    const out = await savedRun({ names: [name], configs: [MODEL], repeat: 1, plan });
+    const { record } = convertRun(out);
+    expect(comments(out)).toEqual([commentOf(bug), commentOf(ordinary)]);
+    expect(record.leftOutTestGaps).toBe(2);
+    expect(record.folders[0]).toMatchObject({ comments: 2, leftOutTestGaps: 2 });
+    expect(loadRun(out).attempts[0].report.findings).toEqual([gap, bug, ordinary]);
+  });
+
+  it("keeps every shown finding when the board flag is off", async () => {
+    const out = await savedRun({ names: [name], configs: [MODEL], repeat: 1, plan });
+    const { record } = convertRun(out, { excludeTestGaps: false });
+    expect(comments(out)).toEqual([gap, bug, ordinary, gap].map(commentOf));
+    expect(record.leftOutTestGaps).toBe(0);
+    expect(record.folders[0]).toMatchObject({ comments: 4, leftOutTestGaps: 0 });
   });
 });
