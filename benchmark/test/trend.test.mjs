@@ -26,6 +26,8 @@
 //    or loses its accepted mark when publish-run.mjs writes it again, or an
 //    entry edited before it is accepted no longer matches its run's score
 //    and is accepted all the same.
+// 7. An entry whose board numbers differ from its run's score.json is
+//    accepted, because the run's files still match.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -448,4 +450,15 @@ describe("per-review models at accept", () => {
     expect(result.status, result.stderr).toBe(2);
     expect(result.stderr.trim()).toMatch(/requested model claude-sonnet-5, but samples were served by claude-opus-5-5/);
   });
+});
+
+it("refuses acceptance of a stale board copy in one line naming the run", async () => {
+  const { root, index } = await indexWith({ before: () => true, after: () => true });
+  const entry = readEntryAt(index, NEWER.runId);
+  entry.outside = { aacr: { stale: true } };
+  putEntry(index, entry);
+  const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
+  expect(result.status).toBe(2);
+  expect(result.stderr.trim()).toBe(`refused: ${NEWER.runId}'s board numbers (outside) differ from those in its score.json`);
+  expect(readEntryAt(index, NEWER.runId).accepted).toBe(false);
 });

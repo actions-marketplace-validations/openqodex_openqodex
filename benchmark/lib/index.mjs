@@ -104,6 +104,21 @@ export function hashFolder(folder, paths = fileList(folder)) {
   return { files: entries.length, listHash: listHash(entries), entries };
 }
 
+// Board output is reproducible from the reviewed run and is not part of its asset.
+export function reviewedBytes(folder, path) {
+  const bytes = readFileSync(join(folder, path));
+  if (path !== "score.json") return bytes;
+  const score = JSON.parse(bytes.toString("utf8"));
+  if (score.outside === undefined) return bytes;
+  delete score.outside;
+  return Buffer.from(`${JSON.stringify(score, null, 2)}\n`);
+}
+
+export function hashReviewedFolder(folder) {
+  const entries = fileList(folder).filter((path) => !path.startsWith("outside/")).map((path) => ({ path, sha256: sha256(reviewedBytes(folder, path)) }));
+  return { files: entries.length, listHash: listHash(entries), entries };
+}
+
 // Each function below reads or writes benchmark/index/runs unless the
 // caller (a test, or trend.mjs --index) names another runs folder.
 export const entryPath = (runId, runs = runsRoot) => join(runs, `${runId}.json`);
@@ -235,6 +250,7 @@ export function buildEntry({ runId, manifest, resumes, score, asset, privateList
     ended: endedOf(manifest, resumes),
     release: manifest.release ?? null,
     scores,
+    ...(score.outside !== undefined ? { outside: score.outside } : {}),
     perCase,
     // Each bug's result per repeat, and how the intervals were drawn: what the trend reads.
     ...(v3 ? { perBug: split === "test" ? null : score.perBug, intervals: score.intervals ?? null } : {}),

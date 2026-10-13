@@ -7,6 +7,7 @@
 // 6. Board metrics and A/A noise are lost or mixed with issue recall.
 // 7. A run whose findings all wait for a ruling shows 0% issue recall as if measured.
 // 8. The README shows an AACR-Bench row with no board numbers and no ruled hit, or the page drops it.
+// 9. The README admits a board-scored row but drops its six board metrics.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -127,6 +128,9 @@ it("keeps indexed board metrics and A/A issue noise separate", () => {
   writeFileSync(entryFile(root, twin.runId), JSON.stringify(twin));
   expect(run(root).status).toBe(0);
   expect(page(root)).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
+  const headline = readFileSync(join(root, "README.md"), "utf8");
+  expect(headline).toContain("Semantic precision");
+  expect(headline.split("\n").find((l) => l.includes(`(${aacrConfig})`))).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
   expect(page(root)).toContain(`The difference is 3 issues across ${parent.repeat} repeats`);
 });
 

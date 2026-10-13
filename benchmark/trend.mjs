@@ -134,7 +134,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, repoRoot } from "./lib/cases.mjs";
 import { externalRefusals, inputDifferences } from "./lib/external.mjs";
-import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
+import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, hashReviewedFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
 import { ISSUE_METRICS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
 import { isPersonName, readPeople } from "./lib/rulings.mjs";
 import { claudeRunModels, savedSampleRows } from "./lib/runner.mjs";
@@ -550,7 +550,7 @@ export function runMismatch(entry, results) {
   const folder = join(results, entry.runId);
   if (!existsSync(join(folder, "manifest.json"))) return [`the run folder ${folder} is missing: fetch it with node benchmark/fetch-run.mjs ${entry.runId}, or name the folder that holds it with --results`];
   const { listHash: hash } = hashFolder(folder);
-  if (hash !== entry.privateListHash && hash !== entry.asset.listHash) return [`${folder} is neither the published asset nor the folder it was published from (its file list hash is ${hash}): fetch the run again into an empty folder`];
+  if (hash !== entry.privateListHash && hash !== entry.asset.listHash && hashReviewedFolder(folder).listHash !== entry.privateListHash && hashReviewedFolder(folder).listHash !== entry.asset.listHash) return [`${folder} is neither the published asset nor the folder it was published from (its file list hash is ${hash}): fetch the run again into an empty folder`];
   let rebuilt;
   try {
     const read = (file) => JSON.parse(readFileSync(join(folder, file), "utf8"));
@@ -559,6 +559,7 @@ export function runMismatch(entry, results) {
   } catch (error) {
     return [`the entry cannot be built again from ${folder}: ${error.message}`];
   }
+  if (canonical(rebuilt.outside ?? null) !== canonical(entry.outside ?? null)) throw new Refusal(`refused: ${entry.runId}'s board numbers (outside) differ from those in its score.json`);
   const committed = { ...entry, accepted: false, acceptedAt: null, acceptedBy: null };
   const differ = [...new Set([...Object.keys(rebuilt), ...Object.keys(committed)])].filter((k) => canonical(rebuilt[k] ?? null) !== canonical(committed[k] ?? null)).sort();
   const out = entryProblems(rebuilt);
