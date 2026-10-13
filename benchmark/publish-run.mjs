@@ -31,7 +31,7 @@
 //    platform (/Users/<name>/, /home/<name>/, C:\Users\<name>\), every value
 //    of the model settings file (~/.config/openqodex-bench/azure.env, or
 //    OPENQODEX_BENCH_MODEL_ENV) and its base URL's host, and the scrub
-//    patterns (scripts/scrub-patterns.txt and the private list); one hit
+//    privacy patterns (scripts/scrub-patterns.txt and the private list); one hit
 //    refuses the publish and nothing is written. The values themselves are
 //    never printed.
 // 3. A run with a model reviewer is published from a machine without the
@@ -61,6 +61,7 @@ import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
 import { RELEASE, REPOSITORY, assetUrl, buildEntry, byBytes, entryProblems, fileList, listHash, readEntry, runsRoot, sha256, writeEntry } from "./lib/index.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
+import { redactRowReasons } from "./lib/runner.mjs";
 import { extractAsset } from "./fetch-run.mjs";
 
 // The files a run may publish, by path inside the run folder.
@@ -155,8 +156,9 @@ function caseRecords(folder, paths) {
   return out;
 }
 
-// The scrub patterns: the public list, and the private list beside the
-// repository's main checkout when there is one (a worktree shares it).
+// Privacy patterns from both lists. Quoted upstream punctuation is part
+// of the saved review, so the public typography pattern does not apply.
+// The private list beside the main checkout is shared by its worktrees.
 function scrubPatterns() {
   const lists = [{ file: join(repoRoot, "scripts", "scrub-patterns.txt"), private: false }];
   const common = (() => {
@@ -173,6 +175,7 @@ function scrubPatterns() {
     for (const source of readFileSync(l.file, "utf8").split("\n").map((s) => s.trim()).filter((s) => s && !s.startsWith("#"))) {
       if (seen.has(source)) continue;
       seen.add(source);
+      if (!l.private && source === String.fromCodePoint(0x2014)) continue;
       out.push({ regex: new RegExp(source, "i"), label: l.private ? "matches a private scrub pattern" : `matches the scrub pattern ${source}` });
     }
   }
@@ -323,6 +326,45 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     }
     files.push({ path: "_archive/recipe.json", bytes: Buffer.from(`${JSON.stringify({ runId, ...recipe }, null, 2)}\n`) });
   }
+  // Old runs keep a reason in the row, sample, reports and brief. Redact
+  // the packaged copies only, preserving the source folder and its hash.
+  // Only a line or file with a redacted reason is rewritten; one that does
+  // not parse (a transcript cut by a killed run) keeps its bytes, and the
+  // inspection below still refuses a home path in it.
+  let reasonsRedacted = 0;
+  const reasons = new Map();
+  const redact = (text) => {
+    let row;
+    try {
+      row = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    const redacted = redactRowReasons(row, folder);
+    if (redacted.count === 0) return null;
+    reasonsRedacted += redacted.count;
+    for (const [from, to] of redacted.reasons) reasons.set(from, to);
+    return redacted.row;
+  };
+  for (const file of files) {
+    if (!/\.jsonl?$/.test(file.path) || file.path.startsWith("_archive/")) continue;
+    const text = file.bytes.toString("utf8");
+    if (file.path.endsWith(".jsonl")) {
+      const lines = text.split("\n").map((line) => {
+        const row = line.trim() ? redact(line) : null;
+        return row === null ? line : JSON.stringify(row);
+      });
+      file.bytes = Buffer.from(lines.join("\n"));
+    } else {
+      const row = redact(text);
+      if (row !== null) file.bytes = Buffer.from(`${JSON.stringify(row, null, 2)}\n`);
+    }
+  }
+  for (const file of files.filter((f) => f.path.endsWith("/brief.md"))) {
+    let text = file.bytes.toString("utf8");
+    for (const [from, to] of reasons) text = text.split(from).join(to);
+    file.bytes = Buffer.from(text);
+  }
   const { hits, looked } = await inspect(folder, files, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
   if (hits.length > 0) throw new Error(`refused: ${hits.length} hit${hits.length === 1 ? "" : "s"} in the files to publish:\n${hits.slice(0, 40).join("\n")}`);
   const tar = tarGz(files.map((f) => ({ path: `${runId}/${f.path}`, bytes: f.bytes })));
@@ -331,6 +373,7 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
   writeFileSync(tarPath, tar);
   return {
     runId,
+    reasonsRedacted,
     tarPath,
     sha256: sha256(tar),
     bytes: tar.length,
@@ -438,6 +481,7 @@ async function main() {
   }
   const { asset, entry, written, rebytes } = r;
   console.log(`${asset.runId}: ${asset.files} files in ${asset.tarPath} (${asset.bytes} bytes, sha256 ${asset.sha256}, list hash ${asset.listHash})`);
+  console.log(`${asset.reasonsRedacted} reasons redacted`);
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;

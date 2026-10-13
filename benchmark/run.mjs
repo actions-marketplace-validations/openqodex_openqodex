@@ -287,7 +287,7 @@
 //    the board, its repository and the commit boards.json pins.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { cpus, homedir, totalmem, tmpdir, platform, arch, release } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -301,7 +301,7 @@ import { heldOutAccessPath } from "./lib/index.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopReviewArgs, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopReviewArgs, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, saveSampleRow, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
@@ -758,8 +758,8 @@ function firstAttempts(folder, jobs) {
 
 // A scanner-only run: the preflight, the overlay's trust step, one pass (or
 // two with --check-identical), each scored, and the comparison.
-async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board }) {
-  const date = new Date().toISOString().slice(0, 10);
+async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt }) {
+  const date = startedAt.slice(0, 10);
   const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-${o.suite}-scan-laptop`);
   const runId = basename(out);
   const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
@@ -858,7 +858,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
   // One pass into `folder`: every scan, then the external inputs into the manifest.
   const pass = async (folder, n) => {
     console.log(n === 1 ? `Pass 1 into ${shown(folder)}` : `Pass 2, on the same build with fresh case repositories, into ${shown(folder)}`);
-    const manifest = { ...runManifest({ startedAt: new Date().toISOString(), settings: n === 1 ? settings : { ...settings, identicalPass: { pass: 2, of: runId } }, jobs }), rulesVersion: SCAN_RULES_VERSION };
+    const manifest = { ...runManifest({ startedAt, settings: n === 1 ? settings : { ...settings, identicalPass: { pass: 2, of: runId } }, jobs }), rulesVersion: SCAN_RULES_VERSION };
     let failedBefore = null;
     const attempt = async (job, k) => {
       const dir = attemptDir(folder, job, k);
@@ -891,8 +891,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
       const report = readJson(join(reportDir, "report.json"));
       const failure = scan ? null : { cause: stop !== null ? `stopped by the run: ${stop}` : `no scan.json (exit ${result.code ?? result.signal}): ${stderr.trim().split("\n").slice(-4).join(" | ")}` };
       const rec = scanSampleRecord({ job, attempt: k, result, scan, report, startedAt, failure, stopped: stop });
-      writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
-      appendFileSync(join(folder, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+      saveSampleRow(folder, dir, rec);
       console.log(`  ${job.case} #${job.repeat}: ${rec.status}, ${rec.candidates ?? "no"} candidates, ${(rec.wallMs / 1000).toFixed(1)} s${failure ? ` (${failure.cause.slice(0, 200)})` : ""}`);
       for (const file of filesUnder(dir)) {
         const text = readFileSync(file, "utf8");
@@ -1017,6 +1016,8 @@ function materialiseMain(o) {
 }
 
 async function main() {
+  const startedAt = new Date().toISOString();
+  const date = startedAt.slice(0, 10);
   let o;
   try {
     o = parseArgs(process.argv.slice(2));
@@ -1025,6 +1026,13 @@ async function main() {
     process.exit(2);
   }
   if (o.materialiseOnly) return materialiseMain(o);
+  // A dated --out names the day the run starts, as an index entry checks.
+  // An undated folder, such as a loop candidate, is never published.
+  const outDate = o.out === null ? null : /^(\d{4}-\d{2}-\d{2})-/.exec(basename(o.out))?.[1] ?? null;
+  if (outDate !== null && outDate !== date && !o.resume && o.addRepeats === null) {
+    console.error(`--out must start with ${date}, the UTC date this run starts, not ${outDate}`);
+    process.exit(2);
+  }
   // Planted cases come from a copy checked against the lock; pull request
   // cases from their suite, with their truth read now.
   const real = o.real ? realCases(o) : null;
@@ -1062,8 +1070,7 @@ async function main() {
   const packageRecord = pkg ? (({ files, ...rest }) => ({ ...rest, fileCount: Object.keys(files).length }))(pkg.record) : { spec: "local", commit: build.commit, dirty: build.dirty };
   if (pkg) console.log(`Package ${pkg.record.name} ${pkg.record.version} (${pkg.record.spec}, sha256 ${pkg.record.sha256.slice(0, 12)})`);
   const board = real ? boardOf(SUITES[suite].board) : null;
-  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board });
-  const date = new Date().toISOString().slice(0, 10);
+  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt });
   const out = o.out ?? join(benchRoot, "results", server ? `${date}-${build.short}-${suite}-review-server` : `${date}-${build.short}`);
   // The repository a review of the case reads, in the shape its path needs:
   // laptop, the change uncommitted; server, the base and the change as two
@@ -1310,7 +1317,7 @@ async function main() {
       rmSync(caseDir, { recursive: true, force: true });
     }
     const rec = saved.record;
-    appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+    saveSampleRow(out, null, rec);
     const cost = rec.usage?.cost_usd;
     console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(4)}` : ""}, served by ${rec.servedModel ?? (rec.servedModels.length > 0 ? rec.servedModels.join(" and ") : "a model the provider did not name")}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
     checkSaved(attemptDir(out, job, k));
@@ -1389,8 +1396,7 @@ async function main() {
     const stoppedHere = stop;
     const failure = stoppedHere !== null && !report ? { cause: `stopped by the run: ${stoppedHere}`, infra: false, unavailable: false } : failureOf(result, report);
     const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere, usageRecord: readJson(join(reportDir, "usage.json")) });
-    writeFileSync(join(dir, "sample.json"), `${JSON.stringify(rec, null, 2)}\n`);
-    appendFileSync(join(out, "rows.jsonl"), `${JSON.stringify(rec)}\n`);
+    saveSampleRow(out, attemptDir(out, job, k), rec);
     const tokens = Number.isInteger(rec.usage?.input_tokens) && Number.isInteger(rec.usage?.output_tokens) ? rec.usage.input_tokens + rec.usage.output_tokens : null;
     budget.recordReview({ jobId: job.jobId, usd: typeof rec.usage?.cost_usd === "number" ? rec.usage.cost_usd : null, tokens, wallMs: rec.wallMs });
     const cost = rec.usage?.cost_usd;
@@ -1444,7 +1450,7 @@ async function main() {
   try {
     ({ ended } = await executeRun({
       out,
-      manifest: o.resume ? null : runManifest({ startedAt: new Date().toISOString(), settings, jobs }),
+      manifest: o.resume ? null : runManifest({ startedAt, settings, jobs }),
       resume: o.resume,
       checkResume,
       copies: o.cases.map((c) => [specFile(c), join("cases", `${c}.json`)]),

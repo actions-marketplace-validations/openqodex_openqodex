@@ -15,3 +15,6 @@ import "../../packages/scanners/test/inputs-boundary.subprocess.test.js";
 // install root; the strict check and the server's resolver on a
 // preinstalled root.
 import "../../packages/scanners/test/server-roots.subprocess.test.js";
+// A scanner's failure reason holds no checkout path, and a path outside
+// the checkout stays as the scanner wrote it.
+import "../../packages/scanners/test/reason-paths.subprocess.test.js";
