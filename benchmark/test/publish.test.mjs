@@ -13,7 +13,6 @@
 //    every allowed file, even without a cached source repository.
 // 4. Upstream punctuation in a spec refuses a run: the spec copy replaces
 //    each em dash with a spaced hyphen, without changing the source data.
-import { } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

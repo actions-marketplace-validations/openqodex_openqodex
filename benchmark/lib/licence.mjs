@@ -10,7 +10,7 @@
 // 1a. A pull request whose licence nobody verified leaves the machine (Sid,
 //    2026-10-11: such cases are for private runs). One whose licence file
 //    GitHub cannot name (NOASSERTION, or an id on none of the lists below)
-//    is class unverified: usable in a private run, never published.
+//    is class unverified: a run publishes it in full (Sid, 2026-10-12),
 //    publishRefusal names every such case of a run, and everything that
 //    sends a run to an outside board (an outside converter, a board
 //    submission) refuses on it. A person's reading of the licence file is
