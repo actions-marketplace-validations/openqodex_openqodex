@@ -477,7 +477,8 @@ export function specCopy(c, truth) {
   if (expected === null || ids.join("\n") !== expected.join("\n")) {
     throw new Error(`${c.id}: its suite lists ${want ?? "no count of"} accepted comments, and the truth read holds ${ids.length === 0 ? "none" : ids.join(", ")}; the copy would score against another set`);
   }
-  return { ...c, bugs: accepted };
+  // Normalise quoted upstream text on the copy, leaving the pinned data intact.
+  return JSON.parse(JSON.stringify({ ...c, bugs: accepted }, (_key, value) => typeof value === "string" ? value.replace(/ *\u2014 */g, " - ") : value));
 }
 
 // What is wrong with a real case's saved truth copy, as cases/<name>.json
