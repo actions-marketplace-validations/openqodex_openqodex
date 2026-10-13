@@ -102,8 +102,8 @@ const statusOf = (first) => (first === null ? "unstarted" : first.report === nul
  * Converts the release run in `folder`: writes <folder>/outside/martian/
  * and returns { out, record, data } (record is convert.json, data
  * benchmark_data.json). Throws, writing and logging nothing, on a run that
- * is not a release run, a run of another suite, a case the licence rule
- * keeps private, a sample the run did not plan, a configuration the board
+ * is not a release run, a run of another suite, a case whose licence a
+ * board refuses, a sample the run did not plan, a configuration the board
  * cannot name, or a run converted before. `root` and `cache` are the suite
  * root and the bench cache the cases and golden files are read from;
  * `accessLog` the held-out access log; `by` who converts; `registry`
@@ -155,7 +155,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
     }
     const record = c.source?.licence ?? null;
     const why = record === null ? "its suite entry holds no licence record" : (licence.licenceExclusion(record) ?? licence.publishRefusal([{ name: c.name, licence: record.class }]));
-    if (why !== null) problems.push(`${c.name}: ${why}; a case whose licence is not verified is for private runs only, never converted for a board`);
+    if (why !== null) problems.push(`${c.name}: ${why}; a case whose licence is not verified is never converted for a board`);
     cases.set(id, c);
   }
   if (problems.length > 0) throw new Error(`${folder} is not converted for Martian's board:\n${[...new Set(problems)].join("\n")}`);

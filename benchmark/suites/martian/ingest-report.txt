@@ -18,7 +18,7 @@ Excluded, by reason:
   repository unknown to GitHub: 0 pull requests
   pull request not served by GitHub: 0 pull requests
   head no longer served by the host: 0 pull requests
-Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): 10 pull requests: getsentry/sentry 6 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0), ai-code-review-evaluation/sentry-greptile 4 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0)
+Usable with an unverified licence (GitHub names no licence it can classify; recorded as unverified, used and published in full like any other): 10 pull requests: getsentry/sentry 6 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0), ai-code-review-evaluation/sentry-greptile 4 (NOASSERTION, LICENSE.md; read by Sid on 2026-10-11 as FSL-1.1-Apache-2.0)
 Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: 5: ai-code-review-evaluation/keycloak-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#1 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#2 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#3 "reviewed commit is not in the repo" (usable); ai-code-review-evaluation/sentry-greptile#5 "there is no such PR, it is a mix of many PRs" (usable)
 Left out before the cases (not cases): 0
 

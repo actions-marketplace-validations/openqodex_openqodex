@@ -386,6 +386,19 @@ node benchmark/queue.mjs decide confirmed|disputed <case id> --bug <truth id> --
 
 A ruling acts only on a finding no frozen spec decides: a planted hit, a listed side issue or a finding on a clean case stays as the spec says. The latest line for a target wins. Each score records the adjudication file's sha256 as `decisionsHash`; `score.mjs --decisions <file>` reads another file.
 
+## Submitting to a board
+
+```bash
+node benchmark/outside/submit/aacr.mjs <accepted-aacr-run> --out benchmark/results/submit-aacr
+node benchmark/outside/submit/martian.mjs <accepted-martian-run> --out benchmark/results/submit-martian
+```
+
+AACR writes `submissions/openqodex-<configuration>-r<repeat>/meta.yaml` and `results/<instance_id>.json`, one submission per repeat. Metadata names OpenQodex, the configuration, the run's commit and version, and our local judge as `local_judge_mode` and `local_judge_model`. Comments, time and token counts come from the saved conversion. A missing time or token count stops the export. Its leaderboard allows partial coverage but scores missing samples against the full dataset. The accepted development run covers part of that dataset.
+
+Martian writes `benchmark_data.json` and a judge model folder holding `candidates.json`, `evaluations.json` and `dedup_groups.json`, preserving the saved pipeline output. Until an accepted Martian release run exists, use `benchmark/outside/fixtures/martian` as the input. That output is marked as synthetic fixtures with a stand-in judge. It is not a leaderboard score. Martian's maintainers run their own pipeline for leaderboard inclusion, as described in their [README](https://github.com/withmartian/code-review-benchmark#inclusion-criteria).
+
+Both commands validate their output. Run either script with `--check <output-folder>` to check it again. `submission.json` records provenance and expected files. An existing output folder is refused. These commands call no model, send nothing and open no pull request. A person sends a submission by hand.
+
 ## Martian's offline set
 
 Martian's Code Review Bench (https://github.com/withmartian/code-review-benchmark, MIT) publishes 50 pull requests from cal.com, Discourse, Grafana, Keycloak and Sentry, some of them copies with bugs injected, and 173 golden comments: prose with a severity and a category, and no file or line. In this benchmark they are the `martian` suite, origin `injected`.
@@ -436,7 +449,7 @@ node benchmark/ingest/clean.mjs admit                # the suite, from the rulin
 - A candidate is not a case. `admit` writes `benchmark/suites/clean/cases.json` and `benchmark/splits/clean-v1.json` from the candidates whose latest ruling is `clean`, signed by a person on `people.json`. It refuses a candidate from a held-out group.
 - A ruling names the candidate's id, which hashes its commits and size. A candidate that changes gets a new id and needs a new ruling.
 - A ruling also names the sheet it was made on. `decide` refuses a sheet that does not show the current version of `candidates.json`, and records the candidate's evidence hash. `admit` refuses a clean ruling, naming the candidate, when the candidates have a new version or the candidate's evidence moved since the ruling; the sheet is printed and ruled again.
-- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name (class `unverified`) may run and publish in full. Outside converters and board submissions still apply `publishRefusal`.
+- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name gets the class `unverified`. It is used and published in full like any other case (Sid, 2026-10-12). Its licence record's `use` field says `local review and scoring`. That field is outside the case hash, so a case id never moves with it. Outside converters and board submissions still apply `publishRefusal`.
 - Every read of the suite refuses an entry without a standing `clean` ruling, so an entry added by hand stops every run of the suite.
 - No candidate has been ruled yet, so the suite holds no case.
 

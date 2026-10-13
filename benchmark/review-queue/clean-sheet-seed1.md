@@ -1,21 +1,21 @@
 # Clean controls: candidates to rule
 
-Sheet clean@1@862d9f412fa1: 49 pull requests in a shuffled order (seed 1). A script found each merged, reviewed with no request for changes, and with no later fix, revert, fix-up or bug report it can see touching it; the evidence it read is under each. No reviewer has seen these changes. Read the change itself (the Files tab of its link) and rule whether it is free of any issue a reviewer should raise. Record each ruling under your own name:
+Sheet clean@1@b112f7d4a795: 49 pull requests in a shuffled order (seed 1). A script found each merged, reviewed with no request for changes, and with no later fix, revert, fix-up or bug report it can see touching it; the evidence it read is under each. No reviewer has seen these changes. Read the change itself (the Files tab of its link) and rule whether it is free of any issue a reviewer should raise. Record each ruling under your own name:
 
 ```
-node benchmark/queue.mjs decide clean <case id> --by <your name> --sheet clean@1@862d9f412fa1
-node benchmark/queue.mjs decide not-clean <case id> --by <your name> --sheet clean@1@862d9f412fa1 --note "<the issue>"
+node benchmark/queue.mjs decide clean <case id> --by <your name> --sheet clean@1@b112f7d4a795
+node benchmark/queue.mjs decide not-clean <case id> --by <your name> --sheet clean@1@b112f7d4a795 --note "<the issue>"
 node benchmark/ingest/clean.mjs admit
 ```
 
-A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to each candidate's evidence: if node benchmark/ingest/clean.mjs list writes them again with any change, admit refuses the ruling, and the sheet is printed and ruled again.
+A ruling binds to this sheet's version of the candidates (b112f7d4a795) and to each candidate's evidence: if node benchmark/ingest/clean.mjs list writes them again with any change, admit refuses the ruling, and the sheet is printed and ruled again.
 
 ## 1. input: fix leaking tablet tool key name
 
 - Case: clean/mpv-player__mpv-17610@d31234ab (evidence 391f9db4fb66)
 - Change: https://github.com/mpv-player/mpv/pull/17610/files (13 changed lines in 1 file, C)
 - Commits: base 5f9e1bc7bd2f48744c57c9055f50b7bf24f32356, head 884acb7b2e7bd559f36df6d7163f6ed50480cef5; merged 2026-03-19T19:45:55Z as https://github.com/mpv-player/mpv/commit/7b1ee864b83e6fe89f936f13b1c5ae34048432b9
-- Licence: NOASSERTION, LICENSE.GPL (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.GPL (unverified: used and published in full)
 - Reviews by others: 2 (approved 1, commented 1); none requested changes
 - Checked up to 2026-06-17T19:45:55Z (read 2026-10-12): 8 later commits on its files, each read line by line (2 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on input/input.c:
@@ -198,7 +198,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/mpv-player__mpv-17434@7bc9ed2d (evidence 4cfcaf987c21)
 - Change: https://github.com/mpv-player/mpv/pull/17434/files (48 changed lines in 9 files, C)
 - Commits: base 250d6056c3ebef4c47dbc789e6fbe0ffc3f724c1, head 32fe7425f10954e7f32efb0f2bd4caefd035e754; merged 2026-02-24T18:36:33Z as https://github.com/mpv-player/mpv/commit/3eb8f9a1de70f03c4ef2b1c6ec0cecb81f84c103
-- Licence: NOASSERTION, LICENSE.GPL (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.GPL (unverified: used and published in full)
 - Reviews by others: 1 (commented 1); none requested changes
 - Checked up to 2026-05-25T18:36:33Z (read 2026-10-12): 77 later commits on its files, each read line by line (15 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on DOCS/man/input.rst:
@@ -354,7 +354,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 
 ## 18. fix: correct OAuth service health check URL
 
-- Case: clean/gofr-dev__gofr-3185@0a6faa23 (evidence dc4ecfbacba1)
+- Case: clean/gofr-dev__gofr-3185@0a6faa23 (evidence 5dc10b71a0e6)
 - Change: https://github.com/gofr-dev/gofr/pull/3185/files (107 changed lines in 2 files, Go)
 - Commits: base 01a7e62bd5a153ab82117807630cbbd63200116e, head 724bc995142ca2fc4c0096ec7bdb207eb6f4c0f6; merged 2026-03-24T07:08:11Z as https://github.com/gofr-dev/gofr/commit/a6f8a9d8ad6182e3cd6082be10d086a218ff13e4
 - Licence: Apache-2.0, LICENSE
@@ -386,7 +386,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/timescale__timescaledb-9329@ed4324e7 (evidence 108c21ca0027)
 - Change: https://github.com/timescale/timescaledb/pull/9329/files (21 changed lines in 1 file, C)
 - Commits: base f6639545b4aa32669c48ebfd45c27697407efe2d, head ad91eea5acc5dbc2dd5ea654ded6c6427d881298; merged 2026-03-04T07:13:29Z as https://github.com/timescale/timescaledb/commit/85229fd60f4ae65af42adeba6b7fb27f6005532f
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE (unverified: used and published in full)
 - Reviews by others: 2 (approved 2); none requested changes
 - Checked up to 2026-06-02T07:13:29Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on sql/size_utils.sql:
@@ -437,7 +437,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/n8n-io__n8n-27610@5d021fdd (evidence 86f8f4248791)
 - Change: https://github.com/n8n-io/n8n/pull/27610/files (6 changed lines in 1 file, TypeScript)
 - Commits: base d3e45bc126258c86dfcf81282b0e28bc1088bf54, head 7a617e72ad4a46e45ba1b7aa01c72a183d1b8d77; merged 2026-03-26T13:04:26Z as https://github.com/n8n-io/n8n/commit/197a4314b39dc873c6e13fd9cd8164971d53023a
-- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.md (unverified: used and published in full)
 - Reviews by others: 3 (approved 1, commented 1, dismissed 1); none requested changes
 - Checked up to 2026-06-24T13:04:26Z (read 2026-10-12): 15 later commits on its files, each read line by line (3 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on packages/frontend/editor-ui/src/app/composables/useWorkflowInitialization.ts:
@@ -489,7 +489,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/elastic__elasticsearch-145252@a2c9e075 (evidence 8af683d2ddd4)
 - Change: https://github.com/elastic/elasticsearch/pull/145252/files (4 changed lines in 1 file, Java)
 - Commits: base 8d0f31d7ffd44514a8bb4367bc2aafee8c3bdd09, head 7f1cc1b0320bb3c071befa5ac24942898bd18d3e; merged 2026-03-31T17:51:18Z as https://github.com/elastic/elasticsearch/commit/7ec12824b2ec23d2942f874048682ee9fc6ce823
-- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.txt (unverified: used and published in full)
 - Reviews by others: 1 (approved 1); none requested changes
 - Checked up to 2026-06-29T17:51:18Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Ruling: 
@@ -685,7 +685,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/nodejs__node-62358@5869d713 (evidence 119d4ef44656)
 - Change: https://github.com/nodejs/node/pull/62358/files (6 changed lines in 1 file, JavaScript)
 - Commits: base 7547e795ef700e1808702fc2851a0dcc3395a065, head 21bd03ed84e0d9b93421ae39775a9712e8f69972; merged 2026-03-22T21:48:58Z as https://github.com/nodejs/node/commit/61102cdbb3d59155ad5bb4fc9419627a31e63f7a
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE (unverified: used and published in full)
 - Reviews by others: 9 (approved 7, commented 2); none requested changes
 - Checked up to 2026-06-20T21:48:58Z (read 2026-10-12): 2 later commits on its files, each read line by line (1 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on doc/api/vm.md:
@@ -741,7 +741,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/n8n-io__n8n-27518@be2e1eb8 (evidence 9598e8fc5814)
 - Change: https://github.com/n8n-io/n8n/pull/27518/files (25 changed lines in 2 files, TypeScript)
 - Commits: base fc0f0712d8ee07cc259c9757cde44df8da2efe26, head 4f8dd78c8b69a0cba02bdd5b2b73bbccb358b80d; merged 2026-03-25T08:24:38Z as https://github.com/n8n-io/n8n/commit/fb7788d6c286f99126371a33b648c6def9541143
-- Licence: NOASSERTION, LICENSE.md (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.md (unverified: used and published in full)
 - Reviews by others: 2 (approved 1, commented 1); none requested changes
 - Checked up to 2026-06-23T08:24:38Z (read 2026-10-12): 1 later commit on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on packages/cli/src/modules/source-control.ee/__tests__/source-control-preferences.service.ee.test.ts:
@@ -800,7 +800,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/elastic__elasticsearch-145087@f8bc183c (evidence eef2ca66d951)
 - Change: https://github.com/elastic/elasticsearch/pull/145087/files (5 changed lines in 1 file, Java)
 - Commits: base b909c6cf7e752f01854de416b242deb719e17a1d, head 3cec09c4b94db97df1f549120b5b3c36eea57b24; merged 2026-03-27T14:07:22Z as https://github.com/elastic/elasticsearch/commit/19728c5eae3bb55c81242a438efcc79a43dc0b9b
-- Licence: NOASSERTION, LICENSE.txt (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE.txt (unverified: used and published in full)
 - Reviews by others: 2 (approved 1, commented 1); none requested changes
 - Checked up to 2026-06-25T14:07:22Z (read 2026-10-12): 2 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Later commits on docs/reference/enrich-processor/geoip-processor.md:
@@ -813,7 +813,7 @@ A ruling binds to this sheet's version of the candidates (862d9f412fa1) and to e
 - Case: clean/nodejs__node-62167@24cf8219 (evidence 5a25061e4dd7)
 - Change: https://github.com/nodejs/node/pull/62167/files (4 changed lines in 1 file, JavaScript)
 - Commits: base 70b35704a04be477e60755bf075d617976925fef, head 07b43ce6f922f4ebff49c265a7c5a309684bd294; merged 2026-03-11T14:15:25Z as https://github.com/nodejs/node/commit/2b74812c3ca2fdb466fd64d44e9c0cfbf2637b00
-- Licence: NOASSERTION, LICENSE (unverified: private runs only)
+- Licence: NOASSERTION, LICENSE (unverified: used and published in full)
 - Reviews by others: 4 (approved 4); none requested changes
 - Checked up to 2026-06-09T14:15:25Z (read 2026-10-12): 0 later commits on its files, each read line by line (0 reading as a fix, revert or follow-up), none touching its lines
 - Later commits naming it (quoting its title, or with no fix word): https://github.com/nodejs/node/commit/1aad512f947ef33ceaee317e6b52f7184896695e "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/7d9db8cd212be8c008279d822e567542938b423c "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/135e8c853cc77e3aca4d2646a22f83d29e462e90 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/9708f7754e9fa715389d8380b29ec9eb6d77c427 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/3d0f97e21aaca29de407a90a5ff30b6089f67c08 "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/b771d1e225e06bc986115aedb9c2b144ddb4dcda "tools: keep GN files when updating Merve"; https://github.com/nodejs/node/commit/795d663ff42ff1ad82b83588771567c7b2a7c39a "tools: keep GN files when updating Merve"
