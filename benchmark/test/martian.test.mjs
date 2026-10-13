@@ -12,8 +12,8 @@
 // 2. A finding without problem, consequence or fix is saved for the judge.
 // 3. One finding extracted into two issues, or matched to two golden
 //    comments, loses a match.
-// Also: a pull request whose licence GitHub cannot name is usable for
-// private runs only, as unverified, with a person's reading of that very
+// Also: a pull request whose licence GitHub cannot name is used and
+// published in full, as unverified, with a person's reading of that very
 // file noted; official totals missing a field of their shape, and a match
 // across two pull requests, are refused.
 import { createHash } from "node:crypto";
@@ -140,7 +140,7 @@ describe("the Martian ingest", () => {
     const { cases, report } = await ingestInto(setup());
     expect(cases.cases.length).toBe(8);
     const by = Object.fromEntries(cases.cases.map((e) => [e.name, e]));
-    // A licence GitHub cannot name is usable for private runs, unverified,
+    // A licence GitHub cannot name is used and published in full, unverified,
     // with a person's reading of the very file noted beside it.
     expect(by["getsentry__sentry-5"]).toMatchObject({ status: "usable", excludedWhy: null, licence: { class: "unverified", spdx: "NOASSERTION", excerpts: "omit", reading: { spdx: "FSL-1.1-Apache-2.0", by: "Sid", on: "2026-10-11" } } });
     expect(by["gamma__lib-3"]).toMatchObject({ status: "excluded", licence: { class: "none" } });

@@ -436,7 +436,7 @@ node benchmark/ingest/clean.mjs admit                # the suite, from the rulin
 - A candidate is not a case. `admit` writes `benchmark/suites/clean/cases.json` and `benchmark/splits/clean-v1.json` from the candidates whose latest ruling is `clean`, signed by a person on `people.json`. It refuses a candidate from a held-out group.
 - A ruling names the candidate's id, which hashes its commits and size. A candidate that changes gets a new id and needs a new ruling.
 - A ruling also names the sheet it was made on. `decide` refuses a sheet that does not show the current version of `candidates.json`, and records the candidate's evidence hash. `admit` refuses a clean ruling, naming the candidate, when the candidates have a new version or the candidate's evidence moved since the ruling; the sheet is printed and ruled again.
-- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name (class `unverified`) may run and publish in full. Outside converters and board submissions still apply `publishRefusal`.
+- A candidate carries its licence class into the suite entry and each run's copy of the case. A case whose licence GitHub cannot name gets the class `unverified`. It is used and published in full like any other case (Sid, 2026-10-12). Its licence record's `use` field says `local review and scoring`. That field is outside the case hash, so a case id never moves with it. Outside converters and board submissions still apply `publishRefusal`.
 - Every read of the suite refuses an entry without a standing `clean` ruling, so an entry added by hand stops every run of the suite.
 - No candidate has been ruled yet, so the suite holds no case.
 

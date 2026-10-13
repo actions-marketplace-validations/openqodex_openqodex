@@ -117,7 +117,7 @@ function pullRequest(cache, repo, n, { title = `Add the pr lines ${n}`, addition
 // for the dev groups. Nothing is written for the held-out repository, so a
 // listing that asked about it would stop on the offline cache. beta/lib's
 // licence file is one GitHub cannot name, so its pull requests are usable
-// for private runs only.
+// and published in full.
 function setup() {
   const root = tempDir("oq-clean-root-");
   const cache = tempDir("oq-clean-cache-");

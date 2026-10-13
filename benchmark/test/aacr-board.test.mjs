@@ -337,10 +337,10 @@ describe("a failed or never-started review vanishes from AACR's denominators", (
 
 describe("a case whose licence nobody verified is converted for a board", () => {
   // A licence record as the ingest writes it for a repository whose licence
-  // file the licence API cannot name: class unverified, usable in a private
-  // run and never for a board; unknown, the class before that; and for one
+  // file the licence API cannot name: class unverified, used and published in full,
+  // but refused for a board; unknown, the class before that; and for one
   // with no licence file, class none.
-  const licence = (cls) => ({ spdx: cls === "none" ? null : "NOASSERTION", chosen: null, class: cls, file: cls === "none" ? null : "LICENSE.txt", fileSha256: null, at: "the default branch on 2026-10-11", source: "the licence API", use: "local review and scoring, in private runs only", excerpts: "omit" });
+  const licence = (cls) => ({ spdx: cls === "none" ? null : "NOASSERTION", chosen: null, class: cls, file: cls === "none" ? null : "LICENSE.txt", fileSha256: null, at: "the default branch on 2026-10-11", source: "the licence API", use: "local review and scoring", excerpts: "omit" });
 
   it.each(["unverified", "unknown", "none"])("refuses a run holding a case whose licence class is %s, naming the case, and writes nothing", async (cls) => {
     const [name, other] = SMOKE;
@@ -357,7 +357,7 @@ describe("a case whose licence nobody verified is converted for a board", () => 
     })();
     expect(refusal).toContain(name);
     expect(refusal).not.toContain(other);
-    expect(refusal).toMatch(/private run/);
+    expect(refusal).toMatch(/never converted for a board/);
     expect(existsSync(join(out, "outside"))).toBe(false);
   });
 });

@@ -8,7 +8,7 @@ Excluded, by reason:
   licence of no class this benchmark uses: 0 pull requests in 0 repositories
   repository unknown to GitHub: 0 pull requests in 0 repositories
   head no longer served by the host (excluded after the split; the split file still lists them): 11 pull requests in 5 repositories: keycloak/keycloak 5 (#35645, #36457, #37465, #37504, #41672), ClickHouse/ClickHouse 2 (#74070, #85266), comfyanonymous/ComfyUI 2 (#7952, #9560), astral-sh/uv 1 (#11088), nodejs/node 1 (#56185)
-Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): 29 pull requests in 5 repositories: elastic/elasticsearch 14 (NOASSERTION, LICENSE.txt), n8n-io/n8n 6 (NOASSERTION, LICENSE.md), mpv-player/mpv 4 (NOASSERTION, LICENSE.GPL), timescale/timescaledb 4 (NOASSERTION, LICENSE), nodejs/node 1 (NOASSERTION, LICENSE)
+Usable with an unverified licence (GitHub names no licence it can classify; recorded as unverified, used and published in full like any other): 29 pull requests in 5 repositories: elastic/elasticsearch 14 (NOASSERTION, LICENSE.txt), n8n-io/n8n 6 (NOASSERTION, LICENSE.md), mpv-player/mpv 4 (NOASSERTION, LICENSE.GPL), timescale/timescaledb 4 (NOASSERTION, LICENSE), nodejs/node 1 (NOASSERTION, LICENSE)
 Left out before the cases (not cases):
   rejected comments of a pull request with no accepted comment: 4 pull requests, 8 rejected comments: opencv/opencv#27185 1, nodejs/node#56714 3, facebook/react#31844 3, vllm-project/vllm#19231 1
   malformed or repeated rows: 0
