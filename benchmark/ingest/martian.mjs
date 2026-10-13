@@ -43,7 +43,7 @@
 //    the code is fetched from is read the way AACR's is (lib/licence.mjs);
 //    none excludes the pull request, with the reason in the entry and the
 //    count in the report. A licence GitHub cannot name (Sentry's) is usable
-//    in private runs as unverified, never published (Sid, 2026-10-11), and
+//    as unverified, used and published in full (Sid, 2026-10-12), and
 //    the report names it with a person's reading of the file.
 // 5. A case is read at another commit on the next ingest, or after the pull
 //    request moves: its base and head come from GitHub's cached answer for
@@ -280,7 +280,7 @@ export async function ingestMartian({ boards, cache = cacheRoot(), offline = fal
     say(`  ${label}: ${plural(hit.length, "pull request")}${detail.length ? `: ${detail.join(", ")}` : ""}`);
   }
   const unverified = usable.filter((e) => e.licence.class === "unverified");
-  say(`Usable with an unverified licence (GitHub names no licence it can classify; private runs only, and a run that holds one is never published): ${plural(unverified.length, "pull request")}${unverified.length ? `: ${countBy(unverified, (e) => e.repo).map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
+  say(`Usable with an unverified licence (GitHub names no licence it can classify; recorded as unverified, used and published in full like any other): ${plural(unverified.length, "pull request")}${unverified.length ? `: ${countBy(unverified, (e) => e.repo).map(([r, n]) => `${r} ${n} (${licenceNote(unverified.find((e) => e.repo === r).licence)})`).join(", ")}` : ""}`);
   const noted = entries.filter((e) => e.note !== null);
   say(`Martian's notes on a pull request (az_comment), kept in the entry; a noted pull request is excluded only when its head is not served: ${noted.length}${noted.length ? `: ${noted.map((e) => `${prRef(e.prUrl)} "${e.note}" (${e.status})`).join("; ")}` : ""}`);
   say(`Left out before the cases (not cases): ${notCases.length}${notCases.length ? `: ${notCases.map((x) => `${x.ref} (${x.why})`).join("; ")}` : ""}`);

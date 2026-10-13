@@ -488,7 +488,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -531,7 +531,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -574,7 +574,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -617,7 +617,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1040,7 +1040,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1083,7 +1083,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1126,7 +1126,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1169,7 +1169,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1212,7 +1212,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",
@@ -1255,7 +1255,7 @@
         "fileSha256": "1f2a39da390f36830e83d88b17f7720527a7c95f8f137b16ebb68f283cbbfabc",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit",
         "reading": {
           "spdx": "FSL-1.1-Apache-2.0",

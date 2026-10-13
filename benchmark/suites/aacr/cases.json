@@ -2157,7 +2157,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2192,7 +2192,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2227,7 +2227,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2262,7 +2262,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2297,7 +2297,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2332,7 +2332,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2367,7 +2367,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2402,7 +2402,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2437,7 +2437,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2472,7 +2472,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2507,7 +2507,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2542,7 +2542,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2577,7 +2577,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -2612,7 +2612,7 @@
         "fileSha256": "09979a6b0701e166ea7bfa4bdf524a431c7ca4a94b16ac2c645bbed9fb7ec2e1",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5097,7 +5097,7 @@
         "fileSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5132,7 +5132,7 @@
         "fileSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5167,7 +5167,7 @@
         "fileSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5202,7 +5202,7 @@
         "fileSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5377,7 +5377,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5412,7 +5412,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5447,7 +5447,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5482,7 +5482,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5517,7 +5517,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5552,7 +5552,7 @@
         "fileSha256": "d2f621f59aa4c10eab79b6333e59d9d3d5b53307dcfd16dbd75e40e679e84965",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5622,7 +5622,7 @@
         "fileSha256": "3ebb7123f4d2b9b916338e11748380972d4339d66f54cb3258270f99bb62faf5",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -5657,7 +5657,7 @@
         "fileSha256": "3ebb7123f4d2b9b916338e11748380972d4339d66f54cb3258270f99bb62faf5",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -6287,7 +6287,7 @@
         "fileSha256": "0378e0948feefd85f579319c74d6e2b671194037f550c7176ef26649d94c895b",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -6322,7 +6322,7 @@
         "fileSha256": "0378e0948feefd85f579319c74d6e2b671194037f550c7176ef26649d94c895b",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -6357,7 +6357,7 @@
         "fileSha256": "0378e0948feefd85f579319c74d6e2b671194037f550c7176ef26649d94c895b",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {
@@ -6392,7 +6392,7 @@
         "fileSha256": "0378e0948feefd85f579319c74d6e2b671194037f550c7176ef26649d94c895b",
         "at": "the default branch on 2026-10-11",
         "source": "the GitHub licence API",
-        "use": "local review and scoring, in private runs only",
+        "use": "local review and scoring",
         "excerpts": "omit"
       },
       "truth": {

@@ -184,7 +184,7 @@ describe("a case whose licence nobody verified, or a sample outside Martian, is 
     const why = await refusal(() => convertRun(out, opts));
     expect(why).toMatch(/oq-fixture__ledger-7/);
     expect(why).not.toMatch(/oq-fixture__shop-11/);
-    expect(why).toMatch(/private run/);
+    expect(why).toMatch(/never converted for a board/);
     expect(existsSync(join(out, "outside"))).toBe(false);
     expect(existsSync(opts.accessLog)).toBe(false);
   });
