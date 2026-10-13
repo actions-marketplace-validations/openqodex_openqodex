@@ -49,6 +49,9 @@
 //    pointer, so each overwrites the other's baseline: an entry carries the
 //    subset its run named, and the group key ends with it. A run with no
 //    subset (or --subset all) has no subset field and keeps the key it had.
+// 12. An accepted entry's board numbers (outside) are edited and the
+//    results page shows them: the pointer records their hash (boardHash),
+//    and acceptedProblems refuses an entry whose board numbers differ.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -403,8 +406,9 @@ export function entryProblems(e) {
 // Groups and the accepted pointer.
 //
 // benchmark/index/accepted.json:
-//   { version: 1, commit, runId, scoreHash, acceptedAt, acceptedBy,
-//     groups: { <group key>: { runId, commit, scoreHash, acceptedAt, acceptedBy } } }
+//   { version: 1, commit, runId, scoreHash, [boardHash,] acceptedAt, acceptedBy,
+//     groups: { <group key>: { runId, commit, scoreHash, [boardHash,] acceptedAt, acceptedBy } } }
+// boardHash is there when the entry carries board numbers (outside).
 // Each group key names the run the trend compares that group's newer runs
 // against. The top level names the run accepted last, of either mode. The
 // reviewer loop's base is the commit of the review run accepted last, which
@@ -441,6 +445,14 @@ export function scoreHash(e) {
   return sha256(canonical({ runId: pick("runId"), commit: e.build?.commit ?? null, rulesVersion: pick("rulesVersion"), rulesHash: pick("rulesHash"), decisionsHash: pick("decisionsHash"), caseSetHash: pick("caseSetHash"), caseIds: pick("caseIds"), scores: pick("scores"), perCase: pick("perCase"), perBug: pick("perBug"), intervals: pick("intervals") }));
 }
 
+// The hash the accepted pointer records for an entry's board numbers
+// (outside), or null when it has none. Accept records it, and so does a
+// board refresh of an accepted entry after it checks the numbers against
+// the run's board output.
+export function boardHash(e) {
+  return e.outside === undefined ? null : sha256(canonical(e.outside));
+}
+
 // Every problem with the accepted pointer against the index entries
 // (`entries`: run id to entry), one line each; empty when it is sound.
 export function acceptedProblems(pointer, entries) {
@@ -460,6 +472,7 @@ export function acceptedProblems(pointer, entries) {
     need(e.accepted === true, `${at} names ${e.runId}, whose entry is not marked accepted`);
     need(e.build?.commit === a.commit, `${at} names the commit ${a.commit}, not ${e.runId}'s build commit`);
     need(scoreHash(e) === a.scoreHash, `${at}: the entry ${e.runId} changed since it was accepted (its score hash is now ${scoreHash(e)}, the pointer holds ${a.scoreHash}); restore the entry from git, since a published entry's numbers never change`);
+    need((a.boardHash ?? null) === boardHash(e), `${at}: the board numbers of ${e.runId} are not the ones recorded (their hash is ${boardHash(e) ?? "none"}, the pointer holds ${a.boardHash ?? "none"}); restore the entry from git, or refresh them with node benchmark/publish-run.mjs <run folder> --write-index`);
     return e;
   };
   named(pointer, "the last accepted run");

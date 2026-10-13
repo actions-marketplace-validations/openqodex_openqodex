@@ -16,6 +16,8 @@
 // 5. Publishing drops the outside block or changes other fields during a refresh.
 // 6. A board-only refresh accepts changed files or changed asset bytes.
 // 7. Board output changes the reviewed asset or its scrub inspects excluded files.
+// 8. Board numbers edited by hand in score.json reach the index, or a
+//    refresh of an accepted entry leaves its board hash unrecorded.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -23,7 +25,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { casesRoot, generatedValue, repoRoot } from "../lib/cases.mjs";
-import { hashFolder } from "../lib/index.mjs";
+import { boardHash, hashFolder } from "../lib/index.mjs";
 import { specCopy } from "../lib/suites.mjs";
 import { packageRun, publishRun } from "../publish-run.mjs";
 import { extractAsset } from "../fetch-run.mjs";
@@ -238,18 +240,26 @@ function boardRun() {
   const folder = plantedRun("2026-10-10-aaaaaaa", { caseIds: ["planted/demo-polyglot@aaaaaaaa", "planted/flask-path-traversal@bbbbbbbb"], caseHashes: { "demo-polyglot": "a".repeat(64), "flask-path-traversal": "b".repeat(64) }, build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false } });
   const scored = spawnSync(process.execPath, [join(repoRoot, "benchmark/score.mjs"), folder], { encoding: "utf8" });
   expect(scored.status, scored.stderr).not.toBe(2);
+  // A board output in the shape AACR-Bench's evaluator leaves it, which score.mjs --outside aacr reads.
+  write(join(folder, "outside/aacr/convert.json"), JSON.stringify({ reader: "ocr", lineK: 1, references: { total: 2, left: 0, share: 0 }, withoutLine: [], folders: [{ dir: "claude-graph-on/r1", config: "claude-graph-on", repeat: 1, tool: "openqodex-claude-graph-on-r1" }] }));
+  write(join(folder, "outside/aacr/claude-graph-on/r1/metrics_ocr_20261010_000000.json"), JSON.stringify({ summary: { evaluated_instances: 2, missing_instances: 0, expected_notes: 2, generated_notes: 4, matched_line_notes: 1, matched_semantic_notes: 1 } }));
+  const boarded = spawnSync(process.execPath, [join(repoRoot, "benchmark/score.mjs"), folder, "--outside", "aacr"], { encoding: "utf8" });
+  expect(boarded.status, boarded.stderr).toBe(0);
   const score = JSON.parse(readFileSync(join(folder, "score.json"), "utf8"));
-  score.outside = { aacr: { byConfig: { "claude-graph-on": { mean: { line: { precision: 0.4, recall: 0.5 }, semantic: null } } } } };
-  writeFileSync(join(folder, "score.json"), JSON.stringify(score));
+  expect(score.outside.aacr.byConfig["claude-graph-on"].mean.line).toMatchObject({ precision: 0.25, recall: 0.5 });
   return { folder, outside: score.outside };
 }
 
 it("does not drop board numbers when publishing or change other entry fields when refreshing them", async () => {
   const { folder, outside } = boardRun();
-  const runs = tempDir("oq-board-index-");
+  const index = tempDir("oq-board-index-");
+  const runs = join(index, "runs");
   const options = { runs, out: tempDir("oq-board-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(runs, "missing") } };
   const first = await publishRun(folder, { ...options, dryRun: true, writeIndex: true });
   expect(first.entry.outside).toEqual(outside);
+  // The pointer of a run accepted before its board run, as trend.mjs --accept wrote it.
+  const record = { runId: first.entry.runId, commit: "a".repeat(40), scoreHash: "c".repeat(64), acceptedAt: "2026-10-10T12:00:00Z", acceptedBy: "Sid" };
+  write(join(index, "accepted.json"), `${JSON.stringify({ version: 1, ...record, groups: { group: record } }, null, 2)}\n`);
   const committed = { ...first.entry, accepted: true, acceptedAt: "2026-10-10T12:00:00Z", acceptedBy: "Sid", scannersComplete: true };
   delete committed.outside;
   writeFileSync(first.written, JSON.stringify(committed));
@@ -258,6 +268,25 @@ it("does not drop board numbers when publishing or change other entry fields whe
   const refreshed = await noUpload(() => publishRun(folder, { ...options, writeIndex: true }));
   expect(refreshed.entry).toEqual({ ...committed, outside });
   expect(JSON.parse(readFileSync(first.written, "utf8"))).toEqual(refreshed.entry);
+  const pointer = JSON.parse(readFileSync(join(index, "accepted.json"), "utf8"));
+  expect(boardHash(refreshed.entry)).toMatch(/^[0-9a-f]{64}$/);
+  expect(pointer).toMatchObject({ ...record, boardHash: boardHash(refreshed.entry), groups: { group: { ...record, boardHash: boardHash(refreshed.entry) } } });
+});
+
+it("refuses board numbers edited by hand in score.json, at publish and at refresh", async () => {
+  const { folder } = boardRun();
+  const runs = tempDir("oq-board-index-");
+  const options = { runs, out: tempDir("oq-board-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(runs, "missing") } };
+  const first = await publishRun(folder, { ...options, dryRun: true, writeIndex: true });
+  const before = readFileSync(first.written, "utf8");
+  const scoreFile = join(folder, "score.json");
+  const score = JSON.parse(readFileSync(scoreFile, "utf8"));
+  score.outside.aacr.byConfig["claude-graph-on"].mean.line.precision = 0.9;
+  writeFileSync(scoreFile, `${JSON.stringify(score, null, 2)}\n`);
+  const refused = /^refused: 2026-10-10-aaaaaaa's board numbers in score.json are not the ones its board output gives; run node benchmark\/score.mjs .+ --outside aacr again$/;
+  await expect(noUpload(() => publishRun(folder, { ...options, writeIndex: true }))).rejects.toThrow(refused);
+  expect(readFileSync(first.written, "utf8")).toBe(before);
+  await expect(publishRun(folder, { ...options, runs: tempDir("oq-board-index-"), dryRun: true, writeIndex: true })).rejects.toThrow(refused);
 });
 
 it("refuses a board-only refresh when run files or asset bytes have changed", async () => {

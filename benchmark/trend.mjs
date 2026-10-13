@@ -128,13 +128,17 @@
 // 16. A model, or anyone people.json does not list, accepts a baseline:
 //    --accept refuses a --by that is not a person named in
 //    benchmark/review-queue/people.json (lib/rulings.mjs isPersonName).
+// 17. An entry's board numbers (outside) are accepted unchecked, or edited
+//    after accept: accept refuses numbers that differ from the run's
+//    score.json, refuses a copy of the asset (which has none) for an entry
+//    that has them, and records their hash (boardHash) beside the score hash.
 
 import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, repoRoot } from "./lib/cases.mjs";
 import { externalRefusals, inputDifferences } from "./lib/external.mjs";
-import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, buildEntry, entryProblems, groupKeys, hashFolder, hashReviewedFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
+import { ACCEPTED_VERSION, acceptedPath, acceptedProblems, boardHash, buildEntry, entryProblems, groupKeys, hashFolder, hashReviewedFolder, indexRoot, listEntries, resultsRoot, scoreHash, writeEntry } from "./lib/index.mjs";
 import { ISSUE_METRICS, RESAMPLES, clusterFn, pairedBounds, pairedSums, seedOf } from "./lib/interval.mjs";
 import { isPersonName, readPeople } from "./lib/rulings.mjs";
 import { claudeRunModels, savedSampleRows } from "./lib/runner.mjs";
@@ -552,6 +556,8 @@ export function runMismatch(entry, results) {
   const { listHash: hash } = hashFolder(folder);
   const reviewed = hashReviewedFolder(folder).listHash;
   if (hash !== entry.privateListHash && hash !== entry.asset.listHash && reviewed !== entry.privateListHash && reviewed !== entry.asset.listHash) return [`${folder} is neither the published asset nor the folder it was published from (its file list hash is ${hash}): fetch the run again into an empty folder`];
+  // The asset carries no board numbers, so only the folder the run was published from can check them.
+  if (hash === entry.asset.listHash && entry.outside !== undefined) return [`${folder} is a copy of the published asset, which carries no board numbers, so it cannot check the entry's: name the folder the run was published from with --results`];
   let rebuilt;
   try {
     const read = (file) => JSON.parse(readFileSync(join(folder, file), "utf8"));
@@ -560,11 +566,8 @@ export function runMismatch(entry, results) {
   } catch (error) {
     return [`the entry cannot be built again from ${folder}: ${error.message}`];
   }
-  // The asset carries no board numbers, so only the folder it was published from can check them.
-  const fetched = hash === entry.asset.listHash;
-  if (!fetched && canonical(rebuilt.outside ?? null) !== canonical(entry.outside ?? null)) throw new Refusal(`refused: ${entry.runId}'s board numbers (outside) differ from those in its score.json`);
+  if (canonical(rebuilt.outside ?? null) !== canonical(entry.outside ?? null)) throw new Refusal(`refused: ${entry.runId}'s board numbers (outside) differ from those in its score.json`);
   const committed = { ...entry, accepted: false, acceptedAt: null, acceptedBy: null };
-  if (fetched) delete committed.outside;
   const differ = [...new Set([...Object.keys(rebuilt), ...Object.keys(committed)])].filter((k) => canonical(rebuilt[k] ?? null) !== canonical(committed[k] ?? null)).sort();
   const out = entryProblems(rebuilt);
   if (differ.length > 0) out.push(`the entry does not match its run: ${differ.join(", ")} differ from what ${folder} gives`);
@@ -590,7 +593,8 @@ export function acceptRun({ index = indexRoot, results = resultsRoot, runId, by,
   }
   const marked = { ...entry, accepted: true, acceptedAt: now, acceptedBy: by };
   const written = writeEntry(marked, join(index, "runs"));
-  const record = { runId, commit: entry.build.commit, scoreHash: scoreHash(marked), acceptedAt: now, acceptedBy: by };
+  const board = boardHash(marked);
+  const record = { runId, commit: entry.build.commit, scoreHash: scoreHash(marked), ...(board === null ? {} : { boardHash: board }), acceptedAt: now, acceptedBy: by };
   const groups = { ...pointer?.groups };
   const keys = groupKeys(marked).map((g) => g.key);
   for (const key of keys) groups[key] = record;
