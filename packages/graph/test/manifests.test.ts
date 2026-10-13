@@ -10,7 +10,9 @@
 // 3. A linear reader stops reading what it must (the positive controls).
 // 4. Stripping a trailing comma or a comment from a tsconfig changes the
 //    text of a string that holds one.
-// 5. A glob with many stars against a long path backtracks.
+// 5. A glob with many stars against a long path backtracks. The graph uses
+//    core's matcher, whose bound is tested once, in core's glob.test.ts;
+//    here the graph's own patterns must still match as before.
 // 6. Comment stripping in the extractor's body hash is quadratic on many
 //    unclosed comments.
 // 7. An edge id with many separators makes `explain` backtrack.
@@ -148,7 +150,7 @@ describe("tsconfig text (4)", () => {
 });
 
 describe("globs (5)", () => {
-  it("matches as before and in linear time on a hostile pattern", async () => {
+  it("matches as before, a hostile pattern included", () => {
     expect(matchesGlob("packages/core", "packages/*")).toBe(true);
     expect(matchesGlob("packages/core/x", "packages/*")).toBe(false);
     expect(matchesGlob("a/b/c/d.ts", "a/**")).toBe(true);
@@ -158,8 +160,6 @@ describe("globs (5)", () => {
     const glob = `${"*a".repeat(200)}b`;
     expect(matchesGlob(path(4096), glob)).toBe(false);
     expect(matchesGlob(path(4096), `${"**a".repeat(200)}b`)).toBe(false);
-    const both = (length: number) => () => matchesGlob(path(length), glob) || matchesGlob(path(length), `${"**a".repeat(200)}b`);
-    expectLinear("two hostile globs against paths of 1,024 and of 4,096 characters", await cpuMs(both(1024)), await cpuMs(both(4096)));
   });
 });
 
