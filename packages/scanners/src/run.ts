@@ -249,7 +249,7 @@ export async function runScanners(args: {
   const scanners = outcomes.map((o) => ({
     ...o.summary,
     keptCount: kept.get(o.summary.scanner) ?? 0,
-    reason: o.summary.reason === null ? null : oneLine(redactCut(o.summary.reason, secrets)),
+    reason: o.summary.reason === null ? null : oneLine(redactCut(checkoutReason(o.summary.reason, args.repoDir), secrets)),
     stages: stages.get(o.summary.scanner) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 },
   }));
   args.onProgress?.(stageLine(scanners, candidates.length));
@@ -278,6 +278,29 @@ export async function runScanners(args: {
     secrets,
     checked,
   };
+}
+
+// Redact before cutting the reason, so a long checkout root cannot survive
+// as a partial path. Tools may resolve a linked checkout to its real path.
+function checkoutReason(reason: string, repoDir: string): string {
+  const roots = new Set([path.resolve(repoDir)]);
+  try {
+    roots.add(fs.realpathSync(repoDir));
+  } catch {
+    // The scanner's failure still reports why this folder could not be read.
+  }
+  for (const root of [...roots].sort((a, b) => b.length - a.length)) {
+    reason = reason.replace(wholePath(root), "<checkout>");
+  }
+  return reason;
+}
+
+// `root` only where it is a whole path, so /work/repo-other stays when the
+// root is /work/repo. A dot after the root ends a sentence unless a name
+// follows it.
+function wholePath(root: string): RegExp {
+  const name = "[\\p{L}\\p{N}_@+~-]";
+  return new RegExp(`(?<!${name}|\\.)${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!${name}|\\.${name})`, "gu");
 }
 
 // The most entries a scan's trail holds. A whole-repository run of a large

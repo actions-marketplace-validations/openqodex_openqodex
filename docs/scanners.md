@@ -20,6 +20,8 @@ Scanners and the review use two severity scales. A scanner reports critical, hig
 
 On this page, high, medium and low are scanner severities. Major, minor and nitpick are review severities.
 
+Scanner reasons replace the review checkout root with `<checkout>` before they are saved or printed.
+
 ## What a run reads and keeps
 
 Pinned versions do not make findings identical on every machine. At run time, semgrep fetches its registry rule packs. OpenQodex does not pin the version of these packs.

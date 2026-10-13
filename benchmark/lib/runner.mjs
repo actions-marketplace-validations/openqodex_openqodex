@@ -57,8 +57,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { SCAN_CONFIG } from "./scan-score.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
@@ -640,4 +640,42 @@ export function preflightRefusals(preflight, { allowMissing }) {
   if (preflight.complete || allowMissing) return [];
   const lines = preflight.missing.map((m) => `${m.case} needs ${m.scanner}, which ${MISSING_WORDS[m.state] ?? `is ${m.state}`}${m.state === "needs_runtime" && m.detail ? ` (${m.detail})` : ""}`);
   return [...lines, "Install them first (node packages/cli/dist/bin.js doctor --install --all-scanners), or run with --allow-missing-scanners: the run then records scannersComplete false and is never accepted."];
+}
+
+// A path only where it stands whole, so /Users/s never matches inside
+// /Users/sam. A dot after it ends a sentence unless a name follows it.
+const NAME = "[\\p{L}\\p{N}_@+~-]";
+const wholePath = (root) => new RegExp(`(?<!${NAME}|\\.)${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!${NAME}|\\.${NAME})`, "gu");
+
+// A row's reason fields can quote scanner paths. Replace the run root
+// before home, since a run can live inside home. Count changed fields.
+export function redactRowReasons(row, runRoot) {
+  const replacements = [[resolve(runRoot), "<run>"], [homedir(), "<home>"]].filter(([root]) => root.length > 1).map(([root, placeholder]) => [wholePath(root), placeholder]);
+  let count = 0;
+  const reasons = new Map();
+  const visit = (value) => {
+    if (Array.isArray(value)) return value.map(visit);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, text]) => {
+      if (key !== "reason" || typeof text !== "string") return [key, visit(text)];
+      let clean = text;
+      for (const [pattern, placeholder] of replacements) clean = clean.replace(pattern, placeholder);
+      if (clean !== text) {
+        count++;
+        reasons.set(text, clean);
+      }
+      return [key, clean];
+    }));
+  };
+  const clean = visit(row);
+  return { row: clean, count, reasons };
+}
+
+// Both copies of an attempt use the same redacted reasons. A null
+// sampleDir appends the row only: the server path saves its own sample.json
+// with every machine path replaced.
+export function saveSampleRow(runRoot, sampleDir, row) {
+  const clean = redactRowReasons(row, runRoot).row;
+  if (sampleDir !== null) writeFileSync(join(sampleDir, "sample.json"), `${JSON.stringify(clean, null, 2)}\n`);
+  appendFileSync(join(runRoot, "rows.jsonl"), `${JSON.stringify(clean)}\n`);
 }
