@@ -54,20 +54,17 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
+import { AACR_BOARD, AACR_K, AACR_READER, boardFolder, instanceIdOf, isTestGap, readAacrOutside, toolName } from "../../lib/aacr-board.mjs";
 import { parseCaseId } from "../../lib/cases.mjs";
 import { benchCache } from "../../lib/board-files.mjs";
 import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.mjs";
-import { normPath, population, shownFindings, TEST_ONLY, TEST_ONLY_KINDS } from "../../lib/score.mjs";
+import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
 
-export { benchCache, instanceIdOf, readAacrOutside };
+export { benchCache, instanceIdOf, isTestGap, readAacrOutside };
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
-// The brief also produces titles that say only "uncovered" or "lacks coverage".
-const MISSING_COVERAGE = /\buncovered\b|\b(no|missing|lacks?|lacking|without|needs?|add)\b[^.]{0,60}\bcoverage\b/i;
-export const isTestGap = (f) => TEST_ONLY_KINDS.includes(f.category) && (TEST_ONLY.test(String(f.title ?? "")) || MISSING_COVERAGE.test(String(f.title ?? "")));
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const text = (s) => (typeof s === "string" ? s.trim() : "");
