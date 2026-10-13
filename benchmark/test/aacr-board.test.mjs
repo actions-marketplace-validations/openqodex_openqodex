@@ -263,6 +263,12 @@ function theirDataset(out) {
   return filterDataset(out, join(tmp, "aacr_bench.jsonl"));
 }
 
+// Relay failures, written before its code:
+// 1. Removing the vLLM field rewrites another value or its JSON spelling.
+// 2. The Azure key uses bearer auth or reaches a log or the saved record.
+// 3. A first-call 401 or 404 runs evaluation rounds instead of exiting 2.
+// 4. eval.json omits or miscounts relay requests, removals or statuses.
+
 // ---------- the tests ----------
 
 describe("a finding without a line is dropped", () => {
@@ -382,7 +388,7 @@ describe("the wrapper echoes the judge's key or base URL", () => {
     const r = dryRun(out);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/JUDGE_MODEL=gpt-5\.2/);
-    expect(r.stdout).toMatch(/JUDGE_BASE_URL and JUDGE_API_KEY.*hidden/);
+    expect(r.stdout).toMatch(/loopback relay for JUDGE_BASE_URL with a random placeholder JUDGE_API_KEY/);
     expect(r.stdout).toMatch(/left-side references/);
     // A crash of the evaluator, whose environment holds both, leaves no core file.
     expect(r.stdout).toMatch(/core file limit for the evaluator: 0\b/);
@@ -522,7 +528,7 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
   // A model provider on this machine (the one stand-in the tests allow) in
   // the shape their judge calls: it says yes only when the reference
   // comment is the second of its pull request, and records what it got.
-  async function fakeJudge() {
+  async function fakeJudge({ status = 200, echo = false } = {}) {
     const seen = [];
     const server = createServer((req, res) => {
       let body = "";
@@ -531,8 +537,9 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
         const request = JSON.parse(body);
         const prompt = request.messages?.[0]?.content ?? "";
         const reference = /Review Comment 1:\n([\s\S]*?)\n\nReview Comment 2:/.exec(prompt)?.[1] ?? "";
-        seen.push({ path: req.url, authorization: req.headers.authorization ?? null, apiKey: req.headers["api-key"] ?? null, request: { ...request, messages: undefined } });
-        res.writeHead(200, { "content-type": "application/json" });
+        seen.push({ body, path: req.url, authorization: req.headers.authorization ?? null, apiKey: req.headers["api-key"] ?? null, request: { ...request, messages: undefined } });
+        res.writeHead(status, { "content-type": "application/json" });
+        if (echo) return res.end(req.headers["api-key"] ?? "missing key");
         res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model: request.model, choices: [{ index: 0, message: { role: "assistant", content: reference.startsWith("2 ") ? "yes" : "no" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
       });
     });
@@ -540,7 +547,78 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     return { seen, base: `http://127.0.0.1:${server.address().port}/v1`, close: () => new Promise((down) => server.close(down)) };
   }
 
-  it.skipIf(!live)("runs their pipeline with JUDGE_* from the settings file, records a judged evaluation, and leaves the key and base URL nowhere (needs their checkout; skipped without it)", async () => {
+  it("relay removal preserves every other body byte", async () => {
+    const provider = await fakeJudge();
+    const relay = await judgeRunner.startRelay({ baseUrl: provider.base, apiKey: "test-key", authHeader: "api-key" });
+    const kept = '"model":"gpt-5.2", "messages":[{"role":"user","content":"a, } \\"quoted\\" chat_template_kwargs"}], "temperature":7e-1, "nested":{"chat_template_kwargs":true}';
+    try {
+      for (const [body, expected] of [
+        [`{${kept},"chat_template_kwargs":{"enable_thinking":false}}`, `{${kept}}`],
+        [`{"chat_template_kwargs":{"enable_thinking":false},${kept}}`, `{${kept}}`],
+        ['{"model":"gpt-5.2","chat_template_kwargs":{}, "messages":[]}', '{"model":"gpt-5.2", "messages":[]}'],
+        [`{${kept}}`, `{${kept}}`],
+      ]) {
+        const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", body });
+        expect(response.status).toBe(200);
+        await response.text();
+        expect(provider.seen.at(-1).body).toBe(expected);
+      }
+      expect(relay.counts()).toEqual({ relay: true, requests: 4, stripped: 3, upstreamStatuses: { 200: 4 } });
+    } finally {
+      await relay.close();
+      await provider.close();
+    }
+  });
+
+  it("relay sends api-key and keeps it out of the evaluator log", async () => {
+    const key = `fake-relay-key-${randomBytes(16).toString("hex")}`;
+    const provider = await fakeJudge({ echo: true });
+    const relay = await judgeRunner.startRelay({ baseUrl: provider.base, apiKey: key, authHeader: "api-key" });
+    const dir = tempDir("oq-aacr-relay-log-");
+    try {
+      const script = 'const r = await fetch(process.env.JUDGE_BASE_URL + "/chat/completions", {method:"POST", headers:{authorization:"Bearer " + process.env.JUDGE_API_KEY}, body:JSON.stringify({model:"gpt-5.2",messages:[]})}); console.log(await r.text());';
+      const result = await judgeRunner.run(process.execPath, ["--input-type=module", "-e", script], { cwd: dir, env: { ...process.env, JUDGE_BASE_URL: relay.baseUrl, JUDGE_API_KEY: relay.apiKey }, log: join(dir, "eval.log"), secrets: endpointSecrets(provider.base, key) });
+      expect(result.code).toBe(0);
+      expect(provider.seen[0]).toMatchObject({ apiKey: key, authorization: null });
+      expect(relay.apiKey).not.toBe(key);
+      expect(readFileSync(join(dir, "eval.log"), "utf8")).toBe("[hidden]\n");
+      expect(JSON.stringify(relay.counts())).not.toContain(key);
+    } finally {
+      await relay.close();
+      await provider.close();
+    }
+  });
+
+  it.skipIf(!live)("relay first-call 401 or 404 stops before round 1 with exit 2", async () => {
+    for (const status of [401, 404]) {
+      const out = await savedRun();
+      convertRun(out);
+      write(join(out, "outside", "aacr", "dataset.jsonl"), "");
+      const provider = await fakeJudge({ status });
+      const home = tempDir("oq-aacr-relay-refused-");
+      write(join(home, "azure.env"), `AZURE_OPENAI_BASE_URL=${provider.base}\nAZURE_OPENAI_KEY=test-key\n`);
+      const env = { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env") };
+      delete env.JUDGE_USE_MOCK;
+      try {
+        const r = await new Promise((done) => {
+          const child = spawn(process.execPath, [join(benchRoot, "outside", "boards", "aacr-judge.mjs"), out, "--evaluation", EVALUATION, "--python", PYTHON], { env });
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (c) => (stdout += c));
+          child.stderr.on("data", (c) => (stderr += c));
+          child.on("close", (code) => done({ code, stdout, stderr }));
+        });
+        expect(r).toEqual({ code: 2, stdout: "", stderr: `AACR judge relay: upstream returned ${status} on the first call; stopped before round 1\n` });
+        expect(provider.seen).toHaveLength(1);
+        expect(existsSync(join(out, "outside", "aacr", "eval.json"))).toBe(false);
+        expect(filesUnder(join(out, "outside", "aacr")).some((p) => p.endsWith("eval.log"))).toBe(false);
+      } finally {
+        await provider.close();
+      }
+    }
+  });
+
+  it.skipIf(!live)("relay counts reach eval.json without the key (needs their checkout; skipped without it)", async () => {
     const out = await savedRun();
     convertRun(out);
     theirDataset(out);
@@ -563,11 +641,13 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     const record = readJson(join(out, "outside", "aacr", "eval.json"));
     expect(record).toMatchObject({ commit: COMMIT, checkout: { commit: COMMIT, tree: expect.stringMatching(/^[0-9a-f]{40}$/) }, rounds: 1, judge: { deployment: "gpt-5.2" } });
     expect(record.folders.map((f) => [f.config, f.repeat, f.mode, f.judgeErrors, f.metrics.length])).toEqual([[CLAUDE, 1, "llm", 0, 1], [CLAUDE, 2, "llm", 0, 1], [MODEL, 1, "llm", 0, 1], [MODEL, 2, "llm", 0, 1]]);
-    // Their client sends the key as a bearer token, to the chat completions path, naming the judge deployment.
+    // The relay sends Azure auth to the chat completions path, naming the judge deployment.
     expect(judge.seen.length).toBeGreaterThan(0);
-    expect(judge.seen.every((s) => s.path === "/v1/chat/completions" && s.authorization === `Bearer ${key}` && s.apiKey === null && s.request.model === "gpt-5.2")).toBe(true);
+    expect(judge.seen.every((s) => s.path === "/v1/chat/completions" && s.authorization === null && s.apiKey === key && s.request.model === "gpt-5.2")).toBe(true);
     // What their judge asks the model for: the session's first judged run checks the deployment takes these.
-    expect(judge.seen[0].request).toMatchObject({ temperature: 0.7, top_p: 0.95, max_tokens: 40000, chat_template_kwargs: { enable_thinking: false } });
+    expect(judge.seen[0].request).toMatchObject({ temperature: 0.7, top_p: 0.95, max_tokens: 40000 });
+    expect(judge.seen.every((s) => !("chat_template_kwargs" in s.request))).toBe(true);
+    expect(record.relay).toEqual({ relay: true, requests: judge.seen.length, stripped: judge.seen.length, upstreamStatuses: { 200: judge.seen.length } });
     const leaks = [["stdout", r.stdout], ["stderr", r.stderr], ...filesUnder(out).map((p) => [p, readFileSync(p, "utf8")])].filter(([, text]) => endpointSecrets(judge.base, key).some((s) => text.includes(s)));
     expect(leaks.map(([where]) => where)).toEqual([]);
     // Semantic numbers are reported now. Their line count drops below ours where the judge's yes on a
