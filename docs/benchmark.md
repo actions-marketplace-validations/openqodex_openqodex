@@ -183,7 +183,27 @@ node benchmark/fetch-run.mjs <run-id>                  # download, check, unpack
 node benchmark/publish-run.mjs benchmark/results/<run-id> --dry-run
 ```
 
-`fetch-run.mjs` refuses a download whose sha256 or file list is not the one the index entry names. `publish-run.mjs` packages only the run's own files (the manifest, rows, specs, samples and scores; the HTML, markdown and SARIF renderings of each report stay behind), and refuses to publish when any packaged file holds a case's generated secret, the home folder path of the machine, a value from the benchmark's model settings file, or text the repository's scrub list forbids. Every case publishes in full regardless of its source repository's licence class, including copyleft and unverified cases (Sid, 2026-10-12). Briefs, traces and quoted source code are included. When the runner copies a real case's spec, it replaces each em dash in upstream text with a spaced hyphen, as the clean ingest does for quoted upstream text. The pinned source data stays unchanged, and the scrub patterns still apply to every packaged file. `--dry-run` packages and unpacks the run without uploading it; only a maintainer uploads.
+New run IDs, including a folder named by `--out`, must start with the UTC date of the run's start; the default ID and manifest use that same timestamp, while `--resume` and `--add-repeats` keep the original run date.
+
+Saved row reasons replace the run root with `<run>` and home with `<home>`; publishing older runs applies the same replacements to packaged reasons and their brief copies, leaves source files unchanged, and logs the number of reason fields redacted.
+
+`fetch-run.mjs` refuses a download whose sha256 or file list is not the one the index entry names. `publish-run.mjs` packages only the run's own files (the manifest, rows, specs, samples and scores; the HTML, markdown and SARIF renderings of each report stay behind), and refuses to publish when any packaged file holds a case's generated secret, a home folder path, a value from the benchmark's model settings file or a privacy pattern below. Every case publishes in full regardless of its source repository's licence class, including copyleft and unverified cases (Sid, 2026-10-12). Briefs, traces and quoted source code are included. When the runner copies a real case's spec, it replaces each em dash in upstream text with a spaced hyphen, as the clean ingest does for quoted upstream text. Publishing preserves punctuation in saved specs and briefs, since they record what the reviewer saw. `--dry-run` packages and unpacks the run without uploading it; only a maintainer uploads.
+
+Publish-run uses these patterns on every packaged file. Entry numbers count nonblank, noncomment patterns; private patterns are described without disclosing their text.
+
+| Pattern | Applied | Reason |
+|---|---|---|
+| Public list entry 1, service name | Yes | Identifies a private service. |
+| Public list entry 2, service name | Yes | Identifies a private service. |
+| Public list entry 3, em dash (U+2014) | No | Typography is a writing rule, and quoted upstream text must retain its punctuation. This is the public list's only punctuation or wording pattern. |
+| Private list entry 1 | Yes | Protects a private identifier. |
+| Private list entry 2 | Yes | Protects a private identifier and its host or name pattern. |
+| Private list entry 3 | Yes | Protects a private identifier. All three private entries protect private material rather than writing style. |
+| Generated case secrets | Yes | Prevents planted keys from leaving the machine. |
+| Every model settings value of at least eight characters, and each URL host of at least eight characters | Yes | Protects keys, names, hosts and URLs used by the model provider. Values are never printed. |
+| This machine's home folder and the cross-platform home-path expression | Yes | Prevents paths under macOS, Linux and Windows home folders from leaving the machine. |
+
+The tracked-files scrub in `scripts/scrub.mjs` still applies every pattern, including typography.
 
 The 11 runs made before the results left the repository are legacy runs: their index entries say `legacy: true`, carry no intervals and are never accepted as a baseline. Each one's asset also carries, under `_archive/<commit>/`, the scorer of every commit that wrote one of its score files, and `benchmark/legacy/recipes.json` says which scorer and which specs wrote which file and how each number below is read from the runs. After fetching, this rescores a run with its own scorers and checks every number this page quotes from it:
 

@@ -8,10 +8,11 @@
 // run.mjs runs, with the review step, which would call a model, replaced.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { git } from "../lib/cases.mjs";
-import { attemptDir, codexModelFrom, executeRun, failureOf, lockRun, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, claudeModels, claudeRunModels, takeOverStale, treeState } from "../lib/runner.mjs";
+import { redactRowReasons, saveSampleRow, attemptDir, codexModelFrom, executeRun, failureOf, lockRun, planJobs, provenanceProblems, resumeProblems, runManifest, sampleRecord, claudeModels, claudeRunModels, takeOverStale, treeState } from "../lib/runner.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -326,4 +327,23 @@ describe("Claude Code models from usage", () => {
     const rows = [{ reviewer: "claude", ...claudeModels(usage("one")) }, { reviewer: "claude", ...timedOut }, { reviewer: "claude", ...claudeModels(null) }];
     expect(claudeRunModels(rows, "one")).toMatchObject({ model: "one", why: null });
   });
+});
+
+// Failure cases: saving a row leaves repeated paths, redacts home before a
+// nested run root, changes null reasons, or leaves the sample copy leaking.
+it("redacts run and home paths in every saved reason and keeps null reasons", () => {
+  const run = tempDir("oq-row-paths-");
+  const sample = join(run, "samples", "case", "config", "1");
+  mkdirSync(sample, { recursive: true });
+  const reason = `${run}/repo/a.go and ${run}/repo/b.go and ${homedir()}/cache`;
+  const row = { scanners: [{ reason }, { reason: null }], nested: { reason }, status: "failed" };
+  saveSampleRow(run, sample, row);
+  const saved = JSON.parse(readFileSync(join(run, "rows.jsonl"), "utf8"));
+  expect(saved.scanners[0].reason).toBe("<run>/repo/a.go and <run>/repo/b.go and <home>/cache");
+  expect(saved.nested.reason).toBe(saved.scanners[0].reason);
+  expect(saved.scanners[1].reason).toBeNull();
+  expect(saved.status).toBe("failed");
+  expect(JSON.parse(readFileSync(join(sample, "sample.json"), "utf8"))).toEqual(saved);
+  const nestedRun = join(homedir(), "results", "run");
+  expect(redactRowReasons({ reason: `${nestedRun}/a ${homedir()}/b` }, nestedRun).row.reason).toBe("<run>/a <home>/b");
 });
