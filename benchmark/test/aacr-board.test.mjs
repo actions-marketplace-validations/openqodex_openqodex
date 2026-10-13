@@ -45,7 +45,7 @@ import { attemptDir, executeRun, planJobs, runManifest, sampleRecord } from "../
 import { RULES } from "../lib/score.mjs";
 import { aacrTruth, readCase, readSuite, specCopy } from "../lib/suites.mjs";
 import * as judgeRunner from "../outside/boards/aacr-judge.mjs";
-import { convertRun, filterDataset, instanceIdOf, readAacrOutside } from "../outside/convert/aacr.mjs";
+import { commentOf, convertRun, filterDataset, instanceIdOf, readAacrOutside } from "../outside/convert/aacr.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -220,6 +220,12 @@ function ourLineCounts(out) {
     s.expected += j.location.expected;
   }
   return sums;
+}
+
+// What score.mjs --outside aacr reads back for the run, scored as score.mjs scores it.
+function outsideOf(out) {
+  const run = loadRun(out);
+  return readAacrOutside(out, scoreRun(run).jobs, run.specs);
 }
 
 // ---------- AACR-Bench's own code, when its pinned checkout is in the cache ----------
@@ -431,8 +437,9 @@ describe("AACR's mock judge scores a run as if a model judged it", () => {
     const out = await savedRun();
     convertRun(out);
     copyRecordedMetrics(out);
-    const { jobs } = scoreRun(loadRun(out));
-    const block = readAacrOutside(out, jobs);
+    const run = loadRun(out);
+    const { jobs } = scoreRun(run);
+    const block = readAacrOutside(out, jobs, run.specs);
     for (const config of [MODEL, CLAUDE]) {
       for (const r of block.byConfig[config].repeats) {
         expect(r.semantic).toBeNull();
@@ -445,7 +452,7 @@ describe("AACR's mock judge scores a run as if a model judged it", () => {
     for (const folder of [{ mode: "mock", judgeErrors: 0 }, { mode: "llm", judgeErrors: 2 }]) {
       const evalRecord = { version: 1, board: "aacr", commit: COMMIT, judge: { deployment: "gpt-5.2" }, rounds: 1, folders: block.folders.map((f) => ({ config: f.config, repeat: f.repeat, metrics: f.metrics, ...folder })) };
       write(join(out, "outside", "aacr", "eval.json"), JSON.stringify(evalRecord));
-      const again = readAacrOutside(out, jobs);
+      const again = readAacrOutside(out, jobs, run.specs);
       expect(again.byConfig[MODEL].repeats.every((r) => r.semantic === null && r.judged === false)).toBe(true);
       expect(again.byConfig[MODEL].repeats[0].why).toMatch(folder.mode === "mock" ? /mock/ : /2 judge calls failed/);
     }
@@ -492,7 +499,7 @@ describe("our line count differs from AACR's on the same reports", () => {
     expect(recorded.folders.reduce((n, f) => n + f.summary.generated_notes, 0)).toBe(20);
     // score.mjs --outside aacr reads their recorded files and finds them equal to ours.
     copyRecordedMetrics(out);
-    const block = readAacrOutside(out, scoreRun(loadRun(out)).jobs);
+    const block = outsideOf(out);
     expect(block.folders.every((f) => f.lineEqual === true)).toBe(true);
     // Each case's references once: 16 accepted comments, one of them on the left side.
     expect(block.references).toEqual({ total: 16, left: 1, share: 1 / 16 });
@@ -679,7 +686,7 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     expect(leaks.map(([where]) => where)).toEqual([]);
     // Semantic numbers are reported now. Their line count drops below ours where the judge's yes on a
     // comment an earlier reference took by line ends a reference's search (two references in model r1).
-    const block = readAacrOutside(out, scoreRun(loadRun(out)).jobs);
+    const block = outsideOf(out);
     expect(block.folders.map((f) => [f.config, f.repeat, f.judged, f.rounds[0].semanticMatches, f.rounds[0].lineMatches, f.ours.matches, f.lineEqual])).toEqual([
       [CLAUDE, 1, true, 1, 3, 3, true],
       [CLAUDE, 2, true, 0, 1, 1, true],
@@ -830,5 +837,61 @@ describe("a split or encoded key reaches AACR output", () => {
     expect(text).toContain("progress\n");
     expect(text).not.toContain(key.slice(0, 12));
     expect(text).not.toContain(key.slice(12));
+  });
+});
+
+// H1 failures, written before the converter rule:
+// 1. A test request survives conversion or its left-out count is missing.
+// 2. A non-test finding changes, or a test-related bug is removed by title alone.
+// 3. Turning the board flag off still drops a finding.
+// 4. score.mjs --outside aacr reads a run converted with the flag as
+//    differing from ours, or the allowance hides a finding lost on the way.
+describe("board conversion drops the wrong findings", () => {
+  const name = "cline__cline-1808";
+  const gap = finding("src/core/task.ts", 13, { category: "maintainability", title: "Changed behaviour has no covering test" });
+  const bug = finding("src/core/task.ts", 14, { title: "Missing test fixture crashes the loader" });
+  const ordinary = finding("src/core/task.ts", 15);
+  const plan = { [`${MODEL}/1`]: { [name]: report([gap, bug, ordinary], { outside: [gap] }) } };
+  const comments = (out) => readJson(join(out, "outside", "aacr", MODEL, "r1", `${instanceIdOf(caseOf(name))}.json`)).review.comments;
+
+  it("leaves out test requests and records their count without changing other comments", async () => {
+    const out = await savedRun({ names: [name], configs: [MODEL], repeat: 1, plan });
+    const { record } = convertRun(out);
+    expect(comments(out)).toEqual([commentOf(bug), commentOf(ordinary)]);
+    expect(record.leftOutTestGaps).toBe(2);
+    expect(record.folders[0]).toMatchObject({ comments: 2, leftOutTestGaps: 2 });
+    expect(loadRun(out).attempts[0].report.findings).toEqual([gap, bug, ordinary]);
+  });
+
+  it("keeps every shown finding when the board flag is off", async () => {
+    const out = await savedRun({ names: [name], configs: [MODEL], repeat: 1, plan });
+    const { record } = convertRun(out, { excludeTestGaps: false });
+    expect(comments(out)).toEqual([gap, bug, ordinary, gap].map(commentOf));
+    expect(record.leftOutTestGaps).toBe(0);
+    expect(record.folders[0]).toMatchObject({ comments: 4, leftOutTestGaps: 0 });
+  });
+});
+
+describe("the line-count check misreads a run whose test gaps were left out", () => {
+  it("finds their counts equal to ours on the converted set, and still differ when a finding is missing", async () => {
+    const name = "cline__cline-1808";
+    // The test gap sits on the first reference's lines, so leaving it out lowers the line matches, not only the count.
+    const gap = finding("src/core/task.ts", 11, { category: "maintainability", title: "Changed behaviour has no covering test" });
+    const plan = { [`${MODEL}/1`]: { [name]: report([gap, finding("src/core/task.ts", 14)]) } };
+    const out = await savedRun({ names: [name], configs: [MODEL], repeat: 1, plan });
+    convertRun(out);
+    // The summary their evaluator at the pinned commit gives on the converted file (checked with their code, mock judge).
+    const theirs = (generated, matched) => write(join(out, "outside", "aacr", MODEL, "r1", "metrics_ocr_20261013_000000.json"), JSON.stringify({ summary: { evaluated_instances: 1, missing_instances: 0, expected_notes: 3, generated_notes: generated, matched_line_notes: matched, matched_semantic_notes: 0 } }));
+    theirs(1, 1);
+    const block = outsideOf(out);
+    expect(block.problems).toEqual([]);
+    expect(block.folders[0]).toMatchObject({ ours: { matches: 1, generated: 1, expected: 3 }, lineEqual: true });
+    // Our own score still counts both findings and both line matches.
+    expect(scoreRun(loadRun(out)).jobs[0].location).toMatchObject({ matches: 2, generated: 2 });
+    // A finding lost on the way: their evaluator read no comment.
+    theirs(0, 0);
+    const lost = outsideOf(out);
+    expect(lost.folders[0].lineEqual).toBe(false);
+    expect(lost.problems).toEqual([expect.stringMatching(/differ from ours \(1 of 1, 3 expected\)/)]);
   });
 });

@@ -27,6 +27,9 @@
 //    same configuration and repeat, and lineEqual says whether all agree.
 //    Their count can be lower than ours only when the judge said yes to a
 //    comment an earlier reference had taken by line (the stage 4 stop).
+//    Ours are counted on the set the converter wrote: every shown finding
+//    but the test gaps convert.json says it left out (isTestGap), so a
+//    lost finding still differs.
 // 3. A missing result file shrinks their denominators unnoticed: a round
 //    with a missing instance is never line-equal.
 // 4. The diagnostics change our score: the reader returns a block for
@@ -37,6 +40,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { boardFolder as boardFolderFor } from "./board-files.mjs";
+import { lineMatches, TEST_ONLY, TEST_ONLY_KINDS } from "./score.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const AACR_BOARD = Object.freeze({ repo: BOARDS.boards.aacr.repo, commit: BOARDS.boards.aacr.commit, source: BOARDS.boards.aacr.source });
@@ -45,6 +49,12 @@ export const AACR_BOARD = Object.freeze({ repo: BOARDS.boards.aacr.repo, commit:
 export const AACR_READER = "ocr";
 export const AACR_K = 1;
 export const AACR_OUTSIDE_LABEL = "AACR-Bench's own evaluator on this run's findings: a board output and a diagnostic, never an acceptance metric. Line numbers come from its path, side and line stages; semantic numbers only from a judged evaluation the wrapper ran.";
+
+// A finding that only asks for a test: a board submission rule, never our
+// score's. The scorer's test-request title and kinds, and also titles that
+// say only "uncovered" or ask for coverage.
+const MISSING_COVERAGE = /\buncovered\b|\b(no|missing|lacks?|lacking|without|needs?|add)\b[^.]{0,60}\bcoverage\b/i;
+export const isTestGap = (f) => TEST_ONLY_KINDS.includes(f.category) && (TEST_ONLY.test(String(f.title ?? "")) || MISSING_COVERAGE.test(String(f.title ?? "")));
 
 /** The tool name a configuration and repeat go by on the board. */
 export const toolName = (config, repeat) => `openqodex-${config}-r${repeat}`;
@@ -85,10 +95,11 @@ function unjudged(evalRecord, entry) {
 /**
  * The outside.aacr block of score.json for the run in `folder`: their
  * evaluator's numbers per configuration and repeat, beside our location
- * numbers from the scored `jobs` (score.mjs scoreRun). Throws when the run
- * was never converted.
+ * numbers from the scored `jobs` (score.mjs scoreRun) on the specs they were
+ * scored against (`specs`, by case name). Throws when the run was never
+ * converted.
  */
-export function readAacrOutside(folder, jobs) {
+export function readAacrOutside(folder, jobs, specs) {
   const out = join(folder, "outside", "aacr");
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; convert the run first (benchmark/outside/boards/aacr.sh)`);
   const convert = readJson(join(out, "convert.json"));
@@ -99,12 +110,18 @@ export function readAacrOutside(folder, jobs) {
     const dir = join(out, f.dir);
     const entry = evalRecord?.folders?.find((x) => x.config === f.config && x.repeat === f.repeat) ?? null;
     const files = entry ? entry.metrics : readdirSync(dir).filter((n) => /^metrics_ocr_.*\.json$/.test(n) && n !== "metrics_ocr_average.json").sort();
+    // Our line rule on the findings the converter wrote: the test gaps it left out are left out here too.
     const ours = { matches: 0, generated: 0, expected: 0 };
+    let leftOut = 0;
     for (const j of jobs.filter((x) => x.config === f.config && x.repeat === f.repeat)) {
-      ours.matches += j.location.matches;
-      ours.generated += j.location.generated;
-      ours.expected += j.location.expected;
+      const kept = convert.excludeTestGaps === true ? j.findings.filter((x) => !isTestGap(x)) : j.findings;
+      const l = lineMatches(kept, specs[j.case].bugs ?? []);
+      ours.matches += l.matches;
+      ours.generated += l.generated;
+      ours.expected += l.expected;
+      leftOut += j.findings.length - kept.length;
     }
+    if (leftOut !== (f.leftOutTestGaps ?? 0)) problems.push(`${f.dir}: convert.json says ${f.leftOutTestGaps ?? 0} test-gap findings were left out, but the rule leaves out ${leftOut} of ours`);
     const rounds = files.map((name) => {
       const s = readJson(join(dir, name)).summary;
       return { file: name, evaluated: s.evaluated_instances, missing: s.missing_instances, expected: s.expected_notes, generated: s.generated_notes, lineMatches: s.matched_line_notes, semanticMatches: s.matched_semantic_notes };
