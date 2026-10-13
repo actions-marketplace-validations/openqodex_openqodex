@@ -12,7 +12,7 @@
 //
 // Failure list, written before the code:
 // 1. The key or base URL is echoed: they live in this process and in the
-//    child's environment only, never in argv, a shell variable or a file.
+//    relay only, never in argv, a shell variable or a file.
 //    Everything the evaluator prints passes through a filter that replaces
 //    them before it reaches the terminal or eval.log, and every file under
 //    outside/aacr/ is checked for them afterwards; a hit fails the step
@@ -49,6 +49,8 @@ import { fileURLToPath } from "node:url";
 import { AACR_BOARD, AACR_K, AACR_READER, boardFolder } from "../../lib/aacr-board.mjs";
 import { checkoutState, leaksIn, redactor } from "../../lib/board-files.mjs";
 export { checkoutState, redactor };
+import { checkRelay, startRelay } from "../../lib/aacr-relay.mjs";
+export { startRelay };
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../boards.json", import.meta.url), "utf8"));
@@ -132,7 +134,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (dry) {
     console.log(`Dry run: their evaluator at ${AACR_BOARD.commit.slice(0, 12)} would run ${convert.folders.length} times, from ${shown(evaluation)}${existsSync(join(evaluation, "evaluate.py")) ? "" : " (not fetched yet; aacr.sh fetches it)"}:`);
     for (const f of convert.folders) console.log(`  ${shown(python)} ${argsOf(f).map((a) => (a.startsWith("/") ? shown(a) : a)).join(" ")}`);
-    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and JUDGE_BASE_URL and JUDGE_API_KEY from ${shown(modelEnvPath())} (values hidden).`);
+    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and a loopback relay for JUDGE_BASE_URL with a random placeholder JUDGE_API_KEY. The relay reads ${shown(modelEnvPath())} (values hidden), sends the key in ${settings.authHeader}, and removes chat_template_kwargs, temperature and top_p, and renames max_tokens to max_completion_tokens. GPT-5.2 uses its default sampling parameters instead of AACR's temperature 0.7 and top_p 0.95.`);
     // The limit the evaluator would get, read by a shell started the same way.
     const [sh, probe] = withoutCore("/bin/sh", ["-c", "ulimit -c"]);
     console.log(`core file limit for the evaluator: ${spawnSync(sh, probe, { encoding: "utf8" }).stdout.trim()}. Nothing was started.`);
@@ -144,39 +146,53 @@ export async function main(argv = process.argv.slice(2)) {
   if (!existsSync(join(evaluation, "evaluate.py")) || !existsSync(python)) throw new Error(`their evaluator or its python is not in ${shown(evaluation)}; run benchmark/outside/boards/aacr.sh --prepare`);
 
   // The child's environment: ours without any judge or OpenAI setting, plus the three their judge reads.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(JUDGE_|OPENAI_)/.test(k)));
-  Object.assign(env, { JUDGE_BASE_URL: settings.baseUrl, JUDGE_API_KEY: settings.apiKey, JUDGE_MODEL: judge.id, PYTHONDONTWRITEBYTECODE: "1" });
-  const version = spawnSync(python, ["--version"], { encoding: "utf8" });
-  const startedAt = new Date().toISOString();
-  const folders = [];
-  for (const f of convert.folders) {
-    const dir = join(out, f.dir);
-    const before = new Set(readdirSync(dir));
-    const log = join(dir, "eval.log");
-    console.log(`\n== ${f.tool}: their evaluator, ${rounds} round${rounds === 1 ? "" : "s"} ==`);
-    const { code, signal } = await run(...withoutCore(python, argsOf(f)), { cwd: evaluation, env, log, secrets });
-    const text = readFileSync(log, "utf8");
-    const mode = text.includes(MODE_LLM) ? "llm" : text.includes(MODE_MOCK) ? "mock" : "unknown";
-    const metrics = readdirSync(dir).filter((n) => !before.has(n) && /^metrics_ocr_.*\.json$/.test(n) && n !== "metrics_ocr_average.json").sort();
-    const requests = /总请求数: (\d+)/.exec(text);
-    folders.push({ config: f.config, repeat: f.repeat, tool: f.tool, exit: code, signal, mode, judgeErrors: text.split(JUDGE_FAILED).length - 1, requests: requests ? Number(requests[1]) : null, metrics, log: "eval.log" });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(JUDGE_|OPENAI_|AZURE_OPENAI_)/.test(k)));
+  const relay = await startRelay(settings);
+  try {
+    try {
+      await checkRelay(relay, judge.id);
+    } catch (error) {
+      let message = "";
+      const filter = redactor(secrets, (text) => (message += text));
+      filter.write(error.message);
+      filter.end();
+      throw new Error(message.replace(/[\r\n]+/g, " "));
+    }
+    Object.assign(env, { JUDGE_BASE_URL: relay.baseUrl, JUDGE_API_KEY: relay.apiKey, JUDGE_MODEL: judge.id, PYTHONDONTWRITEBYTECODE: "1" });
+    const version = spawnSync(python, ["--version"], { encoding: "utf8" });
+    const startedAt = new Date().toISOString();
+    const folders = [];
+    for (const f of convert.folders) {
+      const dir = join(out, f.dir);
+      const before = new Set(readdirSync(dir));
+      const log = join(dir, "eval.log");
+      console.log(`\n== ${f.tool}: their evaluator, ${rounds} round${rounds === 1 ? "" : "s"} ==`);
+      const { code, signal } = await run(...withoutCore(python, argsOf(f)), { cwd: evaluation, env, log, secrets });
+      const text = readFileSync(log, "utf8");
+      const mode = text.includes(MODE_LLM) ? "llm" : text.includes(MODE_MOCK) ? "mock" : "unknown";
+      const metrics = readdirSync(dir).filter((n) => !before.has(n) && /^metrics_ocr_.*\.json$/.test(n) && n !== "metrics_ocr_average.json").sort();
+      const requests = /总请求数: (\d+)/.exec(text);
+      folders.push({ config: f.config, repeat: f.repeat, tool: f.tool, exit: code, signal, mode, judgeErrors: text.split(JUDGE_FAILED).length - 1, requests: requests ? Number(requests[1]) : null, metrics, log: "eval.log" });
+    }
+    const leaks = filesUnder(out).filter((p) => leaksIn(readFileSync(p, "latin1"), secrets));
+    const record = { version: 1, board: "aacr", repo: AACR_BOARD.repo, commit: AACR_BOARD.commit, checkout: { commit: checkout.commit, tree: checkout.tree }, reader: AACR_READER, lineK: AACR_K, rounds, judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null }, python: `${version.stdout}${version.stderr}`.trim(), startedAt, endedAt: new Date().toISOString(), relay: relay.counts(), folders };
+    writeFileSync(join(out, "eval.json"), `${JSON.stringify(record, null, 2)}\n`);
+    const problems = [
+      ...folders.filter((f) => f.exit !== 0).map((f) => `${f.tool}: their evaluator exited ${f.exit ?? f.signal}`),
+      ...folders.filter((f) => f.mode !== "llm").map((f) => `${f.tool}: the ${f.mode} judge answered, not a model, so its semantic numbers are not reported`),
+      ...folders.filter((f) => f.judgeErrors > 0).map((f) => `${f.tool}: ${f.judgeErrors} judge calls failed (see its eval.log); their evaluator counts each as no match, so its semantic numbers are not reported`),
+      ...folders.filter((f) => f.metrics.length !== rounds).map((f) => `${f.tool}: ${f.metrics.length} metrics files written, not ${rounds}`),
+      ...leaks.map((p) => `${relative(out, p)} holds the judge's key or base URL; move outside/aacr to the Trash`),
+    ];
+    console.log(`\neval.json written: ${join(out, "eval.json")}. Score it with node benchmark/score.mjs ${where(folder)} --outside aacr.`);
+    if (problems.length > 0) {
+      console.error(problems.join("\n"));
+      return 1;
+    }
+    return 0;
+  } finally {
+    await relay.close();
   }
-  const leaks = filesUnder(out).filter((p) => leaksIn(readFileSync(p, "latin1"), secrets));
-  const record = { version: 1, board: "aacr", repo: AACR_BOARD.repo, commit: AACR_BOARD.commit, checkout: { commit: checkout.commit, tree: checkout.tree }, reader: AACR_READER, lineK: AACR_K, rounds, judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null }, python: `${version.stdout}${version.stderr}`.trim(), startedAt, endedAt: new Date().toISOString(), folders };
-  writeFileSync(join(out, "eval.json"), `${JSON.stringify(record, null, 2)}\n`);
-  const problems = [
-    ...folders.filter((f) => f.exit !== 0).map((f) => `${f.tool}: their evaluator exited ${f.exit ?? f.signal}`),
-    ...folders.filter((f) => f.mode !== "llm").map((f) => `${f.tool}: the ${f.mode} judge answered, not a model, so its semantic numbers are not reported`),
-    ...folders.filter((f) => f.judgeErrors > 0).map((f) => `${f.tool}: ${f.judgeErrors} judge calls failed (see its eval.log); their evaluator counts each as no match, so its semantic numbers are not reported`),
-    ...folders.filter((f) => f.metrics.length !== rounds).map((f) => `${f.tool}: ${f.metrics.length} metrics files written, not ${rounds}`),
-    ...leaks.map((p) => `${relative(out, p)} holds the judge's key or base URL; move outside/aacr to the Trash`),
-  ];
-  console.log(`\neval.json written: ${join(out, "eval.json")}. Score it with node benchmark/score.mjs ${where(folder)} --outside aacr.`);
-  if (problems.length > 0) {
-    console.error(problems.join("\n"));
-    return 1;
-  }
-  return 0;
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

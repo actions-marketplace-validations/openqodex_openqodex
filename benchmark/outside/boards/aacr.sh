@@ -21,8 +21,8 @@
 #       5. leaves eval.json for node benchmark/score.mjs <run> --outside aacr.
 #
 # The judge's base URL and key never pass through this script: aacr-judge.mjs
-# reads them with lib/model-env.mjs and puts them only into the environment
-# of their evaluator's process. This script holds no secret, so it prints
+# reads them with lib/model-env.mjs and holds them only in its local relay.
+# Their evaluator receives the relay URL and a random placeholder key. This script holds no secret, so it prints
 # none, even under bash -x. Core files are off for this script and all it
 # starts, so a crash writes neither anywhere. Their mock judge is never
 # allowed. The bench cache must lie outside this repository.
