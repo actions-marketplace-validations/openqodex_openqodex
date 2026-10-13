@@ -268,6 +268,8 @@ function theirDataset(out) {
 // 2. The Azure key uses bearer auth or reaches a log or the saved record.
 // 3. A first-call 401 or 404 runs evaluation rounds instead of exiting 2.
 // 4. eval.json omits or miscounts relay requests, removals or statuses.
+// 5. Azure receives temperature, top_p or max_tokens, or the rename changes its value.
+// 6. The first-call error loses the upstream message or prints the key, URL or host.
 
 // ---------- the tests ----------
 
@@ -540,6 +542,7 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
         seen.push({ body, path: req.url, authorization: req.headers.authorization ?? null, apiKey: req.headers["api-key"] ?? null, request: { ...request, messages: undefined } });
         res.writeHead(status, { "content-type": "application/json" });
         if (echo) return res.end(req.headers["api-key"] ?? "missing key");
+        if (status !== 200) return res.end(JSON.stringify({ error: { message: `Unsupported parameter\nkey ${req.headers["api-key"]}, URL http://${req.headers.host}/v1, host ${req.headers.host}` } }));
         res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 0, model: request.model, choices: [{ index: 0, message: { role: "assistant", content: reference.startsWith("2 ") ? "yes" : "no" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
       });
     });
@@ -547,23 +550,24 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     return { seen, base: `http://127.0.0.1:${server.address().port}/v1`, close: () => new Promise((down) => server.close(down)) };
   }
 
-  it("relay removal preserves every other body byte", async () => {
+  it("relay parameter changes preserve every other body byte", async () => {
     const provider = await fakeJudge();
     const relay = await judgeRunner.startRelay({ baseUrl: provider.base, apiKey: "test-key", authHeader: "api-key" });
-    const kept = '"model":"gpt-5.2", "messages":[{"role":"user","content":"a, } \\"quoted\\" chat_template_kwargs"}], "temperature":7e-1, "nested":{"chat_template_kwargs":true}';
+    const kept = '"model":"gpt-5.2", "messages":[{"role":"user","content":"a, } \\"quoted\\" chat_template_kwargs"}], "nested":{"chat_template_kwargs":true,"temperature":0.7,"top_p":0.95,"max_tokens":40000}';
     try {
       for (const [body, expected] of [
         [`{${kept},"chat_template_kwargs":{"enable_thinking":false}}`, `{${kept}}`],
         [`{"chat_template_kwargs":{"enable_thinking":false},${kept}}`, `{${kept}}`],
         ['{"model":"gpt-5.2","chat_template_kwargs":{}, "messages":[]}', '{"model":"gpt-5.2", "messages":[]}'],
         [`{${kept}}`, `{${kept}}`],
+        [`{"temperature":7e-1,${kept},"top_p":0.95,"max_tokens":40000}`, `{${kept},"max_completion_tokens":40000}`],
       ]) {
         const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", body });
         expect(response.status).toBe(200);
         await response.text();
         expect(provider.seen.at(-1).body).toBe(expected);
       }
-      expect(relay.counts()).toEqual({ relay: true, requests: 4, stripped: 3, upstreamStatuses: { 200: 4 } });
+      expect(relay.counts()).toEqual({ relay: true, requests: 5, stripped: 3, parameterChanges: { chat_template_kwargs: 3, temperature: 1, top_p: 1, max_tokens: 1 }, upstreamStatuses: { 200: 5 } });
     } finally {
       await relay.close();
       await provider.close();
@@ -589,8 +593,8 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     }
   });
 
-  it.skipIf(!live)("relay first-call 401 or 404 stops before round 1 with exit 2", async () => {
-    for (const status of [401, 404]) {
+  it.skipIf(!live)("relay first-call failure carries the upstream message with secrets hidden and stops before round 1", async () => {
+    for (const status of [400, 401, 404]) {
       const out = await savedRun();
       convertRun(out);
       write(join(out, "outside", "aacr", "dataset.jsonl"), "");
@@ -608,7 +612,7 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
           child.stderr.on("data", (c) => (stderr += c));
           child.on("close", (code) => done({ code, stdout, stderr }));
         });
-        expect(r).toEqual({ code: 2, stdout: "", stderr: `AACR judge relay: upstream returned ${status} on the first call; stopped before round 1\n` });
+        expect(r).toEqual({ code: 2, stdout: "", stderr: `AACR judge relay: upstream returned ${status} on the first call: Unsupported parameter key [hidden], URL [hidden], host [hidden]; stopped before round 1\n` });
         expect(provider.seen).toHaveLength(1);
         expect(existsSync(join(out, "outside", "aacr", "eval.json"))).toBe(false);
         expect(filesUnder(join(out, "outside", "aacr")).some((p) => p.endsWith("eval.log"))).toBe(false);
@@ -644,10 +648,10 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
     // The relay sends Azure auth to the chat completions path, naming the judge deployment.
     expect(judge.seen.length).toBeGreaterThan(0);
     expect(judge.seen.every((s) => s.path === "/v1/chat/completions" && s.authorization === null && s.apiKey === key && s.request.model === "gpt-5.2")).toBe(true);
-    // What their judge asks the model for: the session's first judged run checks the deployment takes these.
-    expect(judge.seen[0].request).toMatchObject({ temperature: 0.7, top_p: 0.95, max_tokens: 40000 });
-    expect(judge.seen.every((s) => !("chat_template_kwargs" in s.request))).toBe(true);
-    expect(record.relay).toEqual({ relay: true, requests: judge.seen.length, stripped: judge.seen.length, upstreamStatuses: { 200: judge.seen.length } });
+    // Azure receives the original token limit under its reasoning model parameter.
+    expect(judge.seen.every((s) => s.request.max_completion_tokens === 40000)).toBe(true);
+    expect(judge.seen.every((s) => ["chat_template_kwargs", "temperature", "top_p", "max_tokens"].every((name) => !(name in s.request)))).toBe(true);
+    expect(record.relay).toEqual({ relay: true, requests: judge.seen.length, stripped: judge.seen.length, parameterChanges: { chat_template_kwargs: judge.seen.length, temperature: judge.seen.length, top_p: judge.seen.length, max_tokens: judge.seen.length }, upstreamStatuses: { 200: judge.seen.length } });
     const leaks = [["stdout", r.stdout], ["stderr", r.stderr], ...filesUnder(out).map((p) => [p, readFileSync(p, "utf8")])].filter(([, text]) => endpointSecrets(judge.base, key).some((s) => text.includes(s)));
     expect(leaks.map(([where]) => where)).toEqual([]);
     // Semantic numbers are reported now. Their line count drops below ours where the judge's yes on a

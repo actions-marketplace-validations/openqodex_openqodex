@@ -1,4 +1,4 @@
-// AACR's vLLM request field is not accepted by Azure's OpenAI endpoint.
+// AACR's vLLM and sampling fields are not accepted by Azure's reasoning model.
 // Keep the pinned evaluator intact and its process free of the Azure key.
 //
 // Failure list, written before the code (benchmark/test/aacr-board.test.mjs):
@@ -13,7 +13,7 @@ import { request as httpsRequest } from "node:https";
 // Find top-level members without reserializing their values. Commas inside
 // strings, arrays and nested objects do not split a member. JSON.parse
 // validates the body first; slices retain numbers, escapes and whitespace.
-function stripThinking(body) {
+function adaptParameters(body) {
   const parsed = JSON.parse(body);
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected a JSON object");
   const open = body.indexOf("{");
@@ -38,22 +38,27 @@ function stripThinking(body) {
     }
   }
   members.push(body.slice(start, end));
-  let stripped = 0;
-  const kept = members.filter((member) => {
+  const changes = { chat_template_kwargs: 0, temperature: 0, top_p: 0, max_tokens: 0 };
+  const kept = members.flatMap((member) => {
     const name = /^\s*("(?:[^"\\]|\\.)*")\s*:/.exec(member);
-    if (name && JSON.parse(name[1]) === "chat_template_kwargs") {
-      stripped++;
-      return false;
+    const field = name ? JSON.parse(name[1]) : null;
+    if (["chat_template_kwargs", "temperature", "top_p"].includes(field)) {
+      changes[field]++;
+      return [];
     }
-    return true;
+    if (field === "max_tokens") {
+      changes.max_tokens++;
+      return [member.replace(name[1], '"max_completion_tokens"')];
+    }
+    return [member];
   });
-  return { body: stripped === 0 ? body : body.slice(0, open + 1) + kept.join(",") + body.slice(end), stripped };
+  return { body: Object.values(changes).every((n) => n === 0) ? body : body.slice(0, open + 1) + kept.join(",") + body.slice(end), changes };
 }
 
 /** A loopback-only relay with opaque credentials and counters safe to save. */
 export async function startRelay(settings) {
   const apiKey = randomBytes(32).toString("hex");
-  const stats = { relay: true, requests: 0, stripped: 0, upstreamStatuses: {} };
+  const stats = { relay: true, requests: 0, stripped: 0, parameterChanges: { chat_template_kwargs: 0, temperature: 0, top_p: 0, max_tokens: 0 }, upstreamStatuses: {} };
   const target = new URL(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`);
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
   const server = createServer(async (req, res) => {
@@ -65,8 +70,9 @@ export async function startRelay(settings) {
     try {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
-      const stripped = stripThinking(Buffer.concat(chunks).toString("utf8"));
-      stats.stripped += stripped.stripped;
+      const adapted = adaptParameters(Buffer.concat(chunks).toString("utf8"));
+      stats.stripped += adapted.changes.chat_template_kwargs;
+      for (const [name, count] of Object.entries(adapted.changes)) stats.parameterChanges[name] += count;
       const upstream = request(target, {
         method: "POST",
         headers: { "content-type": "application/json", [settings.authHeader]: settings.apiKey },
@@ -83,7 +89,7 @@ export async function startRelay(settings) {
         else res.destroy();
       });
       res.on("close", () => upstream.destroy());
-      upstream.end(stripped.body);
+      upstream.end(adapted.body);
     } catch {
       res.writeHead(400).end("AACR judge relay: invalid request body");
     }
@@ -95,7 +101,7 @@ export async function startRelay(settings) {
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     apiKey,
-    counts: () => ({ ...stats, upstreamStatuses: { ...stats.upstreamStatuses } }),
+    counts: () => ({ ...stats, parameterChanges: { ...stats.parameterChanges }, upstreamStatuses: { ...stats.upstreamStatuses } }),
     close: () => new Promise((down) => {
       server.close(down);
       server.closeAllConnections();
@@ -110,6 +116,16 @@ export async function checkRelay(relay, model) {
     headers: { "content-type": "application/json", authorization: `Bearer ${relay.apiKey}` },
     body: JSON.stringify({ model, messages: [{ role: "user", content: "Reply yes." }], temperature: 0.7, max_tokens: 40000, top_p: 0.95, chat_template_kwargs: { enable_thinking: false } }),
   });
-  await response.arrayBuffer();
-  if (!response.ok) throw new Error(`AACR judge relay: upstream returned ${response.status} on the first call; stopped before round 1`);
+  const body = await response.text();
+  if (!response.ok) {
+    let message = null;
+    try {
+      const error = JSON.parse(body);
+      message = error.error?.message ?? error.message;
+    } catch {
+      // A non-JSON response supplies no upstream message.
+    }
+    const detail = typeof message === "string" ? `: ${message}` : "";
+    throw new Error(`AACR judge relay: upstream returned ${response.status} on the first call${detail}; stopped before round 1`);
+  }
 }

@@ -134,7 +134,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (dry) {
     console.log(`Dry run: their evaluator at ${AACR_BOARD.commit.slice(0, 12)} would run ${convert.folders.length} times, from ${shown(evaluation)}${existsSync(join(evaluation, "evaluate.py")) ? "" : " (not fetched yet; aacr.sh fetches it)"}:`);
     for (const f of convert.folders) console.log(`  ${shown(python)} ${argsOf(f).map((a) => (a.startsWith("/") ? shown(a) : a)).join(" ")}`);
-    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and a loopback relay for JUDGE_BASE_URL with a random placeholder JUDGE_API_KEY. The relay reads ${shown(modelEnvPath())} (values hidden), sends the key in ${settings.authHeader}, and strips only chat_template_kwargs.`);
+    console.log(`with JUDGE_MODEL=${judge.id} (the deployment boards.json names "${judge.key}", probed ${judge.probed}), and a loopback relay for JUDGE_BASE_URL with a random placeholder JUDGE_API_KEY. The relay reads ${shown(modelEnvPath())} (values hidden), sends the key in ${settings.authHeader}, and removes chat_template_kwargs, temperature and top_p, and renames max_tokens to max_completion_tokens. GPT-5.2 uses its default sampling parameters instead of AACR's temperature 0.7 and top_p 0.95.`);
     // The limit the evaluator would get, read by a shell started the same way.
     const [sh, probe] = withoutCore("/bin/sh", ["-c", "ulimit -c"]);
     console.log(`core file limit for the evaluator: ${spawnSync(sh, probe, { encoding: "utf8" }).stdout.trim()}. Nothing was started.`);
@@ -149,7 +149,15 @@ export async function main(argv = process.argv.slice(2)) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(JUDGE_|OPENAI_|AZURE_OPENAI_)/.test(k)));
   const relay = await startRelay(settings);
   try {
-    await checkRelay(relay, judge.id);
+    try {
+      await checkRelay(relay, judge.id);
+    } catch (error) {
+      let message = "";
+      const filter = redactor(secrets, (text) => (message += text));
+      filter.write(error.message);
+      filter.end();
+      throw new Error(message.replace(/[\r\n]+/g, " "));
+    }
     Object.assign(env, { JUDGE_BASE_URL: relay.baseUrl, JUDGE_API_KEY: relay.apiKey, JUDGE_MODEL: judge.id, PYTHONDONTWRITEBYTECODE: "1" });
     const version = spawnSync(python, ["--version"], { encoding: "utf8" });
     const startedAt = new Date().toISOString();
