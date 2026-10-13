@@ -1026,8 +1026,11 @@ async function main() {
     process.exit(2);
   }
   if (o.materialiseOnly) return materialiseMain(o);
-  if (o.out !== null && !o.resume && o.addRepeats === null && !basename(o.out).startsWith(`${date}-`)) {
-    console.error(`--out must start with ${date}, the UTC date of this run's start`);
+  // A dated --out names the day the run starts, as an index entry checks.
+  // An undated folder, such as a loop candidate, is never published.
+  const outDate = o.out === null ? null : /^(\d{4}-\d{2}-\d{2})-/.exec(basename(o.out))?.[1] ?? null;
+  if (outDate !== null && outDate !== date && !o.resume && o.addRepeats === null) {
+    console.error(`--out must start with ${date}, the UTC date this run starts, not ${outDate}`);
     process.exit(2);
   }
   // Planted cases come from a copy checked against the lock; pull request
@@ -1314,7 +1317,7 @@ async function main() {
       rmSync(caseDir, { recursive: true, force: true });
     }
     const rec = saved.record;
-    saveSampleRow(out, attemptDir(out, job, k), rec);
+    saveSampleRow(out, null, rec);
     const cost = rec.usage?.cost_usd;
     console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(4)}` : ""}, served by ${rec.servedModel ?? (rec.servedModels.length > 0 ? rec.servedModels.join(" and ") : "a model the provider did not name")}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
     checkSaved(attemptDir(out, job, k));

@@ -290,9 +290,17 @@ function checkoutReason(reason: string, repoDir: string): string {
     // The scanner's failure still reports why this folder could not be read.
   }
   for (const root of [...roots].sort((a, b) => b.length - a.length)) {
-    reason = reason.split(root).join("<checkout>");
+    reason = reason.replace(wholePath(root), "<checkout>");
   }
   return reason;
+}
+
+// `root` only where it is a whole path, so /work/repo-other stays when the
+// root is /work/repo. A dot after the root ends a sentence unless a name
+// follows it.
+function wholePath(root: string): RegExp {
+  const name = "[\\p{L}\\p{N}_@+~-]";
+  return new RegExp(`(?<!${name}|\\.)${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!${name}|\\.${name})`, "gu");
 }
 
 // The most entries a scan's trail holds. A whole-repository run of a large

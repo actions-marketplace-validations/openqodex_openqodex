@@ -219,7 +219,9 @@ describe("source data in published runs", () => {
 });
 
 // Failure cases: an older row, its saved reports or its rendered reason
-// cannot publish, the count is wrong, or packaging rewrites the source.
+// cannot publish, the count is wrong, packaging rewrites the source, a
+// transcript line cut by a killed run stops the publish, or a line with
+// nothing to redact is rewritten.
 it("publishes saved scanner reasons with placeholders without changing the run", async () => {
   const run = plantedRun();
   const reason = `could not type-check: ${homedir()}/checkouts/tree/a.go and ${run}/repo/b.go`;
@@ -228,6 +230,8 @@ it("publishes saved scanner reasons with placeholders without changing the run",
   const dir = join(run, "samples", "demo-polyglot", "claude-graph-on", "1");
   for (const file of ["sample.json", "report/report.json", "report/scan.json"]) write(join(dir, file), JSON.stringify(row));
   write(join(dir, "report/brief.md"), `- Scanners: golangci: ${reason}\n`);
+  const transcript = '{"text":"\\u00e9"}\n{"type":"assist';
+  write(join(dir, "transcript.jsonl"), transcript);
   const before = hashFolder(run);
   const asset = await packageRun(run, { out: tempDir("oq-publish-out-") });
   expect(asset.reasonsRedacted).toBe(4);
@@ -236,6 +240,7 @@ it("publishes saved scanner reasons with placeholders without changing the run",
   expect(saved.scanners[0].reason).toBe("could not type-check: <home>/checkouts/tree/a.go and <run>/repo/b.go");
   expect(saved.scanners[1].reason).toBeNull();
   expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/report/brief.md"), "utf8")).toContain(saved.scanners[0].reason);
+  expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/transcript.jsonl"), "utf8")).toBe(transcript);
   expect(hashFolder(run)).toEqual(before);
 });
 

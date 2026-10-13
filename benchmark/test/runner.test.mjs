@@ -330,7 +330,8 @@ describe("Claude Code models from usage", () => {
 });
 
 // Failure cases: saving a row leaves repeated paths, redacts home before a
-// nested run root, changes null reasons, or leaves the sample copy leaking.
+// nested run root, changes null reasons, leaves the sample copy leaking, or
+// rewrites a path that only starts with the home folder's text.
 it("redacts run and home paths in every saved reason and keeps null reasons", () => {
   const run = tempDir("oq-row-paths-");
   const sample = join(run, "samples", "case", "config", "1");
@@ -346,4 +347,6 @@ it("redacts run and home paths in every saved reason and keeps null reasons", ()
   expect(JSON.parse(readFileSync(join(sample, "sample.json"), "utf8"))).toEqual(saved);
   const nestedRun = join(homedir(), "results", "run");
   expect(redactRowReasons({ reason: `${nestedRun}/a ${homedir()}/b` }, nestedRun).row.reason).toBe("<run>/a <home>/b");
+  const other = { reason: `${homedir()}-other/a and ${run}2/b` };
+  expect(redactRowReasons(other, run)).toMatchObject({ row: other, count: 0 });
 });

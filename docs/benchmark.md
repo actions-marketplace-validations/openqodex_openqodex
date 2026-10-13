@@ -183,22 +183,20 @@ node benchmark/fetch-run.mjs <run-id>                  # download, check, unpack
 node benchmark/publish-run.mjs benchmark/results/<run-id> --dry-run
 ```
 
-New run IDs, including a folder named by `--out`, must start with the UTC date of the run's start; the default ID and manifest use that same timestamp, while `--resume` and `--add-repeats` keep the original run date.
+A run ID starts with the UTC date of the run's start, and the manifest records that start time. `run.mjs` refuses an `--out` folder whose name starts with another date. A folder name without a date, such as a loop candidate's, is accepted. `--resume` and `--add-repeats` keep the run's original date.
 
-Saved row reasons replace the run root with `<run>` and home with `<home>`; publishing older runs applies the same replacements to packaged reasons and their brief copies, leaves source files unchanged, and logs the number of reason fields redacted.
+When the runner saves a row, each scanner reason replaces the run folder path with `<run>` and the home folder path with `<home>`. A path that only starts with the same text stays. `publish-run.mjs` applies the same rule to a run saved before this rule. It changes the packaged rows, reports and briefs, never the run folder. It prints the number of reasons it redacted.
 
 `fetch-run.mjs` refuses a download whose sha256 or file list is not the one the index entry names. `publish-run.mjs` packages only the run's own files (the manifest, rows, specs, samples and scores; the HTML, markdown and SARIF renderings of each report stay behind), and refuses to publish when any packaged file holds a case's generated secret, a home folder path, a value from the benchmark's model settings file or a privacy pattern below. Every case publishes in full regardless of its source repository's licence class, including copyleft and unverified cases (Sid, 2026-10-12). Briefs, traces and quoted source code are included. When the runner copies a real case's spec, it replaces each em dash in upstream text with a spaced hyphen, as the clean ingest does for quoted upstream text. Publishing preserves punctuation in saved specs and briefs, since they record what the reviewer saw. `--dry-run` packages and unpacks the run without uploading it; only a maintainer uploads.
 
-Publish-run uses these patterns on every packaged file. Entry numbers count nonblank, noncomment patterns; private patterns are described without disclosing their text.
+Publish-run uses these patterns on every packaged file. Entry numbers count nonblank, noncomment patterns.
 
 | Pattern | Applied | Reason |
 |---|---|---|
 | Public list entry 1, service name | Yes | Identifies a private service. |
 | Public list entry 2, service name | Yes | Identifies a private service. |
 | Public list entry 3, em dash (U+2014) | No | Typography is a writing rule, and quoted upstream text must retain its punctuation. This is the public list's only punctuation or wording pattern. |
-| Private list entry 1 | Yes | Protects a private identifier. |
-| Private list entry 2 | Yes | Protects a private identifier and its host or name pattern. |
-| Private list entry 3 | Yes | Protects a private identifier. All three private entries protect private material rather than writing style. |
+| Every private list entry | Yes | Protects private material. The page does not show these patterns. |
 | Generated case secrets | Yes | Prevents planted keys from leaving the machine. |
 | Every model settings value of at least eight characters, and each URL host of at least eight characters | Yes | Protects keys, names, hosts and URLs used by the model provider. Values are never printed. |
 | This machine's home folder and the cross-platform home-path expression | Yes | Prevents paths under macOS, Linux and Windows home folders from leaving the machine. |

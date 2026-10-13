@@ -328,25 +328,36 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
   }
   // Old runs keep a reason in the row, sample, reports and brief. Redact
   // the packaged copies only, preserving the source folder and its hash.
+  // Only a line or file with a redacted reason is rewritten; one that does
+  // not parse (a transcript cut by a killed run) keeps its bytes, and the
+  // inspection below still refuses a home path in it.
   let reasonsRedacted = 0;
   const reasons = new Map();
+  const redact = (text) => {
+    let row;
+    try {
+      row = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    const redacted = redactRowReasons(row, folder);
+    if (redacted.count === 0) return null;
+    reasonsRedacted += redacted.count;
+    for (const [from, to] of redacted.reasons) reasons.set(from, to);
+    return redacted.row;
+  };
   for (const file of files) {
     if (!/\.jsonl?$/.test(file.path) || file.path.startsWith("_archive/")) continue;
     const text = file.bytes.toString("utf8");
-    const clean = (row) => {
-      const redacted = redactRowReasons(row, folder);
-      reasonsRedacted += redacted.count;
-      for (const [from, to] of redacted.reasons) reasons.set(from, to);
-      return redacted.row;
-    };
     if (file.path.endsWith(".jsonl")) {
-      const lines = text.split("\n").map((line) => line.trim() ? JSON.stringify(clean(JSON.parse(line))) : line);
+      const lines = text.split("\n").map((line) => {
+        const row = line.trim() ? redact(line) : null;
+        return row === null ? line : JSON.stringify(row);
+      });
       file.bytes = Buffer.from(lines.join("\n"));
     } else {
-      const row = JSON.parse(text);
-      const before = reasonsRedacted;
-      const redacted = clean(row);
-      if (reasonsRedacted !== before) file.bytes = Buffer.from(`${JSON.stringify(redacted, null, 2)}\n`);
+      const row = redact(text);
+      if (row !== null) file.bytes = Buffer.from(`${JSON.stringify(row, null, 2)}\n`);
     }
   }
   for (const file of files.filter((f) => f.path.endsWith("/brief.md"))) {

@@ -642,10 +642,15 @@ export function preflightRefusals(preflight, { allowMissing }) {
   return [...lines, "Install them first (node packages/cli/dist/bin.js doctor --install --all-scanners), or run with --allow-missing-scanners: the run then records scannersComplete false and is never accepted."];
 }
 
+// A path only where it stands whole, so /Users/s never matches inside
+// /Users/sam. A dot after it ends a sentence unless a name follows it.
+const NAME = "[\\p{L}\\p{N}_@+~-]";
+const wholePath = (root) => new RegExp(`(?<!${NAME}|\\.)${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!${NAME}|\\.${NAME})`, "gu");
+
 // A row's reason fields can quote scanner paths. Replace the run root
 // before home, since a run can live inside home. Count changed fields.
 export function redactRowReasons(row, runRoot) {
-  const replacements = [[resolve(runRoot), "<run>"], [homedir(), "<home>"]].filter(([root]) => root.length > 1);
+  const replacements = [[resolve(runRoot), "<run>"], [homedir(), "<home>"]].filter(([root]) => root.length > 1).map(([root, placeholder]) => [wholePath(root), placeholder]);
   let count = 0;
   const reasons = new Map();
   const visit = (value) => {
@@ -654,7 +659,7 @@ export function redactRowReasons(row, runRoot) {
     return Object.fromEntries(Object.entries(value).map(([key, text]) => {
       if (key !== "reason" || typeof text !== "string") return [key, visit(text)];
       let clean = text;
-      for (const [root, placeholder] of replacements) clean = clean.split(root).join(placeholder);
+      for (const [pattern, placeholder] of replacements) clean = clean.replace(pattern, placeholder);
       if (clean !== text) {
         count++;
         reasons.set(text, clean);
@@ -666,9 +671,11 @@ export function redactRowReasons(row, runRoot) {
   return { row: clean, count, reasons };
 }
 
-// Both copies of an attempt use the same redacted reasons.
+// Both copies of an attempt use the same redacted reasons. A null
+// sampleDir appends the row only: the server path saves its own sample.json
+// with every machine path replaced.
 export function saveSampleRow(runRoot, sampleDir, row) {
   const clean = redactRowReasons(row, runRoot).row;
-  writeFileSync(join(sampleDir, "sample.json"), `${JSON.stringify(clean, null, 2)}\n`);
+  if (sampleDir !== null) writeFileSync(join(sampleDir, "sample.json"), `${JSON.stringify(clean, null, 2)}\n`);
   appendFileSync(join(runRoot, "rows.jsonl"), `${JSON.stringify(clean)}\n`);
 }

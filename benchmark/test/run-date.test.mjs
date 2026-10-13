@@ -1,5 +1,6 @@
 // Failure cases: a new review or scan accepts another day's output name,
-// an undated name starts work, or today's date and an older resume refuse.
+// an undated loop candidate folder is refused, or today's date and an older
+// resume refuse.
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -17,16 +18,19 @@ it.each([review, ["--mode", "scan"]].map((args) => ({ args })))("refuses another
   const out = join(tempDir("oq-run-date-"), "2000-01-01-test");
   const result = run(out, args);
   expect(result.status).toBe(2);
-  expect(result.stderr.trim()).toBe(`--out must start with ${date}, the UTC date of this run's start`);
+  expect(result.stderr.trim()).toBe(`--out must start with ${date}, the UTC date this run starts, not 2000-01-01`);
   expect(result.stdout).toBe("");
   expect(existsSync(out)).toBe(false);
 });
 
-it("refuses an output name without the start date", () => {
-  const out = join(tempDir("oq-run-date-"), "undated");
-  const result = run(out, ["--mode", "scan"]);
+// benchmark/loop.mjs names a candidate run <change id>-<parent run id>.
+it("accepts an undated output name, as the loop names its candidate runs", () => {
+  const root = tempDir("oq-run-date-");
+  const out = join(root, "RC-0001-2000-01-01-parent");
+  const result = run(out, ["--mode", "scan", "--cases", "demo-polyglot", "--package", `file:${join(root, "missing.tgz")}`]);
   expect(result.status).toBe(2);
-  expect(result.stderr.trim()).toBe(`--out must start with ${new Date().toISOString().slice(0, 10)}, the UTC date of this run's start`);
+  expect(result.stderr).not.toContain("--out must start with");
+  expect(result.stderr).toContain(`there is no file ${join(root, "missing.tgz")}`);
   expect(existsSync(out)).toBe(false);
 });
 
