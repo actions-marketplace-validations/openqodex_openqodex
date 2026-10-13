@@ -10,9 +10,9 @@
 // 1a. A pull request whose licence nobody verified leaves the machine (Sid,
 //    2026-10-11: such cases are for private runs). One whose licence file
 //    GitHub cannot name (NOASSERTION, or an id on none of the lists below)
-//    is class unverified: usable in a private run, never published.
+//    is class unverified: a run publishes it in full (Sid, 2026-10-12),
 //    publishRefusal names every such case of a run, and everything that
-//    sends a run out (publish-run.mjs, an outside converter, a board
+//    sends a run to an outside board (an outside converter, a board
 //    submission) refuses on it. A person's reading of the licence file is
 //    noted beside the class, and only for the file the person read (its
 //    sha256); the class stays unverified.
@@ -31,7 +31,7 @@
 //    source-available one.
 // 6. Code from a repository whose licence is not permissive is published:
 //    excerpts is "full" only for permissive, "omit" otherwise
-//    (publish-run.mjs reads the class).
+//    (outside adjudication reads the class).
 // 7. A pull request named only by its link is read at a different commit on
 //    each ingest (a push after the first reading): GitHub's answer for the
 //    pull request is cached with the day it was read, and the cache is the
@@ -233,8 +233,8 @@ export const licenceNote = (l) => `${l.spdx ?? "none"}, ${l.file ?? "no file"}${
 
 // Why a run may not leave the machine because of its cases' licences, or
 // null: a case whose licence is unverified is for private runs only.
-// `cases` are { name, licence } with licence the class. publish-run.mjs, an
-// outside converter and anything that writes a board submission call this
+// `cases` are { name, licence } with licence the class. An outside
+// converter and anything that writes a board submission call this
 // before writing anything.
 export function publishRefusal(cases) {
   const names = cases.filter((c) => c.licence === "unverified").map((c) => c.name).sort();
