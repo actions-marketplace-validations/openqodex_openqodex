@@ -6,6 +6,7 @@
 // 5. Historical accepted runs appear instead of the current group pointers.
 // 6. Board metrics and A/A noise are lost or mixed with issue recall.
 // 7. A run whose findings all wait for a ruling shows 0% issue recall as if measured.
+// 8. The README shows an AACR-Bench row with no board numbers and no ruled hit, or the page drops it.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -94,10 +95,9 @@ it("rejects a stale full page without rewriting it", () => {
 it("publishes only the current accepted groups", () => {
   const root = fixture();
   expect(run(root).status).toBe(0);
-  const headline = readFileSync(join(root, "README.md"), "utf8");
   const groups = Object.values(pointer(root).groups);
-  // The header and the separator line, then one row per accepted group.
-  expect(headline.split("\n").filter((l) => l.startsWith("| ")).length).toBe(groups.length + 2);
+  // One full-page row per accepted group; each row links its run.
+  expect(page(root).split("\n").filter((l) => l.startsWith("| ") && l.includes("/releases/download/")).length).toBe(groups.length);
   for (const { runId } of groups) expect(page(root)).toContain(`[${runId}]`);
   // A legacy run that no group points at.
   expect(page(root)).not.toContain("2026-10-08-752b77f");
@@ -148,4 +148,22 @@ it("shows a run whose findings all wait for a ruling as not yet ruled, never as 
   const row = readFileSync(join(root, "README.md"), "utf8").split("\n").find((l) => l.includes(`(${config})`));
   expect(row).toContain("not yet ruled");
   expect(row).not.toContain(`0/${s.issueRecall.all.of}`);
+});
+
+it("keeps an AACR-Bench row with no board numbers and no ruled hit off the README, and on the page", () => {
+  const root = fixture();
+  const { runId, config } = aacrGroup(root);
+  const entry = JSON.parse(readFileSync(entryFile(root, runId), "utf8"));
+  delete entry.outside;
+  expect(entry.scores[config].issueRecall.all.hit).toBe(0);
+  writeFileSync(entryFile(root, runId), JSON.stringify(entry));
+  expect(run(root).status).toBe(0);
+  const block = (r) => readFileSync(join(r, "README.md"), "utf8").split("\n").filter((l) => l.startsWith("| "));
+  expect(block(root).some((l) => l.includes(`(${config})`) && l.includes("AACR-Bench"))).toBe(false);
+  expect(page(root).split("\n").some((l) => l.startsWith("| ") && l.includes(`[${runId}]`))).toBe(true);
+  // The same row with board numbers is on the README.
+  entry.outside = { aacr: { byConfig: { [config]: { mean: { semantic: null, line: { precision: 0.4, recall: 0.5 } } } } } };
+  writeFileSync(entryFile(root, runId), JSON.stringify(entry));
+  expect(run(root).status).toBe(0);
+  expect(block(root).some((l) => l.includes(`(${config})`) && l.includes("AACR-Bench"))).toBe(true);
 });

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acceptedProblems, entryProblems, groupKeys, listEntries } from "../benchmark/lib/index.mjs";
+import { SUITES } from "../benchmark/lib/suites.mjs";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const START = "<!-- benchmark-results:start -->";
@@ -28,6 +29,10 @@ const modelName = (e, g) => {
 };
 // Findings exist, and every one still waits for a person's ruling: issue recall is unknown, not zero.
 const unruled = (s) => s.issueRecall.all.hit === 0 && s.precision.upper.of > 0 && s.precision.lower.hit === 0 && s.precision.upper.hit === s.precision.upper.of;
+const board = (e, g) => e.outside?.aacr?.byConfig?.[g.config]?.mean;
+// A suite with a board has no matching words in its known issues, so only a ruling credits a hit.
+// The README shows its row once the row has board numbers or a ruled hit. The full page shows every row.
+const readable = ({ e, g, s }) => !SUITES[e.suite]?.board || Boolean(board(e, g)) || s.issueRecall.all.hit > 0;
 const recall = (s, interval = false) => (unruled(s) ? "not yet ruled" : ratio(s.issueRecall.all, interval));
 const suiteLabel = (e) => `${suiteName(e.suite)}, ${e.split} split${e.subset ? `, ${e.subset} subset` : ""}`;
 const groupLabel = (e, g) => [g.config, `${e.split} split`, ...(e.subset ? [`${e.subset} subset`] : []), `${e.mode} mode`, `${e.path} path`, `rules ${e.rulesVersion}`, ...(e.splitHash ? [`split hash ${e.splitHash.slice(0, 12)}`] : [])].join(", ");
@@ -63,7 +68,8 @@ export function renderResults(index) {
     "- Board numbers come from AACR-Bench's own evaluator. Line numbers match a finding to a reference comment by file and lines.",
     "- Semantic numbers also need the evaluator's judge to agree that the two say the same thing. F1 combines precision and recall in one number.",
     "- Noise rate is the share of findings that match no reference comment. Board numbers never decide whether a run is accepted.",
-    "- A subset, such as dev-smoke, covers only the cases it names. Compare two rows only when they ran the same cases.", ""];
+    "- A subset, such as dev-smoke, covers only the cases it names. Compare two rows only when they ran the same cases.",
+    "- The README shows an AACR-Bench row only once it has board numbers or a ruled hit. This page shows every row.", ""];
   const suites = [...new Set(rows.map(({ e }) => e.suite))].sort();
   for (const suite of suites) {
     const selected = rows.filter(({ e }) => e.suite === suite);
@@ -87,16 +93,16 @@ export function renderResults(index) {
     if (suite === "aacr") {
       page.push("### Board scores", "");
       for (const { e, g } of selected) {
-        const board = e.outside?.aacr?.byConfig?.[g.config]?.mean;
-        page.push(`${runLink(e)}, ${g.config}${board ? ":" : ": not yet board-scored."}`, "");
-        if (board) page.push(table(["Semantic precision", "Semantic recall", "Semantic F1", "Noise rate", "Line precision", "Line recall"], [[
-          board.semantic?.precision, board.semantic?.recall, board.semantic?.f1, board.semantic?.noiseRate, board.line?.precision, board.line?.recall,
+        const numbers = board(e, g);
+        page.push(`${runLink(e)}, ${g.config}${numbers ? ":" : ": not yet board-scored."}`, "");
+        if (numbers) page.push(table(["Semantic precision", "Semantic recall", "Semantic F1", "Noise rate", "Line precision", "Line recall"], [[
+          numbers.semantic?.precision, numbers.semantic?.recall, numbers.semantic?.f1, numbers.semantic?.noiseRate, numbers.line?.precision, numbers.line?.recall,
         ].map(percent)]), "");
       }
     }
   }
   page.push("[Benchmark methods](benchmark.md)", "");
-  const headline = [START, "## Benchmark", "", table(["Reviewer", "Model", "Cases", "Issue recall", "Precision", "Clean rate", "Cost per review"], rows.map(({ e, g, s }) => [
+  const headline = [START, "## Benchmark", "", table(["Reviewer", "Model", "Cases", "Issue recall", "Precision", "Clean rate", "Cost per review"], rows.filter(readable).map(({ e, g, s }) => [
     `${reviewer(g)} (${g.config})`, modelName(e, g), suiteLabel(e), recall(s), precisionRange(s), ratio(s.controls), cost(s),
   ])), "", "[Full results and how to read them](https://github.com/openqodex/openqodex/blob/main/docs/benchmark-results.md)", END].join("\n");
   return { page: page.join("\n"), headline };
