@@ -6,7 +6,8 @@
 // 2. The key uses bearer auth or leaks through logs, errors or counters.
 // 3. Binding or the first upstream 401/404 lets evaluation rounds start.
 // 4. Requests, removals or upstream statuses are missing from eval.json.
-import { randomBytes } from "node:crypto";
+// 5. Another local process spends the key through the relay while a run lasts.
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
@@ -58,10 +59,17 @@ function adaptParameters(body) {
 /** A loopback-only relay with opaque credentials and counters safe to save. */
 export async function startRelay(settings) {
   const apiKey = randomBytes(32).toString("hex");
+  const expected = Buffer.from(`Bearer ${apiKey}`);
   const stats = { relay: true, requests: 0, stripped: 0, parameterChanges: { chat_template_kwargs: 0, temperature: 0, top_p: 0, max_tokens: 0 }, upstreamStatuses: {} };
   const target = new URL(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`);
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
   const server = createServer(async (req, res) => {
+    // Only the evaluator holds the placeholder; any other caller is refused before anything is forwarded.
+    const given = Buffer.from(req.headers.authorization ?? "");
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      res.writeHead(401).end();
+      return;
+    }
     if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
       res.writeHead(404).end();
       return;

@@ -270,6 +270,7 @@ function theirDataset(out) {
 // 4. eval.json omits or miscounts relay requests, removals or statuses.
 // 5. Azure receives temperature, top_p or max_tokens, or the rename changes its value.
 // 6. The first-call error loses the upstream message or prints the key, URL or host.
+// 7. A local caller without the evaluator's placeholder token spends the Azure key.
 
 // ---------- the tests ----------
 
@@ -562,12 +563,34 @@ describe("the wrapper runs their evaluation stage with a model as judge", () => 
         [`{${kept}}`, `{${kept}}`],
         [`{"temperature":7e-1,${kept},"top_p":0.95,"max_tokens":40000}`, `{${kept},"max_completion_tokens":40000}`],
       ]) {
-        const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", body });
+        const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${relay.apiKey}` }, body });
         expect(response.status).toBe(200);
         await response.text();
         expect(provider.seen.at(-1).body).toBe(expected);
       }
       expect(relay.counts()).toEqual({ relay: true, requests: 5, stripped: 3, parameterChanges: { chat_template_kwargs: 3, temperature: 1, top_p: 1, max_tokens: 1 }, upstreamStatuses: { 200: 5 } });
+    } finally {
+      await relay.close();
+      await provider.close();
+    }
+  });
+
+  it("relay refuses a caller without the evaluator's placeholder token and never forwards it", async () => {
+    const provider = await fakeJudge();
+    const relay = await judgeRunner.startRelay({ baseUrl: provider.base, apiKey: "test-key", authHeader: "api-key" });
+    const body = JSON.stringify({ model: "gpt-5.2", messages: [] });
+    try {
+      for (const headers of [{}, { authorization: `Bearer ${randomBytes(32).toString("hex")}` }, { authorization: relay.apiKey }, { authorization: `Bearer ${relay.apiKey}x` }, { "api-key": relay.apiKey }]) {
+        const response = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", headers, body });
+        expect(response.status).toBe(401);
+        await response.text();
+      }
+      expect(provider.seen).toEqual([]);
+      expect(relay.counts()).toMatchObject({ requests: 0, upstreamStatuses: {} });
+      const allowed = await fetch(`${relay.baseUrl}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${relay.apiKey}` }, body });
+      expect(allowed.status).toBe(200);
+      await allowed.text();
+      expect(provider.seen).toHaveLength(1);
     } finally {
       await relay.close();
       await provider.close();
