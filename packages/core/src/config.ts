@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { MAX_GLOB } from "./glob.js";
 import { nearestName } from "./names.js";
 import { isRepoState, readFileBounded, readRepoFile } from "./repo-state.js";
 import { SEVERITIES } from "./severity.js";
@@ -229,6 +230,10 @@ const GITHUB_REPO = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const strings = z.array(z.string());
+// The matcher matches nothing with a longer glob, which would quietly undo
+// the key: an exclude would keep its files, a disabled rule would come back
+// on, a custom scanner's paths would select no file. So the file is refused.
+const globs = z.array(z.string().max(MAX_GLOB, `longer than ${MAX_GLOB} characters, the most a glob can have; shorten it`));
 // YAML reads `version: 1.2` as a number; a version is always text here.
 const text = z.union([z.string(), z.number()]).transform(String);
 const scannerSeverity = z.enum(["critical", "high", "medium", "low", "info"]);
@@ -270,7 +275,7 @@ function schemas(strict: boolean) {
     version: text.nullish(),
     format: z.enum(["sarif", "json-map"]).optional(),
     map: map.optional(),
-    paths: strings.nullish(),
+    paths: globs.nullish(),
     target: z.enum(["changed", "repo"]).optional(),
     timeout_seconds: z.number().int().positive().optional(),
     install: install.optional(),
@@ -285,8 +290,8 @@ function schemas(strict: boolean) {
     review: obj({
       severity_threshold: severityLevel.optional(),
       block_on_severity: severityLevel.nullish(),
-      paths: obj({ exclude: strings.optional() }).optional(),
-      disabled_rules: strings.optional(),
+      paths: obj({ exclude: globs.optional() }).optional(),
+      disabled_rules: globs.optional(),
       default_base: z.string().trim().min(1, "expected a branch or ref").nullish(),
       include_fixtures: z.boolean().optional(),
       ...hostedOnly(HOSTED_ONLY_REVIEW_KEYS),

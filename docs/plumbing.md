@@ -64,8 +64,8 @@ openqodex hook install [--force]
 openqodex hook uninstall
 ```
 
-- `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin and looks up the review of exactly the change being pushed. It always exits 0.
-- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which does the same lookup for each commit the push sends (`agents` has the details). It prints no scanner findings and never starts a review. It stops the push (exit 1) only when the config sets `block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
+- `hook check`: the push gate. The Claude Code and Codex hooks call it before a shell command. It reads the hook's JSON on stdin and looks up the review of your current work. It does not know what a push sends: for any push command other than a plain `git push`, it says it cannot tell. It always exits 0.
+- `hook install`: add a git pre-push hook to this repository. It also sets up the launcher in `~/.openqodex/`, which the hook calls. The hook runs `hook pre-push`, which looks up the review of exactly what the push sends, branch by branch (`agents` has the details). It prints no scanner findings and never starts a review. It stops the push (exit 1) only when the config sets `block_on_severity` and the review is missing or blocked. A lookup that fails for its own reasons never stops the push.
 - `hook install` refuses to replace a hook it did not write. `--force` replaces it and keeps the old hook as `pre-push.openqodex.bak`.
 - `hook uninstall`: remove that hook and put back the one it replaced. A hook you edited after install is left in place.
 

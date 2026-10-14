@@ -180,7 +180,7 @@ OpenQodex writes no Cline hook. The rule carries the instruction section and ask
 
 ## What the push gate does
 
-The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote for exactly the change being pushed, in your own `~/.openqodex/receipts/`. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
+The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote, in your own `~/.openqodex/receipts/`. The check inside your agent looks for the record of your current work and does not know what a push sends: for a plain `git push` it asks whether your current work has a passing review, and for any other push command it says it cannot tell. The git pre-push hook looks for the record of exactly the change being pushed. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
 
 - A complete review of this change that passed: the gate says nothing.
 - A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the absolute path of `report.html`, and tells the agent to ask you "fix all, or tell me which?" and to fix only the findings you name.
