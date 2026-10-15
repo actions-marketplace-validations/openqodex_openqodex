@@ -69,6 +69,7 @@ import { createHash } from "node:crypto";
 import { benchCache, boardFolder, outsideRepo } from "../../lib/board-files.mjs";
 import { benchRoot, parseCaseId, repoRoot } from "../../lib/cases.mjs";
 import { heldOutAccessPath } from "../../lib/index.mjs";
+import { nativeReviewBody } from "../../lib/claude-control.mjs";
 import * as licence from "../../lib/licence.mjs";
 import { boardConfigOf, MARTIAN_BOARD, martianBody, martianToolName, npmRegistryAnswer, REGISTRY, releaseGate } from "../../lib/martian-board.mjs";
 import { attemptOf, findingId, judgeFieldsMissing, normPath, population, shownFindings } from "../../lib/score.mjs";
@@ -96,7 +97,7 @@ function readAttempts(folder) {
 }
 
 // What happened to a planned review's first attempt, as our scorer reads it.
-const statusOf = (first) => (first === null ? "unstarted" : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
+const statusOf = (first) => (first === null ? "unstarted" : nativeReviewBody(first.row) !== null ? first.row.status : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
 
 /**
  * Converts the release run in `folder`: writes <folder>/outside/martian/
@@ -117,7 +118,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
   const suite = manifest.suite ?? "planted";
   if (suite !== "martian") throw new Error(`${folder}: the run is of suite ${suite}, not martian; only a run on Martian's cases is converted for its board`);
   if (manifest.mode === "scan") throw new Error(`${folder}: a scanner-only run shows the developer no finding, so it has nothing to convert for the board`);
-  const gate = await releaseGate(manifest, { registry });
+  const gate = await releaseGate(manifest, { registry, root });
   const out = boardFolder(folder, "martian");
   if (existsSync(out)) throw new Error(`${out} exists already: the run was converted before (and maybe judged). Move that folder to the Trash to convert it again.`);
 
@@ -192,7 +193,8 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
       const lacking = judgeFieldsMissing(f);
       if (lacking.length > 0) held.push({ tool: job.tool, caseId: job.caseId, case: job.case, goldenUrl: url, index, findingId: ids[index], lacking });
     });
-    const comments = shown.map((f) => ({ path: normPath(f.file_path) || null, line: Number.isInteger(f.line_number) ? f.line_number : null, body: martianBody(f), created_at: first?.row?.started_at ?? null }));
+    const native = nativeReviewBody(first?.row);
+    const comments = native !== null ? [{ path: null, line: null, body: native, created_at: first.row.started_at ?? null }] : shown.map((f) => ({ path: normPath(f.file_path) || null, line: Number.isInteger(f.line_number) ? f.line_number : null, body: martianBody(f), created_at: first?.row?.started_at ?? null }));
     reviews.push({ url, review: { tool: job.tool, repo_name: null, pr_url: url, review_comments: comments, openqodex: { caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: statusOf(first), findingIds: ids } } });
   }
   const heldTools = new Set(held.map((h) => h.tool));
@@ -222,8 +224,8 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
     splitHash: manifest.splitHash ?? null,
     // What a judging checks before it judges (failure 9): the manifest converted, by its bytes.
     manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
-    package: { spec: gate.package.spec, version: gate.package.version, sha256: gate.package.sha256, integrity: gate.package.integrity },
-    registry: REGISTRY,
+    package: gate.package.spec === "local" ? gate.package : { spec: gate.package.spec, version: gate.package.version, sha256: gate.package.sha256, integrity: gate.package.integrity },
+    ...(gate.buildLabel ? { build: gate.buildLabel, comparison: gate.comparison } : { registry: REGISTRY }),
     tool: "openqodex-<config>-r<repeat>",
     access,
     cases: caseRows,

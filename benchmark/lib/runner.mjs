@@ -62,6 +62,7 @@ import { dirname, join, resolve } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { SCAN_CONFIG } from "./scan-score.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
+import { controlArgs, CONTROL_PROMPT } from "./claude-control.mjs";
 
 // The arguments of one laptop review (Claude Code or Codex through
 // `openqodex review`), the same for planted and pull request cases.
@@ -69,6 +70,11 @@ export function laptopReviewArgs({ repo, reportDir, job, web, timeout }) {
   const args = ["review", "--cwd", repo, "--report-dir", reportDir, "--reviewer", job.reviewer, "--reviewer-web", web, "--timeout", String(timeout), "--no-color"];
   if (!job.graph) args.push("--no-graph");
   return args;
+}
+
+export function laptopInvocation(options) {
+  if (options.job.reviewer === "control") return { command: "claude", args: controlArgs(options), input: CONTROL_PROMPT };
+  return { command: process.execPath, args: [options.cli, ...laptopReviewArgs(options)], input: "" };
 }
 
 // The jobs of a run in run order: per repeat, every case, every
@@ -83,7 +89,10 @@ export function planJobs({ cases, caseIds, reviewers = [], graph = [], repeat, m
   // A model reviewer's name (model:<deployment>) holds a colon, which a
   // configuration id, a folder name, writes as a dash.
   if (mode === "scan") configs.push({ id: SCAN_CONFIG, reviewer: null, graph: false });
-  else for (const reviewer of reviewers) for (const g of graph) configs.push({ id: `${reviewer.replace(/:/g, "-")}-graph-${g}`, reviewer, graph: g === "on" });
+  else for (const reviewer of reviewers) for (const g of graph) {
+    if (reviewer === "control" && g !== "off") throw new Error("the control reviewer has no graph configuration; use --graph off");
+    configs.push({ id: `${reviewer.replace(/:/g, "-")}-graph-${g}`, reviewer, graph: g === "on" });
+  }
   const jobs = [];
   for (let r = 1; r <= repeat; r++) {
     const order = r % 2 === 1 ? configs : [...configs].reverse();
@@ -372,8 +381,8 @@ export function claudeModels(usage) {
   return { model: models.length > 1 ? models : modelStatus === "known" ? models[0] : null, models, modelFrom: CLAUDE_MODEL_FROM, modelStatus };
 }
 
-export function claudeRunModels(rows, requested = null) {
-  const samples = rows.filter((r) => r.reviewer === "claude");
+export function claudeRunModels(rows, requested = null, reviewer = "claude") {
+  const samples = rows.filter((r) => r.reviewer === reviewer);
   const models = [...new Set(samples.flatMap((r) => Array.isArray(r.model) ? r.model : typeof r.model === "string" ? [r.model] : r.models ?? []))].sort();
   const unknown = models.length === 0 || samples.some((r) => r.modelFrom !== CLAUDE_MODEL_FROM || (r.modelStatus !== "none" && r.model == null));
   const why = models.length > 1 ? `Claude Code samples have mixed models: ${models.join(", ")}` : unknown ? "Claude Code samples have an unknown per-review model" : requested && models[0] !== requested ? `Claude Code requested model ${requested}, but samples were served by ${models[0]}` : null;
@@ -484,7 +493,7 @@ export function resumeProblems(earlier, now) {
     // answered review, which a new invocation does not know yet; the model it
     // asks for is what must match. The served id is held by
     // lib/server-review.mjs recordServed.
-    if (e?.kind === "model" || w?.kind === "model" || (n === "claude" && e?.modelFrom === CLAUDE_MODEL_FROM)) same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
+    if (e?.kind === "model" || w?.kind === "model" || (["claude", "control"].includes(n) && e?.modelFrom === CLAUDE_MODEL_FROM)) same(`${n} requested model`, e?.requestedModel, w?.requestedModel);
     else same(`${n} model`, e?.model, w?.model);
     // A model reviewer's settings (effort, maxOutputTokens), the alias that
     // named it and the scripted model's script.
@@ -504,6 +513,7 @@ export function resumeProblems(earlier, now) {
   same("suite", earlier.suite ?? "planted", now.suite ?? "planted");
   same("split", earlier.split ?? "dev", now.split ?? "dev");
   same("split file hash", earlier.splitHash ?? null, now.splitHash ?? null);
+  same("comparison release", earlier.release, now.release);
   same("subset", earlier.subset ?? null, now.subset ?? null);
   if (earlier.cases !== undefined || now.cases !== undefined) same("cases", earlier.cases, now.cases);
   if (earlier.configs !== undefined || now.configs !== undefined) same("configurations", earlier.configs, now.configs);

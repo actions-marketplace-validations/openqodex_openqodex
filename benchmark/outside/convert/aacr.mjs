@@ -61,6 +61,7 @@ import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.m
 import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
+import { nativeReviewBody } from "../../lib/claude-control.mjs";
 
 export { benchCache, instanceIdOf, isTestGap, readAacrOutside };
 
@@ -80,7 +81,7 @@ export function commentOf(f) {
 }
 
 // What happened to a planned review's first attempt, as our scorer reads it.
-const statusOf = (first) => (first === null ? "unstarted" : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
+const statusOf = (first) => (first === null ? "unstarted" : nativeReviewBody(first.row) !== null ? first.row.status : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
 
 /**
  * Converts the run in `folder`: writes <folder>/outside/aacr/ and returns
@@ -134,7 +135,8 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
   for (const job of jobs) {
     const first = job.first;
     const shown = forBoard(first?.report ?? null);
-    const comments = shown.map(commentOf);
+    const native = nativeReviewBody(first?.row);
+    const comments = native !== null ? [{ path: null, start_line: null, end_line: null, content: native }] : shown.map(commentOf);
     comments.forEach((c, index) => {
       if (c.start_line === null) withoutLine.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, index });
     });

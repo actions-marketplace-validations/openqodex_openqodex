@@ -47,10 +47,11 @@
 //    is not clean, signed by a person on review-queue/people.json
 //    (lib/rulings.mjs). A clean case is clean and has no truth.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { benchRoot, buildCase, caseIdFromHash, casesRoot, git, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
+import { comparisonRelease } from "./comparison.mjs";
 import { MERGE_BASE_RULE, materialisePr, mergeBasesOf } from "./materialise.mjs";
 import { readDecisions, resolveRulings } from "./rulings.mjs";
 
@@ -417,23 +418,35 @@ const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
 // The cases of a real suite one run uses (failures 7 and 8): every usable
 // case on the split's development side, or the subset the split file names,
 // or the cases `refs` names (<suite>/<name> or a full case id), each of
-// which must be on that side and in that subset. The test split is held
-// out: only a release run reads it, and there is none yet. `heldOut` true
+// which must be on that side and in that subset. An accepted comparison
+// release admits the test split on its pinned clean build and logs access.
+// `heldOut` true
 // (run.mjs --materialise-only, which builds and proves cases and reviews
 // none, and logs the access) may select the test split. Throws one error
 // whose lines name every refusal; nothing is fetched or built here.
-export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot, heldOut = false }) {
+export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot, heldOut = false, release = null, build = null, packageRecord = null, runId = null, by = null, accessLog = join(root, "index/heldout-access.jsonl") }) {
   if (!SUITES[suite]) throw new Error(`no real suite named ${suite}; the real suites are ${Object.keys(SUITES).join(", ")}`);
-  if (split === "test" && !heldOut) throw new Error(`the ${suite} test split is held out: no held-out case runs before a release, and run.mjs has no release run yet; run.mjs --materialise-only builds and proves held-out cases without a review`);
+  if (split === "test" && !heldOut && release === null) throw new Error(`the ${suite} test split is held out: no held-out case runs before a release; use --release with an accepted comparison, or --materialise-only to prove cases without a review`);
   if (split !== "dev" && split !== "test") throw new Error(`--split takes dev or test, not ${JSON.stringify(split)}`);
   const s = readSuite(suite, { root });
+  const gate = split === "test" && !heldOut ? comparisonRelease({ release, suite, split, splitHash: s.splitHash, build, package: packageRecord }, { root, admit: true }) : null;
+  const admitted = (cases) => {
+    if (gate) {
+      const access = { at: new Date().toISOString(), suite, caseCount: cases.length, caseIds: cases.map((c) => c.id), purpose: "release-run", runId, release, by, comparisonHash: gate.comparison.hash, build: gate.buildLabel };
+      try {
+        mkdirSync(dirname(accessLog), { recursive: true });
+        appendFileSync(accessLog, `${JSON.stringify(access)}\n`);
+      } catch (error) { throw new Error(`the held-out access log cannot be written (${error.message.split("\n")[0]}), so no truth is read`); }
+    }
+    return cases;
+  };
   if (!s.split) throw new Error(`${s.def.split} is missing; run node benchmark/ingest/${suite}.mjs`);
   const subsets = Object.keys(s.split.subsets ?? {}).sort();
   if (subset !== null && subset !== "all" && !subsets.includes(subset)) throw new Error(`${s.def.split} lists no subset ${subset}; its subsets are ${subsets.join(", ")}, or all`);
   const ids = listCases({ suite, split, subset, root });
   if (refs === null) {
     if (ids.length === 0) throw new Error(`the ${split} split of ${suite}${subset ? `, subset ${subset},` : ""} holds no usable case`);
-    return ids.map((id) => readCase(id, { root }));
+    return admitted(ids.map((id) => readCase(id, { root })));
   }
   const problems = [];
   const chosen = [];
@@ -457,7 +470,7 @@ export function selectCases({ suite, split = "dev", subset = null, refs = null, 
     else chosen.push(readCase(realCaseId(suite, name, entry.hash), { root }));
   }
   if (problems.length > 0) throw new Error(problems.join("\n"));
-  return chosen;
+  return admitted(chosen);
 }
 
 // The truth copy of a real case that a run saves as cases/<name>.json and
