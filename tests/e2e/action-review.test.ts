@@ -304,8 +304,8 @@ describe("the Action's chosen convention source", () => {
     if (offline()) return void process.stdout.write("action convention source: skipped, OPENQODEX_E2E_OFFLINE=1\n");
     const config = "review:\n  instructions_files: [rules.md]\n";
     const { dir, base } = pullRequest(`action-conventions-${from}`,
-      { ".openqodex.yaml": config, "rules.md": "BASE-RULE-CANARY\n" },
-      { ".openqodex.yaml": config, "rules.md": "HEAD-RULE-CANARY\n" });
+      { ".openqodex/config.yaml": config, "rules.md": "BASE-RULE-CANARY\n" },
+      { ".openqodex/config.yaml": config, "rules.md": "HEAD-RULE-CANARY\n" });
     const source = from === "base" ? base : git(dir, "rev-parse", "HEAD").trim();
     const r = runAction(`action-conventions-${from}`, dir, {
       CLAUDE_CONFIG_DIR: tempDir("oq-e2e-no-login-"), ANTHROPIC_API_KEY: KEY,
