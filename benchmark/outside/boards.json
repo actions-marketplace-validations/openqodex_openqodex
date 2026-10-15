@@ -99,7 +99,13 @@
       ],
       "judge": {
         "deployment": "judge",
-        "source": "https://github.com/withmartian/code-review-benchmark/blob/e616e849755441da38f18bf3adba2c9583b03803/offline/README.md"
+        "source": "https://github.com/withmartian/code-review-benchmark/blob/e616e849755441da38f18bf3adba2c9583b03803/offline/README.md",
+        "prompt": {
+          "path": "offline/code_review_benchmark/step3_judge_comments.py",
+          "url": "https://raw.githubusercontent.com/withmartian/code-review-benchmark/e616e849755441da38f18bf3adba2c9583b03803/offline/code_review_benchmark/step3_judge_comments.py",
+          "sha256": "7370dfb21bed01655aada1d4d75f32e07c92e4c4c86dfc6cf6d47058a65ce16d",
+          "hashCovers": "The complete source file containing the semantic matching prompt."
+        }
       },
       "note": "Reserved URLs are copied verbatim from the golden files, which mix upstream and injected fork URLs."
     },
@@ -132,7 +138,13 @@
       "reservedPrUrls": [],
       "judge": {
         "deployment": "judge",
-        "source": "https://github.com/alibaba/aacr-bench/blob/68a569759289a83654a59d06db2a72910edf0a4a/evaluation/README.md"
+        "source": "https://github.com/alibaba/aacr-bench/blob/68a569759289a83654a59d06db2a72910edf0a4a/evaluation/README.md",
+        "prompt": {
+          "path": "evaluation/judge.py",
+          "url": "https://raw.githubusercontent.com/alibaba/aacr-bench/68a569759289a83654a59d06db2a72910edf0a4a/evaluation/judge.py",
+          "sha256": "c5305284ae895d7d184a181bc3eb1ba6c3aee1d163cf37435138cd3dd7af663a",
+          "hashCovers": "The complete source file containing the semantic matching prompt."
+        }
       },
       "note": "AACR is split by P1. The positive file contains 196 rows at this commit; the plan says 200."
     },
