@@ -1,17 +1,20 @@
-// Round 1 failure list: greptile-failures.md, items 9 and 10.
+// Round 1 and 2 failure list: greptile-failures.md, items 9, 10 and 13.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { benchRoot } from "../lib/cases.mjs";
+import { cacheRoot } from "../lib/licence.mjs";
 import { attemptDir, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
-import { readCase, specCopy, truthOf } from "../lib/suites.mjs";
+import { rawPath, readCase, specCopy, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 
 const suite = JSON.parse(readFileSync(join(benchRoot, "suites/greptile/cases.json"), "utf8"));
 const c = readCase(suite.cases[0].id);
+const cache = cacheRoot();
+const hasTruth = Object.values(c.truthSets).every((set) => existsSync(rawPath(cache, "greptile", { path: set.file })));
 const write = (path, value) => writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 
 function savedRun(spec = null) {
@@ -31,8 +34,8 @@ function savedRun(spec = null) {
   return folder;
 }
 
-it("scores a Greptile run with empty line truth and saves both judge set identities", () => {
-  const truth = truthOf(c);
+it.skipIf(!hasTruth)("scores a Greptile run with empty line truth and saves both judge set identities (needs pinned Greptile truth in the bench cache; skipped without it)", () => {
+  const truth = truthOf(c, { cache });
   expect(truth.kind).toBe("lines");
   expect(truth.items).toEqual([]);
   const copy = specCopy(c, truth);

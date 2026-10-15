@@ -16,3 +16,8 @@ Round 1, written before the fixes and regression tests:
 9. Greptile cannot save or score a run because prose sets enter line matching. Save an empty line truth and both named prose sets with their frozen hashes and sources. Score a saved run through the real CLI without a model call.
 10. Either outside converter crashes or gives Greptile no route to its judge. Each CLI refuses it with one line naming benchmark/outside/boards/greptile-judge.mjs, the W8-3 path.
 11. Martian accepts absent or malformed tree hashes because both sides compare equal. Require all four tree hashes before comparing their pairs.
+
+Round 2, written before the cache fixes:
+
+12. Published Martian tree proof regressions fail offline in a fresh cache. Require the pinned published data and golden files, or skip with one named reason when they are unavailable.
+13. Greptile scoring reads absent raw truth in a fresh cache. Require both pinned truth files, or skip with one named reason when they are unavailable. Keep the converter refusals running without upstream data.

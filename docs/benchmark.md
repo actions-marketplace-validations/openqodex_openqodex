@@ -4,6 +4,8 @@ This page is for contributors and for anyone who wants to check a claim about re
 
 A script runs it and a script scores it. No model decides what runs or how a review scores. A model may judge the wording of findings in a separate, optional pass, and that verdict never blocks anything.
 
+The published Martian tree proof and Greptile scoring regression tests need their pinned raw upstream files in the bench cache (`OPENQODEX_BENCH_CACHE`). Those files are not committed here. When they are absent, the affected tests skip with a named reason, as the AACR evaluator tests do without their checkout. Tests with local fixtures and the converter refusal tests still run. Cached files still have to match their pins.
+
 ## Published results
 
 [Benchmark results](benchmark-results.md) lists the current accepted run of each group in `benchmark/index/accepted.json`. The full page and the README's Benchmark section are generated from `benchmark/index` only. The script never reads a results folder.
