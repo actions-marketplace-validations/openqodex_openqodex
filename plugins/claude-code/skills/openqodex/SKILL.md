@@ -103,3 +103,5 @@ It downloads the scanners this repository's files call for into `~/.openqodex/to
 `npx -y openqodex@0.12.0 guide` prints this guide. `npx -y openqodex@0.12.0 guide <topic>` prints a page of the docs, offline: `quickstart`, `config`, `scanners`, `custom-scanners`, `security`, `agents`, `cli`, `for-agents`. `for-agents` covers the install, the config, custom scanners and what each message means.
 
 Before reading many files to find who calls a function, what implements it, how two parts connect or what a change reaches, you may ask the code graph: `npx -y openqodex@0.12.0 graph help` lists its questions, or use the `graph_` tools of the `openqodex` MCP server when your agent has them; an answer with `unknown.floor` true may be missing callers, so never read it as "unused".
+
+Never add a file to `review.instructions_files` on your own. Ask the developer which files the reviewer may use, then set only what they name. The default is `[]`; chosen files add to `.openqodex/custom-instructions.md`.

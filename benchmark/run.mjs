@@ -22,7 +22,7 @@
 //                          [--check-identical] [--scanner-config <file>]
 //                          [--allow-missing-scanners] [--timeout 120]
 //                          [--out <folder>] [--dry-run] [--draft]
-//   either mode also takes --suite planted|aacr|clean [--split dev]
+//   either mode also takes --suite planted|conventions|aacr|clean [--split dev]
 //                          [--subset <name>|all] [--cases <suite>/<name>,...]
 //                          [--package local|npm:<version>|file:<path.tgz>]
 //   a review run also takes --smoke
@@ -292,7 +292,7 @@ import { cpus, homedir, totalmem, tmpdir, platform, arch, release } from "node:o
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { benchRoot, buildCase, caseHash, caseIdFromHash, generatedValue, git, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
+import { benchRoot, casesRoot, buildCase, caseHash, caseIdFromHash, generatedValue, git, listCases, loadRunLock, lockPath, lockRefusals, readCase, repoRoot, snapshotCases } from "./lib/cases.mjs";
 import { estimateRun, loadPrices, manifestBudget, readLedger, runBudget, startRefusals } from "./lib/budget.mjs";
 import { externalOf, toolchainOf } from "./lib/external.mjs";
 import { haltRules, rateLimitRetry, smokeCap } from "./lib/halts.mjs";
@@ -308,7 +308,13 @@ import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
 import { SUITES, materialise, selectCases, specCopy, truthOf } from "./lib/suites.mjs";
 import { renderScan, saveScore } from "./score.mjs";
 
-const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]\n       either mode: [--suite planted|aacr|clean] [--split dev] [--subset <name>|all] [--cases <suite>/<name>,...] [--package local|npm:<version>|file:<path.tgz>]; a review run: [--smoke]\n       node benchmark/run.mjs --materialise-only [--suite <suite>] [--split dev|test] [--subset <name>] [--cases a,b] [--reviewers <names> | --mode scan] [--out <folder>]";
+// Authored suites use the same base/change folders. Only the published corpus has a frozen lock.
+const AUTHORED_SUITES = {
+  planted: { root: casesRoot, lock: lockPath, conventions: false },
+  conventions: { root: join(benchRoot, "suites/conventions"), lock: null, conventions: true },
+};
+
+const USAGE = "usage: node benchmark/run.mjs --max-usd <n> --max-minutes <n> [--max-tokens <n>] [--max-reviews <n>] [--allow-over] [--repeat 3] [--cases a,b] [--graph off,on] [--reviewers claude[,codex]] [--concurrency 1] [--timeout 900] [--out <folder>] [--resume] [--add-repeats <n>] [--change <RC-id>] [--model <id>] [--web off|on] [--dry-run] [--draft] [--allow-retired] [--allow-missing-scanners]\n       node benchmark/run.mjs --reviewers model:<deployment>|model:scripted --max-usd <n> --max-minutes <n> --review-max-usd <n> [--cases a,b | <suite>/<name>,...] [--model-effort <level>] [--max-output-tokens <n>] [--model-script <file>] [--install-root <dir>/tools] [--concurrency 2] [--timeout <s>] [--repeat 3] [--out <folder>] [--resume] [--dry-run] [--allow-missing-scanners]\n       node benchmark/run.mjs --mode scan [--cases a,b] [--repeat 1] [--check-identical] [--scanner-config <file>] [--allow-missing-scanners] [--timeout 120] [--out <folder>] [--dry-run] [--draft] [--allow-retired]\n       either mode: [--suite planted|conventions|aacr|clean] [--split dev] [--subset <name>|all] [--cases <suite>/<name>,...] [--package local|npm:<version>|file:<path.tgz>]; a review run: [--smoke]\n       node benchmark/run.mjs --materialise-only [--suite <suite>] [--split dev|test] [--subset <name>] [--cases a,b] [--reviewers <names> | --mode scan] [--out <folder>]";
 
 // Flags only a review run reads, flags only a scanner-only run reads, and
 // flags only a model reviewer reads.
@@ -396,8 +402,14 @@ function parseArgs(argv) {
   if (named.length > 1) throw new Error(`--cases names cases of ${named.join(" and ")}; one run reviews one suite`);
   if (o.suite !== null && named.length === 1 && named[0] !== o.suite) throw new Error(`--cases names cases of ${named[0]}, and --suite names ${o.suite}`);
   o.suite ??= named[0] ?? "planted";
-  if (o.suite !== "planted" && !SUITES[o.suite]) throw new Error(`--suite takes planted or ${Object.keys(SUITES).join(", ")}, not ${o.suite}`);
-  o.real = o.suite !== "planted";
+  if (!AUTHORED_SUITES[o.suite] && !SUITES[o.suite]) throw new Error(`--suite takes planted, conventions or ${Object.keys(SUITES).join(", ")}, not ${o.suite}`);
+  o.real = !AUTHORED_SUITES[o.suite];
+  // Authored cases live directly under the suite root. Resolve the suite
+  // first, then remove its qualifier before validating or snapshotting names.
+  if (!o.real) {
+    o.cases = o.cases?.map((c) => c.startsWith(`${o.suite}/`) ? c.slice(o.suite.length + 1) : c) ?? null;
+    o.realRefs = null;
+  }
   if (!o.real && o.split !== null && o.split !== "dev") throw new Error(`--split ${o.split}: the planted suite has one split, dev`);
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   if (o.materialiseOnly) return materialiseArgs(o, given, real);
@@ -441,8 +453,8 @@ function parseArgs(argv) {
   if (o.model !== null && o.reviewers.includes("codex")) {
     throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
   }
-  const all = listCases();
-  for (const c of o.real ? [] : (o.cases ?? [])) if (!isRealRef(c) && !all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
+  const all = listCases(AUTHORED_SUITES[o.suite]?.root);
+  for (const c of o.real ? [] : (o.cases ?? [])) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   return o;
 }
 
@@ -457,7 +469,7 @@ function materialiseArgs(o, given, real) {
   // A model review reads the case as two commits; a laptop review and a scan read the change uncommitted.
   o.shape = o.mode === "review" && o.reviewers.some(isModelReviewer) ? "server" : "laptop";
   if (o.real && o.cases !== null && real.length !== o.cases.length) throw new Error(`--cases names planted cases in a run of the ${o.suite} suite; name pull request cases as ${o.suite}/<name> or a full case id`);
-  const all = listCases();
+  const all = listCases(AUTHORED_SUITES[o.suite]?.root);
   for (const c of o.real ? [] : (o.cases ?? [])) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   return o;
 }
@@ -524,14 +536,15 @@ function realCases(o) {
 // and 17): the lock is checked against that copy, and every hash, spec and
 // attempt comes from it. Exits 2 on a refusal, leaving no temp folder.
 function lockedCases(o) {
+  const authored = AUTHORED_SUITES[o.suite];
   let lock;
   try {
-    lock = loadRunLock(lockPath, { draft: o.draft });
+    lock = authored.lock === null ? null : loadRunLock(authored.lock, { draft: o.draft });
   } catch (error) {
     console.error(error.message);
     process.exit(2);
   }
-  const cases = o.cases ?? listCases().filter((c) => lock.cases[c]?.retired !== true);
+  const cases = o.cases ?? listCases(authored.root).filter((c) => lock?.cases[c]?.retired !== true);
   const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
   const refuse = (lines) => {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -542,12 +555,12 @@ function lockedCases(o) {
   let snap;
   let hashes;
   try {
-    snap = snapshotCases(cases, join(tempRoot, "cases-snapshot"));
+    snap = snapshotCases(cases, join(tempRoot, "cases-snapshot"), { root: authored.root });
     hashes = Object.fromEntries(cases.map((c) => [c, caseHash(c, snap)]));
   } catch (error) {
     refuse([error.message]);
   }
-  const refusals = lockRefusals(cases, lock, { draft: o.draft, allowRetired: o.allowRetired }, snap);
+  const refusals = lock === null ? [] : lockRefusals(cases, lock, { draft: o.draft, allowRetired: o.allowRetired }, snap);
   if (refusals.length > 0) refuse(refusals);
   return { cases, snap, hashes, tempRoot };
 }
@@ -764,7 +777,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
   const runId = basename(out);
   const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
-  const idOf = Object.fromEntries(cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c])]));
+  const idOf = Object.fromEntries(cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c], o.suite)]));
   const { jobs } = planJobs({ cases, caseIds: idOf, repeat: o.repeat, mode: "scan" });
   for (const folder of folders) {
     if (existsSync(join(folder, "samples")) || existsSync(join(folder, "manifest.json"))) {
@@ -995,7 +1008,7 @@ function materialiseMain(o) {
     const locked = lockedCases(o);
     tempRoot = locked.tempRoot;
     casesDir = locked.snap;
-    cases = locked.cases.map((name) => ({ id: caseIdFromHash(name, locked.hashes[name]), suite: "planted", name, split: "dev", materialise: { kind: "folders" }, source: { kind: "authored" } }));
+    cases = locked.cases.map((name) => ({ id: caseIdFromHash(name, locked.hashes[name], o.suite), suite: o.suite, name, split: "dev", materialise: { kind: "folders" }, source: { kind: "authored" } }));
   }
   const out = o.out ?? join(benchRoot, "results", `${new Date().toISOString().slice(0, 10)}-${o.suite}-${o.split}-materialise-only`);
   if (["proof.json", "manifest.json", "samples"].some((f) => existsSync(join(out, f)))) refuse([`${out} already holds a run or a proof; use --out for a new folder`]);
@@ -1040,7 +1053,7 @@ async function main() {
     ? { cases: Object.keys(real.byName), snap: null, hashes: Object.fromEntries(Object.entries(real.byName).map(([n, x]) => [n, x.case.hash])), tempRoot: real.tempRoot }
     : lockedCases(o);
   o.cases = cases;
-  const suite = real ? real.suite : "planted";
+  const suite = o.suite;
   const server = o.path === "server";
   // Every exit before the reviews start leaves no copy behind.
   const leave = (code) => {
@@ -1098,7 +1111,7 @@ async function main() {
     }
   }
   // The jobs in run order, each with its id (lib/runner.mjs planJobs; failure 7).
-  const idOf = Object.fromEntries(o.cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c])]));
+  const idOf = Object.fromEntries(o.cases.map((c) => [c, real ? real.byName[c].case.id : caseIdFromHash(c, hashes[c], o.suite)]));
   let configs;
   let jobs;
   try {
@@ -1312,7 +1325,7 @@ async function main() {
     const replacements = [[tempRoot, "<temp>"], [realpathSync(tempRoot), "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
     let saved;
     try {
-      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop, appearsIn: models[job.reviewer].appearsIn });
+      saved = await serverAttempt({ reviewChange: lib.reviewChange, job, attempt: k, out, repo, config: AUTHORED_SUITES[suite]?.conventions ? lib.loadConfig(repo.dir).config : undefined, reviewer: models[job.reviewer].reviewer, meter, deadlineMs: o.timeout * 1000, workRoot, installRoot, hide: (t) => sanitize(t, replacements), stopped: () => stop, appearsIn: models[job.reviewer].appearsIn });
     } finally {
       rmSync(caseDir, { recursive: true, force: true });
     }
@@ -1377,10 +1390,10 @@ async function main() {
   const attempt = async (job, k) => {
     const dir = attemptDir(out, job, k);
     const caseDir = join(tempRoot, `${job.case}-${job.config}-${job.repeat}-${k}`);
-    const { dir: repo } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
+    const { dir: repo, base } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
-    const args = laptopReviewArgs({ repo, reportDir, job, web: o.web, timeout: o.timeout });
+    const args = laptopReviewArgs({ repo, reportDir, job, web: o.web, timeout: o.timeout, instructionsRef: AUTHORED_SUITES[suite]?.conventions ? base : undefined, configPath: AUTHORED_SUITES[suite]?.conventions ? join(repo, ".openqodex/config.yaml") : undefined });
     const startedAt = new Date().toISOString();
     let result;
     try {

@@ -1,0 +1,44 @@
+{
+  "id": "violation",
+  "guards": "a chosen route naming convention is missed or reported without citing its rule",
+  "language": "python",
+  "framework": "flask",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "route-verb-noun",
+      "file": "app/server.py",
+      "lines": [
+        41,
+        41
+      ],
+      "anchor": {
+        "line": 41,
+        "text": "def health_check():"
+      },
+      "mentions": [
+        "CONTRIBUTING.md#verb-noun"
+      ],
+      "kind": [
+        "style",
+        "maintainability"
+      ],
+      "class": "style",
+      "severity": "minor",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "CONTRIBUTING.md#verb-noun requires new GET handlers to use verb_noun names with get first. Rename health_check to get_health and cite that rule.",
+      "tags": [],
+      "evidence": [
+        {
+          "file": "CONTRIBUTING.md",
+          "lines": [
+            3,
+            5
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -231,7 +231,7 @@ const within = (child, parent) => {
  * address, so that only the refusal was saved (failure 5). Throws before any
  * review when the work root lies in the clone or the results folder.
  */
-export async function serverAttempt({ reviewChange, job, attempt, out, repo, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null, appearsIn = null }) {
+export async function serverAttempt({ reviewChange, job, attempt, out, repo, config, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null, appearsIn = null }) {
   for (const [what, dir] of [["the clone", repo.dir], ["the results folder", out]]) {
     if (within(workRoot, dir)) throw new Error(`the work root ${workRoot} lies in ${what} (${dir}); a review writes only in a workDir of its own, outside both`);
   }
@@ -253,7 +253,7 @@ export async function serverAttempt({ reviewChange, job, attempt, out, repo, rev
   let error = null;
   try {
     result = await reviewChange(
-      { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head },
+      { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, ...(config === undefined ? {} : { config }) },
       meter.wrap(reviewer),
       { profile: "server", workDir, installRoot, budget: { authorize: meter.authorize, deadlineMs }, tools: { web: false, shell: false }, scanners: "preinstalled", onProgress: (line) => progress.push(line) },
     );

@@ -35,7 +35,7 @@ export function createRepoFiles(repoRoot: string): RepoFiles {
 }
 
 export const INSTRUCTIONS_LINE =
-  "Write in .openqodex/custom-instructions.md what a reviewer of this repo must know: conventions, what never to flag, what always to check.";
+  "Write in .openqodex/custom-instructions.md what a reviewer of this repo must know: conventions, what never to flag, what always to check. It adds to the files the owners chose in review.instructions_files.";
 
 export const ROOT_CONFIG_NOTE =
   "This repo has .openqodex.yaml at its root; it is still read. To move it into the folder: git mv .openqodex.yaml .openqodex/config.yaml";

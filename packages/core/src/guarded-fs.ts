@@ -701,7 +701,13 @@ export class FolderReader {
         if (n === 0) break;
         off += n;
       }
-      return off === size ? { ok: true, data, stat: st } : { ok: false, why: "refused" };
+      const end = fstatSync(fd, { bigint: true });
+      const named = lstatQuiet(abs);
+      const finalFolders = this.ids(folders);
+      if (off !== size || end.size !== st.size || end.mtimeNs !== st.mtimeNs || end.ctimeNs !== st.ctimeNs ||
+          named === null || named === "error" || !same(idOf(named), idOf(st)) ||
+          finalFolders === null || !sameIds(before, finalFolders)) return { ok: false, why: "refused" };
+      return { ok: true, data, stat: st };
     } catch {
       return { ok: false, why: "refused" };
     } finally {

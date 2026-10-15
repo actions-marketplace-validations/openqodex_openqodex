@@ -606,6 +606,10 @@ export const FINDER_LABEL = "Each found truth item once, judged from the review'
 const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected" };
 export const originOf = (suite) => ORIGINS[suite ?? "planted"] ?? null;
 
+// Register authored suites separately from the frozen scoring rules.
+// Their case hashes identify the fixtures; they use the same planted rules.
+ORIGINS.conventions = "planted";
+
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 export const jobIdOf = (caseId, config, repeat) => `${caseId}/${config}/${repeat}`;
 export const caseSetHash = (ids) => sha256([...ids].sort().join("\n"));

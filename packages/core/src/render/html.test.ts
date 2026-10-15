@@ -47,6 +47,7 @@ import type { Change, CompletionRecord, Report, ReportFinding } from "../types.j
 import { DISPLAY_MAX_BYTES, DISPLAY_MAX_ROWS, buildDisplay, buildExcerptDisplay, checkDisplay, displayJson } from "./display.js";
 import type { Display, DisplayRow } from "./display.js";
 import { renderHtml } from "./html.js";
+import { renderMarkdown } from "./markdown.js";
 import { renderReceipt, renderReview } from "./review.js";
 
 const PEM_LINES = [
@@ -562,4 +563,21 @@ describe("the port of the designer's page", () => {
     expect(styleOf(ours)).toBe(styleOf(expected));
     expect(/<title>(.*)<\/title>/.exec(ours)?.[1]).toBe(/<title>(.*)<\/title>/.exec(expected)?.[1]);
   });
+});
+
+it("keeps supplied and omitted convention notes in HTML without interpreting their markup", () => {
+  const change = makeChange();
+  const html = renderHtml({ report: report(change, { notes: ["Conventions supplied: rules.md", "Convention omitted: <script>rules</script> is missing"] }), display: null, version: "test" });
+  expect(html).toContain("Conventions supplied: rules.md");
+  expect(html).toContain("Convention omitted: &lt;script&gt;rules&lt;/script&gt; is missing");
+  expect(html).not.toContain("<script>rules</script>");
+});
+
+it("keeps supplied and omitted convention notes in Markdown without creating markup", () => {
+  const markdown = renderMarkdown(report(makeChange(), { notes: ["Conventions supplied: rules.md", "Convention omitted: <script>rules</script> [link](https://example.test)\n# Heading"] }));
+  expect(markdown).toContain("## Review notes\n\n- Conventions supplied: rules.md");
+  expect(markdown).toContain("Convention omitted:");
+  expect(markdown).not.toContain("<script>");
+  expect(markdown).not.toContain("[link](https://example.test)");
+  expect(markdown).not.toContain("\n# Heading");
 });

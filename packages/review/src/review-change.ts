@@ -21,7 +21,6 @@
 // review-run.ts). What it makes on disk it makes through the host's parts:
 // the snapshot through the snapshot maker, scanner installs through the tool
 // resolver, the graph's kept build through the graph store.
-import { createHash } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
@@ -49,6 +48,7 @@ import {
   safeGit,
   selectLenses,
   verdictFor,
+  resolveInstructionFiles,
 } from "@openqodex/core";
 import type {
   BaseSource,
@@ -58,6 +58,8 @@ import type {
   Config,
   Display,
   ImpactSummary,
+  InstructionFile,
+  InstructionProvenance,
   PhaseClock,
   Report,
   ResolveTool,
@@ -97,7 +99,7 @@ import { MissingObjects } from "./materialize.js";
 import { redactStored } from "./redact.js";
 import { serverScope } from "./scoped.js";
 import type { ScopedParts } from "./scoped.js";
-import { admitted } from "./scopes.js";
+import { admitted, withinScopes } from "./scopes.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
 import type { ToolBox } from "./tools/index.js";
 import { usageTotals } from "./usage.js";
@@ -205,8 +207,8 @@ export type ReviewDeps = {
   // The code graph's kept store; left out, the graph is built in memory.
   graphStore?: () => Promise<{ store: GraphStore | null; refused?: string }>;
   // The owners' instructions for the brief, redacted with the scan's
-  // secrets, and the hash of the file they came from (null for none).
-  instructions: (secrets: string[]) => { text: string; hash: string | null; from?: "host" };
+  // secrets, and the hash of the owners' text and admitted raw files (null for none).
+  instructions: (secrets: string[]) => { text: string; hash: string | null; from?: "host"; files?: InstructionFile[]; provenance?: InstructionProvenance[]; notes?: string[] } | Promise<{ text: string; hash: string | null; from?: "host"; files?: InstructionFile[]; provenance?: InstructionProvenance[]; notes?: string[] }>;
   onEvent: (event: ReviewEvent) => void;
   // Receives the run's result before the run cleans up (the graph's lease,
   // the snapshot), so the host writes and prints everything from it first:
@@ -499,7 +501,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     const redaction = redactSnapshot(prep.snapshot.tree, p.secrets);
     if (redaction.redacted > 0) say(`Redacted secrets in ${redaction.redacted} ${redaction.redacted === 1 ? "file" : "files"} of the snapshot`);
     if (redaction.removed.length > 0) warn(redact(`Left out of the review, too large to check for secrets: ${redaction.removed.join(", ")}`));
-    const instructions = deps.instructions(p.secrets);
+    const instructions = await deps.instructions(p.secrets);
     const context = contextItems ? useContext(contextItems, change, p.secrets, deps.scoped?.admit) : null;
     let lenses: SelectedLens[];
     let impact: ImpactSummary;
@@ -512,7 +514,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       clock.enter("brief");
       impact = hot.impact;
       lenses = wholeRepoLenses(prep.whole, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), whole: { hot: hot.hot, graphNote: hot.note, inventory: buildInventory(prep.whole, scan) }, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     } else {
       clock.enter("graph");
       const run = await buildGraphRun(p, graphHost, inputs.noGraph);
@@ -532,7 +534,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       }
       clock.enter("brief");
       lenses = selectLenses(change, undefined, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     }
     const manifest: RunManifest = {
       version: MANIFEST_VERSION,
@@ -541,6 +543,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       created_at: new Date(deps.now()).toISOString(),
       lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
       instructions_hash: instructions.hash,
+      ...(instructions.provenance?.length ? { instruction_files: instructions.provenance } : {}),
       runtime_version: inputs.runtimeVersion,
       ...(prep.target ? { target: prep.target } : {}),
       ...(context ? { context: context.manifest } : {}),
@@ -672,7 +675,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       // The checked report, or an empty one; the model record goes in it
       // where the record is built (modelReport). A host that gave the clock
       // reads it again once it has finished the report.
-      const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), impact, timings: clock.timings() };
+      const report: Report = { ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())), ...(instructions.notes?.length ? { notes: instructions.notes } : {}), impact, timings: clock.timings() };
       const calls = [...evidence.attempts, ...(second?.evidence.attempts ?? [])];
       return await finish({ ended: "model-reviewed", report, evidence, submission: talk.report ? talk.submission : (talk.checked?.submission ?? talk.submission), change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
     }
@@ -708,6 +711,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       ...(talk.report ?? talk.checked?.report ?? incompleteReport(full, scan, config, deps.now())),
       impact: prep.whole ? null : impact,
       completion,
+      ...(instructions.notes?.length ? { notes: instructions.notes } : {}),
     };
     if (completion.status !== "complete") report.verdict = "incomplete";
 
@@ -861,7 +865,7 @@ function dispositionsOf(report: Report, submission: unknown, scan: ScanResult, b
 // `input.scopes` (scoped.ts); the snapshot, the head's admitted files
 // written under `options.workDir`, nothing written in the clone; scanners
 // only as preinstalled under
-// `options.installRoot`; no instructions file read from the clone (the host
+// `options.installRoot`; chosen convention files read from the merge base inside the scopes (the host
 // gives the config); the brain's five tools and no others; the budget asked
 // before every model call. Nothing is printed, no signal handler is added
 // and no environment variable is written; progress lines go to
@@ -888,6 +892,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   });
   if (!decision.ok) return timed({ result: stoppedResult("incomplete", decision.reason), report: null }, clock);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
+  config.instructionsFiles ??= [];
   // Everything the review writes besides its snapshot: the change source's
   // temporary folders and the scanners' caches, temporary folders, HOME and
   // TMPDIR (scanners/src/scratch.ts). Removed when the review ends.
@@ -942,8 +947,12 @@ async function reviewInScope(
   // The scan record as soon as the scanners have run, so a review that
   // stops after them still carries it.
   let scan: ReviewResult["scan"] = null;
+  let instructionNotes: string[] = [];
+  const stoppedNotes = () => [...instructionNotes, ...scope.notes()];
   let r: ReviewCoreResult;
   try {
+    const conventions = await resolveInstructionFiles({ repoRoot: input.clonePath, paths: config.instructionsFiles ?? [], owners: input.instructions ?? "", source: decision.mergeBase.sha, admit: withinScopes(input.scopes) });
+    instructionNotes = conventions.notes;
     r = await runReviewCore(
       {
         repoRoot: input.clonePath,
@@ -967,8 +976,10 @@ async function reviewInScope(
         resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         // The owners' instructions the host gave, quoted as the laptop quotes
-        // its file; none read from the clone.
-        instructions: (secrets) => (input.instructions ? { text: redactSecrets(input.instructions, secrets), hash: createHash("sha256").update(input.instructions).digest("hex"), from: "host" as const } : { text: "", hash: null }),
+        // its file. Chosen convention files come from the merge base inside the scopes.
+        instructions: async (secrets) => {
+          return { ...conventions, text: redactSecrets(input.instructions ?? "", secrets), from: "host" as const };
+        },
         onEvent: (e) => {
           if (e.type === "progress" || e.type === "warning") say(e.line);
           else if (e.type === "prepared") scan = scanRecord(e.scan, e.secrets);
@@ -981,15 +992,15 @@ async function reviewInScope(
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes(), scan), report: null };
-    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes(), scan), report: null };
+    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, stoppedNotes(), scan), report: null };
+    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, stoppedNotes(), scan), report: null };
     throw error;
   }
   if (r.ended === "nothing") {
     const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
-    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes()), report: null };
+    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, stoppedNotes()), report: null };
   }
-  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes(), scan), report: null };
+  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, stoppedNotes(), scan), report: null };
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;
@@ -1019,7 +1030,7 @@ async function reviewInScope(
     }
     completion = withSecondReviewer(completion, disagreements, r.secrets);
   }
-  const notes = [...(completion.notes ?? []), ...scope.notes()];
+  const notes = [...(r.report.notes ?? []), ...(completion.notes ?? []), ...scope.notes()];
   // Every renderer gets who found each finding, the second reviewer's
   // dropped candidates and the notes, as the result holds them, and the
   // timings reviewChange reads last (timed).

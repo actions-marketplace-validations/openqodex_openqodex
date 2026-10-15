@@ -17,6 +17,7 @@ step() {
   "$@"
 }
 
+step "shipped instruction templates" node scripts/instruction-sections.mjs --check
 step "build" pnpm build
 step "typecheck" pnpm typecheck
 step "lint" pnpm lint

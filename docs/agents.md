@@ -81,6 +81,8 @@ Inside a repository, `init` creates two files in `.openqodex/`, and so does the 
 - `.openqodex/config.yaml`: the config, every key at its default with a comment. `config` lists every key. It is not created while a `.openqodex.yaml` sits at the root of the repository; that file is still read, and `init` says how to move it.
 - `.openqodex/custom-instructions.md`: what a reviewer of this repository must know: conventions, what never to flag, what always to check. The review brief carries its text word for word. A file over 32 KB stops the review with a message; nothing in it is cut. The brief shows it to the reviewer as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the reviewer flags, and a candidate dropped because of it says so in the report; it cannot give the reviewer a tool, skip a check or change the finding shape.
 
+The brief can also quote [convention files](config.md#convention-files) chosen by the developer. Never add a path on your own. Ask which files the reviewer may use, then set only what they name.
+
 Both are meant to be committed, so the whole team shares them. A file that exists is never touched. `.openqodex/.gitignore` keeps the review reports out of git, so after the first run `git status` shows only these files and the `.gitignore`.
 
 ## User scope and project scope
