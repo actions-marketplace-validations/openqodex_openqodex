@@ -17,17 +17,47 @@
 // file noted; official totals missing a field of their shape, and a match
 // across two pull requests, are refused.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
-import { ingestMartian, writeMartianIngest } from "../ingest/martian.mjs";
-import { LICENCE_READINGS, saveCommitAnswer, savePullAnswer, saveRepoAnswer } from "../lib/licence.mjs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ingestMartian, verifyMartianMapping, verifyPublishedMartian, writeMartianIngest } from "../ingest/martian.mjs";
+import { benchRoot } from "../lib/cases.mjs";
+import { LICENCE_READINGS, cacheRoot, saveCommitAnswer, savePullAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { martianFindings, martianGolden, readMartianEvaluation } from "../lib/score.mjs";
-import { listCases, martianTruth, materialise, readCase, truthOf } from "../lib/suites.mjs";
+import { listCases, martianTruth, materialise, rawPath, readCase, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
+
+// Round 1 and 2 failure list: greptile-failures.md, items 11 and 12.
+const cache = cacheRoot();
+const suite = JSON.parse(readFileSync(join(benchRoot, "suites/martian/cases.json"), "utf8"));
+const publishedSource = JSON.parse(readFileSync(join(benchRoot, "suites/martian/verification-source.json"), "utf8"));
+const hasPublishedData = [publishedSource, ...suite.dataset.files].every((pin) => existsSync(rawPath(cache, "martian", pin)));
+describe.skipIf(!hasPublishedData)("published Martian tree proofs (needs pinned Martian data in the bench cache; skipped without it)", () => {
+  let verified;
+  beforeAll(async () => { verified = await verifyPublishedMartian({ cache, offline: true }); });
+
+  it.each(["all", "mergeBase", "builtBase", "head", "builtHead"])("refuses absent %s trees", (field) => {
+    const proofs = structuredClone(verified.proofs);
+    const proof = proofs.find((p) => p.name === suite.cases[0].name);
+    if (field === "all") delete proof.trees;
+    else delete proof.trees[field];
+    const check = verifyMartianMapping({ suite, published: verified.published, rows: verified.rows, proofs });
+    expect(check.differences).toContain(`${proof.name}: committed tree proof differs from the suite's frozen commits or is not proved`);
+    expect(check.counts.mappedProofs).toBe(49);
+  });
+
+  it.each([null, "", "bad", "z".repeat(40)])("refuses equal invalid tree hashes %j", (tree) => {
+    const proofs = structuredClone(verified.proofs);
+    const proof = proofs.find((p) => p.name === suite.cases[0].name);
+    proof.trees = { mergeBase: tree, builtBase: tree, head: tree, builtHead: tree };
+    const check = verifyMartianMapping({ suite, published: verified.published, rows: verified.rows, proofs });
+    expect(check.differences).toContain(`${proof.name}: committed tree proof differs from the suite's frozen commits or is not proved`);
+    expect(check.counts.mappedProofs).toBe(49);
+  });
+});
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const COMMIT = "d".repeat(40);

@@ -4,6 +4,8 @@ This page is for contributors and for anyone who wants to check a claim about re
 
 A script runs it and a script scores it. No model decides what runs or how a review scores. A model may judge the wording of findings in a separate, optional pass, and that verdict never blocks anything.
 
+The published Martian tree proof and Greptile scoring regression tests need their pinned raw upstream files in the bench cache (`OPENQODEX_BENCH_CACHE`). Those files are not committed here. When they are absent, the affected tests skip with a named reason, as the AACR evaluator tests do without their checkout. Tests with local fixtures and the converter refusal tests still run. Cached files still have to match their pins.
+
 ## Published results
 
 [Benchmark results](benchmark-results.md) lists the current accepted run of each group in `benchmark/index/accepted.json`. The full page and the README's Benchmark section are generated from `benchmark/index` only. The script never reads a results folder.
@@ -439,12 +441,26 @@ Martian writes `benchmark_data.json` and a judge model folder holding `candidate
 
 Both commands validate their output. Run either script with `--check <output-folder>` to check it again. `submission.json` records provenance and expected files. An existing output folder is refused. These commands call no model, send nothing and open no pull request. A person sends a submission by hand.
 
+## Greptile's reconstructed pull requests
+
+The `greptile` suite contains the 50 defect-bearing pull requests linked by [Greptile's benchmark page](https://www.greptile.com/benchmarks), ten each from Sentry, Cal.com, Grafana, Keycloak and Discourse. It uses the public review forks, rather than the upstream fixes. Each entry freezes the repository, base and head, title and body, licence class and two separately named truth sets: `greptile`, the page's 50 original bug labels, and `augment`, the 137 corrected comments in [Augment's JSON files at 3f2c8ab](https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc). The JSON count differs from Augment's README table, which claims 145. Golden text stays in the raw cache. `benchmark/suites/greptile/sources.json` records each URL, revision or content hash, sha256 pin and the date read, 2026-10-14, including the page's JavaScript data asset and the cached fork metadata. Six explicit title joins are named in the ingest report. A changed title, body, commit or truth set changes the case and suite hashes. An upstream fix or an entry without both truth sets is refused.
+
+```
+node benchmark/ingest/greptile.mjs [--offline] [--data-only]
+node benchmark/run.mjs --materialise-only --suite greptile --split dev --reviewers model:scripted
+```
+
+The ingest writes `benchmark/suites/greptile/cases.json`, its ingest report and `benchmark/splits/greptile-v1.json`. The selected fork metadata and real GitHub licence answers are retained in `sources.json`, with the full response hashes recorded. Repository and licence records come only from those validated answers, never a mutable repository cache. A missing case or unavailable repository refuses ingestion and names the case; the denominator stays 50. All 50 cases are on the development side for reproduction. They overlap Martian's held-out repository groups, so this split permits no independent held-out claim or tuning. `--materialise-only` checks the reconstructed head over the merge base against the upstream trees, with no model calls. Sentry case 3 introduces a gitlink at `sentry-repo`, which the laptop shape cannot preserve; the command above selects the server shape with two commits and still runs no model. `--data-only` fills the pinned raw cache without rewriting the suite.
+
+Greptile is scored by its board judge, planned at `benchmark/outside/boards/greptile-judge.mjs` in W8-3: caught or missed per case against the chosen `greptile` or `augment` truth set, over all 50 cases. `truthOf` supplies empty line truth and keeps both prose sets apart. Each run saves both sets in its case specs under `truthSets`, keyed by name, with their items, frozen hashes and pinned source identities for the judge. `score.mjs` accepts the run with no line truth items; its line recall does not measure Greptile's caught or missed result. Both the AACR and Martian converters refuse Greptile with one line naming its judge path. No truth sets are pooled.
+
 ## Martian's offline set
 
 Martian's Code Review Bench (https://github.com/withmartian/code-review-benchmark, MIT) publishes 50 pull requests from cal.com, Discourse, Grafana, Keycloak and Sentry, some of them copies with bugs injected, and 173 golden comments: prose with a severity and a category, and no file or line. In this benchmark they are the `martian` suite, origin `injected`.
 
 ```
 node benchmark/ingest/martian.mjs [--offline]
+node benchmark/ingest/martian.mjs --verify-published [--offline]
 ```
 
 - The ingest reads the five golden files only from their pinned URLs at commit `e616e84` (`benchmark/outside/boards.json`) and stops when a file's sha256 is not its pin. It asks GitHub for each pull request's base and head commits and freezes them, and checks each repository's licence the way the AACR ingest does. It writes `benchmark/suites/martian/cases.json` (links, commits, licences and hashes; no golden comment's text), `benchmark/suites/martian/ingest-report.txt` (every exclusion with its reason) and `benchmark/splits/martian-v1.json`.
@@ -452,6 +468,8 @@ node benchmark/ingest/martian.mjs [--offline]
 - At this pin, all 50 pull requests are usable. GitHub names no licence it can classify for Sentry's licence file (NOASSERTION), so Sentry's 10 carry the licence class `unverified`, with a person's reading of that file noted beside it (FSL-1.1-Apache-2.0). Runs publish in full even with unverified cases. Outside converters and board submissions still refuse unverified cases (`publishRefusal` in `benchmark/lib/licence.mjs`). The AACR ingest uses the same licence classes. A pull request with no licence file is still excluded.
 - Martian's own pipeline judges a run: it extracts issues from the findings, groups duplicates, judges each against the golden comments, and sums the totals. `readMartianEvaluation` in `benchmark/lib/score.mjs` reads that result back. It keeps Martian's candidate ids, extraction provenance, matches and official totals unchanged. Beside them it adds its own counts: golden comments found, findings matched, and the severity of the first finding behind each found golden comment against the golden severity (Critical critical, High major, Medium minor, Low nitpick). It refuses a finding saved for the judge without a title, problem, consequence or fix. It also refuses official totals that lack any field of Martian's shape, a match that links a candidate of one pull request to a golden comment of another, and matches that name fewer golden comments than the official totals count.
 - No Martian run is scored yet.
+
+`--verify-published` checks all 50 case identities and 173 complete golden comments against `offline/results/benchmark_data.json` at the same `e616e849755441da38f18bf3adba2c9583b03803` revision. `benchmark/suites/martian/verification-source.json` records its raw URL, sha256 and date read. It also checks every existing case's frozen commits and trees against `benchmark/index/proof/`, requiring valid 40-character hexadecimal hashes for the merge base, head and both built trees before comparing them. Missing trees refuse verification. The published results contain no base or head commit IDs, so they cannot independently establish those commits. The command records every case mapping and names every mismatched comment in the suite's ingest report; it exits 1 on a difference, 2 on a source or tool failure, and 0 when every mapping agrees.
 
 ### Scoring a run with Martian's pipeline
 
