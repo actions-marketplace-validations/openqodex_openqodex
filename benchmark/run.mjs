@@ -299,10 +299,10 @@ import { externalOf, toolchainOf } from "./lib/external.mjs";
 import { haltRules, rateLimitRetry, smokeCap } from "./lib/halts.mjs";
 import { comparePasses } from "./lib/identical.mjs";
 import { heldOutAccessPath } from "./lib/index.mjs";
-import { controlSample, probeControl } from "./lib/claude-control.mjs";
+import { controlEnv, controlSample, probeControl } from "./lib/claude-control.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
-import { claudeEnv, probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
+import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
 import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopInvocation, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, saveSampleRow, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
@@ -1401,11 +1401,12 @@ async function main() {
     const { dir: repo } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
-    const invocation = laptopInvocation({ cli: o.cli, repo, reportDir, job, web: o.web, timeout: o.timeout, maxUsd: Math.max(0, o.maxUsd - budget.summary().spentUsd) / o.concurrency });
+    const caseData = o.control ? { ...readJson(specFile(job.case)), paths: git(repo, "diff", "--name-only", "-z").split("\0").filter(Boolean) } : undefined;
+    const invocation = laptopInvocation({ cli: o.cli, repo, reportDir, job, web: o.web, timeout: o.timeout, maxUsd: Math.max(0, o.maxUsd - budget.summary().spentUsd) / o.concurrency, caseData });
     const startedAt = new Date().toISOString();
     let result;
     try {
-      result = await runCli(o.cli, [], o.control ? claudeEnv(env) : env, repo, o.timeout * 1000, o.control ? 0 : 120_000, invocation);
+      result = await runCli(o.cli, [], o.control ? controlEnv(env) : env, repo, o.timeout * 1000, o.control ? 0 : 120_000, invocation);
     } finally {
       if (real) rmSync(caseDir, { recursive: true, force: true });
     }

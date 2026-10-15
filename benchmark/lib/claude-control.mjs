@@ -1,18 +1,36 @@
 // Failure cases are listed in test/claude-control.test.mjs before this code.
 // Claude Code owns this review. No OpenQodex prompt or engine participates.
 import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { claudeEnv } from "./reviewers.mjs";
 
 const exec = promisify(execFile);
 export const CONTROL_PROMPT = "/code-review medium";
 export const CONTROL_MODEL_FROM = "the usage record Claude Code returned for this review";
+const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+const gate = fileURLToPath(new URL("./control-gate.mjs", import.meta.url));
+
+export function controlInput(caseData) {
+  if (caseData === undefined) return CONTROL_PROMPT;
+  const { title = "", body = "", paths = [] } = caseData;
+  return `${CONTROL_PROMPT}\n${JSON.stringify({ title, body, paths })}`;
+}
+
+export function controlEnv(env = process.env) {
+  const out = { ...claudeEnv(env), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_COUNT: "3" };
+  for (const [i, [key, value]] of [["core.hooksPath", "/dev/null"], ["core.fsmonitor", "false"], ["core.sshCommand", "/usr/bin/false"]].entries()) {
+    out[`GIT_CONFIG_KEY_${i}`] = key;
+    out[`GIT_CONFIG_VALUE_${i}`] = value;
+  }
+  return out;
+}
 
 // https://code.claude.com/docs/en/code-review#review-a-diff-locally
 // In print mode the built-in command waits and returns its findings as text.
 export function controlArgs({ maxUsd }) {
   return ["-p", "--output-format", "json", "--permission-mode", "dontAsk",
-    "--setting-sources", "", "--settings", JSON.stringify({ autoMemoryEnabled: false, hooks: {}, disableAllHooks: true }),
+    "--setting-sources", "", "--settings", JSON.stringify({ autoMemoryEnabled: false, hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(gate)}`, onFailure: "block" }] }] } }),
     "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: {} }),
     "--no-session-persistence", "--tools", "Read,Grep,Glob,Bash",
     "--allowedTools", "Read,Grep,Glob,Bash(git diff*),Bash(git status*),Bash(git log*),Bash(git show*),Bash(git rev-parse*)",
@@ -22,7 +40,7 @@ export function controlArgs({ maxUsd }) {
 // A login check, never a paid prompt. Keep the same CLI and login environment
 // as the existing Claude reviewer, and never save auth status output.
 export async function probeControl({ env = process.env } = {}) {
-  const e = claudeEnv(env);
+  const e = controlEnv(env);
   const { stdout } = await exec("claude", ["--version"], { env: e, timeout: 20_000 });
   const version = /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim();
   if (!e.ANTHROPIC_API_KEY) {

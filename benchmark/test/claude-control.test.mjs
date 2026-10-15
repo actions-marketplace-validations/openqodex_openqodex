@@ -6,9 +6,13 @@
 //    a requested model that differs from usage loses its mismatch record.
 // 5. A failed native review looks complete or loses its native output.
 // 6. The control is run twice under graph settings it does not use.
+// 7. Settings omit the trusted Bash gate or disable it, or lose the tool fences.
+// 8. Git inherits global or system config, hooks, a file monitor or SSH access.
+// 9. Case titles, bodies or paths enter shell code or arguments, or lose bytes.
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { CONTROL_PROMPT, controlSample, nativeReviewBody } from "../lib/claude-control.mjs";
+import { CONTROL_PROMPT, controlEnv, controlSample, nativeReviewBody } from "../lib/claude-control.mjs";
 import { claudeRunModels, laptopInvocation, planJobs } from "../lib/runner.mjs";
 
 const job = { jobId: "planted/test@abcdef01/control-graph-off/1", caseId: "planted/test@abcdef01", case: "test", config: "control-graph-off", reviewer: "control", graph: false, repeat: 1 };
@@ -24,7 +28,37 @@ it("dispatches control directly to Claude Code's native review command without a
   expect(invocation.args).not.toContain("/built/dist/bin.js");
   expect(invocation.args).not.toContain("--disable-slash-commands");
   expect(invocation.args).toContain("--max-budget-usd");
-  expect(JSON.stringify(invocation)).not.toMatch(/openqodex|brief|report-dir|scanner|graph/i);
+  expect(JSON.stringify(invocation)).not.toMatch(/brief|report-dir|scanner|graph/i);
+});
+it("wires the trusted Bash gate without losing the settings or tool fences", () => {
+  const settings = JSON.parse(invocation.args[invocation.args.indexOf("--settings") + 1]);
+  const gate = fileURLToPath(new URL("../lib/control-gate.mjs", import.meta.url));
+  expect(settings).toEqual({ autoMemoryEnabled: false, hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: `'${process.execPath.replaceAll("'", "'\\''")}' '${gate.replaceAll("'", "'\\''")}'`, onFailure: "block" }] }] } });
+  expect(invocation.args[invocation.args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash");
+  expect(invocation.args[invocation.args.indexOf("--allowedTools") + 1]).toBe("Read,Grep,Glob,Bash(git diff*),Bash(git status*),Bash(git log*),Bash(git show*),Bash(git rev-parse*)");
+  const result = spawnSync(settings.hooks.PreToolUse[0].hooks[0].command, { shell: true, input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "git diff; id" } }), encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+});
+it("isolates Git config and overrides hooks, file monitors and SSH in the real environment", () => {
+  const env = controlEnv({ PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/untrusted", GIT_CONFIG_SYSTEM: "/untrusted", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/untrusted" });
+  expect(env).toMatchObject({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_COUNT: "3" });
+  for (const [key, value] of [["core.hooksPath", "/dev/null"], ["core.fsmonitor", "false"], ["core.sshCommand", "/usr/bin/false"]]) {
+    const result = spawnSync("git", ["config", "--get", key], { env, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(value);
+  }
+});
+it("delivers a case title with a shell operator and quote unchanged through stdin", () => {
+  const caseData = { title: 'Fix "value"; id', body: "Text with $(id), `id` and a newline\nkept.", paths: ['src/a"; id.ts', "src/a b.ts"] };
+  const call = laptopInvocation({ job, maxUsd: 0.8, caseData });
+  expect(call.command).toBe("claude");
+  expect(call.args).toEqual(invocation.args);
+  // A real stdin reader checks transport without replacing Claude or spending on a review.
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync(0));'], { input: call.input, encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout.startsWith(`${CONTROL_PROMPT}\n`)).toBe(true);
+  expect(JSON.parse(result.stdout.slice(result.stdout.indexOf("\n") + 1))).toEqual(caseData);
 });
 it("keeps the native body whole without a brief or engine output", () => {
   const s = sample();

@@ -62,7 +62,7 @@ import { dirname, join, resolve } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { SCAN_CONFIG } from "./scan-score.mjs";
 import { RULES_VERSION, jobIdOf } from "./score.mjs";
-import { controlArgs, CONTROL_PROMPT } from "./claude-control.mjs";
+import { controlArgs, controlInput } from "./claude-control.mjs";
 
 // The arguments of one laptop review (Claude Code or Codex through
 // `openqodex review`), the same for planted and pull request cases.
@@ -73,7 +73,7 @@ export function laptopReviewArgs({ repo, reportDir, job, web, timeout }) {
 }
 
 export function laptopInvocation(options) {
-  if (options.job.reviewer === "control") return { command: "claude", args: controlArgs(options), input: CONTROL_PROMPT };
+  if (options.job.reviewer === "control") return { command: "claude", args: controlArgs(options), input: controlInput(options.caseData) };
   return { command: process.execPath, args: [options.cli, ...laptopReviewArgs(options)], input: "" };
 }
 
