@@ -127,6 +127,8 @@ Globs match the path from the repository root, with forward slashes:
 
 There is no negation and no character class.
 
+A glob may be at most 1,024 characters, here, in `review.disabled_rules` and in a custom scanner's `paths`. A longer one could not be matched in bounded time, so OpenQodex refuses the file and names the key; it never treats such a glob as matching nothing.
+
 A `**/` prefix does not match a file at the repository root. `**/*.min.js` matches `web/app.min.js` but not `app.min.js`. To match both, list `**/*.min.js` and `*.min.js`.
 
 ## review.disabled_rules
