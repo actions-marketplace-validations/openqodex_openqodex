@@ -37,7 +37,9 @@ describe("init convention choices", () => {
     const got = cli(s, ["review", "--agent", "--offline", "--only", "sqllint", "--no-graph"]);
     expect(got.status, got.stderr).toBe(0);
     expect(got.stderr.match(/Convention files available:/g)).toHaveLength(1);
-    expect(got.stdout).not.toContain("UNCHOSEN-CANARY");
-    expect(got.stdout).not.toContain("## Conventions chosen");
+    const latest = JSON.parse(readFileSync(join(s.repo, ".openqodex/latest.json"), "utf8"));
+    const brief = readFileSync(join(s.repo, latest.dir, "brief.md"), "utf8");
+    expect(brief).not.toContain("UNCHOSEN-CANARY");
+    expect(brief).not.toContain("## Conventions chosen");
   });
 });

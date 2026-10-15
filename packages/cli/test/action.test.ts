@@ -136,6 +136,7 @@ function runStep(dir: string, env: Record<string, string>, before: string[] = []
       'if [ "$1" = "doctor" ]; then shift; set -- doctor $(for a in "$@"; do [ "$a" = "--install" ] || printf "%s\\n" "$a"; done); fi',
       'if [ "$1" = "scan" ] && [ -z "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install --only sqllint "$@"; fi',
       'if [ "$1" = "scan" ] && [ -n "$OQ_ALL_SCANNERS" ]; then shift; set -- scan --no-install "$@"; fi',
+      'if [ "$1" = "review" ] && [ -n "$OQ_ONLY_SQLLINT" ]; then shift; set -- review --no-install --only sqllint --no-graph "$@"; fi',
       `exec "${process.execPath}" "${bin}" "$@"`,
       "",
     ].join("\n"),
@@ -343,6 +344,28 @@ describe("the scan step, run", () => {
         expect(readFileSync(join(run, "config.yaml"), "utf8"), what).toBe("");
         expect(readFileSync(join(run, "custom-instructions.md"), "utf8"), what).toBe("");
       }
+    }
+  }, 60_000);
+
+  it("R33. a committed chosen rule link is omitted by name and does not prevent a complete review", () => {
+    const outside = tempDir("oq-rule-target-");
+    writeFileSync(join(outside, "rules.md"), "OUTSIDE-RULE-CANARY\n");
+    const provider = tempDir("oq-action-provider-");
+    writeFileSync(join(provider, "claude"), `#!${process.execPath}\n${readFileSync(join(here, "../../../tests/e2e/fixtures/convention-provider.cjs"), "utf8")}`);
+    chmodSync(join(provider, "claude"), 0o755);
+    const { dir, base } = pullRequest(null, "review:\n  instructions_files: [rules.md]\n", (d) => {
+      writeFileSync(join(d, "db/x.sql"), "SELECT 1;\n");
+      symlinkSync(join(outside, "rules.md"), join(d, "rules.md"));
+    });
+    for (const event of [{ EVENT_NAME: "push", PUSH_BEFORE: base }, { EVENT_NAME: "pull_request", BASE_SHA: base, BASE_REF: "main", CONFIG_FROM: "head" }]) {
+      const r = runStep(dir, { ...event, REVIEW: "required", OQ_ONLY_SQLLINT: "1" }, [provider]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(outputOf(r.outputs, "review-status"), r.summary).toBe("complete");
+      const run = dirname(outputOf(r.outputs, "sarif-file")!);
+      const report = JSON.parse(readFileSync(join(run, "report.json"), "utf8"));
+      expect(report.notes.some((note: string) => note.startsWith("Convention omitted: rules.md ") && note.includes("link"))).toBe(true);
+      expect(readFileSync(join(run, "brief.md"), "utf8")).not.toContain("> From: rules.md");
+      expect(readFileSync(join(outside, "rules.md"), "utf8")).toBe("OUTSIDE-RULE-CANARY\n");
     }
   }, 60_000);
 

@@ -1,0 +1,44 @@
+{
+  "id": "violation",
+  "guards": "a chosen convention violation is missed or reported without naming its rule file",
+  "language": "python",
+  "framework": "flask",
+  "clean": false,
+  "bugs": [
+    {
+      "id": "repeated-page-size",
+      "file": "app/server.py",
+      "lines": [
+        24,
+        24
+      ],
+      "anchor": {
+        "line": 24,
+        "text": "(20, offset)"
+      },
+      "mentions": [
+        "CONTRIBUTING.md"
+      ],
+      "kind": [
+        "style",
+        "maintainability"
+      ],
+      "class": "style",
+      "severity": "minor",
+      "found_by": [
+        "reasoning"
+      ],
+      "truth": "The literal 20 repeats PAGE_SIZE against CONTRIBUTING.md. Use PAGE_SIZE as the SQL LIMIT parameter and cite the convention file.",
+      "tags": [],
+      "evidence": [
+        {
+          "file": "CONTRIBUTING.md",
+          "lines": [
+            3,
+            3
+          ]
+        }
+      ]
+    }
+  ]
+}

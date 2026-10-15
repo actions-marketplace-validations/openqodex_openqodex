@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "cases": {
+    "violation": {
+      "findings": [
+        {
+          "file_path": "app/server.py",
+          "line": 24,
+          "problem_contains": "CONTRIBUTING.md"
+        }
+      ],
+      "why": "a chosen convention violation is missed or reported without naming its rule file"
+    },
+    "exception": {
+      "findings": [],
+      "why": "an explicit exception to a chosen convention is ignored"
+    },
+    "no-rule": {
+      "findings": [],
+      "why": "a convention is invented when the owners chose no rule files"
+    }
+  }
+}

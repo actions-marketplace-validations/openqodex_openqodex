@@ -289,8 +289,8 @@ export function caseHash(id, root = casesRoot) {
 
 // The id scores, the index and the review queue key a case by: its name and
 // the first 8 hex of its hash, so an edited case is a different id.
-export function caseIdFromHash(name, hash) {
-  return `planted/${name}@${hash.slice(0, 8)}`;
+export function caseIdFromHash(name, hash, suite = "planted") {
+  return `${suite}/${name}@${hash.slice(0, 8)}`;
 }
 
 export function caseId(name, root = casesRoot) {

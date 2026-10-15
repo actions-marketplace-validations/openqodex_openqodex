@@ -299,6 +299,28 @@ describe("the Action's review mode with no login", () => {
   }, 900_000);
 });
 
+describe("the Action's chosen convention source", () => {
+  it.each(["base", "head"])("does not read conventions from the other commit in %s mode", (from) => {
+    if (offline()) return void process.stdout.write("action convention source: skipped, OPENQODEX_E2E_OFFLINE=1\n");
+    const config = "review:\n  instructions_files: [rules.md]\n";
+    const { dir, base } = pullRequest(`action-conventions-${from}`,
+      { ".openqodex.yaml": config, "rules.md": "BASE-RULE-CANARY\n" },
+      { ".openqodex.yaml": config, "rules.md": "HEAD-RULE-CANARY\n" });
+    const source = from === "base" ? base : git(dir, "rev-parse", "HEAD").trim();
+    const r = runAction(`action-conventions-${from}`, dir, {
+      CLAUDE_CONFIG_DIR: tempDir("oq-e2e-no-login-"), ANTHROPIC_API_KEY: KEY,
+      OQ_REVIEW_TIMEOUT: "1", REVIEW: "required", BASE_SHA: base, BASE_REF: "main", CONFIG_FROM: from,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.probe).toContain(`\n--instructions-ref\n${source}\n`);
+    const brief = reviewBrief(dirname(r.outputs["sarif-file"]!));
+    const conventions = brief.slice(brief.indexOf("## Conventions chosen"), brief.indexOf("## Scanner candidates"));
+    expect(conventions).toContain(`> From: rules.md`);
+    expect(conventions).toContain(`${from.toUpperCase()}-RULE-CANARY`);
+    expect(conventions).not.toContain(`${from === "base" ? "HEAD" : "BASE"}-RULE-CANARY`);
+  }, 900_000);
+});
+
 describe("an incomplete review and the scanner findings", () => {
   const skip = offline() ? "OPENQODEX_E2E_OFFLINE=1" : null;
 

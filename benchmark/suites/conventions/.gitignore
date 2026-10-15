@@ -1,0 +1,3 @@
+# The chosen config is part of each case, including in a fresh clone.
+!*/base/.openqodex/
+!*/base/.openqodex/config.yaml

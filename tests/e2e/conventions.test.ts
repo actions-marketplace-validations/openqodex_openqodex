@@ -62,8 +62,11 @@ describe("conventions in the real CLI", () => {
     expect(readFileSync(join(dir, "report.sarif"), "utf8")).toContain("Convention omitted: linked.md");
   });
 
-  it("refuses a changed admitted file by name but accepts changes to a skipped file", () => {
+  it("refuses an edited admitted rule but does not bind an ignored skipped file", () => {
     const s = fixture();
+    // Keep both edits outside the change id so only the instructions binding is tested.
+    writeFileSync(join(s.repo, ".gitignore"), "big.md\nCONTRIBUTING.md\n");
+    expect(git(s.repo, "check-ignore", "big.md", "CONTRIBUTING.md").trim().split("\n")).toEqual(["big.md", "CONTRIBUTING.md"]);
     expect(cli(s, agentArgs).status).toBe(0);
     const dir = latest(s);
     answer(dir);
