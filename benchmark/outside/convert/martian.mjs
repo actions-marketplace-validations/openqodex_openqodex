@@ -115,6 +115,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
   const manifestBytes = readFileSync(join(folder, "manifest.json"));
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   const suite = manifest.suite ?? "planted";
+  if (suite === "greptile") throw new Error("Greptile uses benchmark/outside/boards/greptile-judge.mjs (W8-3), with caught or missed per case against the chosen truth set");
   if (suite !== "martian") throw new Error(`${folder}: the run is of suite ${suite}, not martian; only a run on Martian's cases is converted for its board`);
   if (manifest.mode === "scan") throw new Error(`${folder}: a scanner-only run shows the developer no finding, so it has nothing to convert for the board`);
   const gate = await releaseGate(manifest, { registry });

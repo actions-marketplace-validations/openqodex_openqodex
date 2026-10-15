@@ -102,7 +102,8 @@ export function martianTruth(row) {
 // Neither set silently becomes the other's scoring denominator.
 export function greptileTruth(original, corrected, sources) {
   return {
-    kind: "prose",
+    kind: "lines",
+    items: [],
     sets: {
       greptile: { kind: "prose", source: sources.greptile, items: [{ id: "g1", text: original.bugDescription, file: original.filePath, severity: MARTIAN_SEVERITY[original.severity] ?? null, rawSeverity: original.severity, severityDetail: original.severityDetail ?? null }] },
       augment: { ...martianTruth(corrected), source: sources.augment },
@@ -512,6 +513,7 @@ export function selectCases({ suite, split = "dev", subset = null, refs = null, 
 // scanner-only score too, a scan rules change (a new SCAN_RULES_VERSION and
 // a new accepted scan entry).
 export function specCopy(c, truth) {
+  if (c.suite === "greptile") return { ...c, bugs: [], truthSets: Object.fromEntries(Object.entries(truth.sets).map(([name, set]) => [name, { ...c.truthSets[name], ...set }])) };
   const accepted = truth.items.filter((t) => t.valid !== false);
   const want = c.truthCount?.accepted;
   const ids = accepted.map((t) => t.id);
@@ -538,6 +540,25 @@ export function realSpecProblems(spec, name, { suite, root = benchRoot } = {}) {
   need(SUITES[suite] !== undefined, `the suite ${suite} has no truth copy rules`);
   need(id !== null && id.suite === suite && id.name === name, `id must be the case id of ${suite}/${name}, not ${JSON.stringify(spec.id)}`);
   const clean = SUITES[suite]?.clean === true;
+  if (suite === "greptile") {
+    need(spec.origin === "injected" && spec.clean === false, "a Greptile case is injected and never clean");
+    need(typeof spec.repoGroup === "string" && spec.repoGroup !== "", "repoGroup is missing");
+    need(Array.isArray(spec.bugs) && spec.bugs.length === 0, "Greptile has no line truth; its board judge scores the prose sets");
+    const sets = spec.truthSets;
+    need(sets && Object.keys(sets).sort().join(",") === "augment,greptile", "both named judge truth sets are required");
+    const truth = {};
+    for (const name of ["greptile", "augment"]) {
+      const set = sets?.[name];
+      need(Array.isArray(set?.items) && set.items.length > 0 && truthHashOf(set.items) === set.hash, `${name}: judge truth does not match its frozen hash`);
+      truth[name] = { kind: set?.kind, source: set?.source, items: set?.items };
+    }
+    need(truthHashOf(truth) === spec.truthHash, "the judge truth sets differ from their combined identity");
+    if (id !== null) {
+      const entry = readSuite(suite, { root }).byName.get(id.name);
+      if (entry?.hash.startsWith(id.hash8)) need(entry.truthHash === spec.truthHash, "its truthHash is not the suite's");
+    }
+    return p;
+  }
   need(spec.origin === "real" && spec.clean === clean, clean ? "a clean suite case is real and clean" : "a pull request case is real and never clean");
   need(typeof spec.repoGroup === "string" && spec.repoGroup !== "", "repoGroup is missing");
   const count = spec.truthCount?.accepted;

@@ -1,14 +1,15 @@
 // Failure cases are listed in greptile-failures.md. Every input comes from
 // the pinned public datasets. The tree check uses a real fork clone.
-import { readFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { ingestGreptile, validateGreptileEntry } from "../ingest/greptile.mjs";
 import { verifyMartianMapping, verifyPublishedMartian } from "../ingest/martian.mjs";
 import { benchRoot, git } from "../lib/cases.mjs";
-import { cacheRoot } from "../lib/licence.mjs";
+import { GREPTILE_REPOS, greptileRows } from "../lib/greptile.mjs";
+import { cacheRoot, saveRepoAnswer } from "../lib/licence.mjs";
 import { seenTree } from "../lib/materialise.mjs";
-import { entryHash, materialise, readCase, splitRewriteProblems, suiteHashOf, truthOf } from "../lib/suites.mjs";
+import { canonicalJson, entryHash, materialise, readCase, sha256, splitRewriteProblems, suiteHashOf, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -24,6 +25,84 @@ beforeAll(async () => {
   c = readCase(entry.id);
   repo = materialise(c, tempDir("oq-greptile-real-"), { cache, shape: "server" }).dir;
 }, 300_000);
+
+function sourceFixture(change) {
+  const sources = JSON.parse(readFileSync(join(benchRoot, "suites/greptile/sources.json"), "utf8"));
+  const local = tempDir("oq-greptile-sources-");
+  cpSync(join(cache, "raw/greptile"), join(local, "raw/greptile"), { recursive: true });
+  change(sources, local);
+  sources.repositoriesSha256 = sha256(canonicalJson(sources.repositories));
+  return { sources, cache: local, offline: true };
+}
+
+function pageFixture(change) {
+  return sourceFixture((sources, local) => {
+    const pin = sources.original.asset;
+    const path = join(cache, "raw/greptile", pin.path);
+    const rows = greptileRows(readFileSync(path, "utf8"));
+    change(rows);
+    const text = Object.keys(GREPTILE_REPOS).map((id) => {
+      const bugs = rows.filter((r) => r.dataset === id);
+      const fork = /^https:\/\/github\.com\/([^/]+\/[^/]+)\//.exec(rows.find((r) => r.dataset === id).prUrl)[1];
+      return `{id:"${id}",label:"${id}",bugs:${JSON.stringify(bugs)},toolResults:[{name:"Greptile",href:"https://github.com/${fork}/pulls"}]}`;
+    }).join("\n");
+    pin.sha256 = sha256(text);
+    sources.original.revision = `sha256:${pin.sha256}`;
+    writeFileSync(join(local, "raw/greptile", pin.path), text);
+  });
+}
+
+it.each([false, true])("ignores a cached repository answer with found %s and no licence", async (found) => {
+  const ctx = sourceFixture(() => {});
+  saveRepoAnswer(ctx.cache, { ...ctx.sources.repositories[0], found, licence: null });
+  const again = await ingestGreptile(ctx);
+  expect(again.suite).toEqual(result.suite);
+  expect(again.suite.cases.filter((e) => e.status === "usable")).toHaveLength(50);
+  expect(again.split.counts).toEqual({ dev: 50, test: 0 });
+});
+
+it.each(["missing", "not found", "no licence answer"])("refuses a %s pinned repository answer and names its case", async (failure) => {
+  let repo;
+  const ctx = sourceFixture((sources) => {
+    repo = sources.repositories[0].asked;
+    if (failure === "missing") sources.repositories.shift();
+    else if (failure === "not found") sources.repositories[0].found = false;
+    else delete sources.repositories[0].licence;
+  });
+  const rows = greptileRows(readFileSync(join(ctx.cache, "raw/greptile", ctx.sources.original.asset.path), "utf8"));
+  const name = rows.find((r) => r.prUrl.startsWith(`https://github.com/${repo}/`)).prUrl;
+  await expect(ingestGreptile(ctx)).rejects.toThrow(name);
+});
+
+it("refuses a wrong corrected title join", async () => {
+  const ctx = sourceFixture((sources) => { sources.titleAliases["sentry-1"] = "No corrected row has this title"; });
+  await expect(ingestGreptile(ctx)).rejects.toThrow(/sentry-greptile\/pull\/1: expected one distinct corrected row/);
+});
+
+it("refuses a duplicated reconstructed pull request link", async () => {
+  const ctx = pageFixture((rows) => { rows[1].prNumber = rows[0].prNumber; });
+  await expect(ingestGreptile(ctx)).rejects.toThrow(/fifty distinct reconstructed pull requests/);
+});
+
+it("refuses a missing original case", async () => {
+  const ctx = pageFixture((rows) => { rows.splice(1, 1); });
+  await expect(ingestGreptile(ctx)).rejects.toThrow(/sentry: expected ten Greptile bugs/);
+});
+
+it("refuses a missing fork pull request and names its case", async () => {
+  let url;
+  const ctx = sourceFixture((sources) => {
+    const pin = sources.pullFiles[0];
+    const missing = pin.snapshot.shift();
+    url = missing.html_url;
+    pin.sha256 = sha256(`${JSON.stringify(pin.snapshot, null, 2)}\n`);
+  });
+  const pin = ctx.sources.pullFiles[0];
+  const path = join(ctx.cache, "raw/greptile", pin.path);
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(pin.snapshot, null, 2)}\n`);
+  await expect(ingestGreptile(ctx)).rejects.toThrow(`${url}: the pinned fork metadata has no unique pull request`);
+});
 
 it("refuses the upstream fix instead of the defect-bearing change", () => {
   expect(seenTree(repo)).toBe(git(repo, "rev-parse", "HEAD^{tree}").trim());

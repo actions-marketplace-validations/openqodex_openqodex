@@ -124,7 +124,7 @@ export function verifyMartianMapping({ suite, published, rows, proofs }) {
     if (entry.truth.items !== want.length || entry.truthHash !== truthHashOf(martianTruth(golden.row).items)) differences.push(`${entry.name}: suite comment count or truth hash differs from the pinned golden file`);
     const proof = proofs.find((p) => p.name === entry.name && p.caseId === entry.id);
     if (!proof) differences.push(`${entry.name}: no proof for the suite's case id`);
-    else if (proof.baseSha !== entry.baseSha || proof.headSha !== entry.headSha || (entry.mergeBaseSha && proof.mergeBaseSha !== entry.mergeBaseSha) || proof.ok !== true || proof.ancestorOfHead !== true || proof.trees?.mergeBase !== proof.trees?.builtBase || proof.trees?.head !== proof.trees?.builtHead) differences.push(`${entry.name}: committed tree proof differs from the suite's frozen commits or is not proved`);
+    else if (proof.baseSha !== entry.baseSha || proof.headSha !== entry.headSha || (entry.mergeBaseSha && proof.mergeBaseSha !== entry.mergeBaseSha) || proof.ok !== true || proof.ancestorOfHead !== true || !["mergeBase", "builtBase", "head", "builtHead"].every((key) => typeof proof.trees?.[key] === "string" && /^[0-9a-f]{40}$/.test(proof.trees[key])) || proof.trees.mergeBase !== proof.trees.builtBase || proof.trees.head !== proof.trees.builtHead) differences.push(`${entry.name}: committed tree proof differs from the suite's frozen commits or is not proved`);
     else mappedProofs++;
     if (before === differences.length) mappedCases++;
     mappings.push(`${entry.name}: ${entry.prUrl}; ${want.length} comments g1-g${want.length}; ${before === differences.length ? "mapped" : "differs"}`);

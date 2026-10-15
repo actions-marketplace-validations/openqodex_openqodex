@@ -9,3 +9,10 @@ Written before the implementation and tests.
 5. A source changes after ingestion. Check every raw file against its sha256 pin, and refuse a missing file in offline mode.
 6. A title joins the wrong corrected row, a run link is duplicated, or a source loses a case. Require one matching title per repository and exactly ten cases per repository, fifty overall.
 7. A previous split moves cases during re-ingestion. Refuse a split rewrite that moves or drops an existing case.
+
+Round 1, written before the fixes and regression tests:
+
+8. A cached repository 404 or changed licence excludes cases without changing the suite hash. Build all fifty records from the validated source answers, independent of the repository cache. Refuse a missing, unavailable or incomplete source answer with the case link.
+9. Greptile cannot save or score a run because prose sets enter line matching. Save an empty line truth and both named prose sets with their frozen hashes and sources. Score a saved run through the real CLI without a model call.
+10. Either outside converter crashes or gives Greptile no route to its judge. Each CLI refuses it with one line naming benchmark/outside/boards/greptile-judge.mjs, the W8-3 path.
+11. Martian accepts absent or malformed tree hashes because both sides compare equal. Require all four tree hashes before comparing their pairs.

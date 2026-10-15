@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot } from "../lib/cases.mjs";
 import { greptileEntryProblems, greptileRows } from "../lib/greptile.mjs";
-import { cacheRoot, licenceExclusion, licenceRecord, readRepoAnswer, repoAnswer, saveRepoAnswer } from "../lib/licence.mjs";
+import { cacheRoot, licenceExclusion, licenceRecord } from "../lib/licence.mjs";
 import { GREPTILE_HASHED, SUITES, canonicalJson, checkPinned, entryHash, greptileTruth, rawPath, realCaseId, sha256, splitRewriteProblems, suiteHashOf, truthHashOf } from "../lib/suites.mjs";
 import { fetchPinned } from "./aacr.mjs";
 
@@ -48,7 +48,6 @@ export async function fetchGreptileData({ sources = JSON.parse(readFileSync(SOUR
     } else files.set(pin.path, await fetchPinned(cache, "greptile", pin, { offline }));
   }
   if (sha256(canonicalJson(sources.repositories)) !== sources.repositoriesSha256) throw new Error("the saved real GitHub licence answers differ from their pin");
-  for (const answer of sources.repositories) if (!readRepoAnswer(cache, answer.asked)) saveRepoAnswer(cache, answer);
   return { sources, files };
 }
 
@@ -58,6 +57,7 @@ export async function ingestGreptile({ sources, cache = cacheRoot(), offline = f
   const rows = greptileRows(data.files.get(sources.original.asset.path).toString("utf8"));
   const corrected = new Map(sources.corrected.files.map((pin) => [pin.path.split("/").pop(), { pin, rows: JSON.parse(data.files.get(pin.path)) }]));
   const pulls = new Map(sources.pullFiles.map((pin) => [pin.repo, { pin, rows: JSON.parse(data.files.get(pin.path)) }]));
+  const repositories = new Map(sources.repositories.map((answer) => [answer.asked.toLowerCase(), answer]));
   const licences = new Map();
   const titleJoins = [];
   const entries = [];
@@ -77,9 +77,14 @@ export async function ingestGreptile({ sources, cache = cacheRoot(), offline = f
     seenCorrected.add(`${original.file}:${title}`);
     if (!Array.isArray(golden.comments) || golden.comments.length === 0 || golden.comments.some((g) => typeof g.comment !== "string" || !g.comment.trim())) throw new Error(`${original.prUrl}: corrected truth has no valid golden comments`);
     if (title !== original.prTitle) titleJoins.push(`${original.prUrl}: page title ${JSON.stringify(original.prTitle)} maps to corrected title ${JSON.stringify(title)}`);
-    if (!licences.has(repo)) licences.set(repo, licenceRecord(repoAnswer(repo, { cache, offline, licence: true })));
+    if (!licences.has(repo)) {
+      const answer = repositories.get(repo.toLowerCase());
+      if (answer?.found !== true || answer.fullName?.toLowerCase() !== repo.toLowerCase() || answer.licence === undefined) throw new Error(`${original.prUrl}: no complete pinned repository and licence answer; refusing to shrink the fifty-case suite`);
+      licences.set(repo, licenceRecord(answer));
+    }
     const licence = licences.get(repo);
     const excludedWhy = licenceExclusion(licence);
+    if (excludedWhy) throw new Error(`${original.prUrl}: ${excludedWhy}; refusing to shrink the fifty-case suite`);
     const truthSources = {
       greptile: { url: sources.original.url, revision: sources.original.revision, readDate: sources.original.readDate, assetUrl: sources.original.asset.url },
       augment: { url: rawGolden.pin.url, revision: sources.corrected.revision, readDate: sources.corrected.readDate },
