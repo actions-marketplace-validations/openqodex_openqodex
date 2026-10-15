@@ -326,7 +326,11 @@ if [ -n "$settings_commit" ]; then
     : > "$instructions_file"
 fi
 config_args=(--config "$config_file")
-instructions_args=(--instructions "$instructions_file")
+instructions_ref=none
+if [ -n "$settings_commit" ]; then
+  instructions_ref="$("$git_bin" rev-parse --verify "${settings_commit}^{commit}")"
+fi
+instructions_args=(--instructions "$instructions_file" --instructions-ref "$instructions_ref")
 
 # Claude Code at the pinned version: the claude on the workflow's PATH when
 # it is that version and passes resolve_outside, else a copy installed from

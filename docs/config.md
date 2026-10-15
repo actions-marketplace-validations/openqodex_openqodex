@@ -22,6 +22,7 @@ An unknown key prints a warning and is ignored. A name in `scanners.disable` tha
 | `review.disabled_rules` | `[]` | Globs on a finding's citation, such as gitleaks:generic-api-key or lens:react-*. |
 | `review.default_base` | `null` | The branch or ref to diff against when the branch has no upstream; null uses the remote's default branch. |
 | `review.include_fixtures` | `false` | Keep scanner findings in test fixtures, mocks and snapshots. |
+| `review.instructions_files` | `[]` | Repo-relative convention paths or globs the owners chose for the reviewer. Empty reads none. |
 | `scanners.disable` | `[]` | Built-in scanners to switch off, by name. |
 | `scanners.custom` | `[]` | Open source scanners to add by GitHub link; each runs only after openqodex trust. |
 | `graph.enabled` | `true` | Show the callers and importers of the changed code in the brief. |
@@ -53,6 +54,23 @@ scanners:
 graph:
   enabled: true
 ```
+
+## Convention files
+
+`review.instructions_files` defaults to `[]`. Only the files the owners list are supplied to the reviewer. There is no automatic discovery during a review.
+
+```yaml
+review:
+  instructions_files: ["CONTRIBUTING.md", "docs/style.md"]
+```
+
+Paths are relative to the repository. Globs use `*`, `**` and `?`; matches follow lexical order within each entry. Files follow the configured order, with duplicates supplied once. A file is at most 32 KB, and the chosen files together are at most 64 KB. A missing path, link, folder, path outside the repository or file past either cap is skipped whole. The receipt and report notes name every omission. A glob with no match is silent.
+
+`init` lists known candidates with their sizes and asks which files the reviewer may use. With no interactive terminal, including `--yes`, it selects nothing and prints the key to set. A review with an empty list prints one hint when candidates exist. An agent must ask the developer before adding paths.
+
+The brief quotes the chosen files after `.openqodex/custom-instructions.md`. Only conventions that apply to the changed code count. Stated scopes and exceptions apply. Custom instructions win on conflict; a later file never silently overrides an earlier one.
+
+Exact shipped OpenQodex team sections are removed from the quoted copy, with a note. Edited text between those markers stays. The manifest binds to each supplied file's original bytes and source. Finalize checks only that selection, so changing a skipped file does not invalidate the review.
 
 ## Keys from the hosted review
 

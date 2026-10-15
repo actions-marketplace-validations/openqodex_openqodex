@@ -4,7 +4,7 @@
 // vanish without a trace.
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { OpenQodexError, STATE_DIR, isRepoState, readFileBounded, readRepoFile } from "@openqodex/core";
+import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, readFileBounded, readRepoFile } from "@openqodex/core";
 
 export const INSTRUCTIONS_FILE = "custom-instructions.md";
 export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
@@ -30,4 +30,32 @@ export function readInstructionsAt(repoRoot: string, explicitPath: string): stri
   }
   if (!existsSync(path)) throw new OpenQodexError(`instructions file not found: ${path}`);
   return readFileBounded(path, INSTRUCTIONS_MAX_BYTES, TOO_BIG_HINT);
+}
+
+// Only metadata is listed here. init asks the developer before selecting it.
+export function instructionCandidates(repoRoot: string): { path: string; bytes: number }[] {
+  const reader = new FolderReader(repoRoot);
+  const found: { path: string; bytes: number }[] = [];
+  const add = (path: string): void => {
+    const entry = reader.entry(path.split("/"));
+    if (entry.ok && entry.stat.isFile()) found.push({ path, bytes: Number(entry.stat.size) });
+  };
+  for (const path of ["CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", ".cursorrules"]) add(path);
+  const walk = (parts: string[]): void => {
+    for (const name of reader.list(parts)?.names.sort() ?? []) {
+      const names = [...parts, name];
+      const entry = reader.entry(names);
+      if (entry.ok && entry.stat.isDirectory()) walk(names);
+      else add(names.join("/"));
+    }
+  };
+  walk([".cursor", "rules"]);
+  add(".github/copilot-instructions.md");
+  return found;
+}
+
+export function conventionHint(repoRoot: string, paths: readonly string[]): string | null {
+  if (paths.length > 0) return null;
+  const candidates = instructionCandidates(repoRoot);
+  return candidates.length === 0 ? null : `Convention files available: ${candidates.map((file) => file.path).join(", ")}. Ask the developer which files to set in review.instructions_files.`;
 }

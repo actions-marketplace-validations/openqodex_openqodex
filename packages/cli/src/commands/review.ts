@@ -39,6 +39,8 @@ import {
   STATE_DIR,
   selectLenses,
   writeLatest,
+  verifyInstructionFiles,
+  instructionNotes,
   writeReportFiles,
 } from "@openqodex/core";
 import type { Change, ChangeScope, Config, Display, ImpactSummary, Latest, RunManifest, RunTarget, ScanResult, Severity, WholeRepo } from "@openqodex/core";
@@ -50,7 +52,7 @@ import { addTargetCheckout, checkoutOwner, inCheckouts, lfsPaths, placeSettings,
 import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, runtimeBin } from "../launcher.js";
 import { HANDED_OFF } from "../update/trigger.js";
-import { readInstructions } from "../instructions.js";
+import { conventionHint, readInstructions } from "../instructions.js";
 import { readHomeRun, writeHomeLastReview, writeHomeReceipt, writeHomeRun } from "../receipts.js";
 import type { RunRecord } from "../receipts.js";
 import { ALL, NO_GRAPH, parseFlags, scannerList } from "../flags.js";
@@ -95,7 +97,7 @@ type RunFile = { version: 1; scope: ChangeScope | "all" | "target" };
 // the last four: a gate the change's own config cannot weaken, the base
 // branch's instructions, a folder of its own for this run's report, and the
 // reviewer's web tools off whatever the runner's user config says.
-const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--report-dir", "--reviewer-web"];
+const OWN_REVIEW_FLAGS = ["--reviewer", "--timeout", "--block-on-severity", "--instructions", "--instructions-ref", "--report-dir", "--reviewer-web"];
 
 // `drivers`: the reviewers to choose from; tests pass a model provider stand-in.
 export async function run(args: string[], drivers?: ReviewerDriver[]): Promise<number> {
@@ -151,6 +153,7 @@ export async function run(args: string[], drivers?: ReviewerDriver[]): Promise<n
       timeoutMs: timeoutSeconds(values.get("--timeout"), bools.has(ALL)) * 1000,
       blockOn: blockOn as Severity | undefined,
       instructions: values.get("--instructions"),
+      instructionsRef: values.get("--instructions-ref"),
       reportDir: values.get("--report-dir"),
       web: web === undefined ? undefined : web === "on",
       drivers,
@@ -225,7 +228,9 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
   if (p.scan === null) return;
   // Read after the template may have been created, so finalize hashes the
   // same file. Over the size limit it is refused, never cut.
-  const instructions = ownersInstructions(p.repoRoot, p.secrets);
+  const instructions = await ownersInstructions(p.repoRoot, p.secrets, undefined, { paths: p.config.instructionsFiles });
+  const hint = conventionHint(p.repoRoot, p.config.instructionsFiles);
+  if (hint) warn(hint);
 
   const lenses = selectLenses(p.change, undefined, ruleCoverage(p));
   const dir = openReportDir(p.repoRoot, p.change.shortId);
@@ -237,6 +242,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
+    ...(instructions.provenance.length > 0 ? { instruction_files: instructions.provenance } : {}),
     runtime_version: __OPENQODEX_VERSION__,
     ...(target ? { target, run_id: runId } : {}),
   };
@@ -251,6 +257,7 @@ async function writeBrief(p: PipelineResult, flags: GlobalFlags, noGraph: boolea
     finalizeCommand: finalizeCommand(p.repoRoot, flags, join(dir, FINDINGS_FILE), false, runId),
     impactBlock: renderImpactBlock(impact, { overflow: "impact.json beside this brief" }),
     instructions: instructions.text,
+    instructionFiles: instructions.files,
     target,
   });
   const runFile: RunFile = { version: 1, scope: scope ?? "target" };
@@ -396,7 +403,9 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
     return EXIT_OK;
   }
 
-  const instructions = ownersInstructions(repoRoot, p.secrets);
+  const instructions = await ownersInstructions(repoRoot, p.secrets, undefined, { paths: config.instructionsFiles });
+  const hint = conventionHint(repoRoot, config.instructionsFiles);
+  if (hint) warn(hint);
   const lenses = wholeRepoLenses(p.change, ruleCoverage(p));
   const dir = openReportDir(repoRoot, p.change.shortId);
   const manifest: RunManifest = {
@@ -406,6 +415,7 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
     created_at: new Date().toISOString(),
     lenses: lenses.map((l) => ({ name: l.name, confidenceFloor: l.confidenceFloor })),
     instructions_hash: instructions.hash,
+    ...(instructions.provenance.length > 0 ? { instruction_files: instructions.provenance } : {}),
     runtime_version: __OPENQODEX_VERSION__,
   };
   const runFile: RunFile = { version: 1, scope: "all" };
@@ -433,6 +443,7 @@ async function runAll(flags: GlobalFlags, only: string | undefined, skip: string
     hot,
     graphNote: note,
     instructions: instructions.text,
+    instructionFiles: instructions.files,
   });
   writeReportFiles(repoRoot, dir, {
     [INVENTORY_FILE]: `${JSON.stringify(redactStored(inventory, p.secrets), null, 2)}\n`,
@@ -623,7 +634,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
     if (target?.checkout) await removeTargetCheckout(repoRoot, target.checkout);
   };
   try {
-    checkBinding(repoRoot, config, manifest);
+    await checkBinding(repoRoot, config, manifest);
     if (target !== undefined) await checkTargetCheckout(target);
   } catch (error) {
     await discard();
@@ -637,6 +648,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   const report = {
     ...finalizeReview({ change, scan, manifest, config, submission, wholeRepo: whole ?? undefined }),
     impact: whole ? null : readImpact(repoRoot, dir),
+    ...(manifest.instruction_files?.length ? { notes: instructionNotes(manifest.instruction_files) } : {}),
   };
 
   // The run as this machine recorded it when the brief was written, checked
@@ -646,7 +658,7 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   // another run, its fingerprints emptied) is not trusted: the page shows
   // no code, `findings` gets no record of it, the push hooks no receipt.
   const record = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
-  const verified = runMatches(record, { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructionsHash(repoRoot), texts });
+  const verified = runMatches(record, { changeId: change.id, configHash: configHash(config), instructionsHash: await currentInstructionsHash(repoRoot, manifest), texts });
   if (!verified) warn("openqodex: this run's files are not the ones review --agent recorded on this machine, so report.html shows the findings without the code and openqodex findings will not print this review");
   // Every output from one redaction pass. The secrets are gone from memory
   // by now; their saved fingerprints (scan.json, every line of a multi-line
@@ -761,9 +773,9 @@ function parseRunFile<T>(text: string | null): T | null {
   }
 }
 
-function currentInstructionsHash(repoRoot: string): string | null {
+async function currentInstructionsHash(repoRoot: string, manifest: RunManifest): Promise<string | null> {
   try {
-    return instructionsHash(readInstructions(repoRoot));
+    return manifest.instruction_files ? await verifyInstructionFiles(repoRoot, manifest.instruction_files, readInstructions(repoRoot)) : instructionsHash(readInstructions(repoRoot));
   } catch {
     return "unreadable";
   }
@@ -792,7 +804,7 @@ export function runMatches(
 }
 
 // The config and the instructions are the ones the brief was made with.
-function checkBinding(repoRoot: string, config: Config, manifest: RunManifest): void {
+async function checkBinding(repoRoot: string, config: Config, manifest: RunManifest): Promise<void> {
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex/config.yaml or --config); run openqodex review --agent again");
   }
@@ -800,8 +812,9 @@ function checkBinding(repoRoot: string, config: Config, manifest: RunManifest): 
   if (manifest.instructions_hash !== undefined) {
     let current: string | null;
     try {
-      current = instructionsHash(readInstructions(repoRoot));
-    } catch {
+      current = manifest.instruction_files ? await verifyInstructionFiles(repoRoot, manifest.instruction_files, readInstructions(repoRoot)) : instructionsHash(readInstructions(repoRoot));
+    } catch (error) {
+      if (manifest.instruction_files) throw error;
       current = "unreadable";
     }
     if (current !== manifest.instructions_hash) {

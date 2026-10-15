@@ -33,6 +33,7 @@ import { keepRunStateOutOfRepo, noteScan } from "./feedback.js";
 import { directRunner, launcherPath, launcherRunner, launcherStarted, openqodexHomeDir, shQuote } from "./launcher.js";
 import { writeHomeLastReview, writeHomeReceipt } from "./receipts.js";
 import { readReviewerSettings } from "./reviewers/settings.js";
+import { conventionHint } from "./instructions.js";
 import { dropTempRef, resolveTarget } from "./target.js";
 
 // How long a review runs before its reviewer is stopped, when --timeout
@@ -77,6 +78,7 @@ export type ReviewOptions = {
   // repository's .openqodex/custom-instructions.md (the Action passes the
   // base branch's copy, so a pull request cannot supply its own).
   instructions?: string;
+  instructionsRef?: string;
   // --report-dir: every file of this run goes to this folder alone, and
   // nothing under .openqodex/ in the checkout is created, read or written
   // (without --config and --instructions, the built-in defaults and no
@@ -144,7 +146,7 @@ export function laptopParts(o: ReviewOptions, repoRoot: string, config: Config):
       };
     },
     graphStore: o.reportDir === undefined ? () => graphStore(repoRoot, config) : undefined,
-    instructions: (secrets) => (o.reportDir !== undefined && o.instructions === undefined ? { text: "", hash: null } : ownersInstructions(repoRoot, secrets, o.instructions)),
+    instructions: (secrets) => ownersInstructions(repoRoot, secrets, o.instructions, { paths: config.instructionsFiles, source: o.instructionsRef ?? (o.reportDir === undefined ? "work tree" : "none"), readOwners: o.reportDir === undefined }),
     now: Date.now,
   };
 }
@@ -165,6 +167,9 @@ function fallbackCommand(o: ReviewOptions): string {
     ...(f.config !== undefined ? ["--config", shQuote(resolve(f.config))] : []),
     ...(f.offline ? ["--offline"] : []),
     ...(f.noInstall ? ["--no-install"] : []),
+    ...(o.instructions !== undefined ? ["--instructions", shQuote(o.instructions)] : []),
+    ...(o.instructionsRef !== undefined ? ["--instructions-ref", shQuote(o.instructionsRef)] : []),
+    ...(o.reportDir !== undefined ? ["--report-dir", shQuote(o.reportDir)] : []),
   ];
   return [runner, "review", "--agent", ...scope, ...kept].join(" ");
 }
@@ -194,6 +199,10 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const loaded = await loadRepo(o.flags, o.reportDir === undefined);
   const repoRoot = loaded.repoRoot;
   const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
+  if (o.reportDir === undefined) {
+    const hint = conventionHint(repoRoot, config.instructionsFiles);
+    if (hint) warn(hint);
+  }
   const owner = checkoutOwner(repoRoot);
   if (owner !== null) throw new OpenQodexError(`this folder is the temporary checkout of a review; run review from ${owner}`);
   // A --report-dir reached through a link stops the run here, before

@@ -125,7 +125,8 @@ export function renderSarif(report: Report): string {
   const versions = new Map(report.scanners.map((s) => [s.scanner as string, s.version]));
   const completion = completionOf(report);
   const reviewed_by = report.reviewed_by ? { properties: { ...(completion.properties as Record<string, unknown> | undefined), reviewed_by: report.reviewed_by } } : {};
-  const runs: Record<string, unknown>[] = [{ ...run("openqodex", null, agent), ...completion, ...reviewed_by }];
+  const notes = report.notes?.length ? { properties: { ...(completion.properties as Record<string, unknown> | undefined), ...reviewed_by.properties, notes: report.notes } } : {};
+  const runs: Record<string, unknown>[] = [{ ...run("openqodex", null, agent), ...completion, ...reviewed_by, ...notes }];
   for (const [source, results] of byScanner) runs.push(run(source, versions.get(source) ?? null, results));
 
   const sarif = {

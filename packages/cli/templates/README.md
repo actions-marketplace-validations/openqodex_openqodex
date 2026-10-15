@@ -106,3 +106,5 @@ No template: `src/agents/targets.ts` builds each entry, and `src/agents/mcp.ts` 
 ## Placeholders
 
 `{{VERSION}}` is the running package version. `{{LAUNCHER}}` is the absolute launcher path, and `init` must substitute it already quoted for a POSIX shell (single quotes, with any single quote inside escaped), because a home folder can contain a space and the hook command is run through a shell.
+
+The team and instruction sections tell agents to ask the developer before setting `review.instructions_files`. Custom instructions add to the files the owners chose.

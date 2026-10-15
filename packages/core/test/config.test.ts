@@ -79,6 +79,7 @@ review:
   disabled_rules: ["gitleaks:generic-api-key", "lens:react-*"]
   default_base: develop
   include_fixtures: true
+  instructions_files: [CONTRIBUTING.md, docs/style.md]
 scanners:
   disable: [brakeman, rubocop]
   custom:
@@ -132,6 +133,7 @@ describe("loadConfig", () => {
       exclude: ["vendor/**", "*.min.js"],
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,
+      instructionsFiles: ["CONTRIBUTING.md", "docs/style.md"],
       disabledScanners: ["brakeman", "rubocop"],
       custom: [
         {
@@ -291,6 +293,7 @@ colour: blue
 review:
   block_on_severty: critical
   include_fixtures: true
+  instructions_files: [CONTRIBUTING.md, docs/style.md]
 scanners:
   custom:
     - source: https://github.com/a/b

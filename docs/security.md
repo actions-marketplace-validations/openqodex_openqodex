@@ -201,3 +201,11 @@ The change itself is worked out without writing inside `.git`. OpenQodex uses a 
 The code graph keeps the bytes each kept build read: it writes them as a git tree into the repository's own objects, through a temporary copy of the index, and holds that tree with a local ref, `refs/openqodex/graph/<tree>`, while a build of it is kept; the ref is deleted with the last such build. Your index, your branches and your working files are not touched. The ref is local: a plain `git push` does not send it, `git push --mirror` would. With `--report-dir` nothing is written there.
 
 The review writes the graph's files into its own snapshot, under `.openqodex-review/graph/`, before the snapshot is hashed, so its reviewer reads them without leaving the snapshot. They pass through the same secret redaction as the brief. A change that holds a path named `.openqodex-review` stops the review rather than having it overwritten.
+
+## Chosen convention files
+
+The reviewer gets only the repository files the owners list in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. The list defaults to `[]`. There is no automatic reading. Never add a path on your own. Ask the developer which files the reviewer may use, then set only what they name.
+
+`init` lists known candidates and sizes. An interactive init asks which to use. A non-interactive init makes no choice. Each chosen file is at most 32 KB, with a 64 KB total. Files are skipped whole, with a reason in the receipt and report notes. Those notes name the supplied files and their sources too. These files join the existing brief sent to the reviewer's model provider.
+
+Local reviews read the developer's own work tree. The Action reads from the commit used for config. The library reads from the merge base inside the review's scopes. Conventions added to the base branch after divergence are not seen by the library. Custom instructions win on conflict. Only conventions applicable to the changed code count, with each stated scope and exception honoured.
