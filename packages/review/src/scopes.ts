@@ -36,20 +36,20 @@ function scopeFolder(scope: string): string {
   return folder;
 }
 
-// The admission function of a review. `scopes`: the folders admitted, or
-// undefined for the whole repository. `exclude`: review.paths.exclude. The
-// tool's own folder (.openqodex/) is never admitted, as the change source
-// never counts it. Paths are compared as git spells them, case included.
-export function admitted(scopes: readonly string[] | undefined, exclude: readonly string[]): Admit {
+// The folders admitted, or undefined for the whole repository. Settings
+// use this predicate without code exclusions. Paths keep git's spelling.
+export function withinScopes(scopes: readonly string[] | undefined): Admit {
   if (scopes !== undefined && (!Array.isArray(scopes) || scopes.length === 0)) {
     throw new OpenQodexError("scopes must name at least one folder; leave scopes out to review the whole repository");
   }
   const folders = scopes === undefined ? null : [...new Set(scopes.map(scopeFolder))];
+  return (path) => typeof path === "string" && plainPath(path) && (folders === null || folders.some((f) => path === f || path.startsWith(`${f}/`)));
+}
+
+// Code also excludes review.paths.exclude and the tool's own folder,
+// which the change source never counts.
+export function admitted(scopes: readonly string[] | undefined, exclude: readonly string[]): Admit {
+  const inside = withinScopes(scopes);
   const globs = [...exclude];
-  return (path) => {
-    if (typeof path !== "string" || !plainPath(path)) return false;
-    if (path === STATE_DIR || path.startsWith(`${STATE_DIR}/`)) return false;
-    if (folders !== null && !folders.some((f) => path === f || path.startsWith(`${f}/`))) return false;
-    return !globs.some((g) => matchesGlob(path, g));
-  };
+  return (path) => inside(path) && path !== STATE_DIR && !path.startsWith(`${STATE_DIR}/`) && !globs.some((g) => matchesGlob(path, g));
 }

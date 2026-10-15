@@ -37,6 +37,7 @@ export const DEFAULT_CONFIG: Config = {
   disabledRules: [],
   defaultBase: null,
   includeFixtures: false,
+  instructionsFiles: [],
   disabledScanners: [],
   custom: [],
   graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 1536 },
@@ -81,6 +82,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
     default: "false",
     description: "Keep scanner findings in test fixtures, mocks and snapshots.",
   },
+  { key: "review.instructions_files", default: "[]", description: "Repo-relative convention paths or globs the owners chose for the reviewer. Empty reads none." },
   { key: "scanners.disable", default: "[]", description: "Built-in scanners to switch off, by name." },
   {
     key: "scanners.custom",
@@ -294,6 +296,7 @@ function schemas(strict: boolean) {
       disabled_rules: globs.optional(),
       default_base: z.string().trim().min(1, "expected a branch or ref").nullish(),
       include_fixtures: z.boolean().optional(),
+      instructions_files: strings.optional(),
       ...hostedOnly(HOSTED_ONLY_REVIEW_KEYS),
     }).optional(),
     scanners: obj({
@@ -549,6 +552,7 @@ export function parseConfig(source: string, file: string = CONFIG_FILE, opts: Pa
       disabledRules: yaml.review?.disabled_rules ?? [],
       defaultBase: yaml.review?.default_base ?? null,
       includeFixtures: yaml.review?.include_fixtures ?? false,
+      instructionsFiles: yaml.review?.instructions_files ?? [],
       disabledScanners: disabled,
       custom,
       graph: {

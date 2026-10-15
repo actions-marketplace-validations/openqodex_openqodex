@@ -1,0 +1,8 @@
+{
+  "id": "exception",
+  "guards": "an explicit exception to a chosen convention is ignored",
+  "language": "python",
+  "framework": "flask",
+  "clean": true,
+  "bugs": []
+}

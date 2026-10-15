@@ -204,6 +204,7 @@ export function renderReceipt(report: Report, opts: { html: string; md: string; 
   } else if (report.not_reviewed.length > 0) {
     out.push(`${plural(report.not_reviewed.length, "scanner candidate was", "scanner candidates were")} not checked by the reviewer and count toward the verdict; the report lists them.`);
   }
+  for (const note of report.notes ?? []) if (/^Convention(?:s supplied| omitted| transformed):/.test(note)) out.push(display(note));
   out.push(`Report: ${opts.html}`, `Markdown: ${opts.md}`);
   return `${out.join("\n")}\n`;
 }

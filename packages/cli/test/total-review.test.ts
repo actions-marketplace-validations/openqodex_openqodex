@@ -1011,6 +1011,23 @@ describe("26. the fallback when no reviewer can start", () => {
     expect(err).toContain(fallback(dir, " --offline --no-install"));
   });
 
+  it("does not emit a fallback that run rejects after instructions-ref and report-dir were used", async () => {
+    const dir = repo();
+    const instructions = join(dir, "rules.md");
+    writeFileSync(instructions, "Owners' rule.\n");
+    const report = tempDir("oq-fallback-report-");
+    expect(await reviewCommand(["--cwd", dir, "--only", "sqllint", "--no-graph", "--instructions", instructions, "--instructions-ref", "none", "--report-dir", report], [fake([good], false)])).toBe(2);
+    expect(err).toContain(fallback(dir));
+    const command = /instead, run `([^`]+)` and follow the brief/.exec(err)![1]!;
+    // Let the shell decode the emitted command without starting its runner.
+    const parsed = spawnSync("bash", ["--noprofile", "--norc", "-c", `set -- ${command}; printf '%s\\0' "$@"`], { encoding: "utf8" });
+    expect(parsed.status, parsed.stderr).toBe(0);
+    const argv = parsed.stdout.split("\0").slice(0, -1);
+    expect(argv.slice(0, 4)).toEqual(["npx", "-y", "openqodex@0.0.0-test", "review"]);
+    // Exercise run's real flag check and agent path with bounded local work.
+    await expect(reviewCommand([...argv.slice(4), "--only", "sqllint", "--no-graph", "--offline"])).resolves.toBe(0);
+  });
+
   it("with a driver available the fallback text never appears", async () => {
     expect(await review(repo(), fake([good]))).toBe(0);
     expect(out + err).not.toContain("review --agent");

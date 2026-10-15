@@ -783,3 +783,23 @@ No planted bug moved. The false finding of `5227579` (the purge reply's count in
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a published benchmark run: its index entry (`benchmark/index/runs/<run-id>.json`), the score file it quotes from the run's asset (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no published run backs is not written.
+
+## Chosen convention cases
+
+`--suite conventions` runs three authored cases under `benchmark/suites/conventions/`. They use the demo's Flask items endpoint and add the same `GET /health` handler, named `health_check`. That name and behavior are valid on their own. The violation case chooses `CONTRIBUTING.md`, whose verb-noun rule requires `get_health`. Its truth item expects the rule citation `CONTRIBUTING.md#verb-noun`, naming both the file and the rule. The exception case chooses the same rule with an explicit exemption for this health handler. The no-rule control has no convention file and an empty selection. Both controls are clean, with no accepted extras: format 3 counts any finding on them as false.
+
+These cases use the planted `case.json`, `base/` and `change/` format. They have their own suite name and hashes. To select one case, use `--cases conventions/violation`, or `--suite conventions --cases violation`. They do not enter the frozen corpus or its splits. The laptop runner passes the case config and the base commit as the instructions source. The server runner passes the case's parsed config to the library. Existing suites keep their inputs.
+
+Build the cases without running a reviewer:
+
+```sh
+node benchmark/run.mjs --suite conventions --materialise-only --reviewers model:gpt-6.1-sol
+```
+
+Run one repeat with the model endpoint already configured:
+
+```sh
+node benchmark/run.mjs --suite conventions --reviewers model:gpt-6.1-sol --repeat 1 --max-usd 5 --review-max-usd 1 --max-minutes 15
+```
+
+Score the saved run with `node benchmark/score.mjs <run-folder>`. A violation finding must name `CONTRIBUTING.md`. The exception and control must have no findings. The scorer checks those expectations from the saved case specs.

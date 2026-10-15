@@ -804,7 +804,8 @@ ${masthead(report, complete, impactSentence(report))}
 </div>
 ${verdictBar(report, complete, findings, filesTotal)}
 <main class="page">
-${summary(report)}
+${summary(report)}${report.notes?.length ? `
+<section class="coverage" aria-label="Review notes"><h2>Review notes</h2><ul>${report.notes.map((note) => `<li>${text(note)}</li>`).join("")}</ul></section>` : ""}
 ${coverage(report)}
 <div class="review-body">
 ${filesNav(entries, findingsByPath, filesTotal)}

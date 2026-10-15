@@ -55,6 +55,7 @@ const config: Config = {
   exclude: [],
   disabledRules: [],
   includeFixtures: false,
+    instructionsFiles: [],
   disabledScanners: [],
   custom: [],
 };

@@ -65,8 +65,10 @@ import { RULES_VERSION, jobIdOf } from "./score.mjs";
 
 // The arguments of one laptop review (Claude Code or Codex through
 // `openqodex review`), the same for planted and pull request cases.
-export function laptopReviewArgs({ repo, reportDir, job, web, timeout }) {
+export function laptopReviewArgs({ repo, reportDir, job, web, timeout, instructionsRef, configPath }) {
   const args = ["review", "--cwd", repo, "--report-dir", reportDir, "--reviewer", job.reviewer, "--reviewer-web", web, "--timeout", String(timeout), "--no-color"];
+  if (configPath !== undefined) args.push("--config", configPath);
+  if (instructionsRef !== undefined) args.push("--instructions-ref", instructionsRef);
   if (!job.graph) args.push("--no-graph");
   return args;
 }

@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
+import { CONFIG_MAX_BYTES, DEFAULT_CONFIG_YAML, readRepoFile, FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
 import { readText } from "../agents/files.js";
@@ -29,6 +29,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "@openqodex/review";
 import { launcherPath, launcherRunner, launcherUsers, oldLocks, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks, staleRuntimes } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
+import { instructionCandidates, mergeInstructionChoice, writeInstructionChoice } from "../instructions.js";
 import { firstReviewLine, reviewAfterInit } from "./init-review.js";
 import { REVIEWER_LABELS, reviewerReadiness, type Readiness } from "../review-run.js";
 import { pruneHomeReceipts, staleReceipts } from "../receipts.js";
@@ -410,6 +411,7 @@ async function runLocked(s: Setup): Promise<Outcome> {
       const repo = planRepoFiles(s.repoRoot, record, s.guard);
       rootConfig = repo.rootConfig;
       team.push(...repo.actions);
+      await planConventionChoice(s, team);
       const hook = hookChoiceFor(s, record);
       hookChoice = hook.hook;
       if (!s.flags.dryRun) setHookChoice(record, s.repoRoot, hookChoice);
@@ -602,6 +604,42 @@ async function runLocked(s: Setup): Promise<Outcome> {
   if (mcpWritten.length > 0) out(`Restart ${mcpWritten.join(", ")} to load the code graph's MCP server.`);
   if (s.agents.includes("codex")) out("Codex: run /hooks once inside Codex and trust the new OpenQodex hook, or Codex will not run it.");
   return { code: failed ? EXIT_TOOL_FAILED : EXIT_OK, ended: "written" };
+}
+
+// Candidates are metadata only. A non-interactive install never chooses.
+async function planConventionChoice(s: Setup, actions: Action[]): Promise<void> {
+  if (s.repoRoot === null) return;
+  const candidates = instructionCandidates(s.repoRoot);
+  if (candidates.length === 0) return;
+  out("Convention files available:");
+  for (const file of candidates) out(`  ${file.path} (${file.bytes} bytes)`);
+  if (!interactive() || s.flags.yes || s.flags.dryRun) {
+    out("Ask the developer which files the reviewer may use, then set review.instructions_files in .openqodex/config.yaml. No files were selected.");
+    return;
+  }
+  const loaded = loadConfig(s.repoRoot);
+  const prompts = await import("@clack/prompts");
+  const chosen = await prompts.multiselect<string>({
+    message: "Which convention files may the reviewer use?",
+    options: candidates.map((file) => ({ value: file.path, label: `${file.path} (${file.bytes} bytes)` })),
+    initialValues: (loaded.config.instructionsFiles ?? []).filter((path) => candidates.some((file) => file.path === path)),
+    required: false,
+  });
+  if (prompts.isCancel(chosen)) return;
+  // Keep explicit paths that the picker cannot list, including globs.
+  const paths = mergeInstructionChoice(loaded.config.instructionsFiles ?? [], candidates.map((file) => file.path), chosen);
+  if (JSON.stringify(paths) === JSON.stringify(loaded.config.instructionsFiles ?? [])) return;
+  const path = loaded.path ?? join(s.repoRoot, STATE_DIR, FOLDER_CONFIG);
+  const before = readRepoFile(s.repoRoot, path, CONFIG_MAX_BYTES);
+  const text = writeInstructionChoice(before ?? DEFAULT_CONFIG_YAML, paths);
+  const create = actions.find((action) => action.path === path && action.apply !== undefined);
+  if (create) {
+    const apply = create.apply!;
+    create.apply = async () => { await apply(); s.guard.write(path, text, { keepMode: true }); };
+    create.note += "; includes your chosen convention files";
+  } else {
+    actions.push({ verb: "update", path, note: "your chosen convention files", guard: { path, before }, apply: () => { s.guard.write(path, text, { keepMode: true }); } });
+  }
 }
 
 // A path as the closing lines show it: inside the repo relative to it,
