@@ -51,6 +51,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { benchRoot, buildCase, caseIdFromHash, casesRoot, git, parseCaseId, readCase as readPlantedSpec, readLock } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
+import { greptileEntryProblems, greptileRows } from "./greptile.mjs";
 import { MERGE_BASE_RULE, materialisePr, mergeBasesOf } from "./materialise.mjs";
 import { readDecisions, resolveRulings } from "./rulings.mjs";
 
@@ -70,6 +71,7 @@ export function canonicalJson(v) {
 export const SUITES = {
   aacr: { board: "aacr", cases: "suites/aacr/cases.json", split: "splits/aacr-v1.json", origin: "real", heldOutOnly: false },
   martian: { board: "martian", cases: "suites/martian/cases.json", split: "splits/martian-v1.json", origin: "injected", heldOutOnly: true },
+  greptile: { board: "greptile", cases: "suites/greptile/cases.json", split: "splits/greptile-v1.json", origin: "injected", heldOutOnly: false },
   clean: { board: null, cases: "suites/clean/cases.json", split: "splits/clean-v1.json", origin: "real", heldOutOnly: false, clean: true },
 };
 
@@ -93,6 +95,18 @@ export function martianTruth(row) {
       category: MARTIAN_CATEGORY[g.category] ?? null,
       rawCategory: g.category ?? null,
     })),
+  };
+}
+
+// Original labels and corrected comments stay in separately named sets.
+// Neither set silently becomes the other's scoring denominator.
+export function greptileTruth(original, corrected, sources) {
+  return {
+    kind: "prose",
+    sets: {
+      greptile: { kind: "prose", source: sources.greptile, items: [{ id: "g1", text: original.bugDescription, file: original.filePath, severity: MARTIAN_SEVERITY[original.severity] ?? null, rawSeverity: original.severity, severityDetail: original.severityDetail ?? null }] },
+      augment: { ...martianTruth(corrected), source: sources.augment },
+    },
   };
 }
 
@@ -137,7 +151,9 @@ export const truthHashOf = (items) => sha256(canonicalJson(items));
 // scored against. Licence, group, split and status are bookkeeping that
 // never changes a review or a score, so a new licence reading keeps the id.
 export const HASHED = ["name", "prUrl", "repo", "cloneUrl", "prRef", "baseSha", "headSha", "mergeBaseSha", "language", "changeLines", "truthHash", "matchSignatures"];
-export const entryHash = (entry) => sha256(canonicalJson(Object.fromEntries(HASHED.map((k) => [k, entry[k] ?? null]))));
+export const GREPTILE_HASHED = [...HASHED, "title", "body", "change", "truthSets", "correctedTitle"];
+export const entryHash = (entry) => sha256(canonicalJson(Object.fromEntries((entry.truthSets ? GREPTILE_HASHED : HASHED).map((k) => [k, entry[k] ?? null]))));
+export const suiteHashOf = (cases) => sha256(canonicalJson([...cases].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).map((e) => ({ name: e.name, hash: entryHash(e) }))));
 export const realCaseId = (suite, name, hash) => `${suite}/${name}@${hash.slice(0, 8)}`;
 
 // ---------- pinned raw files ----------
@@ -171,6 +187,13 @@ export function readSuite(suite, { root = benchRoot } = {}) {
   const path = join(root, def.cases);
   if (!existsSync(path)) throw new Error(`${path} is missing; run node benchmark/ingest/${suite}.mjs`);
   const file = JSON.parse(readFileSync(path, "utf8"));
+  if (suite === "greptile") {
+    for (const entry of file.cases) {
+      const problems = greptileEntryProblems(entry);
+      if (problems.length > 0) throw new Error(`${entry.name}: ${problems.join("; ")}`);
+    }
+    if (suiteHashOf(file.cases) !== file.hash) throw new Error(`${path}: the suite hash differs; a changed case changes the suite hash`);
+  }
   const split = existsSync(join(root, def.split)) ? JSON.parse(readFileSync(join(root, def.split), "utf8")) : null;
   const splitBytes = split ? readFileSync(join(root, def.split)) : null;
   const dev = split?.cases?.dev ?? [];
@@ -240,6 +263,7 @@ function realCase(suite, s, entry) {
     truthHash: entry.truthHash,
     matchSignatures: entry.matchSignatures,
     truthCount: entry.truth,
+    ...(suite === "greptile" ? { title: entry.title, body: entry.body, change: entry.change, truthSets: entry.truthSets, correctedTitle: entry.correctedTitle } : {}),
   };
 }
 
@@ -370,6 +394,7 @@ export function freezeMergeBase(suite, name, { root = benchRoot, cache = cacheRo
   next.hash = entryHash(next);
   next.id = realCaseId(suite, name, next.hash);
   const file = { ...s.file, cases: s.file.cases.map((e) => (e.name === name ? next : e)) };
+  if (suite === "greptile") file.hash = suiteHashOf(file.cases);
   writeFileSync(join(root, s.def.cases), `${JSON.stringify(file, null, 2)}\n`);
   return { name, from, to: next.id, bases, mergeBaseSha: pick, frozen: true, rule };
 }
@@ -383,6 +408,23 @@ export function truthOf(c, { cache = cacheRoot() } = {}) {
   if (def.clean) {
     const truth = { kind: "lines", items: [] };
     if (truthHashOf(truth.items) !== c.truthHash) throw new Error(`${c.id}: a clean case has no truth, and its entry's truthHash is not the hash of none`);
+    return truth;
+  }
+  if (c.suite === "greptile") {
+    const sets = c.truthSets;
+    const originalPin = sets.greptile;
+    const originalPath = rawPath(cache, def.board, { path: originalPin.file });
+    if (!existsSync(originalPath)) throw new Error(`${originalPath} is not in the cache; run node benchmark/ingest/greptile.mjs --data-only`);
+    const text = checkPinned(readFileSync(originalPath), { path: originalPin.file, sha256: originalPin.sha256 }, originalPath).toString("utf8");
+    const original = greptileRows(text).find((r) => r.prUrl === c.source.prUrl);
+    const corrected = readPinned(cache, def.board, { path: sets.augment.file, sha256: sets.augment.sha256 }).find((r) => r.pr_title === c.correctedTitle);
+    if (!original || !corrected) throw new Error(`${c.id}: a pinned truth set has no row for this case`);
+    const sources = Object.fromEntries(Object.entries(sets).map(([name, set]) => [name, set.source]));
+    const truth = greptileTruth(original, corrected, sources);
+    for (const [name, set] of Object.entries(truth.sets)) {
+      if (set.items.length !== sets[name].items || truthHashOf(set.items) !== sets[name].hash) throw new Error(`${c.id}: ${name} truth differs from its frozen count or hash`);
+    }
+    if (truthHashOf(truth.sets) !== c.truthHash) throw new Error(`${c.id}: its two truth sets differ from their frozen hash`);
     return truth;
   }
   if (c.suite === "martian") {
