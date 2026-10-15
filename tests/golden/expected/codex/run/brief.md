@@ -411,6 +411,6 @@ Writing rules, checked by a script that sends back every broken rule:
 - Use the active voice and name the actor. Say one fact per sentence. Use the same word for the same thing every time.
 
 Judgement rules:
-- A wrong finding is worse than a missed one. When you are not sure, read more code; when you still are not sure, leave it out.
+- Raise every defect you can show from the code with confidence 0.7 or higher. Set confidence honestly; the floor removes the rest.
 - When the change adds several parallel pieces (similar queries, sibling branches, a set of guards), compare them: the one that differs from its siblings without a reason is often the bug.
 - One finding per problem.

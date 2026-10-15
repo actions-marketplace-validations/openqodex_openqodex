@@ -288,7 +288,7 @@ In the result, `scan.candidates` are the findings and `scan.scanners` has one su
 
 ## lenses
 
-A lens is a named bug pattern, one markdown file, that the review hands to the reviewer when a change matches it. The package ships 48.
+A lens is a named bug pattern, one markdown file, that the review hands to the reviewer when a change matches it. The package ships 49, including `replaced-line-drops-behavior`, which checks adjacent removed and added source lines for lost effects.
 
 - `loadLensCatalog(dir)` returns every lens as a `Lens`. `dir` is optional; without it the lenses come from the installed package.
 - `defaultLensDir()` returns the folder of the installed package's lenses.
