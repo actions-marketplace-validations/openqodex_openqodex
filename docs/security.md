@@ -94,7 +94,7 @@ Claude Code sends the review brief and the files the reviewer reads to the model
 
 - reads a snapshot of the change in `~/.openqodex/checkouts/`, never your folder. Secrets the scanners found are redacted in every file of the snapshot first, and a file too large to check is left out of it.
 - has the read, search and list tools, plus Claude Code's WebSearch and WebFetch: no shell, no edits, no MCP server, no subagent. So the reviewer reads your code and can open web pages. A reviewer that reads private code and untrusted text from the change and can open web addresses can be talked into putting that code into a web address. `reviewer_web: off` in `~/.openqodex/config.yaml` removes the web tools; set it when you do not accept that risk. Claude Code's own permission rules refuse a read outside the snapshot; that is the boundary. OpenQodex also checks every tool call in the agent's event stream and marks the review incomplete when one names a path outside the snapshot, an unknown tool or an input it cannot read; that is the alarm. A call on the output Claude Code saved for this review's own session, in its configuration folder, does not count as outside: that file holds only what the reviewer's own checked calls returned.
-- loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files, and none of the repository's.
+- loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files as agent instructions. Repository files chosen in `review.instructions_files` are quoted as convention data in the brief. See [Convention files](config.md#convention-files).
 - gets an environment built from a short allowlist: the variables Claude Code needs to run and find its login (`PATH`, `HOME`, `USER`, `CLAUDE_CONFIG_DIR`, proxy settings, `ANTHROPIC_*` keys, and cloud provider variables only when Claude Code is set to that provider). Other tokens in your shell, such as `GITHUB_TOKEN` or `NPM_TOKEN`, never reach it.
 
 The reviewer runs with session saving off (`--no-session-persistence`). After real runs with Claude Code 2.1.289, no transcript, history line or project entry for a snapshot was found in the Claude Code configuration folder. One thing is saved there: when a search or read returns more text than Claude Code hands the model at once, Claude Code 2.1.296 saves that text under `projects/` in its configuration folder, and it stays there after the review. Claude Code's own logs and telemetry follow its own settings.
@@ -201,9 +201,3 @@ The change itself is worked out without writing inside `.git`. OpenQodex uses a 
 The code graph keeps the bytes each kept build read: it writes them as a git tree into the repository's own objects, through a temporary copy of the index, and holds that tree with a local ref, `refs/openqodex/graph/<tree>`, while a build of it is kept; the ref is deleted with the last such build. Your index, your branches and your working files are not touched. The ref is local: a plain `git push` does not send it, `git push --mirror` would. With `--report-dir` nothing is written there.
 
 The review writes the graph's files into its own snapshot, under `.openqodex-review/graph/`, before the snapshot is hashed, so its reviewer reads them without leaving the snapshot. They pass through the same secret redaction as the brief. A change that holds a path named `.openqodex-review` stops the review rather than having it overwritten.
-
-## Chosen convention files
-
-The reviewer quotes only the files chosen in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. See [Convention files](config.md#convention-files) for sources, limits and precedence.
-
-Chosen files join the brief sent to the reviewer's model provider.

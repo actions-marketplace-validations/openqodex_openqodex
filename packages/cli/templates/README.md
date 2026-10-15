@@ -109,4 +109,4 @@ No template: `src/agents/targets.ts` builds each entry, and `src/agents/mcp.ts` 
 
 The team and instruction sections tell agents to ask the developer before setting `review.instructions_files`. Custom instructions add to the files the owners chose.
 
-Previous team and instruction sections live in `previous/`. Init uses the previous instruction templates when replacing its own sections. `scripts/instruction-sections.mjs` builds the exact stripping set from the current and previous templates. Run it after changing a section; `--check` verifies the generated set.
+Previous team and instruction sections live in `previous/`. Whole historical Cursor and Cline rules live in `previous/rules/`, with their instruction sections filled from the same released tag. Init replaces only the previous instruction sections listed in `targets.ts`. `scripts/instruction-sections.mjs` builds the exact section and whole-file catalogue from these templates. Run it after changing a template. Build never regenerates it; `--check` guards the committed catalogue in the local and CI gates. Tests pin released section hashes, so a shallow checkout needs no release tags.

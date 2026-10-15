@@ -786,7 +786,7 @@ A release note, a README line, a post or a reply that states anything about revi
 
 ## Chosen convention cases
 
-`--suite conventions` runs three authored cases under `benchmark/suites/conventions/`. They use the demo's Flask items endpoint and the same change: a literal page size in place of the named constant. The violation case chooses `CONTRIBUTING.md`. The exception case chooses a file that explicitly permits that literal. The control chooses no file. Each `case.json` records the expected findings. The violation case requires the `CONTRIBUTING.md` citation through its `mentions` field.
+`--suite conventions` runs three authored cases under `benchmark/suites/conventions/`. They use the demo's Flask items endpoint and the same change: a literal page size in place of the named constant. The violation case chooses `CONTRIBUTING.md`. The exception case chooses a file that explicitly permits that literal. The control chooses no file. Each `case.json` records the expected findings. The violation case requires the `CONTRIBUTING.md` citation through its `mentions` field. The no-rule control accepts a duplicated-literal finding through the existing `extras` field, since that concern needs no convention file.
 
 These cases use the planted `case.json`, `base/` and `change/` format. They have their own suite name and hashes. They do not enter the frozen corpus or its splits. The laptop runner passes the case config and the base commit as the instructions source. The server runner passes the case's parsed config to the library. Existing suites keep their inputs.
 

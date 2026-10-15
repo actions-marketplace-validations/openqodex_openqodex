@@ -4,5 +4,13 @@
   "language": "python",
   "framework": "flask",
   "clean": true,
-  "bugs": []
+  "bugs": [],
+  "extras": [
+    {
+      "file": "app/server.py",
+      "lines": [24, 24],
+      "mentions": ["magic number", "duplicated", "hardcoded", "hard-coded", "PAGE_SIZE"],
+      "why": "The literal duplicates PAGE_SIZE. A maintainability finding about it does not require an owner convention."
+    }
+  ]
 }

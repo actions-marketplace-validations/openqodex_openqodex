@@ -81,6 +81,8 @@ Inside a repository, `init` creates two files in `.openqodex/`, and so does the 
 - `.openqodex/config.yaml`: the config, every key at its default with a comment. `config` lists every key. It is not created while a `.openqodex.yaml` sits at the root of the repository; that file is still read, and `init` says how to move it.
 - `.openqodex/custom-instructions.md`: what a reviewer of this repository must know: conventions, what never to flag, what always to check. The review brief carries its text word for word. A file over 32 KB stops the review with a message; nothing in it is cut. The brief shows it to the reviewer as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the reviewer flags, and a candidate dropped because of it says so in the report; it cannot give the reviewer a tool, skip a check or change the finding shape.
 
+The brief can also quote [convention files](config.md#convention-files) chosen by the developer. Never add a path on your own. Ask which files the reviewer may use, then set only what they name.
+
 Both are meant to be committed, so the whole team shares them. A file that exists is never touched. `.openqodex/.gitignore` keeps the review reports out of git, so after the first run `git status` shows only these files and the `.gitignore`.
 
 ## User scope and project scope
@@ -236,11 +238,3 @@ Add `--project` to remove project files. `init` records what it wrote in `~/.ope
 - The launcher and the runtime copies are removed when no hook or MCP server entry still calls them. The git pre-push hook counts as one.
 
 Scanners stay in `~/.openqodex/tools/`. Delete that folder to remove them too.
-
-## Chosen convention files
-
-The reviewer quotes only the files chosen in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. See [Convention files](config.md#convention-files) for sources, limits and precedence.
-
-Never add a path on your own. Ask the developer which files the reviewer may use, then set only what they name.
-
-This release advances the user-scope agent contract so `init` can refresh Cursor and Cline rules with the developer-choice requirement. Existing contract copies stay unchanged.

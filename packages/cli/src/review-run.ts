@@ -18,7 +18,7 @@
 // The developer's files are never written. A tool failure, an incomplete
 // review and a missing reviewer all exit 2.
 import { join, relative, resolve } from "node:path";
-import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, writeLatest, writeReportFiles } from "@openqodex/core";
+import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, resolveInstructionRef, writeLatest, writeReportFiles } from "@openqodex/core";
 import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
 import { DEPTH_ENV, TIMED_OUT, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
 import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
@@ -195,6 +195,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const say = progress(o.flags);
   const loaded = await loadRepo(o.flags, o.reportDir === undefined);
   const repoRoot = loaded.repoRoot;
+  const instructionsRef = o.instructionsRef === undefined ? undefined : await resolveInstructionRef(repoRoot, o.instructionsRef);
   const config: Config = o.blockOn === undefined ? loaded.config : { ...loaded.config, blockOnSeverity: o.blockOn };
   if (o.reportDir === undefined) {
     const hint = conventionHint(repoRoot, config.instructionsFiles);
@@ -210,7 +211,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const settings = readReviewerSettings();
   for (const w of settings.warnings) warn(`openqodex: ${w}`);
   const web = o.web ?? settings.web;
-  const parts = laptopParts(o, repoRoot, config);
+  const parts = laptopParts({ ...o, instructionsRef }, repoRoot, config);
   const choice = o.reviewer ?? settings.reviewer;
   // An unknown reviewer name stops the run before the scanner lists are read.
   reviewerOrder(choice, parts.drivers);

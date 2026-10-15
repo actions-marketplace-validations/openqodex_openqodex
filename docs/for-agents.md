@@ -149,7 +149,7 @@ The config belongs to the team. Change it only when the developer asks.
 | `scanners.disable` | built-in scanners to switch off, by name |
 | `scanners.custom` | custom scanners (see above) |
 
-Write what a reviewer of this repository must know in `.openqodex/custom-instructions.md`. The brief is the text that OpenQodex gives the reviewer. The brief quotes this file word for word.
+Write what a reviewer of this repository must know in `.openqodex/custom-instructions.md`. The brief is the text that OpenQodex gives the reviewer. The brief quotes this file word for word. It can also quote [convention files](config.md#convention-files) chosen by the developer. Never add a path on your own. Ask which files the reviewer may use, then set only what they name.
 
 `~/.openqodex/bin/openqodex guide config` lists the keys of the installed version.
 
@@ -189,9 +189,3 @@ It removes what `init` wrote. It keeps a file or a section that the developer ed
 ## Read more offline
 
 `~/.openqodex/bin/openqodex guide <topic>` prints one page of the docs. The topics are the file names in `docs/`, such as `quickstart`, `cli`, `config`, `scanners`, `custom-scanners`, `agents`, `security` and `privacy`.
-
-## Chosen convention files
-
-The reviewer quotes only the files chosen in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. See [Convention files](config.md#convention-files) for sources, limits and precedence.
-
-Never add a path on your own. Ask the developer which files the reviewer may use, then set only what they name.

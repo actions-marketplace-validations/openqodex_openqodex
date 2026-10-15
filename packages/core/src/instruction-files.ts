@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, win32 } from "node:path";
 import { FolderReader } from "./guarded-fs.js";
 import { matchesGlob } from "./glob.js";
-import { stripInstructionSections } from "./instruction-sections.js";
+import { isShippedInstructionFile, stripInstructionSections } from "./instruction-sections.js";
 import { safeGit, SERVER_GIT_ENV } from "./safe-git.js";
 import { OpenQodexError } from "./types.js";
 import type { InstructionFile, InstructionProvenance } from "./types.js";
@@ -29,6 +29,11 @@ async function commitOf(repoRoot: string, source: string): Promise<string> {
   const sha = got.stdout.toString("utf8").trim();
   if (got.code !== 0 || !FULL_ID.test(sha)) throw new OpenQodexError(`--instructions-ref ${source} is not a commit in this repository`);
   return sha;
+}
+
+// CLI values never select the internal work-tree source.
+export async function resolveInstructionRef(repoRoot: string, ref: string): Promise<string> {
+  return ref === "none" ? "none" : commitOf(repoRoot, ref);
 }
 
 // Bound metadata before matching. A rejected expansion is omitted as a whole.
@@ -134,6 +139,7 @@ export async function resolveInstructionFiles(args: { repoRoot: string; paths: r
         record.bytes = bytes.length;
         if (total + bytes.length > CONVENTIONS_MAX_BYTES) throw new Error("would exceed the 64 KB total limit");
         const raw = bytes.toString("utf8");
+        if (isShippedInstructionFile(raw)) throw new Error("is an unchanged OpenQodex rule file");
         const text = stripInstructionSections(raw);
         if (text !== raw) record.transformed = "shipped OpenQodex section removed";
         if (text.trim() === "") throw new Error("has no conventions after removing any shipped OpenQodex section");

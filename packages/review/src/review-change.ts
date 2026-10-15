@@ -207,7 +207,7 @@ export type ReviewDeps = {
   // The code graph's kept store; left out, the graph is built in memory.
   graphStore?: () => Promise<{ store: GraphStore | null; refused?: string }>;
   // The owners' instructions for the brief, redacted with the scan's
-  // secrets, and the hash of the file they came from (null for none).
+  // secrets, and the hash of the owners' text and admitted raw files (null for none).
   instructions: (secrets: string[]) => { text: string; hash: string | null; from?: "host"; files?: InstructionFile[]; provenance?: InstructionProvenance[]; notes?: string[] } | Promise<{ text: string; hash: string | null; from?: "host"; files?: InstructionFile[]; provenance?: InstructionProvenance[]; notes?: string[] }>;
   onEvent: (event: ReviewEvent) => void;
   // Receives the run's result before the run cleans up (the graph's lease,

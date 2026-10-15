@@ -30,7 +30,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "@openqodex/review";
 import { launcherPath, launcherRunner, launcherUsers, oldLocks, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks, staleRuntimes } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
-import { instructionCandidates } from "../instructions.js";
+import { instructionCandidates, mergeInstructionChoice } from "../instructions.js";
 import { firstReviewLine, reviewAfterInit } from "./init-review.js";
 import { REVIEWER_LABELS, reviewerReadiness, type Readiness } from "../review-run.js";
 import { pruneHomeReceipts, staleReceipts } from "../receipts.js";
@@ -628,7 +628,7 @@ async function planConventionChoice(s: Setup, actions: Action[]): Promise<void> 
   });
   if (prompts.isCancel(chosen)) return;
   // Keep explicit paths that the picker cannot list, including globs.
-  const paths = [...(loaded.config.instructionsFiles ?? []).filter((path) => !candidates.some((file) => file.path === path)), ...chosen];
+  const paths = mergeInstructionChoice(loaded.config.instructionsFiles ?? [], candidates.map((file) => file.path), chosen);
   if (JSON.stringify(paths) === JSON.stringify(loaded.config.instructionsFiles ?? [])) return;
   const path = loaded.path ?? join(s.repoRoot, STATE_DIR, FOLDER_CONFIG);
   const before = readRepoFile(s.repoRoot, path, CONFIG_MAX_BYTES);

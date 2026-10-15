@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveInstructionFiles, verifyInstructionFiles } from "./instruction-files.js";
+import { resolveInstructionFiles, resolveInstructionRef, verifyInstructionFiles } from "./instruction-files.js";
 
 const roots: string[] = [];
 function repo(): string {
@@ -73,6 +73,9 @@ describe("chosen convention files", () => {
     git("add", ".");
     git("commit", "-qm", "Base");
     const source = git("rev-parse", "HEAD");
+    await expect(resolveInstructionRef(root, "HEAD")).resolves.toBe(source);
+    await expect(resolveInstructionRef(root, "none")).resolves.toBe("none");
+    await expect(resolveInstructionRef(root, "work tree")).rejects.toThrow("is not a commit");
     writeFileSync(join(root, "rules.md"), "Work tree rule.");
     const got = await resolveInstructionFiles({ repoRoot: root, paths: ["rules.md", "linked.md", "outside.md"], source, admit: (path) => path !== "outside.md" });
     expect(got.files).toEqual([{ path: "rules.md", text: "Base rule.", source }]);

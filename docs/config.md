@@ -66,13 +66,13 @@ review:
 
 Paths are relative to the repository. Globs use `*`, `**` and `?`. They match tracked regular files in lexical order within each entry. Untracked and ignored files need an explicit path. A source list over 4 MB or 50,000 paths is refused as a whole and noted. Files follow the configured order, with duplicates supplied once. A file is at most 32 KB, and the chosen files together are at most 64 KB. A missing path, link, folder, path outside the repository or file past either cap is skipped whole. The receipt and report notes name every omission. A glob with no match is silent.
 
-`init` lists known candidates with their sizes and asks which files the reviewer may use. With no interactive terminal, including `--yes`, it selects nothing and prints the key to set. A review with an empty list prints one hint when candidates exist. Files containing only shipped OpenQodex sections do not count as candidates. An agent must ask the developer before adding paths.
+`init` lists known candidates with their sizes and asks which files the reviewer may use. With no interactive terminal, including `--yes`, it selects nothing and prints the key to set. A review with an empty list prints one hint when candidates exist. Files containing only shipped OpenQodex sections or an unchanged shipped rule file do not count as candidates. Re-running init keeps existing entries in place, drops deselected candidates and appends new choices. An agent must ask the developer before adding paths.
 
 The brief quotes the chosen files after `.openqodex/custom-instructions.md`. Only conventions that apply to the changed code count. Stated scopes and exceptions apply. Custom instructions win on conflict; a later file never silently overrides an earlier one.
 
-Exact shipped OpenQodex team and instruction sections, current and previous, are removed from the quoted copy, with a note. Edited text between those markers stays. The manifest binds to each supplied file's original bytes and source. Finalize checks only that selection, so changing a skipped file does not invalidate the review.
+Exact shipped OpenQodex team and instruction sections, current and previous, are removed from the quoted copy, with a note. An unchanged shipped Cursor or Cline rule file is omitted whole, with a note when chosen. Edited files and edited text between those markers stay. The manifest binds to each supplied file's original bytes and source. Finalize checks only that selection, so changing a skipped file does not invalidate the review.
 
-Local reviews read the developer's own work tree. The Action reads from the commit used for config. The library reads from the merge base inside the review's scopes. Code exclusions do not exclude chosen settings files. Conventions added to the base branch after divergence are not seen by the library. Supplied files and omissions appear in report notes, including the HTML report.
+Local reviews read the developer's own work tree. The Action reads from the commit used for config. The library reads from the merge base inside the review's scopes. Code exclusions do not exclude chosen settings files. Conventions added to the base branch after divergence are not seen by the library. Supplied files and omissions appear in report notes, including the HTML and Markdown reports.
 
 ## Keys from the hosted review
 

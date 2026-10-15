@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { benchRoot, listCases, repoRoot } from "../lib/cases.mjs";
 import { laptopReviewArgs } from "../lib/runner.mjs";
+import { classify, scoreSample } from "../lib/score.mjs";
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -44,4 +45,13 @@ it("does not leave chosen fixture configs ignored in a fresh checkout", () => {
   const ignored = spawnSync("git", ["check-ignore", "--no-index", "--", ...paths], { cwd: repoRoot, encoding: "utf8" });
   expect(ignored.status, ignored.stderr + ignored.stdout).toBe(1);
   for (const path of paths) expect(readFileSync(join(repoRoot, path), "utf8")).toContain("instructions_files:");
+});
+
+it("does not penalize a duplicated literal in the no-rule control but still rejects invented rules", () => {
+  const spec = JSON.parse(readFileSync(join(benchRoot, "suites/conventions/no-rule/case.json"), "utf8"));
+  const finding = { file_path: "app/server.py", line_number: 24, category: "maintainability", title: "A magic number duplicates the page size", description: "Use PAGE_SIZE for the limit." };
+  expect(classify(finding, spec).outcome).toBe("accepted");
+  const score = scoreSample({ spec, report: { findings: [finding], completion: { status: "complete" } }, brief: "" });
+  expect(score.controls).toEqual({ hit: 1, of: 1 });
+  expect(classify({ ...finding, title: "CONTRIBUTING.md forbids this change", description: "An owner rule was violated." }, spec).outcome).toBe("false");
 });

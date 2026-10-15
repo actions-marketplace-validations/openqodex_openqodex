@@ -4,7 +4,7 @@
 // vanish without a trace.
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, readFileBounded, readRepoFile, stripInstructionSections } from "@openqodex/core";
+import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, isShippedInstructionFile, readFileBounded, readRepoFile, stripInstructionSections } from "@openqodex/core";
 
 export const INSTRUCTIONS_FILE = "custom-instructions.md";
 export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
@@ -42,7 +42,10 @@ export function instructionCandidates(repoRoot: string): { path: string; bytes: 
     if (!entry.ok || !entry.stat.isFile()) return;
     const content = reader.read(path.split("/"), INSTRUCTIONS_MAX_BYTES);
     // A large or unreadable candidate remains visible so the owner can decide.
-    if (content.ok && stripInstructionSections(content.data.toString("utf8")).trim() === "") return;
+    if (content.ok) {
+      const text = content.data.toString("utf8");
+      if (isShippedInstructionFile(text) || stripInstructionSections(text).trim() === "") return;
+    }
     found.push({ path, bytes: Number(entry.stat.size) });
   };
   for (const path of ["CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", ".cursorrules"]) add(path);
@@ -63,4 +66,12 @@ export function conventionHint(repoRoot: string, paths: readonly string[] = []):
   if (paths.length > 0) return null;
   const candidates = instructionCandidates(repoRoot);
   return candidates.length === 0 ? null : `Convention files available: ${candidates.map((file) => file.path).join(", ")}. Ask the developer which files to set in review.instructions_files.`;
+}
+
+// Keep precedence when a picker changes only part of an explicit list.
+export function mergeInstructionChoice(previous: readonly string[], candidates: readonly string[], chosen: readonly string[]): string[] {
+  return [
+    ...previous.filter((path) => !candidates.includes(path) || chosen.includes(path)),
+    ...chosen.filter((path) => !previous.includes(path)),
+  ];
 }

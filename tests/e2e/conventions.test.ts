@@ -4,7 +4,7 @@
 // report-dir reads work tree rules; a commit flag reads head's work tree.
 // The model provider alone is a stand-in.
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { removeTempDirs, tempDir } from "../temp-dirs.mjs";
@@ -39,6 +39,15 @@ function answer(dir: string): void {
 const agentArgs = ["review", "--agent", "--offline", "--only", "sqllint", "--no-graph"];
 
 describe("conventions in the real CLI", () => {
+  it("refuses the internal work tree source through instructions-ref with an external report folder", () => {
+    const s = fixture();
+    const report = tempDir("oq-convention-refused-");
+    const result = cli(s, ["review", "--offline", "--only", "sqllint", "--no-graph", "--config", join(s.repo, ".openqodex/config.yaml"), "--report-dir", report, "--instructions-ref", "work tree"]);
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stderr).toContain("--instructions-ref work tree is not a commit");
+    expect(existsSync(join(report, "brief.md"))).toBe(false);
+  });
+
   it("keeps omitted files out of the brief and warns in the receipt without blocking", () => {
     const s = fixture();
     const prepared = cli(s, agentArgs);

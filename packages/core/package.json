@@ -19,7 +19,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "node ../../scripts/instruction-sections.mjs && tsup",
+    "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

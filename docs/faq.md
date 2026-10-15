@@ -6,7 +6,7 @@ No other key and no account. The reviewer is Claude Code or Codex, on your own l
 
 ## Does OpenQodex send my code anywhere?
 
-Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, dependency names and versions sent to osv.dev, Kubernetes schemas and the RustSec advisory database. The reviewer sends the brief and the files it reads to the model of your Claude Code or Codex login. A custom scanner you approved does whatever its own command does.
+Not through the built-in scanners. Their network use is listed in `security`: scanner downloads, Semgrep rule packs, dependency names and versions sent to osv.dev, Kubernetes schemas and the RustSec advisory database. The reviewer sends the brief and the files it reads to the model of your Claude Code or Codex login. The brief includes any [convention files](config.md#convention-files) you chose. A custom scanner you approved does whatever its own command does.
 
 ## Will it block my push?
 
@@ -52,7 +52,3 @@ Through WSL. OpenQodex runs on macOS and Linux.
 ## How do I remove it?
 
 `npx openqodex init --uninstall` removes what `init` wrote. Delete `~/.openqodex/` to remove the scanners as well.
-
-## Chosen convention files
-
-The reviewer quotes only the files chosen in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. See [Convention files](config.md#convention-files) for sources, limits and precedence.

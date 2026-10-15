@@ -22,4 +22,4 @@ export * from "./safe-git.js";
 export * from "./delivery.js";
 export * from "./instruction-files.js";
 
-export { stripInstructionSections } from "./instruction-sections.js";
+export { isShippedInstructionFile, stripInstructionSections } from "./instruction-sections.js";
