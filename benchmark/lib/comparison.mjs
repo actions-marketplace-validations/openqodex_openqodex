@@ -6,8 +6,9 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, caseHash, readLock } from "./cases.mjs";
-import { entryProblems, sha256 } from "./index.mjs";
+import { entryProblems, hashFolder, sha256 } from "./index.mjs";
 import { bundleHash } from "./runner.mjs";
+import { isPersonName, readPeople } from "./rulings.mjs";
 import { canonicalJson, entryHash, readSuite, SUITES } from "./suites.mjs";
 
 const HEX40 = /^[a-f0-9]{40}$/;
@@ -109,15 +110,19 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     need(equal(pin, suiteFingerprint(name, { root })), `comparison suite ${name} case hashes or split no longer match`);
     if (SUITES[name]?.board) need(record.boards[SUITES[name].board], `comparison suite ${name} has no board pin`);
   }
-  for (const [name, r] of Object.entries(record.reviewers)) need(object(r) && ["server", "laptop"].includes(r.path) && text(r.reviewer) && text(r.model) && ["on", "off"].includes(r.graph) && ["on", "off"].includes(r.web), `comparison reviewers.${name} must pin path, reviewer, model, graph and web`);
+  for (const [name, r] of Object.entries(record.reviewers)) need(object(r) && ["server", "laptop"].includes(r.path) && text(r.reviewer) && text(r.model) && ["on", "off"].includes(r.graph) && ["on", "off"].includes(r.web) && (r.effort === null || text(r.effort)) && ((r.path === "laptop" && r.maxOutputTokens === null) || (Number.isInteger(r.maxOutputTokens) && r.maxOutputTokens > 0)), `comparison reviewers.${name} must pin path, reviewer, model, graph, web, effort and maxOutputTokens`);
   need(Number.isFinite(record.capUsd) && record.capUsd > 0, "comparison capUsd must be positive dollars");
   need(Array.isArray(record.calibrations), "comparison calibrations must be an array");
   const calibrationFiles = new Set();
   for (const c of record.calibrations) {
-    need(object(c) && HEX64.test(c.sha256 ?? "") && object(c.agreement) && Object.keys(c.agreement).length > 0 && Object.values(c.agreement).every(Number.isFinite), "calibration must pin file, sha256 and agreement numbers");
+    need(object(c) && HEX64.test(c.sha256 ?? "") && buildProblems(c.build) && object(c.agreement) && Object.keys(c.agreement).length > 0 && Object.values(c.agreement).every(Number.isFinite), "calibration must pin file, sha256, build and agreement numbers");
+    need(equal(c.build, record.build), `calibration ${c.file} build differs from the comparison build`);
     need(!calibrationFiles.has(c.file), "duplicate calibration file"); calibrationFiles.add(c.file);
     const file = reference(root, c.file, "calibration");
     need(sha256(readFileSync(file)) === c.sha256, `calibration ${c.file} no longer matches its hash`);
+    const calibration = json(file);
+    need(equal(calibration.build, c.build), `calibration ${c.file} build differs from its reference`);
+    need(equal(calibration.agreement, c.agreement), `calibration ${c.file} agreement differs from its reference`);
   }
   need(Array.isArray(record.runs), "comparison runs must be an array");
   const runs = new Set();
@@ -131,26 +136,28 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     need(e.runId === r.runId && entryProblems(e).length === 0, `run ${r.runId} has an invalid index entry`);
     const suite = record.suites[e.suite];
     need(suite && e.splitHash === suite.splitHash && Array.isArray(e.caseIds) && e.caseIds.length > 0 && e.caseIds.every((id) => Object.entries(suite.caseHashes).some(([name, h]) => id === `${e.suite}/${name}@${h.slice(0, 8)}`)), `run ${r.runId} differs from the comparison suite`);
-    let tree = e.build?.tree;
-    if (!tree) {
-      const manifest = json(reference(root, `results/${r.runId}/manifest.json`, "run build"));
-      need(manifest.build?.commit === e.build.commit && manifest.build?.bundleHash === e.build.bundleHash, `run ${r.runId} build differs from its manifest`);
-      tree = manifest.build?.tree;
-    }
+    const folder = reference(root, `results/${r.runId}`, "run folder");
+    const { listHash } = hashFolder(folder);
+    need(listHash === e.asset.listHash || listHash === e.privateListHash, `run ${r.runId} folder differs from its asset or private list hash`);
+    const manifest = json(reference(root, `results/${r.runId}/manifest.json`, "run manifest"));
+    need(manifest.build?.commit === e.build.commit && manifest.build?.bundleHash === e.build.bundleHash, `run ${r.runId} build differs from its manifest`);
+    const tree = e.build?.tree ?? manifest.build?.tree;
     need(equal({ commit: e.build.commit, tree, bundleHash: e.build.bundleHash, version: e.build.cliVersion }, record.build), `run ${r.runId} build differs from the comparison build`);
     const reviewer = record.reviewers[r.reviewer];
     need(reviewer && e.path === reviewer.path && e.web === reviewer.web && e.reviewers?.[reviewer.reviewer]?.model === reviewer.model && (reviewer.version === undefined || e.reviewers[reviewer.reviewer].version === reviewer.version) && e.configs.every((c) => c === `${reviewer.reviewer.replace(/:/g, "-")}-graph-${reviewer.graph}`), `run ${r.runId} differs from its reviewer settings`);
+    const settings = manifest.reviewers?.[reviewer.reviewer]?.settings;
+    need((settings?.effort ?? null) === reviewer.effort && (settings?.maxOutputTokens ?? null) === reviewer.maxOutputTokens, `run ${r.runId} differs from its reviewer settings`);
   }
   const a = record.acceptance;
   need(object(a) && ["person", "date", "hash"].every((f) => typeof a[f] === "string"), "comparison acceptance must give person, date and hash");
   const unsigned = a.person === "" && a.date === "" && a.hash === "";
-  need(unsigned || (text(a.person) && date(a.date) && a.date.length === 10 && HEX64.test(a.hash) && a.hash === comparisonHash(record)), "comparison acceptance is incomplete or its hash no longer covers the record");
+  need(unsigned || (isPersonName(a.person, readPeople(join(root, "review-queue"))) && date(a.date) && a.date.length === 10 && HEX64.test(a.hash) && a.hash === comparisonHash(record)), "comparison acceptance must name a person in review-queue/people.json, give a date and hash the complete record");
   return { accepted: !unsigned, hash: comparisonHash(record) };
 }
 
 // One product per board. Secondary metrics stay on that row, so F1 and
 // precision cannot accidentally be printed as separate products.
-export function validateOutsideRows(data) {
+export function validateOutsideRows(data, { root = benchRoot } = {}) {
   need(object(data) && data.version === 1 && Array.isArray(data.rows) && data.rows.length > 0, "outside rows version must be 1 with nonempty rows");
   const seen = new Set();
   for (const [i, row] of data.rows.entries()) {
@@ -161,6 +168,11 @@ export function validateOutsideRows(data) {
     for (const field of ["measurementDate", "readDate"]) need(date(row[field]), `${at}: ${field} must be a calendar date or month`);
     need(row.readDate.length === 10, `${at}: readDate must include the day`);
     need(url(row.source), `${at}: source must be a URL`);
+    if (["greptile-original", "augment-corrected"].includes(row.board) || row.snapshot !== undefined) {
+      const s = row.snapshot;
+      need(object(s) && text(s.file) && s.file.startsWith("index/outside-sources/") && HEX64.test(s.sha256 ?? ""), `${at}: snapshot must pin a file under index/outside-sources and its sha256`);
+      need(sha256(readFileSync(reference(root, s.file, `${at} snapshot`))) === s.sha256, `${at}: snapshot no longer matches its hash`);
+    }
     const g = row.goldenSet;
     need(object(g) && text(g.identity) && text(g.revision) && url(g.source), `${at}: goldenSet must give identity, revision and source URL`);
     if (row.metrics !== undefined) need(object(row.metrics) && Object.entries(row.metrics).every(([k, v]) => text(k) && Number.isFinite(v) && v >= 0 && v <= 100), `${at}: metrics must be named percentages`);

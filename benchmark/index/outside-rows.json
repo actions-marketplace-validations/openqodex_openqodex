@@ -14,6 +14,10 @@
         "identity": "Greptile original set: 50 bugs in 50 pull requests across five repositories",
         "revision": "July 2025 original set",
         "source": "https://www.greptile.com/benchmarks"
+      },
+      "snapshot": {
+        "file": "index/outside-sources/greptile-original.json",
+        "sha256": "f8e49272e643a29b32f4232e29ec471331a0cdec28a353ef76f8518504699dd9"
       }
     },
     {
@@ -29,6 +33,10 @@
         "identity": "Greptile original set: 50 bugs in 50 pull requests across five repositories",
         "revision": "July 2025 original set",
         "source": "https://www.greptile.com/benchmarks"
+      },
+      "snapshot": {
+        "file": "index/outside-sources/greptile-original.json",
+        "sha256": "f8e49272e643a29b32f4232e29ec471331a0cdec28a353ef76f8518504699dd9"
       }
     },
     {
@@ -44,6 +52,10 @@
         "identity": "Greptile original set: 50 bugs in 50 pull requests across five repositories",
         "revision": "July 2025 original set",
         "source": "https://www.greptile.com/benchmarks"
+      },
+      "snapshot": {
+        "file": "index/outside-sources/greptile-original.json",
+        "sha256": "f8e49272e643a29b32f4232e29ec471331a0cdec28a353ef76f8518504699dd9"
       }
     },
     {
@@ -59,6 +71,10 @@
         "identity": "Greptile original set: 50 bugs in 50 pull requests across five repositories",
         "revision": "July 2025 original set",
         "source": "https://www.greptile.com/benchmarks"
+      },
+      "snapshot": {
+        "file": "index/outside-sources/greptile-original.json",
+        "sha256": "f8e49272e643a29b32f4232e29ec471331a0cdec28a353ef76f8518504699dd9"
       }
     },
     {
@@ -74,6 +90,10 @@
         "identity": "Greptile original set: 50 bugs in 50 pull requests across five repositories",
         "revision": "July 2025 original set",
         "source": "https://www.greptile.com/benchmarks"
+      },
+      "snapshot": {
+        "file": "index/outside-sources/greptile-original.json",
+        "sha256": "f8e49272e643a29b32f4232e29ec471331a0cdec28a353ef76f8518504699dd9"
       }
     },
     {
@@ -95,7 +115,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -116,7 +140,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -137,7 +165,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -158,7 +190,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -179,7 +215,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -200,7 +240,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "augment-corrected",
@@ -221,7 +265,11 @@
         "revision": "3f2c8ab794b4ed71c099cbf0a7670555e90906dc",
         "source": "https://github.com/ai-code-review-evaluations/golden_comments/tree/3f2c8ab794b4ed71c099cbf0a7670555e90906dc"
       },
-      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md"
+      "measurementDateSource": "https://github.com/ai-code-review-evaluations/golden_comments/blob/3f2c8ab794b4ed71c099cbf0a7670555e90906dc/README.md",
+      "snapshot": {
+        "file": "index/outside-sources/augment-corrected.json",
+        "sha256": "0437856c6a9519c6660a74eec3c57e86a6150750993fdee6ef6f782aa334ef92"
+      }
     },
     {
       "board": "martian-offline",

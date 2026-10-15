@@ -327,7 +327,9 @@
       "reviewer": "model:gpt-6.1-sol",
       "model": "gpt-6.1-sol",
       "graph": "on",
-      "web": "off"
+      "web": "off",
+      "effort": null,
+      "maxOutputTokens": 32000
     },
     "cli-claude": {
       "path": "laptop",
@@ -335,7 +337,9 @@
       "model": "claude-opus-5-5",
       "version": "2.1.296",
       "graph": "on",
-      "web": "off"
+      "web": "off",
+      "effort": null,
+      "maxOutputTokens": null
     },
     "cli-codex": {
       "path": "laptop",
@@ -343,7 +347,9 @@
       "model": "gpt-6.1-sol",
       "version": "0.162.1",
       "graph": "on",
-      "web": "off"
+      "web": "off",
+      "effort": null,
+      "maxOutputTokens": null
     }
   },
   "calibrations": [],
