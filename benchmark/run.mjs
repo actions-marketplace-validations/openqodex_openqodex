@@ -404,6 +404,12 @@ function parseArgs(argv) {
   o.suite ??= named[0] ?? "planted";
   if (!AUTHORED_SUITES[o.suite] && !SUITES[o.suite]) throw new Error(`--suite takes planted, conventions or ${Object.keys(SUITES).join(", ")}, not ${o.suite}`);
   o.real = !AUTHORED_SUITES[o.suite];
+  // Authored cases live directly under the suite root. Resolve the suite
+  // first, then remove its qualifier before validating or snapshotting names.
+  if (!o.real) {
+    o.cases = o.cases?.map((c) => c.startsWith(`${o.suite}/`) ? c.slice(o.suite.length + 1) : c) ?? null;
+    o.realRefs = null;
+  }
   if (!o.real && o.split !== null && o.split !== "dev") throw new Error(`--split ${o.split}: the planted suite has one split, dev`);
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   if (o.materialiseOnly) return materialiseArgs(o, given, real);
@@ -448,7 +454,7 @@ function parseArgs(argv) {
     throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
   }
   const all = listCases(AUTHORED_SUITES[o.suite]?.root);
-  for (const c of o.real ? [] : (o.cases ?? [])) if (!isRealRef(c) && !all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
+  for (const c of o.real ? [] : (o.cases ?? [])) if (!all.includes(c)) throw new Error(`no case ${c}; cases: ${all.join(", ")}`);
   return o;
 }
 

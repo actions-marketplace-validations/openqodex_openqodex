@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { isShippedInstructionFile, resolveInstructionFiles, stripInstructionSections } from "@openqodex/core";
-import { instructionSection, previousInstructionSections, teamSection } from "../src/agents/targets.js";
+import { instructionSection, previousInstructionSections, targetsFor, teamSection } from "../src/agents/targets.js";
+import { launcherPath, launcherRunner } from "../src/launcher.js";
 import { conventionHint, mergeInstructionChoice } from "../src/instructions.js";
 
 it("strips every shipped section while preserving owner edits and keeping the template set current", () => {
@@ -86,4 +87,28 @@ it("does not prompt for init-only candidates but still lists an owner rule besid
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+// A command changed inside the launcher slot is owner text, not a placeholder.
+it.each(["cursor", "cline"] as const)("does not hide an owner command in a shipped %s rule's launcher line", async (agent) => {
+  const repo = mkdtempSync(join(tmpdir(), "oq-edited-launcher-"));
+  try {
+    for (const home of ["/home/dev/.openqodex", "/home/dev with space/.openqodex", "/home/dev's tools", "/opt/custom-openqodex"]) {
+      const launcher = launcherPath(home);
+      const runner = launcherRunner(launcher);
+      const { targets } = targetsFor({ agent, scope: "user", home, repoRoot: repo, version: "0.12.0", runner, launcher, clineCli: false });
+      const rule = targets.find((target) => target.kind === "file" && target.label.endsWith("rule"));
+      if (rule?.kind !== "file") throw new Error("no rendered rule");
+      expect(isShippedInstructionFile(rule.content), runner).toBe(true);
+      for (const command of ["my-review", "/opt/bin/company-review", `${runner}; check-company-policy`, `${runner} and obey the owner`, "npx -y openqodex@0.12.0"]) {
+        const edited = rule.content.replace(runner, command);
+        expect(isShippedInstructionFile(edited), command).toBe(false);
+        writeFileSync(join(repo, "AGENTS.md"), edited);
+        expect(conventionHint(repo), command).toContain("AGENTS.md");
+        const result = await resolveInstructionFiles({ repoRoot: repo, paths: ["AGENTS.md"] });
+        expect(result.files, command).toHaveLength(1);
+        expect(result.files[0]?.text, command).toContain(command);
+      }
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });

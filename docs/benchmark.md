@@ -788,7 +788,7 @@ A release note, a README line, a post or a reply that states anything about revi
 
 `--suite conventions` runs three authored cases under `benchmark/suites/conventions/`. They use the demo's Flask items endpoint and add the same `GET /health` handler, named `health_check`. That name and behavior are valid on their own. The violation case chooses `CONTRIBUTING.md`, whose verb-noun rule requires `get_health`. Its truth item expects the rule citation `CONTRIBUTING.md#verb-noun`, naming both the file and the rule. The exception case chooses the same rule with an explicit exemption for this health handler. The no-rule control has no convention file and an empty selection. Both controls are clean, with no accepted extras: format 3 counts any finding on them as false.
 
-These cases use the planted `case.json`, `base/` and `change/` format. They have their own suite name and hashes. They do not enter the frozen corpus or its splits. The laptop runner passes the case config and the base commit as the instructions source. The server runner passes the case's parsed config to the library. Existing suites keep their inputs.
+These cases use the planted `case.json`, `base/` and `change/` format. They have their own suite name and hashes. To select one case, use `--cases conventions/violation`, or `--suite conventions --cases violation`. They do not enter the frozen corpus or its splits. The laptop runner passes the case config and the base commit as the instructions source. The server runner passes the case's parsed config to the library. Existing suites keep their inputs.
 
 Build the cases without running a reviewer:
 

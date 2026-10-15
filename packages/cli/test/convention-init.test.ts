@@ -34,6 +34,27 @@ describe("init convention choices", () => {
     }
   });
 
+  it.each(["review", "pr_review"])("keeps the existing %s block and anchored entries when the picker adds a choice", (block) => {
+    const before = `${block}:
+  instructions_files: &rules
+    - &first AGENTS.md # keep this comment
+  paths:
+    exclude: [*first]
+`;
+    const s = sandbox({ "AGENTS.md": "First rule.\n", "CONTRIBUTING.md": "New rule.\n", ".openqodex/config.yaml": before });
+    const got = inTerminal(s, ["init", "--project", "--agent", "codex", "--no-mcp", "--hook", "none"], [
+      ["Which convention files may the reviewer use?", " \r"],
+      ["Write these files?", "\r"],
+    ]);
+    expect(got.status, got.stderr + got.stdout).toBe(0);
+    const text = readFileSync(join(s.repo, ".openqodex/config.yaml"), "utf8");
+    const config = parse(text);
+    expect(config[block].instructions_files).toEqual(["AGENTS.md", "CONTRIBUTING.md"]);
+    expect(config[block].paths.exclude).toEqual(["AGENTS.md"]);
+    expect(config[block === "review" ? "pr_review" : "review"]).toBeUndefined();
+    for (const kept of ["&rules", "&first", "*first", "# keep this comment"]) expect(text).toContain(kept);
+  });
+
   it("does not choose files during an unattended init", () => {
     const s = sandbox({ "CONTRIBUTING.md": "Chosen only by a person.\n" });
     const got = cli(s, ["init", "--project", "--agent", "codex", "--yes", "--no-mcp", "--hook", "none"]);

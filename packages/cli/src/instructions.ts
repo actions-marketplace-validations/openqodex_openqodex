@@ -2,6 +2,7 @@
 // `.openqodex/custom-instructions.md`. Handed to the brief whole: a file over
 // the limit is refused, never cut, since an instruction after a cut would
 // vanish without a trace.
+import { isSeq, parseDocument } from "yaml";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, isShippedInstructionFile, readFileBounded, readRepoFile, stripInstructionSections } from "@openqodex/core";
@@ -74,4 +75,18 @@ export function mergeInstructionChoice(previous: readonly string[], candidates: 
     ...previous.filter((path) => !candidates.includes(path) || chosen.includes(path)),
     ...chosen.filter((path) => !previous.includes(path)),
   ];
+}
+
+// Keep the hosted block spelling and the nodes that carry comments or anchors.
+export function writeInstructionChoice(before: string, paths: readonly string[]): string {
+  const document = parseDocument(before);
+  const block = document.has("pr_review") && !document.has("review") ? "pr_review" : "review";
+  const key = [block, "instructions_files"];
+  const sequence = document.getIn(key, true);
+  if (isSeq(sequence)) {
+    const previous = document.toJS()[block].instructions_files as string[];
+    sequence.items = sequence.items.filter((_, index) => paths.includes(previous[index]!));
+    for (const path of paths) if (!previous.includes(path)) sequence.add(document.createNode(path));
+  } else document.setIn(key, document.createNode(paths));
+  return document.toString();
 }

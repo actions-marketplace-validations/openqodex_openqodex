@@ -12,7 +12,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { parseDocument } from "yaml";
 import { CONFIG_MAX_BYTES, DEFAULT_CONFIG_YAML, readRepoFile, FOLDER_CONFIG, INSTRUCTIONS_FILE, STATE_DIR, loadConfig, repoStat } from "@openqodex/core";
 import type { BuiltinScanner } from "@openqodex/core";
 import { AGENT_NAMES, AGENTS, detectAgents, type AgentId } from "../agents/detect.js";
@@ -30,7 +29,7 @@ import { EXIT_OK, EXIT_TOOL_FAILED } from "../exit-codes.js";
 import { hostAgent } from "@openqodex/review";
 import { launcherPath, launcherRunner, launcherUsers, oldLocks, openqodexHomeDir, planRuntime, planRuntimeRemoval, pruneRuntimes, removeOldLocks, staleRuntimes } from "../launcher.js";
 import { planGitHook, planGitHookRemoval, setHookChoice } from "./hook.js";
-import { instructionCandidates, mergeInstructionChoice } from "../instructions.js";
+import { instructionCandidates, mergeInstructionChoice, writeInstructionChoice } from "../instructions.js";
 import { firstReviewLine, reviewAfterInit } from "./init-review.js";
 import { REVIEWER_LABELS, reviewerReadiness, type Readiness } from "../review-run.js";
 import { pruneHomeReceipts, staleReceipts } from "../receipts.js";
@@ -632,9 +631,7 @@ async function planConventionChoice(s: Setup, actions: Action[]): Promise<void> 
   if (JSON.stringify(paths) === JSON.stringify(loaded.config.instructionsFiles ?? [])) return;
   const path = loaded.path ?? join(s.repoRoot, STATE_DIR, FOLDER_CONFIG);
   const before = readRepoFile(s.repoRoot, path, CONFIG_MAX_BYTES);
-  const document = parseDocument(before ?? DEFAULT_CONFIG_YAML);
-  document.setIn(["review", "instructions_files"], paths);
-  const text = document.toString();
+  const text = writeInstructionChoice(before ?? DEFAULT_CONFIG_YAML, paths);
   const create = actions.find((action) => action.path === path && action.apply !== undefined);
   if (create) {
     const apply = create.apply!;

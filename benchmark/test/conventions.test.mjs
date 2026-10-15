@@ -32,6 +32,18 @@ it.each(["claude", "model:gpt-6.1-sol"])("keeps convention cases separate and bu
   expect(readFileSync(join(benchRoot, "cases.lock.json"))).toEqual(before);
 });
 
+it.each(["claude", "model:gpt-6.1-sol"])("does not treat a suite-qualified convention case as a nested path for %s", (reviewer) => {
+  const out = mkdtempSync(join(tmpdir(), "oq-qualified-convention-"));
+  roots.push(out);
+  const run = spawnSync(process.execPath, [join(benchRoot, "run.mjs"), "--cases", "conventions/violation", "--materialise-only", "--reviewers", reviewer, "--out", out], { cwd: repoRoot, encoding: "utf8" });
+  expect(run.status, run.stderr).toBe(0);
+  const proof = JSON.parse(readFileSync(join(out, "proof.json"), "utf8"));
+  expect(proof.suite).toBe("conventions");
+  expect(run.stdout).toContain("1 of 1 cases proved");
+  expect(run.stdout).toContain(`conventions/violation@${caseHash("violation", join(benchRoot, "suites/conventions")).slice(0, 8)}`);
+  expect(run.stdout).not.toContain("conventions/conventions/");
+});
+
 it("keeps selected conventions when laptop reports go outside the repo without changing old suite arguments", () => {
   const options = { repo: "/repo", reportDir: "/report", job: { reviewer: "claude", graph: false }, web: "off", timeout: 900 };
   const old = ["review", "--cwd", "/repo", "--report-dir", "/report", "--reviewer", "claude", "--reviewer-web", "off", "--timeout", "900", "--no-color", "--no-graph"];

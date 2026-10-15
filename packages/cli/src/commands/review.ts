@@ -658,7 +658,14 @@ async function runFinalize(flags: GlobalFlags, path: string | undefined, all: bo
   // another run, its fingerprints emptied) is not trusted: the page shows
   // no code, `findings` gets no record of it, the push hooks no receipt.
   const record = readHomeRun(openqodexHomeDir(), repoRoot, basename(dir));
-  const verified = runMatches(record, { changeId: change.id, configHash: configHash(config), instructionsHash: await currentInstructionsHash(repoRoot, manifest), texts });
+  let currentInstructions: string | null;
+  try {
+    currentInstructions = await checkInstructionsBinding(repoRoot, manifest);
+  } catch (error) {
+    await discard();
+    throw error;
+  }
+  const verified = runMatches(record, { changeId: change.id, configHash: configHash(config), instructionsHash: currentInstructions, texts });
   if (!verified) warn("openqodex: this run's files are not the ones review --agent recorded on this machine, so report.html shows the findings without the code and openqodex findings will not print this review");
   // Every output from one redaction pass. The secrets are gone from memory
   // by now; their saved fingerprints (scan.json, every line of a multi-line
@@ -773,12 +780,20 @@ function parseRunFile<T>(text: string | null): T | null {
   }
 }
 
-async function currentInstructionsHash(repoRoot: string, manifest: RunManifest): Promise<string | null> {
+// Both finalize checks refuse changed instructions before writing a report.
+export async function checkInstructionsBinding(repoRoot: string, manifest: Pick<RunManifest, "instruction_files" | "instructions_hash">): Promise<string | null> {
+  let current: string | null;
   try {
-    return manifest.instruction_files ? await verifyInstructionFiles(repoRoot, manifest.instruction_files, readInstructions(repoRoot)) : instructionsHash(readInstructions(repoRoot));
-  } catch {
-    return "unreadable";
+    current = manifest.instruction_files ? await verifyInstructionFiles(repoRoot, manifest.instruction_files, readInstructions(repoRoot)) : instructionsHash(readInstructions(repoRoot));
+  } catch (error) {
+    if (manifest.instruction_files) throw error;
+    current = "unreadable";
   }
+  // A run from before the field existed has no hash to compare.
+  if (manifest.instructions_hash !== undefined && current !== manifest.instructions_hash) {
+    throw new OpenQodexError("the instructions changed since the brief (.openqodex/custom-instructions.md); run review again (openqodex review --agent)");
+  }
+  return current;
 }
 
 // Whether a home run record (looked up by the run folder's name, whose shape
@@ -808,17 +823,5 @@ async function checkBinding(repoRoot: string, config: Config, manifest: RunManif
   if (manifest.config_hash !== configHash(config)) {
     throw new OpenQodexError("the config changed since the brief (.openqodex/config.yaml or --config); run openqodex review --agent again");
   }
-  // A run from before the field existed has no hash to compare.
-  if (manifest.instructions_hash !== undefined) {
-    let current: string | null;
-    try {
-      current = manifest.instruction_files ? await verifyInstructionFiles(repoRoot, manifest.instruction_files, readInstructions(repoRoot)) : instructionsHash(readInstructions(repoRoot));
-    } catch (error) {
-      if (manifest.instruction_files) throw error;
-      current = "unreadable";
-    }
-    if (current !== manifest.instructions_hash) {
-      throw new OpenQodexError("the instructions changed since the brief (.openqodex/custom-instructions.md); run review again (openqodex review --agent)");
-    }
-  }
+  await checkInstructionsBinding(repoRoot, manifest);
 }
