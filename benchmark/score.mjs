@@ -710,7 +710,7 @@ function main() {
   // An outside board's own evaluator, read after the scoring and added beside it (failure 12).
   if (outside === "aacr") {
     try {
-      doc.outside = { aacr: readAacrOutside(run.folder, jobs) };
+      doc.outside = { aacr: readAacrOutside(run.folder, jobs, run.specs) };
     } catch (error) {
       doc.outside = { aacr: null };
       console.error(`outside.aacr is null: ${String(error.message).split("\n")[0]}`);

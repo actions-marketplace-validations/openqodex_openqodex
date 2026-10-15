@@ -11,8 +11,8 @@
 //    is published: each refuses the publish without printing the key.
 // 3. A licence class removes code or refuses a run: every class publishes
 //    every allowed file, even without a cached source repository.
-// 4. Upstream punctuation in a spec refuses a run: the spec copy replaces
-//    each em dash with a spaced hyphen, without changing the source data.
+// 4. Upstream punctuation in a saved brief or spec refuses a run, or
+//    packaging alters the text the reviewer saw: both retain their bytes.
 // 5. Publishing drops the outside block or changes other fields during a refresh.
 // 6. A board-only refresh accepts changed files or changed asset bytes.
 // 7. Board output changes the reviewed asset or its scrub inspects excluded files.
@@ -322,4 +322,47 @@ it("does not change the reviewed asset or scrub excluded board output", async ()
   expect(after.sha256).toBe(before.sha256);
   expect(after.privateListHash).toBe(before.privateListHash);
   expect(after.left).toContain("outside/aacr/output.json");
+});
+
+// Failure cases: an older row, its saved reports or its rendered reason
+// cannot publish, the count is wrong, packaging rewrites the source, a
+// transcript line cut by a killed run stops the publish, or a line with
+// nothing to redact is rewritten.
+it("publishes saved scanner reasons with placeholders without changing the run", async () => {
+  const run = plantedRun();
+  const reason = `could not type-check: ${homedir()}/checkouts/tree/a.go and ${run}/repo/b.go`;
+  const row = { scanners: [{ reason }, { reason: null }] };
+  write(join(run, "rows.jsonl"), `${JSON.stringify(row)}\n`);
+  const dir = join(run, "samples", "demo-polyglot", "claude-graph-on", "1");
+  for (const file of ["sample.json", "report/report.json", "report/scan.json"]) write(join(dir, file), JSON.stringify(row));
+  write(join(dir, "report/brief.md"), `- Scanners: golangci: ${reason}\n`);
+  const transcript = '{"text":"\\u00e9"}\n{"type":"assist';
+  write(join(dir, "transcript.jsonl"), transcript);
+  const before = hashFolder(run);
+  const asset = await packageRun(run, { out: tempDir("oq-publish-out-") });
+  expect(asset.reasonsRedacted).toBe(4);
+  const back = extractAsset(asset.tarPath, asset, tempDir("oq-fetch-"), asset.runId);
+  const saved = JSON.parse(readFileSync(join(back, "rows.jsonl"), "utf8"));
+  expect(saved.scanners[0].reason).toBe("could not type-check: <home>/checkouts/tree/a.go and <run>/repo/b.go");
+  expect(saved.scanners[1].reason).toBeNull();
+  expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/report/brief.md"), "utf8")).toContain(saved.scanners[0].reason);
+  expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/transcript.jsonl"), "utf8")).toBe(transcript);
+  expect(hashFolder(run)).toEqual(before);
+});
+
+it("preserves quoted punctuation in saved briefs and specs when publishing", async () => {
+  const run = plantedRun();
+  const punctuation = String.fromCodePoint(0x2014);
+  const brief = `Quoted description: before ${punctuation} after\n`;
+  const spec = JSON.stringify({ suite: "real", golden: [{ comment: `before ${punctuation} after` }] });
+  const briefPath = "samples/demo-polyglot/claude-graph-on/1/report/brief.md";
+  const specPath = "cases/demo-polyglot.json";
+  write(join(run, briefPath), brief);
+  write(join(run, specPath), spec);
+  const before = hashFolder(run);
+  const asset = await packageRun(run, { out: tempDir("oq-publish-out-") });
+  const back = extractAsset(asset.tarPath, asset, tempDir("oq-fetch-"), asset.runId);
+  expect(readFileSync(join(back, briefPath), "utf8")).toBe(brief);
+  expect(readFileSync(join(back, specPath), "utf8")).toBe(spec);
+  expect(hashFolder(run)).toEqual(before);
 });

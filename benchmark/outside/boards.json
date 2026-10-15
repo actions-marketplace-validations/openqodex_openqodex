@@ -2,6 +2,7 @@
   "version": 1,
   "boards": {
     "martian": {
+      "excludeTestGaps": false,
       "repo": "withmartian/code-review-benchmark",
       "source": "https://github.com/withmartian/code-review-benchmark/tree/e616e849755441da38f18bf3adba2c9583b03803",
       "commit": "e616e849755441da38f18bf3adba2c9583b03803",
@@ -103,6 +104,7 @@
       "note": "Reserved URLs are copied verbatim from the golden files, which mix upstream and injected fork URLs."
     },
     "aacr": {
+      "excludeTestGaps": true,
       "repo": "alibaba/aacr-bench",
       "source": "https://github.com/alibaba/aacr-bench/tree/68a569759289a83654a59d06db2a72910edf0a4a",
       "commit": "68a569759289a83654a59d06db2a72910edf0a4a",

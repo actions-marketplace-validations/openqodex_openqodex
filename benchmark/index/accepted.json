@@ -1,12 +1,18 @@
 {
   "version": 1,
-  "runId": "2026-10-12-b43b25b-aacr-gpt61",
-  "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
-  "scoreHash": "3e0ec4efdee6d2cac0ac44dba04102c001f4dd5f84846918f8251cafbac71e60",
-  "boardHash": "8b47a33546f388abb69061b3475c42553fb00fc3524e0ae6ed6ff21daf98e6c7",
-  "acceptedAt": "2026-10-13T00:02:54.494Z",
+  "runId": "2026-10-13-b43b25b-aacr-claude",
+  "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
+  "scoreHash": "5d38ec361ccfeafea0a23c890a925ee32a3e68ee7066ea5c7fbe83b3db81672a",
+  "acceptedAt": "2026-10-13T15:17:48.022Z",
   "acceptedBy": "Sid",
   "groups": {
+    "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|laptop|claude|claude-opus-5-5|claude-graph-on|8|dev-laptop": {
+      "runId": "2026-10-13-b43b25b-aacr-claude",
+      "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
+      "scoreHash": "5d38ec361ccfeafea0a23c890a925ee32a3e68ee7066ea5c7fbe83b3db81672a",
+      "acceptedAt": "2026-10-13T15:17:48.022Z",
+      "acceptedBy": "Sid"
+    },
     "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|server|model-gpt-6.1-sol|unknown|model-gpt-6.1-sol-graph-on|7|dev-laptop": {
       "runId": "2026-10-12-b43b25b-aacr-gpt61",
       "commit": "b43b25bd2a16566bc520cea452cebf954b6e9113",
@@ -42,6 +48,13 @@
       "scoreHash": "0aa95cba9c1c773d64785a7dd147579733dbf1960c230db0328ef1bebe133dd8",
       "acceptedAt": "2026-10-11T19:57:52.122Z",
       "acceptedBy": "Sid (recorded by the session on 2026-10-11 under the benchmark program he approved)"
+    },
+    "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|laptop|codex|gpt-6.1-sol|codex-graph-on|8|dev-laptop": {
+      "runId": "2026-10-13-b43b25b-aacr-codex",
+      "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
+      "scoreHash": "21e514ddf3f4016fb94e0e7de8614b6a9dfe93d6690875eeab10daffd2f3fe7f",
+      "acceptedAt": "2026-10-13T16:36:17.829Z",
+      "acceptedBy": "Sid"
     }
   }
 }

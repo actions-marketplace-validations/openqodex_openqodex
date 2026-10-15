@@ -43,8 +43,9 @@ const putRecorded = (root, entry) => {
   }
   writeFileSync(join(root, "benchmark/index/accepted.json"), JSON.stringify(accepted));
 };
-const aacrGroup = (root) => {
-  const key = Object.keys(pointer(root).groups).find((k) => k.startsWith("aacr|"));
+const aacrGroup = (root, { boarded = false } = {}) => {
+  const accepted = pointer(root);
+  const key = Object.keys(accepted.groups).find((k) => k.startsWith("aacr|") && (!boarded || accepted.groups[k].boardHash));
   expect(key).toBeDefined();
   const { runId } = pointer(root).groups[key];
   const entry = JSON.parse(readFileSync(entryFile(root, runId), "utf8"));
@@ -142,7 +143,7 @@ it("keeps indexed board metrics and A/A issue noise separate", () => {
   expect(page(root)).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
   const headline = readFileSync(join(root, "README.md"), "utf8");
   expect(headline).toContain("Semantic precision");
-  expect(headline.split("\n").find((l) => l.includes(`(${aacrConfig})`))).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
+  expect(headline.split("\n").find((l) => l.includes(`(${aacrConfig})`) && l.includes("AACR-Bench"))).toContain("20.0% | 30.0% | 24.0% | 80.0% | 40.0% | 50.0%");
   expect(page(root)).toContain(`The difference is 3 issues across ${parent.repeat} repeats`);
 });
 
@@ -186,7 +187,7 @@ it("keeps an AACR-Bench row with no board numbers and no ruled hit off the READM
 
 it("rejects an accepted entry whose board numbers were edited after they were recorded", () => {
   const root = fixture();
-  const { runId, config } = aacrGroup(root);
+  const { runId, config } = aacrGroup(root, { boarded: true });
   const entry = JSON.parse(readFileSync(entryFile(root, runId), "utf8"));
   expect(pointer(root).boardHash ?? Object.values(pointer(root).groups).find((a) => a.runId === runId).boardHash).toBe(boardHash(entry));
   entry.outside.aacr.byConfig[config].mean.semantic.precision = 0.9;
