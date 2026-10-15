@@ -893,7 +893,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
       // Every case is built at the one path the overlay's approval names, and
       // moved aside after its scan; a pull request case in the laptop shape,
       // from the clone cache (lib/suites.mjs materialise).
-      const { dir: repo } = real ? materialise(real.byName[job.case].case, repoPath, { shape: "laptop" }) : buildCase(job.case, repoPath, snap);
+      const { dir: repo } = real ? materialise(real.byName[job.case].case, repoPath, { shape: "laptop", heldOut: real.byName[job.case].case.split === "test" }) : buildCase(job.case, repoPath, snap);
       const args = ["scan", "--cwd", repo, "--report-dir", reportDir, "--no-color", "--no-install", ...(overlay ? ["--config", overlay.file] : [])];
       const startedAt = new Date().toISOString();
       let result;

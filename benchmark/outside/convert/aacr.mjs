@@ -130,13 +130,15 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
   }
   const files = new Map();
   const withoutLine = [];
+  const failures = [];
   // Board-only rule: use the scorer's test-request predicate without changing our score.
   const forBoard = (report) => shownFindings(report).filter((f) => !excludeTestGaps || !isTestGap(f));
   for (const job of jobs) {
     const first = job.first;
     const shown = forBoard(first?.report ?? null);
     const native = nativeReviewBody(first?.row);
-    const comments = native !== null ? [{ path: null, start_line: null, end_line: null, content: native }] : shown.map(commentOf);
+    const comments = native !== null ? native.trim() ? [{ path: null, start_line: null, end_line: null, content: native }] : [] : shown.map(commentOf);
+    if (native !== null && first.row.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: first.row.failure ?? null });
     comments.forEach((c, index) => {
       if (c.start_line === null) withoutLine.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, index });
     });
@@ -177,6 +179,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
     folders,
     references: { total, left, share: total === 0 ? 0 : left / total },
     excludeTestGaps,
+    failures,
     leftOutTestGaps: folders.reduce((n, f) => n + f.leftOutTestGaps, 0),
     withoutLine,
   };

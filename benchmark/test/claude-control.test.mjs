@@ -2,13 +2,14 @@
 // 1. Control dispatch runs OpenQodex or sends its brief instead of the native command.
 // 2. A native review body is shortened or rewritten into engine findings.
 // 3. A sample loses command, CLI version, served model, time or cost.
-// 4. Requested models or missing usage are recorded as served models.
+// 4. Requested models or missing usage are recorded as served models, or
+//    a requested model that differs from usage loses its mismatch record.
 // 5. A failed native review looks complete or loses its native output.
 // 6. The control is run twice under graph settings it does not use.
 import { spawnSync } from "node:child_process";
 import { expect, it } from "vitest";
 import { CONTROL_PROMPT, controlSample, nativeReviewBody } from "../lib/claude-control.mjs";
-import { laptopInvocation, planJobs } from "../lib/runner.mjs";
+import { claudeRunModels, laptopInvocation, planJobs } from "../lib/runner.mjs";
 
 const job = { jobId: "planted/test@abcdef01/control-graph-off/1", caseId: "planted/test@abcdef01", case: "test", config: "control-graph-off", reviewer: "control", graph: false, repeat: 1 };
 const body = "## Review\n\nKeep  all whitespace.\n```js\nthrow new Error('bug');\n```\n" + "Native detail.\n".repeat(100);
@@ -38,6 +39,12 @@ it("records command, version, served model, time and cost from native usage", ()
 it("records missing and mixed usage without inventing a served model", () => {
   expect(sample({ ...answer, modelUsage: {} })).toMatchObject({ model: null, modelStatus: "none" });
   expect(sample({ ...answer, modelUsage: { first: {}, second: {} } })).toMatchObject({ model: ["first", "second"], modelStatus: "mixed" });
+});
+it("keeps the usage model and records a mismatch with the requested model", () => {
+  const s = sample();
+  const observed = claudeRunModels([s], "requested-model", "control");
+  expect(s.model).toBe("served-model");
+  expect(observed).toMatchObject({ model: "served-model", why: "Claude Code requested model requested-model, but samples were served by served-model" });
 });
 it("keeps a failed review's body and refuses to mark it complete", () => {
   expect(sample({ ...answer, is_error: true })).toMatchObject({ status: "failed", nativeBody: body });

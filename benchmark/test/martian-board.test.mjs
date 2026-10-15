@@ -41,9 +41,13 @@
 // 9. A file marked assume-unchanged, or an ignored file, hides an edit of
 //    the evaluator.
 // 10. A link under the bench cache puts their checkout in the repository.
+// 11. A failed native body reaches the judge or loses its denominator or
+//     failure record, or an empty native body becomes a comment.
+// 12. Extracted native candidates lack the review's stable source id,
+//     so Martian withholds the control's evaluation.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, git, repoRoot } from "../lib/cases.mjs";
@@ -72,6 +76,55 @@ const refusal = async (fn) => {
   }
   return null;
 };
+
+const nativeRun = (ctx, sample) => savedRun(ctx, { configs: ["control-graph-off"], plan: { "control-graph-off/1": Object.fromEntries([...ctx.ids.keys()].map((name) => [name, { reviewer: "control", started_at: "2026-10-14T00:00:00Z", ...sample }])) } });
+
+it("converts failed native Martian reviews to empty reviews and records their failures", async () => {
+  const ctx = await suite();
+  const failure = "Review failed while reading src/checkout.ts:40.";
+  const out = await nativeRun(ctx, { status: "failed", nativeBody: failure, failure });
+  const { record, data } = await convertRun(out, convertOpts(ctx));
+  expect(record.tools[0]).toMatchObject({ reviews: 3, findings: 0, statuses: { failed: 3 }, held: false });
+  for (const entry of Object.values(data)) {
+    expect(entry.reviews).toHaveLength(1);
+    expect(entry.reviews[0]).toMatchObject({ review_comments: [], openqodex: { status: "failed", findingIds: [] } });
+  }
+  expect(record.failures).toEqual([...ctx.ids.keys()].sort().map((name) => ({ caseId: ctx.ids.get(name), config: "control-graph-off", repeat: 1, failure })));
+});
+
+it("keeps empty native Martian reviews in the denominator without comments", async () => {
+  const ctx = await suite();
+  const out = await nativeRun(ctx, { status: "complete", nativeBody: "", failure: null });
+  const { record, data } = await convertRun(out, convertOpts(ctx));
+  expect(record.tools[0]).toMatchObject({ reviews: 3, findings: 0, statuses: { complete: 3 }, held: false });
+  for (const entry of Object.values(data)) expect(entry.reviews[0]).toMatchObject({ review_comments: [], openqodex: { status: "complete", findingIds: [] } });
+});
+
+it("attributes every extracted native candidate to one stable review source id", async () => {
+  const ctx = await suite();
+  const body = "The coupon checkout reads the total before locking. The refund handler records the complete card number.";
+  const out = await nativeRun(ctx, { status: "complete", nativeBody: body, failure: null });
+  const { data } = await convertRun(out, convertOpts(ctx));
+  const again = await convertRun(await nativeRun(ctx, { status: "complete", nativeBody: body, failure: null }), convertOpts(ctx));
+  const tool = "claude-code-control-r1";
+  const candidates = {}, dedup = {}, evaluations = {};
+  for (const [url, entry] of Object.entries(data)) {
+    const review = entry.reviews[0];
+    expect(review.review_comments).toEqual([{ path: null, line: null, body, created_at: "2026-10-14T00:00:00Z" }]);
+    expect(review.openqodex.findingIds).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/)]);
+    expect(again.data[url].reviews[0].openqodex.findingIds).toEqual(review.openqodex.findingIds);
+    candidates[url] = { [tool]: body.split(". ").map((text) => ({ text })) };
+    dedup[url] = { [tool]: [[0], [1]] };
+    evaluations[url] = { [tool]: { total_candidates: 2, total_golden: entry.golden_comments.length, errors_count: 0, true_positives: [] } };
+  }
+  const totals = { beta: 1, profiles: Object.fromEntries(["all", "core", "strict"].map((profile) => [profile, { [tool]: { tp: 0, fp: 6, fn: 5, prs: 3 } }])) };
+  const result = martianEvaluations({ data, candidates, dedup, evaluations, totals, judge: { model: "fixture", served: "fixture" }, model: "fixture" });
+  expect(result.problems).toEqual([]);
+  expect(result.tools[0].problems).toEqual([]);
+  expect(result.tools[0].evaluation.candidates).toHaveLength(6);
+  for (const candidate of result.tools[0].evaluation.candidates) expect(candidate.sourceFindingIds).toEqual(data[candidate.prUrl].reviews[0].openqodex.findingIds);
+  expect(new Set(Object.values(data).map((entry) => entry.reviews[0].openqodex.findingIds[0])).size).toBe(3);
+});
 
 // ---------- the tests ----------
 
@@ -131,8 +184,14 @@ describe("a run that is not a release run reads Martian's cases", () => {
 describe("a conversion made outside the gate, or of another manifest, is judged", () => {
   const judgeDry = (out, accessLog) => {
     const home = tempDir("oq-martian-board-gate-");
+    const root = join(home, "runner/benchmark");
+    // Keep the checkout outside the runner's repository, even under a local TMPDIR.
+    for (const file of ["lib", "outside/boards.json", "outside/boards/martian-judge.mjs", "outside/boards/aacr-judge.mjs", "outside/convert/martian.mjs"]) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      cpSync(join(benchRoot, file), join(root, file), { recursive: true });
+    }
     writeFileSync(join(home, "azure.env"), "AZURE_OPENAI_BASE_URL=https://judge.example.test/v1\nAZURE_OPENAI_KEY=fake-key\n");
-    return spawnSync(process.execPath, [JUDGE, out, "--dry-run", "--checkout", join(home, "offline"), "--python", join(home, "venv", "bin", "python")], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: accessLog }, timeout: 60_000 });
+    return spawnSync(process.execPath, [join(root, "outside/boards/martian-judge.mjs"), out, "--dry-run", "--checkout", join(home, "offline"), "--python", join(home, "venv", "bin", "python")], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: accessLog }, timeout: 60_000 });
   };
 
   it("refuses to judge when the run's manifest changed after the conversion, or the access line is not in the log", async () => {

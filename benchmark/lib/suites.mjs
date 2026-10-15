@@ -424,7 +424,7 @@ const FULL_ID = /^[a-z][a-z0-9-]*\/[^@\s]+@[0-9a-f]{8}$/;
 // (run.mjs --materialise-only, which builds and proves cases and reviews
 // none, and logs the access) may select the test split. Throws one error
 // whose lines name every refusal; nothing is fetched or built here.
-export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot, heldOut = false, release = null, build = null, packageRecord = null, runId = null, by = null, accessLog = join(root, "index/heldout-access.jsonl") }) {
+export function selectCases({ suite, split = "dev", subset = null, refs = null, root = benchRoot, heldOut = false, release = null, build = null, packageRecord = null, runId = null, by = null, accessLog = join(cacheRoot(), "heldout-access.jsonl") }) {
   if (!SUITES[suite]) throw new Error(`no real suite named ${suite}; the real suites are ${Object.keys(SUITES).join(", ")}`);
   if (split === "test" && !heldOut && release === null) throw new Error(`the ${suite} test split is held out: no held-out case runs before a release; use --release with an accepted comparison, or --materialise-only to prove cases without a review`);
   if (split !== "dev" && split !== "test") throw new Error(`--split takes dev or test, not ${JSON.stringify(split)}`);

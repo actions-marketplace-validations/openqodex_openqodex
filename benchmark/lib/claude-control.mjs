@@ -54,5 +54,5 @@ export function controlSample({ job, attempt, result, command, version, startedA
   };
 }
 
-// Converter stub for W8-6: one native review body, with no parsing or edits.
-export const nativeReviewBody = (sample) => sample?.reviewer === "control" && typeof sample.nativeBody === "string" ? sample.nativeBody : null;
+// Failed controls stay in the denominator without sending error text to a judge.
+export const nativeReviewBody = (sample) => sample?.reviewer === "control" && typeof sample.nativeBody === "string" ? sample.status === "complete" ? sample.nativeBody : "" : null;
