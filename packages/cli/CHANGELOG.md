@@ -1,5 +1,75 @@
 # openqodex
 
+## 0.13.0
+
+### Minor Changes
+
+- [#222](https://github.com/openqodex/openqodex/pull/222) [`49601e4`](https://github.com/openqodex/openqodex/commit/49601e43d3091bc9a0faba5089a369d54bfbce54) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Let repository owners choose convention files with review.instructions_files. Quote them in review briefs, record supplied files and omissions, and bind finalize to their original content. Add an init picker and trusted commit reads for the Action and library. The default reads no convention files.
+
+  This release advances the user-scope agent contract so `init` can refresh Cursor and Cline rules with the developer-choice requirement. Existing contract copies stay unchanged.
+
+- [#105](https://github.com/openqodex/openqodex/pull/105) [`4c62ccb`](https://github.com/openqodex/openqodex/commit/4c62ccbb467bfa156ecf0a9a86933a7ccb7638bb) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - Every correction round of a review is saved in `rounds.json` beside the report: the checks the earlier answer failed, that answer, and the changed line ranges the round sent. A finding a check rejected, and the next answer left out, now shows it was raised. `reviewChange` returns the same rounds as `result.rounds`.
+
+  - A secret the scanners found that a reviewer's answer held as a JSON key, not a value, was saved as it was in `submission.json`. Run files now redact keys as well as values.
+
+- [#135](https://github.com/openqodex/openqodex/pull/135) [`e6cedef`](https://github.com/openqodex/openqodex/commit/e6cedeff43383fa45381b190b656ab09ab83e79e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The library's `reviewChange` result carries the scan record as `result.scan`, the same object the command writes to `scan.json` (the candidates, each scanner's summary and rule packs, `selection` and `trail`), redacted like the report and without the secrets' fingerprints, and `result.timings` is always set, so a server host reads both from the result instead of a file.
+
+- [#107](https://github.com/openqodex/openqodex/pull/107) [`bdc3f42`](https://github.com/openqodex/openqodex/commit/bdc3f42d7a1457be6babdcd00b79825b0e1b3768) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - `report.json` says how long each phase of the run took, in milliseconds, under `timings`. A review records `change_ms`, `scan_ms`, `graph_ms`, `brief_ms`, `reviewer_ms` and `finalize_ms`, and `total_ms`, the time from the start of the command to the report, read from the clock. A scan records `change_ms`, `scan_ms` and `total_ms`. `scan_ms` is the scanner stage as a whole, so it is never less than the slowest scanner's time.
+
+  - The library's `reviewChange` result carries the same `timings`, from the call to the result, and the library exports their type, `RunTimings`.
+  - Nothing that read `report.json` before needs to change: the field is new and every other field is as it was.
+
+- [#145](https://github.com/openqodex/openqodex/pull/145) [`7bb1df0`](https://github.com/openqodex/openqodex/commit/7bb1df0b4c10604ff06bbef70505715b861b95b2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - A review now stops its reviewer after 30 minutes for a change, a branch or a pull request, and after 2 hours for the whole repository (`--all`), up from 10 minutes for both. `--timeout <seconds>` still sets any other cap.
+
+  - A review stopped at its cap says which cap it hit and how to raise it, on the terminal and in the report: `the reviewer timed out and was stopped at the 30 minute cap; pass --timeout <seconds> to allow more`.
+  - A `--timeout` above 2147483 seconds (about 24 days) is refused before anything runs. Such a value overflowed the timer, so the reviewer stopped as soon as it started.
+
+- [#120](https://github.com/openqodex/openqodex/pull/120) [`b66b3fc`](https://github.com/openqodex/openqodex/commit/b66b3fc4cbc648a63817876405dceb1198fea29e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - `scan.json` records which scanners the change called for and why, under `selection`, and what became of every finding a scanner raised, under `trail`: one entry per finding with its rule, file, lines, severity and the step that dropped it (outside the change, not on a changed line, a fixture file, a disabled rule, merged into another candidate) or the candidate it became. An entry never holds the finding's message.
+
+  - Each scanner's entry in `scan.json` and `report.json` also says how many of its findings each step dropped (`stages`), how long its tool took to find or install (`resolveMs`) and how many changed files it was handed (`files`).
+  - Nothing is printed, and nothing that read these files before needs to change: the fields are new and every other field is as it was.
+
+- [#114](https://github.com/openqodex/openqodex/pull/114) [`396e906`](https://github.com/openqodex/openqodex/commit/396e9061668a75a083941eeedefcfc23cb68d92a) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - semgrep's entry in `report.json` and `scan.json` now lists the registry rule packs the scan used, each with the sha256 of its rules and the size of the bytes semgrep read, so two scans that used different rules show it, and two that used the same rules match even when the registry sends them in another order or as YAML.
+
+### Patch Changes
+
+- [#154](https://github.com/openqodex/openqodex/pull/154) [`76a5b8d`](https://github.com/openqodex/openqodex/commit/76a5b8d424f7fe9f24dbf6a17cbcb286a71b510d) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - bandit no longer raises an assert (`B101`) in a test file, where assert is how a test checks its results; it still raises one in every other Python file, and its other checks still read test files.
+
+- [#158](https://github.com/openqodex/openqodex/pull/158) [`fd64c44`](https://github.com/openqodex/openqodex/commit/fd64c44900b24bce76f6fa6a4ee935a6155071c4) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - `scan.json` names Flask among a project's frameworks when its `requirements*.txt`, `pyproject.toml` or `Pipfile` lists `flask`.
+
+- [#188](https://github.com/openqodex/openqodex/pull/188) [`70445e8`](https://github.com/openqodex/openqodex/commit/70445e8ab9461bbae71c054e162ec6115184a164) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - golangci-lint now checks Go code with Go 1.27 on your `PATH`, as well as with Go 1.26. Before, a review with Go 1.27 listed `golangci` as failed. golangci-lint is pinned at 2.14.0, up from 2.12.2.
+
+- [#175](https://github.com/openqodex/openqodex/pull/175) [`5b38afa`](https://github.com/openqodex/openqodex/commit/5b38afa2ad670de4efdc7528a88679d176271db5) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - A review that stops before any answer passes the checks, such as one stopped at its time cap, now lists every scanner candidate no reviewer checked: in the receipt, `report.md`, `report.json` (`not_reviewed`) and `report.sarif`, each with its file, line, rule, scanner and message. Before, these reports held no scanner result at all. The review is still incomplete and exits 2.
+
+- [#208](https://github.com/openqodex/openqodex/pull/208) [`d3cd0c6`](https://github.com/openqodex/openqodex/commit/d3cd0c6301cf8f139a30192521ceceaddc9108a2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - A glob in `review.paths.exclude`, `review.disabled_rules`, a lens or a custom scanner's `paths` is matched in time that grows with the pattern times the path, never more. A pattern with many stars, such as one a pull request writes into the config, no longer backtracks against a long path and holds the review. A config with a glob longer than 1,024 characters is now refused, and the error names the file and the key. Such a glob cannot be matched in bounded time, and treating it as matching nothing would quietly turn off an exclude, a disabled rule or a custom scanner.
+
+  - The README and the Claude Code plugin's README say what each push check sees: the check inside your agent looks for a review of your current work and does not know what a push sends; the git pre-push hook that `init` adds checks exactly what is pushed. The docs pages for the agents, Claude Code and the plumbing commands now say the same.
+
+- [#197](https://github.com/openqodex/openqodex/pull/197) [`224bcc3`](https://github.com/openqodex/openqodex/commit/224bcc3bf224416fbc054fa5350d08c9d2f728eb) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Long changed lines are reviewed in numbered parts, and lines too large to deliver keep the review incomplete.
+
+- [#167](https://github.com/openqodex/openqodex/pull/167) [`c315225`](https://github.com/openqodex/openqodex/commit/c3152258d0c509eabc3e805ac7535f9bee089b0e) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - A new docs page for AI agents: how to install OpenQodex, configure a repository, add a custom scanner and act on each message. `openqodex guide for-agents` prints it offline.
+
+  - The skill, the Cursor and Cline rules for a project and the team section in `CLAUDE.md` and `AGENTS.md` no longer tell an agent to allow ten minutes for a review. They say the reviewer stops after 30 minutes, and tell the agent to run the review in the background and wait until it exits.
+  - The skill now names the four scanners that use the network and that `--offline` skips: semgrep, osv-scanner, kubeconform and cargo-deny. It named two.
+  - The README is shorter and says what a compatible custom scanner needs: SARIF or one JSON document, and a release file, an exact npm or PyPI version, or a program on `PATH`.
+
+- [#213](https://github.com/openqodex/openqodex/pull/213) [`a85aad1`](https://github.com/openqodex/openqodex/commit/a85aad109cdd939f8ce4ffb510bdf4e0be2ed571) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Scanner failure reasons show `<checkout>` in place of the review checkout path, in saved reports and CLI output.
+
+- [#196](https://github.com/openqodex/openqodex/pull/196) [`5c84bcc`](https://github.com/openqodex/openqodex/commit/5c84bcca1a5e700f76c63ddbaec3d9d5b836bf20) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - `review` now writes `usage.json` in the report folder, with each reviewer round's model, tokens and cost.
+
+- [#156](https://github.com/openqodex/openqodex/pull/156) [`009aae4`](https://github.com/openqodex/openqodex/commit/009aae4cb9c73841e08abd80eb1a1d90fd696754) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - The checks that look for Go and Rust no longer write into your home folder.
+
+  - The Go check runs in a folder of its own, `~/.openqodex/cache/runtime-probe` (under `$OPENQODEX_HOME` when you set it), and Go writes no telemetry files for it.
+  - The Rust check does not run a rustup command that has no toolchain installed behind it. It reports Rust as missing and says why.
+  - A Go, Rust or Ruby you keep in your home folder is still found, including one behind a version manager such as asdf or rbenv.
+  - A library host's server review runs these checks inside its own work folder.
+
+- [#195](https://github.com/openqodex/openqodex/pull/195) [`c915498`](https://github.com/openqodex/openqodex/commit/c915498b30f48b0f38d2bcdf3ac6d21e2b145030) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - When a scanner the change needs did not run, the verdict says how many, and never says `Passed: no findings`.
+
+- [#198](https://github.com/openqodex/openqodex/pull/198) [`6fb7c4d`](https://github.com/openqodex/openqodex/commit/6fb7c4defffee2b220e04519cbc805eaaf398141) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - - On Windows, `openqodex review` failed with `EINVAL: invalid argument, mkdir 'F:\F:'` before it could save a report. The checked writer walked every path from `\` and took the drive letter for a folder name. It now walks from the path's own root, such as `F:\`, and takes either slash between names.
+  - A lens file saved with Windows line ends (`\r\n`) failed to parse with "lens file is missing YAML frontmatter". It now parses the same as one with `\n`.
+  - On Windows, `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set to a full path such as `C:\Users\me\.claude` was taken as relative and put under the current folder. It is now taken as given.
+
 ## 0.12.0
 
 ### Minor Changes
