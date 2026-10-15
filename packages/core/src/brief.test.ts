@@ -24,6 +24,10 @@
 //     instructions get, shares a heading with another kind, changes a rule
 //     of the brief, or carries a secret the scanners found; or a brief made
 //     with no item differs from one made before context items existed.
+// 12. The reviewer omits the rule to raise shown defects at the confidence
+//     floor, retains the leave-it-out rule, or weakens impact and scope rules.
+// 13. The judgement rule substitutes the default for a configured confidence
+//     floor, including zero, while the other brief rules use that floor.
 import { describe, expect, it } from "vitest";
 import { buildBrief, buildReviewerBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
@@ -190,6 +194,24 @@ describe("buildBrief with lenses from the shipped catalog", () => {
 
 
 describe("10. the reviewer brief's diff section", () => {
+  it.each([0, 0.5, 0.9])("does not substitute the default for confidence floor %s", (confidenceFloor) => {
+    const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [], confidenceFloor });
+    expect(text).toContain(`Raise every defect you can show from the code with confidence ${confidenceFloor} or higher.`);
+    expect(text).toContain(`Raise only real problems on lines this change added or modified, or next to a deletion, with confidence ${confidenceFloor} or higher.`);
+    expect(text).toContain(`Findings under ${confidenceFloor}, or under a cited lens's floor, are not counted.`);
+  });
+
+  it("does not omit shown defects at the confidence floor or weaken impact and scope rules", () => {
+    const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [] });
+    expect(text).toContain("Raise every defect you can show from the code with confidence 0.7 or higher.");
+    expect(text).toContain("Set confidence honestly. The floor removes the rest.");
+    expect(text).not.toContain("A wrong finding is worse than a missed one");
+    expect(text).not.toContain("leave it out");
+    expect(text).toContain("Raise only real problems on lines this change added or modified, or next to a deletion, with confidence 0.7 or higher.");
+    expect(text).toContain("Findings under 0.7, or under a cited lens's floor, are not counted.");
+    expect(text).toContain("`severity` reflects impact on users or the system, not your confidence");
+  });
+
   it("names the files to open with their changed lines and deletions, and says the rest is already shown", () => {
     const big = { path: "app/big.py", text: `diff --git a/app/big.py b/app/big.py\n${"+x\n".repeat(120_000)}` };
     const change = makeChange({
