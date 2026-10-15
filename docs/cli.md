@@ -70,6 +70,8 @@ A scanner name is a built-in name such as `semgrep`, or `custom:<name>` for a cu
 
 `review --agent` and `review --finalize`, the two-step protocol of earlier versions, still work for skills installed before this one and are the fallback `review` names when no reviewer can start: `plumbing` describes them. A review finished that way is recorded as a legacy review, which the push hooks accept, with a line naming who reviewed.
 
+The agent fallback reads the developer's work tree and uses the normal repository report folder. It does not carry `--instructions`, `--instructions-ref` or `--report-dir` from a review that could not start.
+
 ### The receipt and report.html
 
 When a review ends, stdout gets a receipt, not the whole report:

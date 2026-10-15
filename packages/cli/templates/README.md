@@ -108,3 +108,5 @@ No template: `src/agents/targets.ts` builds each entry, and `src/agents/mcp.ts` 
 `{{VERSION}}` is the running package version. `{{LAUNCHER}}` is the absolute launcher path, and `init` must substitute it already quoted for a POSIX shell (single quotes, with any single quote inside escaped), because a home folder can contain a space and the hook command is run through a shell.
 
 The team and instruction sections tell agents to ask the developer before setting `review.instructions_files`. Custom instructions add to the files the owners chose.
+
+Previous team and instruction sections live in `previous/`. Init uses the previous instruction templates when replacing its own sections. `scripts/instruction-sections.mjs` builds the exact stripping set from the current and previous templates. Run it after changing a section; `--check` verifies the generated set.

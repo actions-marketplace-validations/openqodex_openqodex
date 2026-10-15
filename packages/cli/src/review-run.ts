@@ -167,9 +167,6 @@ function fallbackCommand(o: ReviewOptions): string {
     ...(f.config !== undefined ? ["--config", shQuote(resolve(f.config))] : []),
     ...(f.offline ? ["--offline"] : []),
     ...(f.noInstall ? ["--no-install"] : []),
-    ...(o.instructions !== undefined ? ["--instructions", shQuote(o.instructions)] : []),
-    ...(o.instructionsRef !== undefined ? ["--instructions-ref", shQuote(o.instructionsRef)] : []),
-    ...(o.reportDir !== undefined ? ["--report-dir", shQuote(o.reportDir)] : []),
   ];
   return [runner, "review", "--agent", ...scope, ...kept].join(" ");
 }

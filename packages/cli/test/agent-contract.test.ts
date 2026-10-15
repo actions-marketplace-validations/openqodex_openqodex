@@ -31,6 +31,7 @@ const VERSION = "9.9.9";
 const COPIES: Record<number, string> = {
   1: "6baaa371d9d814b0ca225ff82705403d607f4d0f02c137834050b8d7c2566ecc",
   2: "f34091e753bd8c0a0dce42cd5f7312d7e5609497e9dc941aff72048f4fce87a3",
+  3: "bb6b89b4295a19bdbfe8d41e977d02a5fb4f77c9fb5c2ac3875d35f7dadc72a7",
 };
 
 // Every file, hook and rule a user-scope init writes for every agent, for a

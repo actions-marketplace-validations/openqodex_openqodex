@@ -99,7 +99,7 @@ import { MissingObjects } from "./materialize.js";
 import { redactStored } from "./redact.js";
 import { serverScope } from "./scoped.js";
 import type { ScopedParts } from "./scoped.js";
-import { admitted } from "./scopes.js";
+import { admitted, withinScopes } from "./scopes.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
 import type { ToolBox } from "./tools/index.js";
 import { usageTotals } from "./usage.js";
@@ -892,6 +892,7 @@ export async function reviewChange(input: ReviewChangeInput, reviewer: Reviewer,
   });
   if (!decision.ok) return timed({ result: stoppedResult("incomplete", decision.reason), report: null }, clock);
   const config = structuredClone(input.config ?? DEFAULT_CONFIG);
+  config.instructionsFiles ??= [];
   // Everything the review writes besides its snapshot: the change source's
   // temporary folders and the scanners' caches, temporary folders, HOME and
   // TMPDIR (scanners/src/scratch.ts). Removed when the review ends.
@@ -946,8 +947,12 @@ async function reviewInScope(
   // The scan record as soon as the scanners have run, so a review that
   // stops after them still carries it.
   let scan: ReviewResult["scan"] = null;
+  let instructionNotes: string[] = [];
+  const stoppedNotes = () => [...instructionNotes, ...scope.notes()];
   let r: ReviewCoreResult;
   try {
+    const conventions = await resolveInstructionFiles({ repoRoot: input.clonePath, paths: config.instructionsFiles ?? [], owners: input.instructions ?? "", source: decision.mergeBase.sha, admit: withinScopes(input.scopes) });
+    instructionNotes = conventions.notes;
     r = await runReviewCore(
       {
         repoRoot: input.clonePath,
@@ -971,9 +976,8 @@ async function reviewInScope(
         resolveTool: createToolResolver({ allowInstall: false, installBudgetMs: null, installRoot: options.installRoot }),
         resolveTarget: async () => ({ headSha: input.headSha, baseRef: "the merge base", baseSource: "the host", baseSha: input.mergeBaseSha, mergeBase: input.mergeBaseSha, notes: [], release: async () => {} }),
         // The owners' instructions the host gave, quoted as the laptop quotes
-        // its file; none read from the clone.
+        // its file. Chosen convention files come from the merge base inside the scopes.
         instructions: async (secrets) => {
-          const conventions = await resolveInstructionFiles({ repoRoot: input.clonePath, paths: config.instructionsFiles, owners: input.instructions ?? "", source: decision.mergeBase.sha, admit: scope.admit });
           return { ...conventions, text: redactSecrets(input.instructions ?? "", secrets), from: "host" as const };
         },
         onEvent: (e) => {
@@ -988,15 +992,15 @@ async function reviewInScope(
   } catch (error) {
     // What the clone could not give (a partial clone's missing tree or
     // file), or a step that could not run, ends the review with its reason.
-    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, scope.notes(), scan), report: null };
-    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, scope.notes(), scan), report: null };
+    if (error instanceof MissingObjects) return { result: stoppedResult("incomplete", error.message, decision.scope, stoppedNotes(), scan), report: null };
+    if (error instanceof OpenQodexError) return { result: stoppedResult("incomplete", /partial clone/.test(error.message) ? `missing objects: ${error.message}` : error.message, decision.scope, stoppedNotes(), scan), report: null };
     throw error;
   }
   if (r.ended === "nothing") {
     const since = decision.scope.kind === "delta" ? "since the previously reviewed commit" : "since the merge base";
-    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, scope.notes()), report: null };
+    return { result: stoppedResult("complete", `nothing to review: the head adds no change ${since}${input.scopes !== undefined ? " inside the review's scopes" : ""}`, decision.scope, stoppedNotes()), report: null };
   }
-  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, scope.notes(), scan), report: null };
+  if (r.ended !== "model-reviewed") return { result: stoppedResult("incomplete", r.ended === "unavailable" ? r.reasons.join("; ") : "an agent reviewer ran where a model reviewer was given", decision.scope, stoppedNotes(), scan), report: null };
   // Only an answer that passed every check has dispositions; the empty
   // report of one that did not has no summary.
   const answered = r.report.summary !== null;

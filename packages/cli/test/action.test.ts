@@ -347,7 +347,7 @@ describe("the scan step, run", () => {
     }
   }, 60_000);
 
-  it("R33. a committed chosen rule link is omitted by name and does not prevent a complete review", () => {
+  it("R35. a committed chosen rule link is omitted by name and does not prevent a complete review", () => {
     const outside = tempDir("oq-rule-target-");
     writeFileSync(join(outside, "rules.md"), "OUTSIDE-RULE-CANARY\n");
     const provider = tempDir("oq-action-provider-");

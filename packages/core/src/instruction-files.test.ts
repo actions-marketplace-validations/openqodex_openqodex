@@ -81,6 +81,43 @@ describe("chosen convention files", () => {
     await expect(verifyInstructionFiles(root, got.provenance)).resolves.toBe(got.hash);
   });
 
+  it("does not expand globs into untracked or ignored files, folders or links", async () => {
+    const root = repo();
+    const git = (...args: string[]): string => execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", ...args], { cwd: root, encoding: "utf8" }).trim();
+    git("init", "-q");
+    mkdirSync(join(root, "rules"));
+    writeFileSync(join(root, "rules/kept.md"), "Chosen rule.");
+    symlinkSync("kept.md", join(root, "rules/link.md"));
+    writeFileSync(join(root, ".gitignore"), "rules/ignored.md\n");
+    git("add", ".");
+    git("commit", "-qm", "Rules");
+    writeFileSync(join(root, "rules/ignored.md"), "Ignored rule.");
+    writeFileSync(join(root, "rules/untracked.md"), "Untracked rule.");
+    for (const source of ["work tree", git("rev-parse", "HEAD")]) {
+      const got = await resolveInstructionFiles({ repoRoot: root, paths: ["rules/**"], source });
+      expect(got.files.map((file) => file.path)).toEqual(["rules/kept.md"]);
+      expect(got.provenance).toHaveLength(1);
+    }
+    const explicit = await resolveInstructionFiles({ repoRoot: root, paths: ["rules/ignored.md"] });
+    expect(explicit.files[0]?.text).toBe("Ignored rule.");
+  });
+
+  it("omits a glob as a whole when its tracked source list exceeds the file bound", async () => {
+    const root = repo();
+    const git = (args: string[], input?: string): string => execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", ...args], { cwd: root, encoding: "utf8", input }).trim();
+    git(["init", "-q"]);
+    const blob = git(["hash-object", "-w", "--stdin"], "Rule.\n");
+    git(["update-index", "--index-info"], Array.from({ length: 50_001 }, (_, i) => `100644 ${blob}\tr/${i}.md\n`).join(""));
+    git(["commit", "-qm", "Rules"]);
+    for (const source of ["work tree", git(["rev-parse", "HEAD"])]) {
+      const result = await resolveInstructionFiles({ repoRoot: root, paths: ["r/**"], source });
+      expect(result.files).toEqual([]);
+      expect(result.provenance).toHaveLength(1);
+      expect(result.notes[0]).toContain("r/** could not expand the glob");
+      expect(result.notes[0]).toContain("50000 indexed paths");
+    }
+  });
+
   it("strips only exact shipped sections and binds the untransformed file", async () => {
     const root = repo();
     const section = readFileSync(new URL("../../cli/templates/repo/team-section.md", import.meta.url), "utf8").trimEnd().replaceAll("{{VERSION}}", "0.9.0");

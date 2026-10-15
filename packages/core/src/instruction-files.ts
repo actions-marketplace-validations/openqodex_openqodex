@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, win32 } from "node:path";
 import { FolderReader } from "./guarded-fs.js";
 import { matchesGlob } from "./glob.js";
-import { TEAM_SECTION_TEMPLATES } from "./instruction-sections.js";
+import { stripInstructionSections } from "./instruction-sections.js";
 import { safeGit, SERVER_GIT_ENV } from "./safe-git.js";
 import { OpenQodexError } from "./types.js";
 import type { InstructionFile, InstructionProvenance } from "./types.js";
@@ -24,13 +24,6 @@ export function instructionSetHash(owners: string, files: readonly { path: strin
   return sha256(JSON.stringify([owners, ...files.map((file) => [file.path, file.raw])]));
 }
 
-function stripTeamSections(raw: string): string {
-  return raw.replace(/<!-- openqodex:start -->[\s\S]*?<!-- openqodex:end -->/g, (span) => {
-    const version = /openqodex@(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)/.exec(span)?.[1];
-    return version && TEAM_SECTION_TEMPLATES.some((template) => template.replaceAll("{{VERSION}}", version) === span) ? "" : span;
-  });
-}
-
 async function commitOf(repoRoot: string, source: string): Promise<string> {
   const got = await safeGit(repoRoot, ["rev-parse", "--verify", "--end-of-options", `${source}^{commit}`], undefined, { ...SERVER_GIT_ENV }, 1024);
   const sha = got.stdout.toString("utf8").trim();
@@ -38,25 +31,26 @@ async function commitOf(repoRoot: string, source: string): Promise<string> {
   return sha;
 }
 
+// Bound metadata before matching. A rejected expansion is omitted as a whole.
+const PATH_LIST_MAX_BYTES = 4 * 1024 * 1024;
+const PATH_LIST_MAX_FILES = 50_000;
+function listedPaths(data: Buffer, pattern: string): string[] {
+  const entries = data.toString("utf8").split("\0").filter(Boolean);
+  if (entries.length > PATH_LIST_MAX_FILES) throw new Error("matches a source with more than 50000 indexed paths");
+  return entries.filter((entry) => /^(100644|100755) /.test(entry)).map((entry) => entry.slice(entry.indexOf("\t") + 1)).filter((path) => matchesGlob(path, pattern)).sort();
+}
+
 type Reader = { paths(pattern: string): Promise<string[]>; read(path: string): Promise<Buffer> };
 function workTreeReader(repoRoot: string): Reader {
   const reader = new FolderReader(repoRoot);
   return {
     async paths(pattern) {
-      const prefix = pattern.split("/").slice(0, pattern.split("/").findIndex(glob));
-      const found: string[] = [];
-      const walk = (names: string[]): void => {
-        for (const name of reader.list(names)?.names.sort() ?? []) {
-          if (name.toLowerCase() === ".git") continue;
-          const parts = [...names, name];
-          const path = parts.join("/");
-          const entry = reader.entry(parts);
-          if (matchesGlob(path, pattern)) found.push(path);
-          if (entry.ok && entry.stat.isDirectory()) walk(parts);
-        }
-      };
-      walk(prefix);
-      return found.sort();
+      const got = await safeGit(repoRoot, ["ls-files", "--cached", "--stage", "-z"], undefined, { ...SERVER_GIT_ENV }, PATH_LIST_MAX_BYTES);
+      if (got.code !== 0) throw new Error("could not list tracked convention paths");
+      return listedPaths(got.stdout, pattern).filter((path) => {
+        const entry = reader.entry(path.split("/"));
+        return entry.ok && entry.stat.isFile();
+      });
     },
     async read(path) {
       const entry = reader.entry(path.split("/"));
@@ -75,9 +69,9 @@ function commitReader(repoRoot: string, sha: string): Reader {
   const git = (args: string[], maxBytes?: number) => safeGit(repoRoot, args, undefined, { ...SERVER_GIT_ENV }, maxBytes);
   return {
     async paths(pattern) {
-      const got = await git(["ls-tree", "-r", "-t", "-z", "--full-tree", sha]);
+      const got = await git(["ls-tree", "-r", "-z", "--full-tree", sha], PATH_LIST_MAX_BYTES);
       if (got.code !== 0) throw new Error("could not list the convention paths in the commit");
-      return got.stdout.toString("utf8").split("\0").filter(Boolean).map((entry) => entry.slice(entry.indexOf("\t") + 1)).filter((path) => matchesGlob(path, pattern)).sort();
+      return listedPaths(got.stdout, pattern);
     },
     async read(path) {
       const entry = await git(["ls-tree", "-z", "--full-tree", sha, "--", `:(literal)${path}`], 4096);
@@ -120,10 +114,11 @@ export async function resolveInstructionFiles(args: { repoRoot: string; paths: r
   let total = 0;
   for (const chosen of args.paths) {
     let paths = [chosen];
+    let expansionError: string | null = null;
     try {
       if (plain(chosen) && glob(chosen) && reader) paths = await reader.paths(chosen);
-    } catch {
-      paths = [chosen];
+    } catch (error) {
+      expansionError = `could not expand the glob: ${(error as Error).message}`;
     }
     for (const path of paths) {
       if (seen.has(path)) continue;
@@ -131,6 +126,7 @@ export async function resolveInstructionFiles(args: { repoRoot: string; paths: r
       const record: InstructionProvenance = { path, source, sha256: null, bytes: null, omitted: null };
       provenance.push(record);
       try {
+        if (expansionError) throw new Error(expansionError);
         if (!plain(path)) throw new Error("is not a repo-relative path inside the repository");
         if (args.admit && !args.admit(path)) throw new Error("is outside the review's scopes; supply it through instructions if needed");
         if (!reader) throw new Error("has no convention source selected");
@@ -138,7 +134,7 @@ export async function resolveInstructionFiles(args: { repoRoot: string; paths: r
         record.bytes = bytes.length;
         if (total + bytes.length > CONVENTIONS_MAX_BYTES) throw new Error("would exceed the 64 KB total limit");
         const raw = bytes.toString("utf8");
-        const text = stripTeamSections(raw);
+        const text = stripInstructionSections(raw);
         if (text !== raw) record.transformed = "shipped OpenQodex section removed";
         if (text.trim() === "") throw new Error("has no conventions after removing any shipped OpenQodex section");
         total += bytes.length;

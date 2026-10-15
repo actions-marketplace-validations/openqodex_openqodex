@@ -563,3 +563,11 @@ describe("the port of the designer's page", () => {
     expect(/<title>(.*)<\/title>/.exec(ours)?.[1]).toBe(/<title>(.*)<\/title>/.exec(expected)?.[1]);
   });
 });
+
+it("keeps supplied and omitted convention notes in HTML without interpreting their markup", () => {
+  const change = makeChange();
+  const html = renderHtml({ report: report(change, { notes: ["Conventions supplied: rules.md", "Convention omitted: <script>rules</script> is missing"] }), display: null, version: "test" });
+  expect(html).toContain("Conventions supplied: rules.md");
+  expect(html).toContain("Convention omitted: &lt;script&gt;rules&lt;/script&gt; is missing");
+  expect(html).not.toContain("<script>rules</script>");
+});

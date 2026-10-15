@@ -646,7 +646,7 @@ describe("the recorded submission", () => {
 });
 
 describe("conventions from the trusted merge base", () => {
-  it("omits chosen files outside scopes and never substitutes head rules for base rules", async () => {
+  it("omits rules outside scopes but ignores code exclusions and never substitutes head rules", async () => {
     const repo = changeRepo();
     git(repo.dir, "checkout", "-q", "main");
     writeFileSync(join(repo.dir, "src/rules.md"), "BASE-CONVENTION: use addition.\n");
@@ -661,7 +661,7 @@ describe("conventions from the trusted merge base", () => {
     const model = fixtureModel();
     const { DEFAULT_CONFIG } = await import("@openqodex/core");
     const result = await reviewChange(
-      { clonePath: repo.dir, mergeBaseSha: base, headSha: head, scopes: ["src"], config: { ...DEFAULT_CONFIG, instructionsFiles: ["src/rules.md", "AGENTS.md"] } },
+      { clonePath: repo.dir, mergeBaseSha: base, headSha: head, scopes: ["src"], config: { ...DEFAULT_CONFIG, instructionsFiles: ["src/rules.md", "AGENTS.md"], exclude: ["**/*.md"] } },
       model,
       { profile: "server", workDir: tempDir("oq-rc-work-"), installRoot: tempDir("oq-rc-install-"), tools: { web: false, shell: false }, scanners: "preinstalled", budget: { deadlineMs: 120_000, authorize: async () => true } },
     );
@@ -675,4 +675,31 @@ describe("conventions from the trusted merge base", () => {
     expect(result.notes.join("\n")).toContain(`src/rules.md (${base}`);
     expect(result.render.sarif()).toContain("Convention omitted: AGENTS.md");
   });
+});
+
+it("keeps convention omissions when the review stops with nothing to review", async () => {
+  const repo = changeRepo();
+  const { DEFAULT_CONFIG } = await import("@openqodex/core");
+  const result = await reviewChange(
+    { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.base, config: { ...DEFAULT_CONFIG, instructionsFiles: ["missing-rule.md"] } },
+    fixtureModel(),
+    { profile: "server", workDir: tempDir("oq-rc-work-"), installRoot: tempDir("oq-rc-install-"), tools: { web: false, shell: false }, scanners: "preinstalled", budget: { deadlineMs: 120_000, authorize: async () => true } },
+  );
+  expect(result.status).toBe("complete");
+  expect(result.reason).toContain("nothing to review");
+  expect(result.notes.join("\n")).toContain("Convention omitted: missing-rule.md");
+});
+
+it("accepts a host config made before instructionsFiles existed", async () => {
+  const repo = changeRepo();
+  const { DEFAULT_CONFIG } = await import("@openqodex/core");
+  const config = structuredClone(DEFAULT_CONFIG);
+  delete config.instructionsFiles;
+  const result = await reviewChange(
+    { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, config },
+    fixtureModel(),
+    { profile: "server", workDir: tempDir("oq-rc-work-"), installRoot: tempDir("oq-rc-install-"), tools: { web: false, shell: false }, scanners: "preinstalled", budget: { deadlineMs: 120_000, authorize: async () => true } },
+  );
+  expect(result.status).toBe("complete");
+  expect(config).not.toHaveProperty("instructionsFiles");
 });

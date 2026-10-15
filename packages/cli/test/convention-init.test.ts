@@ -31,7 +31,7 @@ describe("init convention choices", () => {
     expect(config.review.instructions_files).toEqual(["CONTRIBUTING.md"]);
   });
 
-  it("prints one hint without reading unchosen candidate contents", () => {
+  it("prints one hint without supplying unchosen candidate contents", () => {
     const s = sandbox({ "CONTRIBUTING.md": "UNCHOSEN-CANARY\n", "readme.txt": "Before\n" });
     writeFileSync(join(s.repo, "readme.txt"), "After\n");
     const got = cli(s, ["review", "--agent", "--offline", "--only", "sqllint", "--no-graph"]);

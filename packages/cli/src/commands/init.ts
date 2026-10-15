@@ -623,13 +623,13 @@ async function planConventionChoice(s: Setup, actions: Action[]): Promise<void> 
   const chosen = await prompts.multiselect<string>({
     message: "Which convention files may the reviewer use?",
     options: candidates.map((file) => ({ value: file.path, label: `${file.path} (${file.bytes} bytes)` })),
-    initialValues: loaded.config.instructionsFiles.filter((path) => candidates.some((file) => file.path === path)),
+    initialValues: (loaded.config.instructionsFiles ?? []).filter((path) => candidates.some((file) => file.path === path)),
     required: false,
   });
   if (prompts.isCancel(chosen)) return;
   // Keep explicit paths that the picker cannot list, including globs.
-  const paths = [...loaded.config.instructionsFiles.filter((path) => !candidates.some((file) => file.path === path)), ...chosen];
-  if (JSON.stringify(paths) === JSON.stringify(loaded.config.instructionsFiles)) return;
+  const paths = [...(loaded.config.instructionsFiles ?? []).filter((path) => !candidates.some((file) => file.path === path)), ...chosen];
+  if (JSON.stringify(paths) === JSON.stringify(loaded.config.instructionsFiles ?? [])) return;
   const path = loaded.path ?? join(s.repoRoot, STATE_DIR, FOLDER_CONFIG);
   const before = readRepoFile(s.repoRoot, path, CONFIG_MAX_BYTES);
   const document = parseDocument(before ?? DEFAULT_CONFIG_YAML);

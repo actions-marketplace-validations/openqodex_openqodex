@@ -53,19 +53,11 @@ export function instructionSection(): string {
   return template("instructions-section.md").trimEnd();
 }
 
-// The instruction section as versions 0.5.0 to 0.8.1 wrote it, which said
-// who reviews: found exactly as written, init puts the current one in its
-// place even where no record names it (a teammate's machine).
-const PREVIOUS_INSTRUCTION_SECTIONS = [
-  [
-    SECTION_START,
-    "## Review with OpenQodex",
-    '- When a feature or fix is done, and before any push, review it with the openqodex skill: "review my change with openqodex".',
-    "- OpenQodex starts its own reviewer process for the review: the agent that wrote the code does not judge its own work.",
-    "- Do not push on a blocked verdict unless the developer says so after seeing the findings.",
-    "- The report is in `.openqodex/reviews/`.",
-    SECTION_END,
-  ].join("\n"),
+// Previous instruction sections: found exactly as written, init puts the
+// current one in their place even where no record names it (a teammate's machine).
+export const PREVIOUS_INSTRUCTION_SECTIONS = [
+  template("previous", "instructions-0.5.0.md").trimEnd(),
+  template("previous", "instructions-0.8.2.md").trimEnd(),
 ];
 
 // The marked section for each agent's global instruction file: one line

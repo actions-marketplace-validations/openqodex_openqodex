@@ -4,7 +4,7 @@
 // vanish without a trace.
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, readFileBounded, readRepoFile } from "@openqodex/core";
+import { FolderReader, OpenQodexError, STATE_DIR, isRepoState, readFileBounded, readRepoFile, stripInstructionSections } from "@openqodex/core";
 
 export const INSTRUCTIONS_FILE = "custom-instructions.md";
 export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
@@ -32,13 +32,18 @@ export function readInstructionsAt(repoRoot: string, explicitPath: string): stri
   return readFileBounded(path, INSTRUCTIONS_MAX_BYTES, TOO_BIG_HINT);
 }
 
-// Only metadata is listed here. init asks the developer before selecting it.
+// Bounded reads distinguish real conventions from sections init wrote.
+// The list shows metadata only. init asks before selecting anything.
 export function instructionCandidates(repoRoot: string): { path: string; bytes: number }[] {
   const reader = new FolderReader(repoRoot);
   const found: { path: string; bytes: number }[] = [];
   const add = (path: string): void => {
     const entry = reader.entry(path.split("/"));
-    if (entry.ok && entry.stat.isFile()) found.push({ path, bytes: Number(entry.stat.size) });
+    if (!entry.ok || !entry.stat.isFile()) return;
+    const content = reader.read(path.split("/"), INSTRUCTIONS_MAX_BYTES);
+    // A large or unreadable candidate remains visible so the owner can decide.
+    if (content.ok && stripInstructionSections(content.data.toString("utf8")).trim() === "") return;
+    found.push({ path, bytes: Number(entry.stat.size) });
   };
   for (const path of ["CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", ".cursorrules"]) add(path);
   const walk = (parts: string[]): void => {
@@ -54,7 +59,7 @@ export function instructionCandidates(repoRoot: string): { path: string; bytes: 
   return found;
 }
 
-export function conventionHint(repoRoot: string, paths: readonly string[]): string | null {
+export function conventionHint(repoRoot: string, paths: readonly string[] = []): string | null {
   if (paths.length > 0) return null;
   const candidates = instructionCandidates(repoRoot);
   return candidates.length === 0 ? null : `Convention files available: ${candidates.map((file) => file.path).join(", ")}. Ask the developer which files to set in review.instructions_files.`;

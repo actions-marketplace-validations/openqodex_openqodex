@@ -1011,6 +1011,15 @@ describe("26. the fallback when no reviewer can start", () => {
     expect(err).toContain(fallback(dir, " --offline --no-install"));
   });
 
+  it("does not give agent fallback flags that agent mode refuses", async () => {
+    const dir = repo();
+    const instructions = join(dir, "rules.md");
+    writeFileSync(instructions, "Owners' rule.\n");
+    const report = tempDir("oq-fallback-report-");
+    expect(await review(dir, fake([good], false), ["--instructions", instructions, "--instructions-ref", "none", "--report-dir", report])).toBe(2);
+    expect(err).toContain(fallback(dir));
+  });
+
   it("with a driver available the fallback text never appears", async () => {
     expect(await review(repo(), fake([good]))).toBe(0);
     expect(out + err).not.toContain("review --agent");

@@ -239,8 +239,8 @@ Scanners stay in `~/.openqodex/tools/`. Delete that folder to remove them too.
 
 ## Chosen convention files
 
-The reviewer gets only the repository files the owners list in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. The list defaults to `[]`. There is no automatic reading. Never add a path on your own. Ask the developer which files the reviewer may use, then set only what they name.
+The reviewer quotes only the files chosen in `review.instructions_files`, plus `.openqodex/custom-instructions.md`. See [Convention files](config.md#convention-files) for sources, limits and precedence.
 
-`init` lists known candidates and sizes. An interactive init asks which to use. A non-interactive init makes no choice. Each chosen file is at most 32 KB, with a 64 KB total. Files are skipped whole, with a reason in the receipt and report notes. Those notes name the supplied files and their sources too. These files join the existing brief sent to the reviewer's model provider.
+Never add a path on your own. Ask the developer which files the reviewer may use, then set only what they name.
 
-Local reviews read the developer's own work tree. The Action reads from the commit used for config. The library reads from the merge base inside the review's scopes. Conventions added to the base branch after divergence are not seen by the library. Custom instructions win on conflict. Only conventions applicable to the changed code count, with each stated scope and exception honoured.
+This release advances the user-scope agent contract so `init` can refresh Cursor and Cline rules with the developer-choice requirement. Existing contract copies stay unchanged.

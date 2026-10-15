@@ -293,7 +293,7 @@ export type Config = {
   disabledRules: string[];
   defaultBase: string | null; // the branch or ref the default scope diffs against when there is no upstream; null: the remote's default branch
   includeFixtures: boolean;
-  instructionsFiles: string[]; // repo-relative convention paths or globs chosen by the owners; default []
+  instructionsFiles?: string[]; // repo-relative convention paths or globs chosen by the owners; default []
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
   // the code graph in the brief; enabled by default. maxFiles caps new parses per build.
