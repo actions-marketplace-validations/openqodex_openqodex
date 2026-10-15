@@ -187,18 +187,32 @@ triggers:
 confidence_floor: 0.7
 ---
 
-For each removed line with a replacement beside it, name what the old
-line did: a condition it checked, a call it made, a resource it released,
-an error it handled, a slice it took, a start value it used, a retry it
-kept, a status it sent, or a key a parser reads. Compare those effects
-with the new code, including the surrounding control flow and callers.
+For each removed line beside a replacement, name the old line's effects.
+These include conditions, calls, resource releases and error handling.
+Also check slices, initial values, retries, statuses and parser keys.
+Compare those effects with the new code.
+Include surrounding control flow and callers.
 
-Flag when the replacement drops one of those effects, nothing else in
-this change restores it, and you can show the resulting failure from
-the code. Name the lost effect, the input or path that needs it, and the
-consequence. Cite the replacement line. A missing effect alone is not
-proof of a defect: check whether the change intentionally removes the
-behavior and whether the code supports that reason.
+Flag a dropped effect only when this change never restores it.
+Show the resulting failure from the code.
+Name the lost effect.
+Identify the input or path that needs it.
+State the consequence.
+Cite the replacement line.
+A missing effect alone does not prove a defect.
+Check whether the change intentionally removes the behavior.
+Verify that the code supports that reason.
+
+This lens triggers on replacements in files with these extensions:
+
+- `.c`, `.cc`, `.cpp`, `.cxx`, `.C`, `.h`, `.hh`, `.hpp`, `.hxx`, `.rs`, `.cs`, `.php`
+- `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, `.cts`, `.py`, `.pyi`, `.go`, `.rb`
+- `.java`, `.kt`, `.kts`, `.swift`, `.m`, `.mm`, `.scala`, `.sc`, `.sh`, `.bash`, `.zsh`, `.sql`
+- `.lua`, `.pl`, `.pm`, `.r`, `.R`, `.dart`, `.ex`, `.exs`, `.erl`, `.hrl`, `.hs`, `.clj`
+- `.cljs`, `.cljc`, `.vue`, `.svelte`, `.vb`, `.fs`, `.fsx`, `.ps1`, `.psm1`, `.groovy`, `.gradle`, `.asm`
+- `.s`, `.S`, `.zig`, `.jl`, `.ml`, `.mli`, `.nim`, `.v`, `.vhd`, `.vhdl`, `.f`, `.f90`
+- `.f95`, `.for`, `.cob`, `.cbl`, `.coffee`, `.elm`, `.el`, `.lisp`, `.lsp`, `.scm`, `.ss`, `.rkt`
+- `.d`, `.pas`, `.p`, `.raku`, `.tcl`, `.awk`
 
 Suppress when:
 - a renamed call has the same effect,
@@ -211,10 +225,9 @@ Suppress when:
   changing behavior.
 
 Example: `return ptr ? *ptr : 0;` becomes `return *ptr;`. The old line
-handled a null pointer. If callers can still pass null and no other
-check was added, the replacement dereferences null instead of returning
-zero. Flag the lost check. If the same change guards null before this
-line, raise nothing.
+handled a null pointer. If callers can still pass null, check for another null guard.
+Without one, the replacement dereferences null instead of returning zero.
+Flag the lost check. If the same change guards null before this line, raise nothing.
 
 Severity follows the demonstrated consequence. Raise a bug, not a
 request for tests, a style preference, or speculative hardening.

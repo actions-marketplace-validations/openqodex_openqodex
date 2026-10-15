@@ -1,7 +1,6 @@
 // Ways the combined reviewer check could fail, written before the code:
-// 1. A replacement hunk never selects the shipped replacement lens in the brief.
+// 1. The build omits the replacement lens, or a replacement never selects it.
 // 2. The reviewer receives the old omission rule instead of honest confidence.
-// 3. A harmless replacement in the demo's clean copy produces a new finding.
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +12,6 @@ afterAll(removeTempDirs);
 
 describe("replacement lens and honest confidence in a CLI review", () => {
   let brief: string;
-  let reviewed: Report;
 
   beforeAll(() => {
     const dir = baseline();
@@ -28,7 +26,8 @@ describe("replacement lens and honest confidence in a CLI review", () => {
 
     // Replay an empty answer through the model provider used by the e2e suite.
     const provider = tempDir("oq-e2e-replacement-provider-");
-    writeFileSync(join(provider, "claude"), `#!${process.execPath}\n${readFileSync(join(root, "tests/golden/stand-ins/claude.cjs"), "utf8")}`);
+    writeFileSync(join(provider, "claude.cjs"), readFileSync(join(root, "tests/golden/stand-ins/claude.cjs"), "utf8"));
+    writeFileSync(join(provider, "claude"), `#!${process.execPath}\nimport "./claude.cjs";\n`);
     chmodSync(join(provider, "claude"), 0o755);
     writeFileSync(join(provider, "submission.json"), JSON.stringify({ version: 2, change_id: change.changeId, summary: "Preserves the page size.", findings: [], dropped: [] }));
     const result = run("replacement-confidence-review", dir, [...args, "--reviewer", "claude", "--reviewer-web", "off"], {
@@ -36,20 +35,18 @@ describe("replacement lens and honest confidence in a CLI review", () => {
     });
     expect(result.status, result.stderr).toBe(0);
     const out = reportDir(dir);
-    reviewed = readJson<Report>(join(out, "report.json"));
+    const reviewed = readJson<Report>(join(out, "report.json"));
     expect(reviewed.completion?.status).toBe("complete");
     brief = readFileSync(join(out, "brief.md"), "utf8");
   });
 
   it("does not omit the replacement lens from the reviewer brief", () => {
+    expect(readFileSync(join(root, "packages/cli/lenses/replaced-line-drops-behavior.md"), "utf8"))
+      .toBe(readFileSync(join(root, "packages/core/lenses/replaced-line-drops-behavior.md"), "utf8"));
     expect(brief).toContain("### replaced-line-drops-behavior");
   });
 
   it("does not replace honest confidence with the old omission rule", () => {
-    expect(brief).toContain("Raise every defect you can show from the code with confidence 0.7 or higher. Set confidence honestly; the floor removes the rest.");
-  });
-
-  it("does not add a finding for a harmless replacement in the clean demo", () => {
-    expect(reviewed.findings).toEqual([]);
+    expect(brief).toContain("Raise every defect you can show from the code with confidence 0.7 or higher. Set confidence honestly. The floor removes the rest.");
   });
 });

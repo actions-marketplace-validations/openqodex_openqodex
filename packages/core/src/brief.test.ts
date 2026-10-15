@@ -204,7 +204,7 @@ describe("10. the reviewer brief's diff section", () => {
   it("does not omit shown defects at the confidence floor or weaken impact and scope rules", () => {
     const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [] });
     expect(text).toContain("Raise every defect you can show from the code with confidence 0.7 or higher.");
-    expect(text).toContain("Set confidence honestly; the floor removes the rest.");
+    expect(text).toContain("Set confidence honestly. The floor removes the rest.");
     expect(text).not.toContain("A wrong finding is worse than a missed one");
     expect(text).not.toContain("leave it out");
     expect(text).toContain("Raise only real problems on lines this change added or modified, or next to a deletion, with confidence 0.7 or higher.");

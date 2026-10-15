@@ -66,6 +66,6 @@ describe("the replaced-line lens", () => {
     const change = makeChange({ diff: diff("value.c"), files: [{ path: "value.c", status: "modified", oldPath: null, binary: false }], changedPaths: ["value.c"] });
     const out = buildReviewerBrief({ change, scan: makeScan({ candidates: [] }), lenses: selectLenses(change), config: makeConfig(), secrets: [] });
     expect(out.text).toContain(`### ${NAME}`);
-    expect(out.text).toContain("a condition it checked");
+    expect(out.text).toContain("These include conditions, calls, resource releases and error handling.");
   });
 });
