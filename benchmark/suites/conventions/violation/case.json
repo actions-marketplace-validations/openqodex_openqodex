@@ -1,23 +1,23 @@
 {
   "id": "violation",
-  "guards": "a chosen convention violation is missed or reported without naming its rule file",
+  "guards": "a chosen route naming convention is missed or reported without citing its rule",
   "language": "python",
   "framework": "flask",
   "clean": false,
   "bugs": [
     {
-      "id": "repeated-page-size",
+      "id": "route-verb-noun",
       "file": "app/server.py",
       "lines": [
-        24,
-        24
+        41,
+        41
       ],
       "anchor": {
-        "line": 24,
-        "text": "(20, offset)"
+        "line": 41,
+        "text": "def health_check():"
       },
       "mentions": [
-        "CONTRIBUTING.md"
+        "CONTRIBUTING.md#verb-noun"
       ],
       "kind": [
         "style",
@@ -28,14 +28,14 @@
       "found_by": [
         "reasoning"
       ],
-      "truth": "The literal 20 repeats PAGE_SIZE against CONTRIBUTING.md. Use PAGE_SIZE as the SQL LIMIT parameter and cite the convention file.",
+      "truth": "CONTRIBUTING.md#verb-noun requires new GET handlers to use verb_noun names with get first. Rename health_check to get_health and cite that rule.",
       "tags": [],
       "evidence": [
         {
           "file": "CONTRIBUTING.md",
           "lines": [
             3,
-            3
+            5
           ]
         }
       ]

@@ -8,14 +8,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { isShippedInstructionFile, resolveInstructionFiles, stripInstructionSections } from "@openqodex/core";
-import { instructionSection, PREVIOUS_INSTRUCTION_SECTIONS, teamSection } from "../src/agents/targets.js";
+import { instructionSection, previousInstructionSections, teamSection } from "../src/agents/targets.js";
 import { conventionHint, mergeInstructionChoice } from "../src/instructions.js";
 
 it("strips every shipped section while preserving owner edits and keeping the template set current", () => {
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   execFileSync(process.execPath, [join(root, "scripts/instruction-sections.mjs"), "--check"]);
   const templates = join(root, "packages/cli/templates");
-  const sections = [instructionSection(), ...PREVIOUS_INSTRUCTION_SECTIONS, teamSection("0.12.0"), teamSection("99.1.2-beta.3")];
+  const sections = [instructionSection(), ...previousInstructionSections(), teamSection("0.12.0"), teamSection("99.1.2-beta.3")];
   for (const path of readdirSync(templates, { recursive: true }) as string[]) {
     if (!/\.(md|mdc)$/.test(path)) continue;
     const text = readFileSync(join(templates, path), "utf8").replaceAll("{{VERSION}}", "0.1.0").replaceAll("{{INSTRUCTIONS}}", instructionSection());

@@ -1,15 +1,16 @@
 // Failures guarded: the convention cases enter the frozen corpus, cannot
 // materialise in either review shape, or lose their selected rules when
 // the laptop runner uses an external report folder. A fixture config must
-// also survive git add so a fresh clone reviews the same cases.
+// also survive git add so a fresh clone reviews the same cases. Format 3
+// must credit the cited violation and count control findings as false.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { benchRoot, listCases, repoRoot } from "../lib/cases.mjs";
+import { benchRoot, caseHash, listCases, readCase, repoRoot } from "../lib/cases.mjs";
 import { laptopReviewArgs } from "../lib/runner.mjs";
-import { classify, scoreSample } from "../lib/score.mjs";
+import { originOf, scoreJob } from "../lib/score.mjs";
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -47,11 +48,55 @@ it("does not leave chosen fixture configs ignored in a fresh checkout", () => {
   for (const path of paths) expect(readFileSync(join(repoRoot, path), "utf8")).toContain("instructions_files:");
 });
 
-it("does not penalize a duplicated literal in the no-rule control but still rejects invented rules", () => {
-  const spec = JSON.parse(readFileSync(join(benchRoot, "suites/conventions/no-rule/case.json"), "utf8"));
-  const finding = { file_path: "app/server.py", line_number: 24, category: "maintainability", title: "A magic number duplicates the page size", description: "Use PAGE_SIZE for the limit." };
-  expect(classify(finding, spec).outcome).toBe("accepted");
-  const score = scoreSample({ spec, report: { findings: [finding], completion: { status: "complete" } }, brief: "" });
-  expect(score.controls).toEqual({ hit: 1, of: 1 });
-  expect(classify({ ...finding, title: "CONTRIBUTING.md forbids this change", description: "An owner rule was violated." }, spec).outcome).toBe("false");
+const conventionRoot = join(benchRoot, "suites/conventions");
+const conventionFinding = {
+  file_path: "app/server.py", line_number: 41, category: "maintainability", severity: "minor",
+  title: "The handler breaks CONTRIBUTING.md#verb-noun",
+  problem: "The rule requires new route handlers to use verb_noun names with the HTTP method first.",
+  consequence: "health_check does not follow the chosen naming convention.",
+  fix: "Rename health_check to get_health.",
+};
+
+function scoreConvention(name, findings) {
+  const spec = readCase(name, conventionRoot);
+  const caseId = `conventions/${name}@${caseHash(name, conventionRoot).slice(0, 8)}`;
+  return scoreJob({
+    job: { jobId: `${caseId}/fixture/1`, caseId, case: name, config: "fixture", repeat: 1 },
+    spec, origin: originOf("conventions"), brief: "",
+    report: { findings, completion: { status: "complete" } },
+  });
+}
+
+it("does not miss a cited convention violation in the format 3 score", () => {
+  const hit = scoreConvention("violation", [conventionFinding]);
+  expect(hit.origin).toBe("planted");
+  expect(hit.findings[0].outcome).toBe("hit");
+  expect(hit.issueRecall.all).toEqual({ hit: 1, of: 1 });
+  expect(hit.precision).toEqual({ correct: 1, unresolved: 0, of: 1 });
+  expect(scoreConvention("violation", []).issueRecall.all).toEqual({ hit: 0, of: 1 });
+});
+
+it.each(["CONTRIBUTING.md", "verb_noun"])("does not credit a violation naming only %s without the rule citation", (word) => {
+  const score = scoreConvention("violation", [{
+    ...conventionFinding, title: `Follow ${word}`,
+    problem: "The handler breaks a chosen convention.",
+    consequence: "Its name does not follow the convention.",
+    fix: "Rename the handler.",
+  }]);
+  expect(score.findings[0].outcome).not.toBe("hit");
+  expect(score.issueRecall.all).toEqual({ hit: 0, of: 1 });
+});
+
+it.each(["exception", "no-rule"])("counts a convention finding on the %s control as false in format 3", (name) => {
+  const spec = readCase(name, conventionRoot);
+  expect(spec.clean).toBe(true);
+  expect(spec.bugs).toEqual([]);
+  expect(spec.extras).toBeUndefined();
+  expect(readFileSync(join(conventionRoot, name, "change/app/server.py"), "utf8"))
+    .toBe(readFileSync(join(conventionRoot, "violation/change/app/server.py"), "utf8"));
+  const falseAlarm = scoreConvention(name, [conventionFinding]);
+  expect(falseAlarm.findings[0].outcome).toBe("false");
+  expect(falseAlarm.precision).toEqual({ correct: 0, unresolved: 0, of: 1 });
+  expect(falseAlarm.controls).toEqual({ hit: 0, of: 1 });
+  expect(scoreConvention(name, []).controls).toEqual({ hit: 1, of: 1 });
 });

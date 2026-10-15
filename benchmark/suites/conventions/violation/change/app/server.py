@@ -21,7 +21,7 @@ def list_items():
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
-            (20, offset),
+            (PAGE_SIZE, offset),
         ).fetchall()
     return jsonify([dict(row) for row in rows])
 
@@ -35,3 +35,8 @@ def get_item(item_id):
     if row is None:
         return jsonify({"error": "not found"}), 404
     return jsonify(dict(row))
+
+
+@app.get("/health")
+def health_check():
+    return jsonify({"status": "ok"})

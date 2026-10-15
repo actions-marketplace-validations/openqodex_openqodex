@@ -1,5 +1,7 @@
 # Repository conventions
 
-In app/server.py, list_items must pass PAGE_SIZE as the SQL LIMIT parameter. Do not repeat its numeric value at the call site. This keeps pagination settings in one place.
+## Verb-noun
 
-Exception: list_items may pass the literal 20 as its SQL LIMIT parameter. This endpoint intentionally keeps its existing page size when the shared constant changes. Do not flag that literal.
+New route handlers in app/ use verb_noun names, with the HTTP method first. A GET /health handler is named get_health, not health_check.
+
+Exception: the GET /health handler in app/server.py may be named health_check. The verb_noun rule does not apply to this health endpoint.

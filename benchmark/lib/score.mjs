@@ -603,8 +603,12 @@ export const SEVERITY_LABEL = "Each found truth item once, by the first finding 
 export const FINDER_LABEL = "Each found truth item once, judged from the review's own scan.json: a scanner found it when one of its candidates, or a finding merged into one, sits on the item's lines and is either from a scanner found_by names or names the item's words; else the reviewer found it alone. found_by is the expectation: a scanner it names is met when that scanner located the item, reasoning and graph when no scanner did.";
 
 // The kind of case a suite holds.
-const ORIGINS = { planted: "planted", conventions: "planted", aacr: "real", clean: "real", martian: "injected" };
+const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected" };
 export const originOf = (suite) => ORIGINS[suite ?? "planted"] ?? null;
+
+// Register authored suites separately from the frozen scoring rules.
+// Their case hashes identify the fixtures; they use the same planted rules.
+ORIGINS.conventions = "planted";
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 export const jobIdOf = (caseId, config, repeat) => `${caseId}/${config}/${repeat}`;

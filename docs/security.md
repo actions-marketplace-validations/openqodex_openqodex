@@ -106,7 +106,7 @@ Codex sends the conversation to the model your Codex login uses, as any Codex se
 - reads the same redacted snapshot in `~/.openqodex/checkouts/`, never your folder.
 - runs under a Codex permission profile: its commands can read the snapshot and the system folders Codex's `:minimal` set names (such as `/usr` and `/etc`), and nothing else. `/tmp`, your home folder, `~/.ssh` and `~/.codex` are refused. Writes and network are refused. That sandbox is the boundary. Before each review, OpenQodex proves it with a command run under the same profile without a model: a read of a file outside the snapshot and a write inside it must both be refused, or the review does not start.
 - loads your global `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`). No Codex setting leaves it out. If you keep instructions there, the reviewer sees them, including the section `init` adds for Codex.
-- loads none of your `config.toml`, rules, MCP servers, plugins, hooks, memories or skills, and none of the repository's `AGENTS.md` or skills.
+- loads none of your `config.toml`, rules, MCP servers, plugins, hooks, memories or skills, and none of the repository's `AGENTS.md` or skills as agent instructions. Repository files chosen in `review.instructions_files` are quoted as convention data in the brief.
 - has Codex's web search by default, as the cached search, which answers from OpenAI's search index and opens no address the model names. `reviewer_web: off` removes it.
 - gets an environment built from a short allowlist: `PATH`, `HOME`, `USER`, `CODEX_HOME`, proxy and certificate settings. Other tokens in your shell, including `OPENAI_API_KEY` and `GITHUB_TOKEN`, never reach it. Its commands see a smaller set still (Codex's `core` environment).
 

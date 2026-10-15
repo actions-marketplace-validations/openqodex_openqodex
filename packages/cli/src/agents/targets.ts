@@ -55,10 +55,14 @@ export function instructionSection(): string {
 
 // Previous instruction sections: found exactly as written, init puts the
 // current one in their place even where no record names it (a teammate's machine).
-export const PREVIOUS_INSTRUCTION_SECTIONS = [
-  template("previous", "instructions-0.5.0.md").trimEnd(),
-  template("previous", "instructions-0.8.2.md").trimEnd(),
-];
+// Read only when init renders targets. Update workers import this module
+// without rendering any agent files or needing the templates beside them.
+export function previousInstructionSections(): string[] {
+  return [
+    template("previous", "instructions-0.5.0.md").trimEnd(),
+    template("previous", "instructions-0.8.2.md").trimEnd(),
+  ];
+}
 
 // The marked section for each agent's global instruction file: one line
 // that names the skill. The global file is read in every repository, so it
@@ -70,7 +74,7 @@ export function globalSection(): string {
 
 function sectionTarget(agent: AgentId, label: string, path: string, inRepo: boolean): Target {
   if (!inRepo) return { kind: "md-section", agent, label, path, section: globalSection(), inRepo };
-  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo, replaces: PREVIOUS_INSTRUCTION_SECTIONS };
+  return { kind: "md-section", agent, label, path, section: instructionSection(), inRepo, replaces: previousInstructionSections() };
 }
 
 // The hook group from a JSON template, with the command put in after
@@ -208,8 +212,8 @@ export function teamSection(version: string): string {
 export function teamTargets(repoRoot: string, version: string): Target[] {
   const section = teamSection(version);
   return [
-    { kind: "md-section", agent: "claude-code", label: "team review section", path: join(repoRoot, "CLAUDE.md"), section, inRepo: true, replaces: [instructionSection(), ...PREVIOUS_INSTRUCTION_SECTIONS] },
-    { kind: "md-section", agent: "codex", label: "team review section", path: join(repoRoot, "AGENTS.md"), section, inRepo: true, replaces: [instructionSection(), ...PREVIOUS_INSTRUCTION_SECTIONS] },
+    { kind: "md-section", agent: "claude-code", label: "team review section", path: join(repoRoot, "CLAUDE.md"), section, inRepo: true, replaces: [instructionSection(), ...previousInstructionSections()] },
+    { kind: "md-section", agent: "codex", label: "team review section", path: join(repoRoot, "AGENTS.md"), section, inRepo: true, replaces: [instructionSection(), ...previousInstructionSections()] },
   ];
 }
 
