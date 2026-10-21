@@ -72,6 +72,7 @@ const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.
 export const MARTIAN_BOARD = Object.freeze({ repo: BOARDS.boards.martian.repo, commit: BOARDS.boards.martian.commit, source: BOARDS.boards.martian.source });
 // score_profiles' own default F-beta.
 export const MARTIAN_BETA = 2;
+export const MARTIAN_CITED = Object.freeze({ profile: "core", metric: "F1", beta: 1, publishedJudge: "anthropic_claude-opus-4-5-20251101" });
 export const MARTIAN_PROFILES = ["strict", "core", "all"];
 export const MARTIAN_STEPS = Object.freeze({ extract: "step2_extract_comments", dedup: "step2_5_dedup_candidates", judge: "step3_judge_comments", score: "score_profiles" });
 // Step 2 extracts a review only when its joined text has this many characters.

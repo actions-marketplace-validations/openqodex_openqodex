@@ -14,6 +14,7 @@
 // 13. A local manifest supplies a build tree without a verified run folder.
 // 14. A vendor page snapshot is missing or its bytes differ from the row's hash.
 // 15. Calibration build identity or agreement differs from the reference.
+// 16. Calibration agreement is below 90 percent on either class.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -41,7 +42,7 @@ function fixture() {
 }
 const sign = (record) => { record.acceptance = { person: "Sid", date: "2026-10-14", hash: "" }; record.acceptance.hash = comparisonHash(record); return record; };
 function calibrationFixture(f) {
-  const calibration = { build: { ...f.build }, agreement: { exact: 0.8, withinOne: 1 } };
+  const calibration = { version: 1, board: f.record.boards.aacr, vendor: "fixture", labelUnit: "golden comment", judgeModel: f.record.boards.aacr.judgeModel, promptHash: f.record.boards.aacr.promptHash, costUsd: 0, build: { ...f.build }, agreement: { positive: 1, negative: 1 }, counts: { total: 20, agree: 20, disagree: 0, byClass: { positive: { total: 10, agree: 10, disagree: 0 }, negative: { total: 10, agree: 10, disagree: 0 } } } };
   const file = "index/calibration/check.json";
   write(join(f.root, file), calibration);
   f.record.calibrations = [{ file, sha256: sha256(readFileSync(join(f.root, file))), ...structuredClone(calibration) }];
@@ -153,9 +154,9 @@ describe("frozen comparisons", () => {
   });
   it("refuses missing and changed calibration files", () => {
     const f = fixture(); const { root, options, record } = f;
-    const calibration = { build: f.build, agreement: { exact: 0.8, withinOne: 1 } };
+    const calibration = calibrationFixture(f);
     const bytes = `${JSON.stringify(calibration, null, 2)}\n`;
-    record.calibrations = [{ file: "index/calibration/check.json", sha256: sha256(bytes), ...calibration }];
+    record.calibrations = [{ file: "index/calibration/missing.json", sha256: sha256(bytes), ...calibration }];
     expect(() => validateComparison(record, options)).toThrow(/calibration/);
     const path = join(root, record.calibrations[0].file); writeFileSyncAfterMkdir(path, bytes); sign(record);
     expect(validateComparison(record, options).accepted).toBe(true);
@@ -175,8 +176,16 @@ describe("frozen comparisons", () => {
     expect(() => validateComparison(f.record, f.options)).toThrow(/calibration.*build/);
   });
   it("refuses claimed calibration agreement that differs from the saved numbers", () => {
-    const f = fixture(); calibrationFixture(f); f.record.calibrations[0].agreement.exact = 1;
+    const f = fixture(); calibrationFixture(f); f.record.calibrations[0].agreement.positive = 0.95;
     expect(() => validateComparison(f.record, f.options)).toThrow(/calibration.*agreement/);
+  });
+  for (const name of ["positive", "negative"]) it(`refuses a calibration below 90 percent on ${name}`, () => {
+    const f = fixture(); const calibration = calibrationFixture(f);
+    calibration.counts.byClass[name] = { total: 10, agree: 8, disagree: 2 };
+    calibration.counts.agree = 18; calibration.counts.disagree = 2; calibration.agreement[name] = 0.8;
+    const c = f.record.calibrations[0]; Object.assign(c, structuredClone(calibration));
+    write(join(f.root, c.file), calibration); c.sha256 = sha256(readFileSync(join(f.root, c.file)));
+    expect(() => validateComparison(f.record, f.options)).toThrow(/90 percent/);
   });
   it("refuses reference paths outside the benchmark folder", () => {
     const { options, record } = fixture();

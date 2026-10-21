@@ -10,6 +10,7 @@ import { entryProblems, hashFolder, sha256 } from "./index.mjs";
 import { bundleHash } from "./runner.mjs";
 import { isPersonName, readPeople } from "./rulings.mjs";
 import { canonicalJson, entryHash, readSuite, SUITES } from "./suites.mjs";
+import { validateCalibration } from "./calibration.mjs";
 
 const HEX40 = /^[a-f0-9]{40}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
@@ -38,7 +39,7 @@ export function buildFingerprint({ root = benchRoot } = {}) {
   return { commit: p.commit, tree: p.tree, bundleHash: p.bundleHash, version };
 }
 
-const BOARD_SCORING = { martian: { metric: "F1", profile: "core" }, aacr: { metric: "semantic recall", profile: "accepted comments, test gaps excluded" }, reviewbench: { metric: "F1", profile: "official" } };
+const BOARD_SCORING = { greptile: { metric: "caught rate", profile: "greptile" }, martian: { metric: "F1", profile: "core" }, aacr: { metric: "semantic recall", profile: "accepted comments, test gaps excluded" }, reviewbench: { metric: "F1", profile: "official" } };
 export function boardFingerprint(name, { root = benchRoot } = {}) {
   const metadata = json(join(root, "outside/boards.json"));
   const board = metadata.boards?.[name];
@@ -46,7 +47,7 @@ export function boardFingerprint(name, { root = benchRoot } = {}) {
   const judge = board.judge;
   const deployment = judge?.deployment ? metadata.deployments?.[judge.deployment] : null;
   const model = deployment?.served ?? judge?.id;
-  const promptHash = judge?.prompt?.sha256 ?? judge?.sha256;
+  const promptHash = judge?.calibrationPrompts?.sha256 ?? judge?.prompt?.sha256 ?? judge?.sha256;
   need(text(model) && HEX64.test(promptHash ?? ""), `board ${name}: missing judge model or prompt hash`);
   need(BOARD_SCORING[name], `board ${name}: no metric and profile defined`);
   return { name, repository: board.repo, commit: board.commit, judgeModel: model, promptHash, ...BOARD_SCORING[name], pinHash: hash({ board, deployment }) };
@@ -123,6 +124,9 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     const calibration = json(file);
     need(equal(calibration.build, c.build), `calibration ${c.file} build differs from its reference`);
     need(equal(calibration.agreement, c.agreement), `calibration ${c.file} agreement differs from its reference`);
+    const calibrationBoard = record.boards[calibration.board?.name];
+    need(calibrationBoard, `calibration ${c.file} has no matching comparison board`);
+    validateCalibration(calibration, { build: record.build, board: calibrationBoard });
   }
   need(Array.isArray(record.runs), "comparison runs must be an array");
   const runs = new Set();

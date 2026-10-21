@@ -57,10 +57,12 @@ function adaptParameters(body) {
 }
 
 /** A loopback-only relay with opaque credentials and counters safe to save. */
-export async function startRelay(settings) {
+export async function startRelay(settings, { trackUsage = false, onFailure } = {}) {
   const apiKey = randomBytes(32).toString("hex");
   const expected = Buffer.from(`Bearer ${apiKey}`);
   const stats = { relay: true, requests: 0, stripped: 0, parameterChanges: { chat_template_kwargs: 0, temperature: 0, top_p: 0, max_tokens: 0 }, upstreamStatuses: {} };
+  if (trackUsage) stats.usage = { responses: 0, missing: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  let failed = false;
   const target = new URL(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`);
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
   const server = createServer(async (req, res) => {
@@ -74,6 +76,7 @@ export async function startRelay(settings) {
       res.writeHead(404).end();
       return;
     }
+    if (failed) { res.writeHead(503).end("Judge relay stopped after an upstream failure"); return; }
     stats.requests++;
     try {
       const chunks = [];
@@ -87,12 +90,35 @@ export async function startRelay(settings) {
       }, (response) => {
         const status = response.statusCode;
         stats.upstreamStatuses[status] = (stats.upstreamStatuses[status] ?? 0) + 1;
+        if (onFailure && status >= 400) {
+          failed = true;
+          response.resume();
+          res.writeHead(status).end("Judge relay: upstream request failed");
+          onFailure(`judge relay: upstream returned ${status}; stopped`);
+          return;
+        }
+        if (trackUsage) {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => {
+            stats.usage.responses++;
+            let usage;
+            try { usage = JSON.parse(Buffer.concat(chunks).toString("utf8")).usage; } catch { /* Missing usage is a refusal when cost is read. */ }
+            if (!Number.isInteger(usage?.prompt_tokens) || !Number.isInteger(usage?.completion_tokens)) stats.usage.missing++;
+            else {
+              stats.usage.inputTokens += usage.prompt_tokens;
+              stats.usage.outputTokens += usage.completion_tokens;
+              stats.usage.cachedTokens += usage.prompt_tokens_details?.cached_tokens ?? 0;
+            }
+          });
+        }
         res.writeHead(status, response.headers);
         response.on("error", () => res.destroy());
         response.pipe(res);
       });
       // Never surface a transport error, which can name the real endpoint.
       upstream.on("error", () => {
+        if (onFailure) { failed = true; onFailure("judge relay: upstream connection failed; stopped"); }
         if (!res.headersSent) res.writeHead(502).end("AACR judge relay: upstream connection failed");
         else res.destroy();
       });
@@ -109,7 +135,7 @@ export async function startRelay(settings) {
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     apiKey,
-    counts: () => ({ ...stats, parameterChanges: { ...stats.parameterChanges }, upstreamStatuses: { ...stats.upstreamStatuses } }),
+    counts: () => ({ ...stats, ...(trackUsage ? { usage: { ...stats.usage } } : {}), parameterChanges: { ...stats.parameterChanges }, upstreamStatuses: { ...stats.upstreamStatuses } }),
     close: () => new Promise((down) => {
       server.close(down);
       server.closeAllConnections();
