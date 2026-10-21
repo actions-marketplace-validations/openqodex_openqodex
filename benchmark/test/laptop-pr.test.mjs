@@ -13,6 +13,7 @@
 //    materialise.test.mjs, failures 7 and 12.
 // 6. Pull request reviews lose the planted path's graph and web options.
 // 7. The flags still refuse laptop reviewers for pull request cases.
+// 8. Build validation hides a development case's missing cached truth.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,12 +52,13 @@ describe("a laptop run of pull request cases", () => {
     expect(p.cacheMade).toBeNull();
   });
 
-  it("takes development pull request cases for Claude Code past the flags, to the truth read", () => {
-    const p = run(["--suite", "aacr", "--subset", "dev-smoke", "--reviewers", "claude", "--max-usd", "1", "--max-minutes", "20", "--dry-run"]);
+  it("refuses missing development truth before checking the build", () => {
+    const p = run(["--suite", "aacr", "--subset", "dev-smoke", "--reviewers", "claude", "--max-usd", "1", "--max-minutes", "20", "--cli", join(repoRoot, "benchmark/results/missing-cli.js"), "--dry-run"]);
     expect(p.status).toBe(2);
     expect(p.stderr).toContain("The run cannot start:");
     expect(p.stderr).toMatch(/is not in the cache .*run node benchmark\/ingest\/aacr\.mjs/);
     expect(p.stderr).not.toMatch(/model reviewers only/);
+    expect(p.stderr).not.toContain("no record of how the CLI was built");
   });
 
   it("scores a Claude Code sample of a pull request case against its saved truth", () => {

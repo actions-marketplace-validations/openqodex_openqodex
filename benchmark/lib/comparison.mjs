@@ -3,9 +3,9 @@
 // This module reads local fingerprints only. It never runs a reviewer or
 // accepts a comparison on someone's behalf.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { benchRoot, caseHash, readLock } from "./cases.mjs";
+import { benchRoot, caseHash, git, readLock } from "./cases.mjs";
 import { entryProblems, hashFolder, sha256 } from "./index.mjs";
 import { bundleHash } from "./runner.mjs";
 import { isPersonName, readPeople } from "./rulings.mjs";
@@ -153,6 +153,35 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
   const unsigned = a.person === "" && a.date === "" && a.hash === "";
   need(unsigned || (isPersonName(a.person, readPeople(join(root, "review-queue"))) && date(a.date) && a.date.length === 10 && HEX64.test(a.hash) && a.hash === comparisonHash(record)), "comparison acceptance must name a person in review-queue/people.json, give a date and hash the complete record");
   return { accepted: !unsigned, hash: comparisonHash(record) };
+}
+
+// A comparison release uses the accepted record committed on this branch.
+// Admission checks the checkout; runtime access is logged in the cache.
+// Conversion checks the saved build and the installed bundle again.
+export function comparisonRelease(manifest, { root = benchRoot, admit = false } = {}) {
+  const { release, suite, split, splitHash, build: b, package: p } = manifest;
+  need(typeof release === "string" && /^[a-z0-9][a-z0-9.-]*$/.test(release), "comparison release is missing or malformed");
+  const file = join(root, "index/comparisons", `${release}.json`);
+  need(existsSync(file), `local build release ${release} has no committed comparison record`);
+  const repo = git(root, "rev-parse", "--show-toplevel").trim();
+  const bytes = readFileSync(file, "utf8");
+  let committed;
+  try { committed = git(repo, "show", `HEAD:${relative(realpathSync(repo), realpathSync(file)).split(sep).join("/")}`); }
+  catch { throw new Error(`comparison ${release} must be committed on this branch`); }
+  need(bytes === committed, `comparison ${release} differs from its committed record`);
+  const record = JSON.parse(bytes);
+  need(record.release === release, "comparison record names another release");
+  const checked = validateComparison(record, { root });
+  need(checked.accepted, `comparison ${release} is not accepted`);
+  need(p?.spec === "local" && p.commit === record.build.commit && p.dirty === false, "comparison release requires its pinned clean local build");
+  const fingerprint = b ? { commit: b.commit, tree: b.tree, bundleHash: b.bundleHash, version: b.cliVersion ?? b.version } : null;
+  need(equal(fingerprint, record.build), "comparison build fingerprint differs from the run's build");
+  need(b.dirty === false && b.commitTree === b.tree && git(repo, "rev-parse", `${b.commit}^{tree}`).trim() === b.tree, "comparison build must be clean and match its commit tree");
+  const provenance = json(join(root, ".build/provenance.json"));
+  need(provenance.dirty === false && provenance.commitTree === b.tree, "comparison build provenance must be clean");
+  need(record.suites[suite] && split === "test" && record.suites[suite].splitHash === splitHash, "comparison suite or test split differs from the accepted pins");
+  if (admit) need(git(repo, "status", "--porcelain").trim() === "", "comparison release requires a clean checkout; the tree is dirty");
+  return { release, package: p, comparison: { release, hash: checked.hash }, buildLabel: `local build ${b.commit}` };
 }
 
 // One product per board. Secondary metrics stay on that row, so F1 and

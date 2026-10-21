@@ -61,6 +61,7 @@ import { cacheRoot, licenceExclusion, publishRefusal } from "../../lib/licence.m
 import { normPath, population, shownFindings } from "../../lib/score.mjs";
 import { checkPinned, rawPath, readSuite } from "../../lib/suites.mjs";
 import { loadRun } from "../../score.mjs";
+import { nativeReviewBody } from "../../lib/claude-control.mjs";
 
 export { benchCache, instanceIdOf, isTestGap, readAacrOutside };
 
@@ -80,7 +81,7 @@ export function commentOf(f) {
 }
 
 // What happened to a planned review's first attempt, as our scorer reads it.
-const statusOf = (first) => (first === null ? "unstarted" : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
+const statusOf = (first) => (first === null ? "unstarted" : nativeReviewBody(first.row) !== null ? first.row.status : first.report === null ? "failed" : first.report.completion?.status === "complete" ? "complete" : "incomplete");
 
 /**
  * Converts the run in `folder`: writes <folder>/outside/aacr/ and returns
@@ -130,12 +131,15 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
   }
   const files = new Map();
   const withoutLine = [];
+  const failures = [];
   // Board-only rule: use the scorer's test-request predicate without changing our score.
   const forBoard = (report) => shownFindings(report).filter((f) => !excludeTestGaps || !isTestGap(f));
   for (const job of jobs) {
     const first = job.first;
     const shown = forBoard(first?.report ?? null);
-    const comments = shown.map(commentOf);
+    const native = nativeReviewBody(first?.row);
+    const comments = native !== null ? native.trim() ? [{ path: null, start_line: null, end_line: null, content: native }] : [] : shown.map(commentOf);
+    if (native !== null && first.row.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: first.row.failure ?? null });
     comments.forEach((c, index) => {
       if (c.start_line === null) withoutLine.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, index });
     });
@@ -176,6 +180,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
     folders,
     references: { total, left, share: total === 0 ? 0 : left / total },
     excludeTestGaps,
+    failures,
     leftOutTestGaps: folders.reduce((n, f) => n + f.leftOutTestGaps, 0),
     withoutLine,
   };

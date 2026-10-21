@@ -31,6 +31,9 @@
 //     or a dry run starts without checking an existing evaluator.
 // 15. A split or URL-encoded key reaches output; sharing a buffer between
 //     stdout and stderr hides the pieces from the redactor.
+// 16. A failed native body's error text reaches the judge, or the failed
+//     review leaves the denominator or loses its failure in convert.json.
+// 17. An empty native body becomes a comment rather than an empty review.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -179,8 +182,8 @@ const BUILD = { commit: "a".repeat(40), short: "aaaaaaa", dirty: false, cliVersi
 // `suite` is the suite the manifest names.
 async function savedRun({ names = SMOKE, plan = PLAN, specs = {}, suite = "aacr", configs = [MODEL, CLAUDE], repeat = 2 } = {}) {
   const cases = names.map(caseOf);
-  const reviewers = configs.map((c) => (c === MODEL ? "model:scripted" : "claude"));
-  const { jobs } = planJobs({ cases: names, caseIds: Object.fromEntries(cases.map((c) => [c.name, c.id])), reviewers, graph: ["on"], repeat });
+  const reviewers = configs.map((c) => (c === MODEL ? "model:scripted" : c === "control-graph-off" ? "control" : "claude"));
+  const { jobs } = planJobs({ cases: names, caseIds: Object.fromEntries(cases.map((c) => [c.name, c.id])), reviewers, graph: configs.every((c) => c.endsWith("-off")) ? ["off"] : ["on"], repeat });
   const root = tempDir("oq-aacr-board-");
   const out = join(root, "run");
   for (const c of cases) write(join(root, "specs", `${c.name}.json`), `${JSON.stringify(specs[c.name] ?? specCopy(c, aacrTruth({ comments: TRUTH[c.name] ?? [] }, null)), null, 2)}\n`);
@@ -193,6 +196,10 @@ async function savedRun({ names = SMOKE, plan = PLAN, specs = {}, suite = "aacr"
     runJob: async (job) => {
       const saved = plan[`${job.config}/${job.repeat}`]?.[job.case] ?? report([]);
       if (saved === "unstarted") return;
+      if (saved.reviewer === "control") {
+        write(join(attemptDir(out, job, 1), "sample.json"), JSON.stringify({ ...job, attempt: 1, ...saved }));
+        return;
+      }
       const result = { code: 0, signal: null, wallMs: 90_000 };
       const attempt = (n, rep) => {
         const dir = attemptDir(out, job, n);
@@ -208,6 +215,24 @@ async function savedRun({ names = SMOKE, plan = PLAN, specs = {}, suite = "aacr"
   });
   return out;
 }
+
+it("converts failed native reviews to empty AACR files and records their failures", async () => {
+  const name = SMOKE[0];
+  const failure = "Review failed while reading src/core/task.ts:10.";
+  const out = await savedRun({ names: [name], configs: ["control-graph-off"], repeat: 1, plan: { "control-graph-off/1": { [name]: { reviewer: "control", status: "failed", nativeBody: failure, failure } } } });
+  const { out: board, record } = convertRun(out);
+  expect(readJson(join(board, "control-graph-off/r1", `${instanceIdOf(caseOf(name))}.json`))).toMatchObject({ review: { comments: [] }, openqodex: { status: "failed", findings: 0 } });
+  expect(record.folders[0]).toMatchObject({ files: 1, comments: 0, statuses: { failed: 1 } });
+  expect(record.failures).toEqual([{ caseId: caseOf(name).id, config: "control-graph-off", repeat: 1, failure }]);
+});
+
+it("keeps an empty native AACR review in the denominator without a comment", async () => {
+  const name = SMOKE[0];
+  const out = await savedRun({ names: [name], configs: ["control-graph-off"], repeat: 1, plan: { "control-graph-off/1": { [name]: { reviewer: "control", status: "complete", nativeBody: "", failure: null } } } });
+  const { out: board, record } = convertRun(out);
+  expect(readJson(join(board, "control-graph-off/r1", `${instanceIdOf(caseOf(name))}.json`))).toMatchObject({ review: { comments: [] }, openqodex: { status: "complete", findings: 0 } });
+  expect(record.folders[0]).toMatchObject({ files: 1, comments: 0, statuses: { complete: 1 } });
+});
 
 // Our location numbers per configuration and repeat, from the scored jobs.
 function ourLineCounts(out) {
