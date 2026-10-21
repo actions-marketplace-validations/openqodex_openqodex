@@ -9,7 +9,12 @@
 // 7. Settings omit the trusted Bash gate or disable it, or lose the tool fences.
 // 8. Git inherits global or system config, hooks, a file monitor or SSH access.
 // 9. Case titles, bodies or paths enter shell code or arguments, or lose bytes.
+// 10. Repository config enables an external diff, signature verification or pager.
+// 11. Status refreshes index metadata because optional locks remain enabled.
+// 12. A version older than 2.1.295 accepts a hook that fails open.
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { CONTROL_PROMPT, controlEnv, controlSample, nativeReviewBody } from "../lib/claude-control.mjs";
@@ -42,11 +47,51 @@ it("wires the trusted Bash gate without losing the settings or tool fences", () 
 });
 it("isolates Git config and overrides hooks, file monitors and SSH in the real environment", () => {
   const env = controlEnv({ PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/untrusted", GIT_CONFIG_SYSTEM: "/untrusted", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/untrusted" });
-  expect(env).toMatchObject({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_COUNT: "3" });
+  expect(env).toMatchObject({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" });
   for (const [key, value] of [["core.hooksPath", "/dev/null"], ["core.fsmonitor", "false"], ["core.sshCommand", "/usr/bin/false"]]) {
     const result = spawnSync("git", ["config", "--get", key], { env, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(value);
+  }
+});
+for (const [key, value] of [["diff.external", ""], ["log.showSignature", "false"]]) it(`overrides repository ${key} in Git's command config`, () => {
+  const result = spawnSync("git", ["config", "--get", key], { env: controlEnv({ PATH: process.env.PATH }), encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout.trim()).toBe(value);
+});
+it("forces both Git pager variables to cat", () => {
+  expect(controlEnv({ GIT_PAGER: "/untrusted", PAGER: "/untrusted" })).toMatchObject({ GIT_PAGER: "cat", PAGER: "cat" });
+});
+it("disables optional Git locks so status cannot refresh index metadata", () => {
+  const root = fileURLToPath(new URL("../results/", import.meta.url));
+  mkdirSync(root, { recursive: true });
+  const cwd = mkdtempSync(join(root, "control-status-"));
+  const env = controlEnv({ PATH: process.env.PATH, GIT_OPTIONAL_LOCKS: "1" });
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd, env, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+  };
+  try {
+    git("init", "-q");
+    const file = join(cwd, "sample.txt");
+    writeFileSync(file, "unchanged\n");
+    git("add", ".");
+    git("-c", "user.name=Gate test", "-c", "user.email=gate@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "Base");
+    const index = join(cwd, ".git", "index");
+    const before = readFileSync(index);
+    utimesSync(file, 0, 0);
+    git("status", "--short");
+    expect(readFileSync(index)).toEqual(before);
+    expect(env.GIT_OPTIONAL_LOCKS).toBe("0");
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+for (const [stdout, ok] of [["2.1.294 (Claude Code)\n", false], ["2.1.295 (Claude Code)\n", true], ["2.1.296 (Claude Code)\n", true], ["2.2.0 (Claude Code)\n", true], ["3.0.0 (Claude Code)\n", true], ["unknown\n", false]]) it(`${ok ? "accepts" : "refuses"} control version ${stdout.trim()}`, async () => {
+  const { controlVersion } = await import("../lib/claude-control.mjs");
+  const result = controlVersion(stdout);
+  expect(result.ok).toBe(ok);
+  if (!ok) {
+    expect(result).toMatchObject({ blocked: true, model: null });
+    expect(result.text).toMatch(/^[^\r\n]*2\.1\.295[^\r\n]*$/);
   }
 });
 it("delivers a case title with a shell operator and quote unchanged through stdin", () => {

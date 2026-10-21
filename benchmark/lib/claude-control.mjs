@@ -18,8 +18,9 @@ export function controlInput(caseData) {
 }
 
 export function controlEnv(env = process.env) {
-  const out = { ...claudeEnv(env), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_COUNT: "3" };
-  for (const [i, [key, value]] of [["core.hooksPath", "/dev/null"], ["core.fsmonitor", "false"], ["core.sshCommand", "/usr/bin/false"]].entries()) {
+  const config = [["core.hooksPath", "/dev/null"], ["core.fsmonitor", "false"], ["core.sshCommand", "/usr/bin/false"], ["diff.external", ""], ["log.showSignature", "false"]];
+  const out = { ...claudeEnv(env), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_COUNT: String(config.length), GIT_PAGER: "cat", PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" };
+  for (const [i, [key, value]] of config.entries()) {
     out[`GIT_CONFIG_KEY_${i}`] = key;
     out[`GIT_CONFIG_VALUE_${i}`] = value;
   }
@@ -37,12 +38,21 @@ export function controlArgs({ maxUsd }) {
     "--max-budget-usd", String(maxUsd)];
 }
 
+export function controlVersion(stdout) {
+  const version = /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim();
+  const [major, minor, patch] = version.split(".").map(Number);
+  const ok = major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 295)));
+  return { ok, blocked: !ok, version, model: null, text: ok ? "version supported" : "Claude Code 2.1.295 or newer is required" };
+}
+
 // A login check, never a paid prompt. Keep the same CLI and login environment
 // as the existing Claude reviewer, and never save auth status output.
 export async function probeControl({ env = process.env } = {}) {
   const e = controlEnv(env);
   const { stdout } = await exec("claude", ["--version"], { env: e, timeout: 20_000 });
-  const version = /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? stdout.trim();
+  const supported = controlVersion(stdout);
+  if (!supported.ok) return supported;
+  const { version } = supported;
   if (!e.ANTHROPIC_API_KEY) {
     let loggedIn = false;
     try { loggedIn = JSON.parse((await exec("claude", ["auth", "status"], { env: e, timeout: 20_000 })).stdout).loggedIn === true; }
