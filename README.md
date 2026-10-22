@@ -16,7 +16,7 @@ OpenQodex reviews your code change before you push it. Your change is the commit
 
 First, OpenQodex runs the scanners that fit the files you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. A finding is one problem at one place in the code, with a severity. OpenQodex keeps the scanner findings on the lines you changed. It drops findings in test fixtures and in rules you switched off.
 
-Then OpenQodex starts a reviewer: a separate Claude Code or Codex process on your own login. By default, the agent that wrote the code does not review it. The reviewer must raise or drop each scanner finding, with a reason. Scripts check that it answered every scanner finding. They also check that it was given every changed line. Then you choose which findings your agent fixes.
+Then OpenQodex starts reviewers: separate Claude Code or Codex processes on your own login. By default, the agent that wrote the code does not review it. Finder sessions read each part of the change, with the code that calls it, and propose candidates with a quoted line as evidence. A script checks every quote against the code. Verifier sessions then judge each candidate and each scanner finding against the code, and must confirm or refute every one with a reason. Scripts check that every scanner finding was answered and that every changed line was given to a reviewer. Style and naming notes are shown as observations and do not block. Then you choose which findings your agent fixes.
 
 ## Where it runs
 

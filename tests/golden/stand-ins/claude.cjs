@@ -61,7 +61,7 @@ function answerForPrompt(prompt) {
   const candidates = new Map();
   for (const m of brief.matchAll(/^### ([ck]\d+) \((finder|scanner)\)\n([\s\S]*?)(?=^### |^## )/gm)) {
     const location = /^- Location: (.+):(\d+)(?:-(\d+))?$/m.exec(m[3]);
-    if (location) candidates.set(m[1], { id: m[1], file_path: location[1], line_number: Number(location[2]), line_end: Number(location[3] ?? location[2]), title: /^- Title: (.*)$/m.exec(m[3])?.[1] });
+    if (location) candidates.set(m[1], { id: m[1], file_path: location[1], line_number: Number(location[2]), line_end: Number(location[3] ?? location[2]), title: /^- Title: (.*)$/m.exec(m[3])?.[1], category: /^- Category: (.*)$/m.exec(m[3])?.[1] });
   }
   if (!candidates.size) throw new Error("verify brief has no candidate ids");
   const unresolved = process.env.OPENQODEX_STANDIN_UNRESOLVED_SCANNER === "1" && answerRound === 1;
@@ -71,7 +71,7 @@ function answerForPrompt(prompt) {
     const line_number = details.line_number ?? details.lineStart;
     const templates = existsSync(join(folder, "find-answers.json")) ? Object.values(JSON.parse(readFileSync(join(folder, "find-answers.json"), "utf8"))).flat() : frozen.findings;
     const template = templates.find((f) => details.title && f.title === details.title) ?? templates.find((f) => f.file_path === file_path && f.line_number === line_number) ?? frozen.findings[0];
-    return { id, verdict: unresolved && id.startsWith("c") ? "unresolved" : "confirmed", reason: "The planted operation is unsafe on this changed line.", severity: template.severity, confidence: 1, file_path, line_number, line_end: details.line_end ?? line_number, title: template.title, problem: template.problem, consequence: template.consequence, fix: template.fix, tier: "finding" };
+    return { id, verdict: unresolved && id.startsWith("c") ? "unresolved" : "confirmed", reason: "The planted operation is unsafe on this changed line.", severity: template.severity, category: details.category ?? template.category, confidence: 1, file_path, line_number, line_end: details.line_end ?? line_number, title: template.title, problem: template.problem, consequence: template.consequence, fix: template.fix, tier: "finding" };
   });
   for (const v of verdicts) {
     if (!v.id.startsWith("k")) continue;

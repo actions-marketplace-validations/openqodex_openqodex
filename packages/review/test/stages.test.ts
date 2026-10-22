@@ -46,7 +46,7 @@ function setup(answerer?: Answerer, files?: string[]) {
     return reply(answerer ? await answerer(answer, request, brief) : answer);
   } };
   const args: StagedArgs = {
-    snapshotDir: f.dir, change: f.change, scan: f.scan, config: f.config, manifest: f.manifest, secrets: [], deadline: clock + 60_000, now: () => clock, traced: true, say: () => {}, stopped: () => stopped,
+    snapshotDir: f.dir, change: f.change, scan: f.scan, config: f.config, manifest: f.manifest, secrets: [], deadline: clock + 60_000, now: () => clock, traced: true, model: true, say: () => {}, stopped: () => stopped,
     findBrief: (unit, pass) => ({ text: JSON.stringify({ unit, pass }), diffFiles: new Set(unit.files) }),
     verifyBrief: (batch) => ({ text: JSON.stringify({ batch }) }),
     openSession: (role) => {
@@ -280,6 +280,19 @@ it.skipIf(!briefsBuilt)("accepts the real find and verify briefs through a model
   expect(r.report.findings).toHaveLength(2);
 });
 
+it("delivers a hunk the brief left out when the finder did not read it, whatever the finder says it examined", async () => {
+  const f = setup();
+  // The brief carries b.txt but not a.txt, as a hunk over the diff budget leaves the brief.
+  f.args.findBrief = (unit, pass) => ({ text: JSON.stringify({ unit, pass }), diffFiles: new Set(unit.files.filter((file) => file !== "a.txt")) });
+  const r = await runStagedReview(f.args);
+  const finderRounds = r.rounds.filter((round) => round.by.startsWith("finder:") && round.by.endsWith(":local"));
+  expect(finderRounds.length).toBeGreaterThan(0);
+  expect(finderRounds.every((round) => round.delivered.length > 0 && round.delivered.every((h) => h.path === "a.txt"))).toBe(true);
+  expect(r.rounds.filter((round) => round.by.startsWith("finder:") && round.by.endsWith(":contracts"))).toEqual([]);
+  expect(r.missing).toEqual([]);
+  expect(r.report.findings).toHaveLength(2);
+});
+
 // Additional failure cases: observations disappear below the findings'
 // threshold, refuted duplicates lose provenance, a refusal restarts calls.
 it("shows observations below the findings' severity threshold", async () => {
@@ -357,16 +370,15 @@ it("kills a timed-out finder before awaiting its close so cleanup cannot consume
   expect(f.requests.some((r) => r.purpose === "verify")).toBe(true);
 });
 
-it("keeps a confirmed finder's security category when it duplicates a non-security scanner", async () => {
+it("takes the verifier's category for a confirmed scanner finding", async () => {
   const f = setup((answer) => {
-    if (answer.version === "find-1") answer.candidates.forEach((c) => { c.category = "security"; });
-    if (answer.version === "verify-1") answer.verdicts.filter((v) => v.id.startsWith("k")).forEach((v) => { v.duplicate_of = "c1"; });
+    if (answer.version === "find-1") answer.candidates = [];
+    if (answer.version === "verify-1") answer.verdicts.forEach((v) => { v.category = "performance"; });
     return answer;
   }, ["a.txt"]);
-  f.scan.candidates.push({ ...scanner("a.txt"), source: "ruff", token: "ruff:test" });
+  f.scan.candidates.push(scanner("a.txt"));
   const r = await runStagedReview(f.args);
-  expect(r.report.findings).toHaveLength(1);
-  expect(r.report.findings[0]).toMatchObject({ candidate: "c1", category: "security" });
+  expect(r.report.findings[0]).toMatchObject({ candidate: "c1", category: "performance" });
 });
 
 // A host write failure must stop the run, rather than becoming a retry.

@@ -180,6 +180,7 @@ used at infra/main.tf:23 (by name, unverified: the same name may be another thin
 - Message: Security groups should not allow unrestricted ingress to SSH or RDP from any IP address: Security group rule allows unrestricted ingress from any IP address.
 - Location: infra/main.tf:28
 - Severity: major
+- Category: maintainability
 
 ### c15 (scanner)
 
@@ -187,6 +188,7 @@ used at infra/main.tf:23 (by name, unverified: the same name may be another thin
 - Message: Ensure no security groups allow ingress from 0.0.0.0:0 to port 22
 - Location: infra/main.tf:28
 - Severity: minor
+- Category: maintainability
 
 ### k8 (finder)
 
@@ -217,6 +219,7 @@ A scanner candidate is always confirmed or refuted, never unresolved.
 Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.
 Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.
 When candidates describe the same problem, choose one surviving id in this batch.
+Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.
 Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.
 When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.
 Mark the finder candidate `duplicate_of` the scanner candidate.
@@ -245,6 +248,7 @@ The example's code and claims are illustrations. Use the candidates and code fro
       "reason": "infra/main.tf:28 builds SQL from request input without a bound parameter.",
       "duplicate_of": null,
       "severity": "critical",
+      "category": "security",
       "confidence": 0.9,
       "file_path": "infra/main.tf",
       "line_number": 28,
@@ -269,6 +273,7 @@ Fields:
 - `reason`: one or two sentences explaining the verdict, with the file and line that show it.
 - `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.
 - `severity`: impact according to the scale above.
+- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
 - Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.

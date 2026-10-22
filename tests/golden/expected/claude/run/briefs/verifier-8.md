@@ -315,6 +315,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: During normal index creation, table updates are blocked, but reads are still allowed. Use `concurrently` to avoid blocking writes.
 - Location: db/migrations/002_index_item_names.sql:2
 - Severity: minor
+- Category: maintainability
 
 ### c18 (scanner)
 
@@ -322,6 +323,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: Missing `IF NOT EXISTS`, the migration can't be rerun if it fails part way through. Use an explicit name for a concurrently created index
 - Location: db/migrations/002_index_item_names.sql:2
 - Severity: nitpick
+- Category: maintainability
 
 ### c19 (scanner)
 
@@ -329,6 +331,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: Missing `set lock_timeout` before potentially slow SHARE lock operations Configure a `lock_timeout` before this statement. Statement requires: SHARE lock; blocking: writes, schema changes.
 - Location: db/migrations/002_index_item_names.sql:2
 - Severity: nitpick
+- Category: maintainability
 
 ### c20 (scanner)
 
@@ -336,6 +339,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: Missing `set statement_timeout` before potentially slow operations Configure a `statement_timeout` before this statement
 - Location: db/migrations/002_index_item_names.sql:2
 - Severity: nitpick
+- Category: maintainability
 
 ### k13 (finder)
 
@@ -366,6 +370,7 @@ A scanner candidate is always confirmed or refuted, never unresolved.
 Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.
 Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.
 When candidates describe the same problem, choose one surviving id in this batch.
+Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.
 Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.
 When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.
 Mark the finder candidate `duplicate_of` the scanner candidate.
@@ -394,6 +399,7 @@ The example's code and claims are illustrations. Use the candidates and code fro
       "reason": "db/migrations/002_index_item_names.sql:2 builds SQL from request input without a bound parameter.",
       "duplicate_of": null,
       "severity": "critical",
+      "category": "security",
       "confidence": 0.9,
       "file_path": "db/migrations/002_index_item_names.sql",
       "line_number": 2,
@@ -418,6 +424,7 @@ Fields:
 - `reason`: one or two sentences explaining the verdict, with the file and line that show it.
 - `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.
 - `severity`: impact according to the scale above.
+- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
 - Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.

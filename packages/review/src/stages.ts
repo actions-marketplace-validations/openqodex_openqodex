@@ -1,4 +1,4 @@
-import { FINDER_CONFIDENCE_FLOOR, VERIFY_BATCH_SIZE, checkSubmission, findingKey, outsideSnapshot, requiredCandidates, scannerCategory, severityRank } from "@openqodex/core";
+import { FINDER_CONFIDENCE_FLOOR, VERIFY_BATCH_SIZE, checkSubmission, findingKey, modelCoverage, outsideSnapshot, readCoverage, requiredCandidates, severityRank } from "@openqodex/core";
 import type { Change, Config, FindAnswer, FindPass, FindingV2, Hunk, Report, ReportFinding, ReviewerSessionRecord, ReviewerUsage, ReviewUnit, RunManifest, ScanResult, SubmissionV2, TraceEntry, VerifyAnswer, VerifyBatch, VerifyCandidate, VerifyVerdict } from "@openqodex/core";
 import { MAX_CORRECTIONS, converse, deliverRanges } from "./conversation.js";
 import { TIMED_OUT } from "./agents/driver.js";
@@ -6,8 +6,9 @@ import type { Conversation, CorrectionRound, Speaker } from "./conversation.js";
 import { checkFindAnswer, checkVerifyAnswer } from "./evidence-check.js";
 import { snapshotText, lineCounter } from "./snapshot.js";
 import { MAX_UNIT_DIFF_BYTES, hunkRefs, unitsOf } from "./units.js";
+import { modelToolEntry } from "./model-loop.js";
 import { usageTotals } from "./usage.js";
-import type { CallRecord, ReviewerRole } from "./usage.js";
+import type { CallRecord, ReviewerRole, ToolLogEntry } from "./usage.js";
 
 export const FINDERS_CONCURRENCY = 4;
 export const VERIFIERS_CONCURRENCY = 3;
@@ -27,6 +28,10 @@ export type StagedArgs = {
   deadline: number;
   now: () => number;
   traced: boolean;
+  // True when the sessions are model sessions, whose trace is the tool log
+  // (a read counts once its result was sent); otherwise the trace is an
+  // agent's, read as a single-pass trace, and only when `traced`.
+  model?: boolean;
   confidenceFloor?: number;
   say: (line: string) => void;
   onRound?: (round: CorrectionRound) => void;
@@ -140,6 +145,16 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
       missing.push(run.talk.failure ?? "the budget refused a reviewer call");
     }
   };
+  // The hunks of a unit no one has put in front of a finder: the brief left
+  // them out (a hunk over the diff budget, or without diff rows), no read
+  // carried their lines and no earlier round delivered them. The same rule as
+  // the single pass: coverage never rests on the finder's own `examined` list.
+  const undelivered = (unit: ReviewUnit, briefFiles: ReadonlySet<string>, trace: TraceEntry[], delivered: Hunk[]): Hunk[] => {
+    const coverage = args.model
+      ? modelCoverage({ change, briefSent: true, briefFiles, toolLog: (trace as ToolLogEntry[]).map(modelToolEntry), delivered, lineCount })
+      : readCoverage({ change, briefFiles, trace: args.traced ? trace : [], lineCount, delivered });
+    return coverage.unread.filter((h) => unit.hunks.some((u) => u.path === h.path && u.deletion === h.deletion && u.start <= h.end && h.start <= u.end));
+  };
   const findings: { run: Run; answer: FindAnswer; passRole: string }[] = [];
   const verified: Verified[] = [];
   const unverified = new Set<string>();
@@ -159,11 +174,13 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
           began = true;
           let checked: ReturnType<typeof checkFindAnswer> | null = null;
           run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: brief.text, deadline: findDeadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, say, now: args.now, onRound: roundFor(run.role),
-            check: (value) => {
+            check: (value, trace, delivered) => {
               const result = checkFindAnswer(value, unit, citationChange, read, args.manifest.lenses.map((lens) => lens.name));
               checked = result;
               run!.examined = result.answer.examined;
-              return { report: null, errors: result.errors, unread: result.parsed && pass === "local" ? unit.hunks.filter((h) => !result.answer.examined.includes(h.id)) : [], required: 0, disposed: 0 };
+              const unread: Hunk[] = result.parsed && pass === "local" ? unit.hunks.filter((h) => !result.answer.examined.includes(h.id)) : [];
+              if (result.parsed && pass === "local") for (const h of undelivered(unit, brief.diffFiles, trace, delivered)) if (!unread.some((u) => u.path === h.path && u.start === h.start && u.end === h.end && u.deletion === h.deletion)) unread.push(h);
+              return { report: null, errors: result.errors, unread, required: 0, disposed: 0 };
             },
             deliver: (unread, earlier) => deliverRanges({ snapshotDir: args.snapshotDir, unread, earlier, secrets: args.secrets, change }),
           });
@@ -280,10 +297,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     verified.sort((a, b) => a.number - b.number);
     const sourceOf = (c: VerifyCandidate) => c.kind === "scanner" ? c.candidate.token : c.candidate.lens ? `lens:${c.candidate.lens}` : null;
     const findingOf = (v: VerifyVerdict, c: VerifyCandidate, owner: Verified): FindingV2 => {
-      const duplicate = owner.batch.candidates.find((item) => item.kind === "finder" && owner.answer.verdicts.some((v) => v.id === item.id && v.verdict === "confirmed" && v.duplicate_of === c.id));
-      const scanned = c.kind === "scanner" ? scannerCategory(c.candidate.source) : null;
-      const category = c.kind === "finder" ? c.candidate.category : scanned === "security" ? scanned : duplicate?.kind === "finder" ? duplicate.candidate.category : scanned!;
-      return { severity: v.severity, category, confidence: v.confidence, file_path: v.file_path, line_number: v.line_number, ...(v.line_end !== undefined ? { line_end: v.line_end } : {}), title: v.title, problem: v.problem, consequence: v.consequence, fix: v.fix, suggested_change: v.suggested_change ?? null, source: sourceOf(c), candidate: c.kind === "scanner" ? c.id : null };
+      return { severity: v.severity, category: v.category, confidence: v.confidence, file_path: v.file_path, line_number: v.line_number, ...(v.line_end !== undefined ? { line_end: v.line_end } : {}), title: v.title, problem: v.problem, consequence: v.consequence, fix: v.fix, suggested_change: v.suggested_change ?? null, source: sourceOf(c), candidate: c.kind === "scanner" ? c.id : null };
     };
     const analysis = findings.flatMap((f) => f.answer.analysis).map((a) => a.changed.trim().replace(/\s+/g, " ")).find(Boolean)?.split(/(?<=[.!?])\s+/)[0];
     const summary = `Reviewed ${findings.length === 0 ? "no completed finder units" : `units ${[...new Set(findings.map((f) => f.answer.unit))].join(", ")}`}.${analysis ? ` ${analysis}` : ""}`;

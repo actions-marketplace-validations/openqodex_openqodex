@@ -764,6 +764,7 @@ used at deploy/deployment.yaml:60 (by name, unverified: the same name may be ano
 - Message: B608: Possible SQL injection vector through string-based query construction.
 - Location: app/search.py:14
 - Severity: minor
+- Category: security
 
 ### k14 (finder)
 
@@ -794,6 +795,7 @@ A scanner candidate is always confirmed or refuted, never unresolved.
 Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.
 Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.
 When candidates describe the same problem, choose one surviving id in this batch.
+Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.
 Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.
 When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.
 Mark the finder candidate `duplicate_of` the scanner candidate.
@@ -822,6 +824,7 @@ The example's code and claims are illustrations. Use the candidates and code fro
       "reason": "app/search.py:14 builds SQL from request input without a bound parameter.",
       "duplicate_of": null,
       "severity": "critical",
+      "category": "security",
       "confidence": 0.9,
       "file_path": "app/search.py",
       "line_number": 14,
@@ -846,6 +849,7 @@ Fields:
 - `reason`: one or two sentences explaining the verdict, with the file and line that show it.
 - `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.
 - `severity`: impact according to the scale above.
+- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
 - Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.

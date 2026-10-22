@@ -257,7 +257,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": ".github/workflows/ci.yml",
       "line_number": 17,
@@ -275,7 +275,7 @@
     {
       "origin": "agent",
       "severity": "minor",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "Dockerfile",
       "line_number": 1,
@@ -293,7 +293,7 @@
     {
       "origin": "agent",
       "severity": "minor",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "Dockerfile",
       "line_number": 3,
@@ -365,7 +365,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "Dockerfile",
       "line_number": 6,
@@ -383,7 +383,7 @@
     {
       "origin": "agent",
       "severity": "minor",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "Dockerfile",
       "line_number": 7,
@@ -419,7 +419,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "infra/main.tf",
       "line_number": 28,
@@ -455,7 +455,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "deploy/deployment.yaml",
       "line_number": 42,
@@ -491,7 +491,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "deploy/deployment.yaml",
       "line_number": 43,
@@ -527,7 +527,7 @@
     {
       "origin": "agent",
       "severity": "minor",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "scripts/deploy.sh",
       "line_number": 7,
@@ -563,7 +563,7 @@
     {
       "origin": "agent",
       "severity": "major",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "scripts/deploy.sh",
       "line_number": 11,
@@ -599,7 +599,7 @@
     {
       "origin": "agent",
       "severity": "minor",
-      "category": "bug",
+      "category": "maintainability",
       "confidence": 1,
       "file_path": "db/migrations/002_index_item_names.sql",
       "line_number": 2,

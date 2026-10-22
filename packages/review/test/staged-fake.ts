@@ -27,7 +27,7 @@ export function stagedAnswer(brief: string, fixed: string, read: (file: string, 
     // An intentionally undisposed scanner still fails the real check.
     if (c.kind === "scanner" && !f && !dropped) return [];
     const duplicate = f && c.kind === "finder" ? candidates.find((other) => other.kind === "scanner" && other.id === f.candidate) : null;
-    return [{ id: c.id, verdict: f ? "confirmed" : "refuted", reason: dropped?.reason ?? "The cited operation confirms the claim.", duplicate_of: duplicate?.id ?? null, severity: f?.severity ?? "minor", confidence: f?.confidence ?? 0.9, file_path: f?.file_path ?? dropped?.file_path ?? c.file, line_number: f?.line_number ?? dropped?.line_number ?? c.line, ...(f?.line_end ? { line_end: f.line_end } : {}), title: f?.title ?? "Refuted claim", problem: f?.problem ?? "", consequence: f?.consequence ?? "", fix: f?.fix ?? "", suggested_change: f?.suggested_change ?? null, tier: "finding" }];
+    return [{ id: c.id, verdict: f ? "confirmed" : "refuted", reason: dropped?.reason ?? "The cited operation confirms the claim.", duplicate_of: duplicate?.id ?? null, severity: f?.severity ?? "minor", category: f?.category ?? "bug", confidence: f?.confidence ?? 0.9, file_path: f?.file_path ?? dropped?.file_path ?? c.file, line_number: f?.line_number ?? dropped?.line_number ?? c.line, ...(f?.line_end ? { line_end: f.line_end } : {}), title: f?.title ?? "Refuted claim", problem: f?.problem ?? "", consequence: f?.consequence ?? "", fix: f?.fix ?? "", suggested_change: f?.suggested_change ?? null, tier: "finding" }];
   });
   return JSON.stringify({ ...extra, version: "verify-1", change_id: value.change_id, verdicts });
 }

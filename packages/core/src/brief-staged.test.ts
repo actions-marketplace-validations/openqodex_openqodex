@@ -91,6 +91,23 @@ describe("find brief", () => {
     expect(diffFiles.has("app/search.py")).toBe(false);
   });
 
+  it("leaves a hunk past the brief's diff budget to the tools and does not count its file as delivered", () => {
+    // Three hundred lines of a thousand characters each: one indivisible hunk over 200 KB.
+    const wide = Array.from({ length: 300 }, (_, i) => `+${"x".repeat(1000)}${i}`).join("\n");
+    const bigDiff = `diff --git a/app/wide.py b/app/wide.py\n--- /dev/null\n+++ b/app/wide.py\n@@ -0,0 +1,300 @@\n${wide}\n`;
+    const wideUnit: ReviewUnit = { id: "u2", files: ["app/wide.py", "app/search.py"], hunks: [
+      { id: "h1", path: "app/wide.py", start: 1, end: 300, deletion: false },
+      { id: "h2", path: "app/search.py", start: 14, end: 15, deletion: false },
+    ], diffBytes: bigDiff.length + searchDiff.length };
+    const { text, diffFiles } = buildFindBrief(args({ change: { ...change, diffs: [...change.diffs!, { path: "app/wide.py", text: bigDiff }] } }), wideUnit, "local");
+    expect(text).toContain("### h1 app/wide.py 1-300");
+    expect(text).toMatch(/This hunk is \d+ KB, more than the 200 KB a brief carries for one hunk\. Read its lines with your tools\./);
+    expect(text).not.toContain("x".repeat(1000));
+    expect(text).toContain("+    return cur.fetchall()");
+    expect(diffFiles.has("app/wide.py")).toBe(false);
+    expect(diffFiles.has("app/search.py")).toBe(true);
+  });
+
   it("shows the file header once when the unit has several hunks in that file", () => {
     const grouped = { ...unit, hunks: [...unit.hunks, { id: "h2", path: "app/search.py", start: 41, end: 41, deletion: false }] };
     const { text } = buildFindBrief(args(), grouped, "local");
@@ -261,6 +278,7 @@ describe("verify brief", () => {
     expect(text).toContain(candidate.evidence[0]!.quote);
     expect(text).toContain(SQL_CANDIDATE.token);
     expect(text).toContain(SQL_CANDIDATE.message);
+    expect(text).toContain(`- Severity: ${SQL_CANDIDATE.reviewSeverity}\n- Category: security`);
     expect(text).toContain("A scanner candidate is always confirmed or refuted, never unresolved.");
     expect(text).toContain("Never add a candidate of your own.");
   });

@@ -1,7 +1,7 @@
 // One brief per finder session and one per verifier batch.
-import { conventionsBlock, contextBlocks, fenceFor, header, instructionsBlock, lensBlock, SEVERITY_RULES, targetBlock, writingRules } from "./brief.js";
+import { conventionsBlock, contextBlocks, fenceFor, header, instructionsBlock, lensBlock, MAX_DIFF_BYTES, SEVERITY_RULES, targetBlock, writingRules } from "./brief.js";
 import { removedRuns } from "./diff.js";
-import { GLOBAL_CONFIDENCE_FLOOR } from "./finalize.js";
+import { GLOBAL_CONFIDENCE_FLOOR, scannerCategory } from "./finalize.js";
 import { redactSecrets, redactSecretsKeepingLines } from "./redact.js";
 import type { Change, Config, ContextItem, DeletionPoint, FindAnswer, FindPass, HunkRef, InstructionFile, ReviewUnit, RunTarget, ScanResult, SelectedLens, VerifyAnswer, VerifyCandidate } from "./types.js";
 
@@ -172,6 +172,9 @@ function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): { text
   const files = new Map<string, { diff: ReturnType<typeof splitDiff>; removed: ReturnType<typeof removedRuns> }>();
   const shown = new Set<string>();
   const missing = new Set<string>();
+  // A unit holds at most MAX_UNIT_DIFF_BYTES of diff unless one hunk alone is
+  // larger. A hunk over the brief's diff budget is read through the tools
+  // instead, and its file must then be read to count.
   for (const ref of hunks) {
     let file = files.get(ref.path);
     if (!file) {
@@ -186,14 +189,17 @@ function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): { text
     }
     const rows = hunkRows(ref, file.diff, file.removed, point);
     const body = [...(shown.has(ref.path) ? [] : file.diff.header), ...rows].join("\n");
-    if (rows.length > 0) shown.add(ref.path);
-    else missing.add(ref.path);
+    const size = Buffer.byteLength(body, "utf8");
+    const over = rows.length > 0 && size > MAX_DIFF_BYTES;
+    if (rows.length > 0 && !over) shown.add(ref.path); else missing.add(ref.path);
     const fence = fenceFor(body);
     blocks.push([
       `### ${ref.id} ${ref.path} ${ref.start}-${ref.end}`,
       "",
       ...(ref.deletion ? [`Removed lines use the old file's line numbers. Cite deletion anchor ${ref.start}${ref.end === ref.start ? "" : ` or ${ref.end}`}.`, ""] : []),
-      ...(rows.length > 0 ? [`${fence}diff`, body, fence] : ["The change holds no diff lines for this hunk. Read its code with your tools."]),
+      ...(over
+        ? [`This hunk is ${Math.ceil(size / 1024)} KB, more than the ${MAX_DIFF_BYTES / 1024} KB a brief carries for one hunk. Read its lines with your tools.`]
+        : rows.length > 0 ? [`${fence}diff`, body, fence] : ["The change holds no diff lines for this hunk. Read its code with your tools."]),
     ].join("\n"));
   }
   return { text: blocks.join("\n\n"), diffFiles: new Set([...shown].filter((path) => !missing.has(path))) };
@@ -287,7 +293,7 @@ function verifyCandidatesBlock(batch: VerifyBatch, lenses: SelectedLens[]): stri
       }
     } else {
       const c = item.candidate;
-      lines.push(`- Token: ${c.token}`, `- Message: ${c.message}`, `- Location: ${c.filePath}:${c.lineStart}`, `- Severity: ${c.reviewSeverity}`);
+      lines.push(`- Token: ${c.token}`, `- Message: ${c.message}`, `- Location: ${c.filePath}:${c.lineStart}`, `- Severity: ${c.reviewSeverity}`, `- Category: ${scannerCategory(c.source)}`);
     }
     lines.push("");
   }
@@ -307,6 +313,7 @@ const VERIFY_WORK = [
   "Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.",
   "Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.",
   "When candidates describe the same problem, choose one surviving id in this batch.",
+  "Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.",
   "Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.",
   "When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.",
   "Mark the finder candidate `duplicate_of` the scanner candidate.",
@@ -324,7 +331,7 @@ function verifyAnswerBlock(change: Change, batch: VerifyBatch, floor = GLOBAL_CO
     verdicts: [{
       id: first?.id ?? "k1", verdict: "confirmed",
       reason: `${batch.file}:${line} builds SQL from request input without a bound parameter.`,
-      duplicate_of: null, severity: "critical", confidence: 0.9,
+      duplicate_of: null, severity: "critical", category: "security", confidence: 0.9,
       file_path: batch.file, line_number: line, line_end: line,
       title: "Query built from request input",
       problem: "The search query puts q from the request straight into the SQL text.",
@@ -345,6 +352,7 @@ function verifyAnswerBlock(change: Change, batch: VerifyBatch, floor = GLOBAL_CO
     "- `reason`: one or two sentences explaining the verdict, with the file and line that show it.",
     "- `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.",
     "- `severity`: impact according to the scale above.",
+    "- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.",
     "- `confidence`: 0 to 1, set honestly from the code.",
     `- Findings under ${floor}, or under a cited lens's floor, are not counted.`,
     "- `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.",

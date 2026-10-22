@@ -683,6 +683,8 @@ export type VerifyVerdict = {
   reason: string;
   duplicate_of?: string | null;
   severity: Severity;
+  // The kind of the problem as the verifier judges it from the code.
+  category: Category;
   confidence: number;
   file_path: string;
   line_number: number;

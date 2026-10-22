@@ -394,6 +394,7 @@ used at scripts/deploy.sh:2 (by name, unverified: the same name may be another t
 - Message: Using latest is prone to errors if the image will ever update. Pin the version explicitly to a release tag
 - Location: Dockerfile:1
 - Severity: minor
+- Category: maintainability
 
 ### k4 (finder)
 
@@ -416,6 +417,7 @@ FROM python:latest
 - Message: Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`
 - Location: Dockerfile:3
 - Severity: minor
+- Category: maintainability
 
 ### c11 (scanner)
 
@@ -423,6 +425,7 @@ FROM python:latest
 - Message: Use the `-y` switch to avoid manual input `apt-get -y install <package>`
 - Location: Dockerfile:3
 - Severity: minor
+- Category: maintainability
 
 ### c21 (scanner)
 
@@ -430,6 +433,7 @@ FROM python:latest
 - Message: Delete the apt lists (/var/lib/apt/lists) after installing something
 - Location: Dockerfile:3
 - Severity: nitpick
+- Category: maintainability
 
 ### c22 (scanner)
 
@@ -437,6 +441,7 @@ FROM python:latest
 - Message: Avoid additional packages by specifying `--no-install-recommends`
 - Location: Dockerfile:3
 - Severity: nitpick
+- Category: maintainability
 
 ### k5 (finder)
 
@@ -467,6 +472,7 @@ A scanner candidate is always confirmed or refuted, never unresolved.
 Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.
 Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.
 When candidates describe the same problem, choose one surviving id in this batch.
+Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.
 Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.
 When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.
 Mark the finder candidate `duplicate_of` the scanner candidate.
@@ -495,6 +501,7 @@ The example's code and claims are illustrations. Use the candidates and code fro
       "reason": "Dockerfile:1 builds SQL from request input without a bound parameter.",
       "duplicate_of": null,
       "severity": "critical",
+      "category": "security",
       "confidence": 0.9,
       "file_path": "Dockerfile",
       "line_number": 1,
@@ -519,6 +526,7 @@ Fields:
 - `reason`: one or two sentences explaining the verdict, with the file and line that show it.
 - `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.
 - `severity`: impact according to the scale above.
+- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
 - Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.

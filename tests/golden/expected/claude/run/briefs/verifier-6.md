@@ -227,6 +227,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: container "api" is privileged. Do not run your container as privileged unless it is required.
 - Location: deploy/deployment.yaml:42
 - Severity: major
+- Category: maintainability
 
 ### c13 (scanner)
 
@@ -234,6 +235,7 @@ used at infra/main.tf:46 (by name, unverified: the same name may be another thin
 - Message: Container should not be privileged
 - Location: deploy/deployment.yaml:42
 - Severity: minor
+- Category: maintainability
 
 ### k9 (finder)
 
@@ -256,6 +258,7 @@ deploy/deployment.yaml:42
 - Message: container "api" has AllowPrivilegeEscalation set to true. Ensure containers do not allow privilege escalation by setting allowPrivilegeEscalation=false, privileged=false and removing CAP_SYS_ADMIN capability. See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/ for more details.
 - Location: deploy/deployment.yaml:43
 - Severity: major
+- Category: maintainability
 
 ### c14 (scanner)
 
@@ -263,6 +266,7 @@ deploy/deployment.yaml:42
 - Message: Containers should not run with allowPrivilegeEscalation
 - Location: deploy/deployment.yaml:43
 - Severity: minor
+- Category: maintainability
 
 ### k10 (finder)
 
@@ -293,6 +297,7 @@ A scanner candidate is always confirmed or refuted, never unresolved.
 Refute a candidate the owners' instructions put out of scope with a reason starting `repo instructions:`.
 Never add a candidate of your own. Return exactly one verdict for every candidate id in this batch.
 When candidates describe the same problem, choose one surviving id in this batch.
+Candidates whose ranges overlap or touch and that name one defect are the same problem, whatever their titles say.
 Every duplicate carries verdict `confirmed` and `duplicate_of` the surviving id.
 When a scanner candidate is among duplicates, keep the scanner candidate as the survivor.
 Mark the finder candidate `duplicate_of` the scanner candidate.
@@ -321,6 +326,7 @@ The example's code and claims are illustrations. Use the candidates and code fro
       "reason": "deploy/deployment.yaml:42 builds SQL from request input without a bound parameter.",
       "duplicate_of": null,
       "severity": "critical",
+      "category": "security",
       "confidence": 0.9,
       "file_path": "deploy/deployment.yaml",
       "line_number": 42,
@@ -345,6 +351,7 @@ Fields:
 - `reason`: one or two sentences explaining the verdict, with the file and line that show it.
 - `duplicate_of`: another confirmed id in this batch for the same problem. Otherwise omit it or set null.
 - `severity`: impact according to the scale above.
+- `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
 - Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.

@@ -14,7 +14,7 @@ import { severityRank } from "./severity.js";
 import type { Change, Config, ContextItem, ContextKind, RunTarget, ScanResult, SelectedLens } from "./types.js";
 
 const MAX_CANDIDATES_SHOWN = 50;
-const MAX_DIFF_BYTES = DELIVERY_ROW_BYTES;
+export const MAX_DIFF_BYTES = DELIVERY_ROW_BYTES;
 
 export function fenceFor(text: string): string {
   const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));

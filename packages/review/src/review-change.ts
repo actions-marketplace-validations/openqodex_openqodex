@@ -631,7 +631,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       clock.enter("reviewer");
       say(`Reviewer: ${agent ? `${agent.driver.name} ${agent.version}` : `model ${model!.reviewer.model}`}; staged review, ${unitCount} units, ${unitCount * 2} finder sessions, then verifiers; this takes several minutes`);
       const stagedRun = await runStagedReview({
-        snapshotDir: prep.snapshot.tree, change, citationChange: full, scan, config, manifest, secrets: p.secrets, deadline, now: deps.now, traced, confidenceFloor: inputs.confidenceFloor, say, stopped: () => stopped,
+        snapshotDir: prep.snapshot.tree, change, citationChange: full, scan, config, manifest, secrets: p.secrets, deadline, now: deps.now, traced, model: model !== null, confidenceFloor: inputs.confidenceFloor, say, stopped: () => stopped,
         findBrief: (unit, pass) => buildFindBrief({ ...briefArgs, neighbourhoodBlock: neighbourhoodBlock(unit.files) }, unit, pass),
         verifyBrief: (batch) => buildVerifyBrief({ ...briefArgs, neighbourhoodBlock: neighbourhoodBlock([batch.file]) }, batch),
         openSession: (role) => {
