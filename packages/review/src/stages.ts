@@ -32,6 +32,9 @@ export type StagedArgs = {
   // (a read counts once its result was sent); otherwise the trace is an
   // agent's, read as a single-pass trace, and only when `traced`.
   model?: boolean;
+  // The line a session stopped at the review's time cap fails with, in place
+  // of TIMED_OUT, and the first missing line when any stage ran out of time.
+  timedOut?: string;
   confidenceFloor?: number;
   say: (line: string) => void;
   onRound?: (round: CorrectionRound) => void;
@@ -132,13 +135,17 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     if (earlier) return earlier;
     const pending = Promise.resolve().then(async () => {
       try {
-        if (run.talk.failure === TIMED_OUT) run.session.kill?.();
+        if (run.talk.failure === TIMED_OUT || (args.timedOut !== undefined && run.talk.failure === args.timedOut)) { timedOut = true; run.session.kill?.(); }
         await run.session.close();
       } finally { live--; done++; emit(() => args.onEnded?.(recordOf(run))); }
     });
     closedRuns.set(run, pending);
     return pending;
   };
+  // Set when a session hit the cap or a stage ran out of time: the review
+  // then names the cap first in `missing`, as the single pass does.
+  let timedOut = false;
+  const ranOut = (text: string) => { timedOut = true; return text; };
   const noteRefusal = (run: Run) => {
     if (run.session.attempts?.some((c) => c.outcome === "refused")) {
       budgetRefused = true;
@@ -173,7 +180,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
           run = start(attempt === 0 ? passRole : `${passRole}:retry1`, index * 10 + attempt, `Finder for unit ${unit.id} (${pass === "local" ? "correctness and safety" : "interfaces and conventions"})`, brief.text, unit.id);
           began = true;
           let checked: ReturnType<typeof checkFindAnswer> | null = null;
-          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: brief.text, deadline: findDeadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, say, now: args.now, onRound: roundFor(run.role),
+          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: brief.text, deadline: findDeadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, say, now: args.now, timedOut: args.timedOut, onRound: roundFor(run.role),
             check: (value, trace, delivered) => {
               const result = checkFindAnswer(value, unit, citationChange, read, args.manifest.lenses.map((lens) => lens.name));
               checked = result;
@@ -206,7 +213,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
         }
       }
       if (answer === null) {
-        missing.push(!began ? `unit ${unit.id} was not started: ${last ?? (stopped() ? "the review stopped" : "the finders' time ran out")}` : `unit ${unit.id} was not examined by ${pass}: ${last ?? "the finders' time ran out"}`);
+        missing.push(!began ? `unit ${unit.id} was not started: ${last ?? (stopped() ? "the review stopped" : ranOut("the finders' time ran out"))}` : `unit ${unit.id} was not examined by ${pass}: ${last ?? ranOut("the finders' time ran out")}`);
         for (const h of unit.hunks) missing.push(`hunk ${h.id} of ${h.path} was not examined by the ${pass} pass`);
       }
     });
@@ -278,7 +285,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
           const brief = args.verifyBrief(batch);
           run = start(`verifier:${index + 1}${attempt ? ":retry1" : ""}`, jobs.length * 10 + index * 10 + attempt, `Verifier ${index + 1} for ${batch.file}`, brief.text);
           let answer: VerifyAnswer | null = null;
-          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: brief.text, deadline: args.deadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, say, now: args.now, onRound: roundFor(run.role), check: verifyCheck(batch, (a) => { answer = a; }), deliver: noDelivery });
+          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: brief.text, deadline: args.deadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, say, now: args.now, timedOut: args.timedOut, onRound: roundFor(run.role), check: verifyCheck(batch, (a) => { answer = a; }), deliver: noDelivery });
           noteRefusal(run);
           if (run.talk.failure === null && (!args.traced || !run.talk.trace.some(outsideSnapshot)) && answer !== null && (failed(run.talk) === null || isolate(batch, answer, run.talk.errors))) {
             verified.push({ batch, run, answer, brief: brief.text, number: index + 1, corrections: 0 }); accepted = true; break;
@@ -290,7 +297,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
           if (run) await close(run);
         }
       }
-      if (!accepted) abandon(batch, stopped() ? "the review stopped" : args.now() >= args.deadline ? "the verifier did not finish in time" : "the verifier session failed twice");
+      if (!accepted) abandon(batch, stopped() ? "the review stopped" : args.now() >= args.deadline ? ranOut("the verifier did not finish in time") : "the verifier session failed twice");
     });
 
     if (hostFailure !== null) throw hostFailure;
@@ -351,7 +358,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
         try {
           let answer: VerifyAnswer | null = null;
           const saved = { ...run.talk, rounds: 1, submission: owner.answer };
-          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: owner.brief, continuation: { conversation: saved, errors: problems }, deadline: args.deadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, now: args.now, say, check: verifyCheck(owner.batch, (a) => { answer = a; }), deliver: noDelivery, onRound: roundFor(run.role) });
+          run.talk = await converse({ session: run.session, snapshotDir: args.snapshotDir, brief: owner.brief, continuation: { conversation: saved, errors: problems }, deadline: args.deadline, traced: args.traced, heartbeat: false, staged: true, sessionName: run.name, now: args.now, timedOut: args.timedOut, say, check: verifyCheck(owner.batch, (a) => { answer = a; }), deliver: noDelivery, onRound: roundFor(run.role) });
           // The saved answer is context, not a call in this new session.
           run.talk.rounds--;
           noteRefusal(run);
@@ -434,6 +441,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     const blocking = config.blockOnSeverity;
     report.verdict = missing.length > 0 ? "incomplete" : blocking && report.findings.some((f) => severityRank(f.severity) >= severityRank(blocking)) ? "blocked" : "passed";
     const calls = runs.flatMap((r) => [...(r.session.calls?.() ?? r.session.attempts ?? [])]);
+    if (timedOut) missing.unshift(args.timedOut ?? TIMED_OUT);
     const trace = runs.flatMap((r) => r.talk.trace.map((t) => ({ ...t, session: r.role })));
     const sessions = runs.map(recordOf);
     const submission = { ...built.submission, findings: built.submission.findings.filter((_, i) => {

@@ -370,6 +370,22 @@ it("kills a timed-out finder before awaiting its close so cleanup cannot consume
   expect(f.requests.some((r) => r.purpose === "verify")).toBe(true);
 });
 
+it("names the time cap first in missing when a finder session hit it, in the caller's words", async () => {
+  const f = setup();
+  const cap = "the reviewer timed out and was stopped at the 1 second cap; pass --timeout <seconds> to allow more";
+  f.args.timedOut = cap;
+  const open = f.args.openSession;
+  let opened = 0;
+  f.args.openSession = (role) => {
+    if (++opened > 1) return open(role);
+    return { send: async () => ({ finalText: "", calls: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, sessionId: null, failure: TIMED_OUT }), kill: () => {}, close: async () => {} };
+  };
+  const r = await runStagedReview(f.args);
+  expect(r.missing[0]).toBe(cap);
+  expect(r.missing.filter((line) => line === cap)).toHaveLength(1);
+  expect(r.sessions[0]!.failure).toBe(cap);
+});
+
 it("takes the verifier's category for a confirmed scanner finding", async () => {
   const f = setup((answer) => {
     if (answer.version === "find-1") answer.candidates = [];
