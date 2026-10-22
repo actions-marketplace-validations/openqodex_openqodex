@@ -66,6 +66,7 @@ import type {
   Report,
   ResolveTool,
   ReviewerRecord,
+  ReviewerSessionRecord,
   RunManifest,
   RunTarget,
   ScanResult,
@@ -200,6 +201,7 @@ export type ReviewEvent =
   | { type: "staged-brief"; role: ReviewerRole; brief: string }
   // The reviewer started.
   | { type: "started"; driver: string; version: string; pid: number | null; role?: ReviewerRole }
+  | { type: "session-ended"; session: ReviewerSessionRecord }
   // A correction round, as it is sent, redacted with the scan's secrets.
   | { type: "round"; round: CorrectionRound };
 
@@ -481,9 +483,9 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     opened.close = async () => {
       if (closed) return;
       closed = true;
-      liveSessions.delete(opened);
       try { await close(); }
       catch (error) { warn(`Could not close reviewer: ${(error as Error).message}`); }
+      finally { liveSessions.delete(opened); }
     };
     liveSessions.add(opened);
     return opened;
@@ -617,15 +619,16 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null,
       ...(deps.scoped?.folderScopes ? { admit: deps.scoped.admit } : {}),
     };
-    const staged = config.stages && !prep.whole && refused === null;
+    const unitCount = config.stages && !prep.whole && refused === null ? unitsOf(change, hunkRefs(change)).length : 0;
+    const staged = config.stages && !prep.whole && refused === null && unitCount > 0;
     if (staged) {
       const startedIso = new Date(deps.now()).toISOString();
       const started = deps.now();
       const shared: CallRecord[] = [];
+      const budgetState = { pending: Promise.resolve(), refused: false };
       const modelSessions: ModelSession[] = [];
       const briefArgs = { change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown };
       clock.enter("reviewer");
-      const unitCount = unitsOf(change, hunkRefs(change)).length;
       say(`Reviewer: ${agent ? `${agent.driver.name} ${agent.version}` : `model ${model!.reviewer.model}`}; staged review, ${unitCount} units, ${unitCount * 2} finder sessions, then verifiers; this takes several minutes`);
       const stagedRun = await runStagedReview({
         snapshotDir: prep.snapshot.tree, change, citationChange: full, scan, config, manifest, secrets: p.secrets, deadline, now: deps.now, traced, confidenceFloor: inputs.confidenceFloor, say, stopped: () => stopped,
@@ -633,7 +636,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         verifyBrief: (batch) => buildVerifyBrief({ ...briefArgs, neighbourhoodBlock: neighbourhoodBlock([batch.file]) }, batch),
         openSession: (role) => {
           if (stopped) throw new Error("the review stopped");
-          const modelSessionForRole = model ? modelSession({ reviewer: model.reviewer, role, budget: model.budget, box, now: deps.now, deadline, shared }) : null;
+          const modelSessionForRole = model ? modelSession({ reviewer: model.reviewer, role, budget: model.budget, box, now: deps.now, deadline, shared, budgetState }) : null;
           if (modelSessionForRole) modelSessions.push(modelSessionForRole);
           const metered = agent ? meterSession(agentReviewer(agent.driver, { snapshotDir: prep.snapshot.tree, deadline, bin: agent.bin, web: inputs.web }), { driver: agent.driver.name, role, now: deps.now }) : null;
           const opened = register(modelSessionForRole ?? metered!.session);
@@ -644,11 +647,13 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
             get sentRounds() { return modelSessionForRole?.sentRounds; },
             ...(metered ? { calls: () => metered.calls() } : {}),
             close: () => opened.close(),
+            kill: () => opened.kill?.(),
           };
         },
         onStarted: (role, pid) => {
           deps.onEvent({ type: "started", driver: agent?.driver.name ?? "model", version: agent?.version ?? model!.reviewer.model, pid, role });
         },
+        onEnded: (session) => deps.onEvent({ type: "session-ended", session: redactStored(session, p.secrets) }),
         onBrief: (role, text) => deps.onEvent({ type: "staged-brief", role, brief: redact(text) }),
         onRound: (round) => deps.onEvent({ type: "round", round: redactStored(round, p.secrets) }),
       });

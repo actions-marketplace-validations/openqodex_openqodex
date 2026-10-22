@@ -21,11 +21,13 @@
 // 20. An ignored site directory also hides its changed-file candidates.
 // 21. Repeated rendering makes the byte budget quadratic in symbol count.
 import { cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Change, ImpactSummary } from "@openqodex/core";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import { makeChange } from "../../core/src/test-fixtures.js";
 import {
   buildNeighbourhood, renderNeighbourhoodBlock, NEIGHBOURHOOD_BLOCK_BYTES,
@@ -164,7 +166,7 @@ it("excludes only added lines as sites and preserves the snapshot's context numb
 it("returns a partial packet when now steps beyond the time cap during the file scan", () => {
   const dir = snapshot({ "a.txt": "reprice\n", "b.txt": "result = reprice()\n", "c.txt": "result = reprice()\n" });
   let ticks = 0;
-  const packet = build(dir, change(dir, { "a.txt": [1] }), { now: () => ticks++ < 7 ? 0 : NEIGHBOURHOOD_TIME_MS + 1 });
+  const packet = build(dir, change(dir, { "a.txt": [1] }), { now: () => ticks++ < 8 ? 0 : NEIGHBOURHOOD_TIME_MS + 1 });
   expect(packet.partial).toMatch(/^Time cap reached after 2 of 3 files;/);
   expect(packet.durationMs).toBeGreaterThan(NEIGHBOURHOOD_TIME_MS);
   const symbol = packet.symbols.find((s) => s.name === "reprice")!;
@@ -387,6 +389,34 @@ it("does not count ignored directories, binary files, non-UTF8 files or files ov
   const dir = snapshot(files);
   const packet = build(dir, change(dir, { "changed.txt": [1] }));
   expect(packet.symbols[0]).toMatchObject({ name: "reprice", files: 2, sites: [{ path: "use.txt" }] });
+});
+
+it("prunes an ignored directory before listing its many files", () => {
+  const dir = snapshot({ "changed.txt": "reprice\n", "use.txt": "reprice\n" });
+  const ignored = join(dir, "node_modules");
+  mkdirSync(ignored);
+  for (let i = 0; i < 2000; i++) writeFileSync(join(ignored, `use-${i}.txt`), "reprice\n");
+  const reads = vi.spyOn(fs, "readdirSync");
+  syncBuiltinESMExports();
+  try {
+    const packet = build(dir, change(dir, { "changed.txt": [1] }));
+    expect(packet.partial).toBeNull();
+    expect(reads.mock.calls.map(([path]) => String(path))).not.toContain(ignored);
+    expect(packet.symbols[0]!.files).toBe(2);
+  } finally { reads.mockRestore(); syncBuiltinESMExports(); }
+});
+
+it("stops listing directories at the time cap and marks the walked portion partial", () => {
+  const dir = snapshot({ "a/changed.txt": "reprice\n", "b/use.txt": "reprice\n", "c/use.txt": "reprice\n" });
+  let ticks = 0;
+  const reads = vi.spyOn(fs, "readdirSync");
+  syncBuiltinESMExports();
+  try {
+    const packet = build(dir, change(dir, { "a/changed.txt": [1] }), { now: () => ticks++ < 3 ? 0 : NEIGHBOURHOOD_TIME_MS + 1 });
+    expect(packet.partial).toMatch(/^Time cap reached/);
+    expect(reads.mock.calls.map(([path]) => String(path))).not.toContain(join(dir, "b"));
+    expect(reads.mock.calls.map(([path]) => String(path))).toContain(join(dir, "a"));
+  } finally { reads.mockRestore(); syncBuiltinESMExports(); }
 });
 
 it("returns a partial packet instead of throwing when the snapshot cannot be listed", () => {

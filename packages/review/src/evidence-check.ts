@@ -38,6 +38,8 @@ export function checkEvidence(c: EvidenceCitation, snapshotText: SnapshotText, c
   const text = snapshotText(c.file_path);
   if (text === null) return `evidence ${at}: the file is not a text file in the snapshot`;
   const lines = text.split("\n");
+  const lineCount = lines.length - (lines.at(-1) === "" ? 1 : 0);
+  if (c.line_number > lineCount) return `evidence ${at}: the cited line is past the end of the file`;
   const matches = normal(lines.slice(Math.max(0, c.line_number - 3), c.line_number + 2).join(" ")).includes(quote);
   return matches ? null : `evidence ${at}: the quote is not within two lines of the cited line`;
 }
@@ -59,7 +61,7 @@ export function checkFindAnswer(value: unknown, unit: ReviewUnit, change: Change
   answer.candidates.forEach((c, i) => {
     if (c.lens && !lenses.includes(c.lens)) c.lens = null;
     const candidateErrors: string[] = [];
-    if (snapshotText(c.file_path) === null) candidateErrors.push(`candidates[${i}].file_path: ${c.file_path} is not a text file in the snapshot`);
+    if (!change.files.some((f) => f.path === c.file_path && f.status === "deleted") && snapshotText(c.file_path) === null) candidateErrors.push(`candidates[${i}].file_path: ${c.file_path} is not a text file in the snapshot`);
     if (c.line_end !== undefined && c.line_end < c.line_number) candidateErrors.push(`candidates[${i}].line_end: it is before line_number`);
     for (const e of c.evidence) {
       const error = checkEvidence(e, snapshotText, change);
@@ -112,7 +114,7 @@ export function checkVerifyAnswer(value: unknown, batch: VerifyBatch, change: Ch
         if (v[field].trim() === "") errors.push(`${at}.${field}: must not be empty`);
         errors.push(...proseErrors(`${at}.${field}`, v[field], banned, field === "title" ? null : 2));
       }
-      if (snapshotText(v.file_path) === null) errors.push(`${at}: ${v.file_path} is not a text file in the snapshot`);
+      if (!change.files.some((f) => f.path === v.file_path && f.status === "deleted") && snapshotText(v.file_path) === null) errors.push(`${at}: ${v.file_path} is not a text file in the snapshot`);
       const wrong = citesChange(v.file_path, v.line_number, v.line_end ?? v.line_number, change, lineCount);
       if (wrong) errors.push(`${at}: ${wrong}`);
       if (c?.kind === "finder") for (const e of c.candidate.evidence) {

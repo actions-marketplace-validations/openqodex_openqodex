@@ -38,6 +38,7 @@ export const VERIFY_BATCH_SIZE = 6;
 // code around its files, the matched lenses, the pass's questions and the
 // find answer shape (FindAnswer).
 export function buildFindBrief(args: StagedBriefArgs, unit: ReviewUnit, pass: FindPass): { text: string; diffFiles: Set<string> } {
+  const hunks = hunksBlock(args.change, unit.hunks, args.secrets);
   const blocks = [
     header(args.change, args.scan, args.config, args.target, "# OpenQodex review brief: find pass"),
     targetBlock(args.target, true),
@@ -45,7 +46,7 @@ export function buildFindBrief(args: StagedBriefArgs, unit: ReviewUnit, pass: Fi
     conventionsBlock(args.instructionFiles ?? [], "find"),
     contextBlocks(args.context ?? [], "find"),
     ["## Your unit", "", `Unit: ${unit.id}`, "", ...unit.files.map((file) => `- ${file}`)].join("\n"),
-    hunksBlock(args.change, unit.hunks, args.secrets),
+    hunks.text,
     args.impactBlock ?? "",
     args.neighbourhoodBlock ?? "",
     lensBlock(args.lenses, false, true),
@@ -53,7 +54,7 @@ export function buildFindBrief(args: StagedBriefArgs, unit: ReviewUnit, pass: Fi
     FIND_WORK,
     findAnswerBlock(args.change, unit),
   ];
-  return { text: render(blocks, args.secrets), diffFiles: new Set(unit.files) };
+  return { text: render(blocks, args.secrets), diffFiles: hunks.diffFiles };
 }
 
 // The brief of one verifier session: that file's hunks with their ids, the
@@ -67,7 +68,7 @@ export function buildVerifyBrief(args: StagedBriefArgs, batch: VerifyBatch): { t
     instructionsBlock(args.instructions ?? "", args.instructionsFrom, "verify"),
     conventionsBlock(args.instructionFiles ?? [], "verify"),
     `## The file\n\n${batch.file}`,
-    hunksBlock(args.change, batch.hunks, args.secrets),
+    hunksBlock(args.change, batch.hunks, args.secrets).text,
     args.impactBlock ?? "",
     args.neighbourhoodBlock ?? "",
     verifyCandidatesBlock(batch, args.lenses),
@@ -166,11 +167,11 @@ function hunkRows(ref: HunkRef, diff: ReturnType<typeof splitDiff>, removed: Ret
   return out;
 }
 
-function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): string {
+function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): { text: string; diffFiles: Set<string> } {
   const blocks: string[] = [];
   const files = new Map<string, { diff: ReturnType<typeof splitDiff>; removed: ReturnType<typeof removedRuns> }>();
   const shown = new Set<string>();
-  const deletionOrdinals = new Map<string, number>();
+  const missing = new Set<string>();
   for (const ref of hunks) {
     let file = files.get(ref.path);
     if (!file) {
@@ -180,16 +181,13 @@ function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): string
     }
     let point: DeletionPoint | undefined;
     if (ref.deletion) {
-      // Different deletions can share anchors when only one line survives.
-      const key = `${ref.path}\0${ref.start}\0${ref.end}`;
-      const ordinal = deletionOrdinals.get(key) ?? 0;
-      point = (change.deletionPoints.get(ref.path) ?? [])
-        .filter((point) => Math.min(...point.anchors) === ref.start && Math.max(...point.anchors) === ref.end)[ordinal];
-      deletionOrdinals.set(key, ordinal + 1);
+      const points = change.deletionPoints.get(ref.path) ?? [];
+      point = ref.point !== undefined ? points[ref.point] : points.find((p) => Math.min(...p.anchors) === ref.start && Math.max(...p.anchors) === ref.end);
     }
     const rows = hunkRows(ref, file.diff, file.removed, point);
     const body = [...(shown.has(ref.path) ? [] : file.diff.header), ...rows].join("\n");
     if (rows.length > 0) shown.add(ref.path);
+    else missing.add(ref.path);
     const fence = fenceFor(body);
     blocks.push([
       `### ${ref.id} ${ref.path} ${ref.start}-${ref.end}`,
@@ -198,7 +196,7 @@ function hunksBlock(change: Change, hunks: HunkRef[], secrets: string[]): string
       ...(rows.length > 0 ? [`${fence}diff`, body, fence] : ["The change holds no diff lines for this hunk. Read its code with your tools."]),
     ].join("\n"));
   }
-  return blocks.join("\n\n");
+  return { text: blocks.join("\n\n"), diffFiles: new Set([...shown].filter((path) => !missing.has(path))) };
 }
 
 function passBlock(pass: FindPass): string {

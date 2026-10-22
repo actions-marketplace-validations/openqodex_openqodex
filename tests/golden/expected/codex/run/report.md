@@ -18,7 +18,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** gitleaks:stripe-access-token
 
-### 2. Major maintainability: Planted problem number 2
+### 2. Major bug: Planted problem number 2
 
 - **Where:** .github/workflows/ci.yml:17
 - **Problem:** This changed line introduces an unsafe operation.
@@ -26,7 +26,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** actionlint:expression
 
-### 3. Major maintainability: Planted problem number 3
+### 3. Major bug: Planted problem number 3
 
 - **Where:** Dockerfile:6
 - **Problem:** This changed line introduces an unsafe operation.
@@ -42,7 +42,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the operation before using this change.
 - **Source:** the reviewer
 
-### 5. Major maintainability: Planted problem number 4
+### 5. Major bug: Planted problem number 4
 
 - **Where:** infra/main.tf:28
 - **Problem:** This changed line introduces an unsafe operation.
@@ -58,7 +58,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** checkov:CKV\_AWS\_24
 
-### 7. Major maintainability: Planted problem number 5
+### 7. Major bug: Planted problem number 5
 
 - **Where:** deploy/deployment.yaml:42
 - **Problem:** This changed line introduces an unsafe operation.
@@ -74,7 +74,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** checkov:CKV\_K8S\_16
 
-### 9. Major maintainability: Planted problem number 6
+### 9. Major bug: Planted problem number 6
 
 - **Where:** deploy/deployment.yaml:43
 - **Problem:** This changed line introduces an unsafe operation.
@@ -90,7 +90,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** checkov:CKV\_K8S\_20
 
-### 11. Major maintainability: Planted problem number 7
+### 11. Major bug: Planted problem number 7
 
 - **Where:** scripts/deploy.sh:11
 - **Problem:** This changed line introduces an unsafe operation.
@@ -122,7 +122,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the operation before using this change.
 - **Source:** the reviewer
 
-### 15. Minor maintainability: Planted problem number 9
+### 15. Minor bug: Planted problem number 9
 
 - **Where:** Dockerfile:1
 - **Problem:** This changed line introduces an unsafe operation.
@@ -130,7 +130,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** hadolint:DL3007
 
-### 16. Minor maintainability: Planted problem number 10
+### 16. Minor bug: Planted problem number 10
 
 - **Where:** Dockerfile:3
 - **Problem:** This changed line introduces an unsafe operation.
@@ -162,7 +162,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** hadolint:DL3015
 
-### 20. Minor maintainability: Planted problem number 12
+### 20. Minor bug: Planted problem number 12
 
 - **Where:** Dockerfile:7
 - **Problem:** This changed line introduces an unsafe operation.
@@ -170,7 +170,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** hadolint:DL3042
 
-### 21. Minor maintainability: Planted problem number 16
+### 21. Minor bug: Planted problem number 16
 
 - **Where:** scripts/deploy.sh:7
 - **Problem:** This changed line introduces an unsafe operation.
@@ -186,7 +186,7 @@ Counts: 27 findings \(14 major, 13 minor\), 0 scanner candidates dropped
 - **Fix:** Correct the flagged operation before using this change.
 - **Source:** shellcheck:SC2086
 
-### 23. Minor maintainability: Planted problem number 8
+### 23. Minor bug: Planted problem number 8
 
 - **Where:** db/migrations/002\_index\_item\_names.sql:2
 - **Problem:** This changed line introduces an unsafe operation.

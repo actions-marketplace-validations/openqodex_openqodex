@@ -20,7 +20,7 @@
 //  6. rounds.json keeps concurrent arrival order after the staged run ends.
 import { stagedFake } from "../../review/test/staged-fake.js";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "@openqodex/core";
@@ -84,7 +84,7 @@ type Run = { repo: string; home: string; during: During[]; lines: string[]; ende
 
 // The core with the laptop's parts and `driver` as the only reviewer. Every
 // line it hands over, and every stop it offers, is kept here.
-async function runCore(dir: string, driver: ReviewerDriver, stages = false): Promise<{ lines: string[]; ended: string }> {
+async function runCore(dir: string, driver: ReviewerDriver, stages = false, onStop?: (stop: () => void) => void): Promise<{ lines: string[]; ended: string }> {
   const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
   const config = { ...structuredClone(DEFAULT_CONFIG), stages };
   const parts = laptopParts({ flags: global, scope: {}, noGraph: true, timeoutMs: 60_000, drivers: [driver] }, dir, config);
@@ -92,7 +92,7 @@ async function runCore(dir: string, driver: ReviewerDriver, stages = false): Pro
   const stops: (() => void)[] = [];
   const result = await runReviewCore(
     { repoRoot: dir, config, scope: {}, only: ["sqllint"], noGraph: true, reviewer: "auto", web: false, timeoutMs: 60_000, runtimeVersion: "0.0.0-test" },
-    { ...parts, onEvent: (e) => (e.type === "progress" || e.type === "warning" ? lines.push(e.line) : undefined), onStop: (stop) => stops.push(stop) },
+    { ...parts, onEvent: (e) => (e.type === "progress" || e.type === "warning" ? lines.push(e.line) : undefined), onStop: (stop) => { stops.push(stop); onStop?.(stop); } },
   );
   expect(stops).toHaveLength(1);
   return { lines, ended: result.ended === "reviewed" && result.completion.status === "complete" ? "reviewed" : result.ended };
@@ -170,6 +170,79 @@ it("names each staged session and prints the staged receipt once", async () => {
   expect(r.lines).toContain("Finder for unit u1 (interfaces and conventions) started (process 1)");
   expect(r.lines).toContain("Verifier 1 for db/x.sql started (process 1)");
   expect(r.lines.filter((line) => line.startsWith("Reviewer:"))).toHaveLength(1);
+});
+
+it("runs one single-pass reviewer for a pure rename instead of passing with zero sessions", async () => {
+  const dir = tempDir("oq-core-rename-");
+  git(dir, "init", "-q", "-b", "main");
+  writeFileSync(join(dir, "old.txt"), "unchanged contents\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "Base");
+  renameSync(join(dir, "old.txt"), join(dir, "new.txt"));
+  const during: During[] = [];
+  const base = standIn(home, during);
+  const briefs: string[] = [];
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    session.send = (text) => { briefs.push(text); return send(text); };
+    return session;
+  } };
+  const r = await runCore(dir, driver, true);
+  expect(r.ended).toBe("reviewed");
+  expect(during).toHaveLength(1);
+  expect(briefs).toHaveLength(1);
+  expect(briefs[0]).toMatch(/^# OpenQodex review brief\n/);
+  expect(r.lines.some((line) => line.includes("staged review"))).toBe(false);
+});
+
+it("kills a closing reviewer when stop arrives during its close grace period", async () => {
+  const dir = repo();
+  const base = standIn(home, []);
+  let stop!: () => void;
+  let closing!: () => void;
+  let release!: () => void;
+  let killed = 0;
+  let first = true;
+  const entered = new Promise<void>((resolve) => { closing = resolve; });
+  const gone = new Promise<void>((resolve) => { release = resolve; });
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    if (!first) return session;
+    first = false;
+    session.close = async () => { closing(); await gone; };
+    session.kill = () => { killed++; release(); };
+    return session;
+  } };
+  const running = runCore(dir, driver, true, (value) => { stop = value; }).catch((error: unknown) => error);
+  await entered;
+  stop();
+  release();
+  await running;
+  expect(killed).toBe(1);
+});
+
+it("saves ended sessions in reviewer.json before the review finishes and preserves them on the next start", async () => {
+  const dir = repo();
+  const folder = tempDir("oq-core-journal-");
+  const base = standIn(home, []);
+  let journal: { sessions?: { role: string; rounds: number; failure: string | null }[] } | null = null;
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    session.send = async (text) => {
+      if (text.startsWith("# OpenQodex review brief: verify")) journal = JSON.parse(readFileSync(join(folder, "reviewer.json"), "utf8"));
+      return send(text);
+    };
+    return session;
+  } };
+  const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
+  expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [driver], reportDir: folder })).toBe(0);
+  expect(journal).toMatchObject({ sessions: expect.arrayContaining([
+    { role: "finder:u1:local", unit: "u1", rounds: 1, failure: null, usage: expect.any(Object), examined: expect.any(Array) },
+    { role: "finder:u1:contracts", unit: "u1", rounds: 1, failure: null, usage: expect.any(Object), examined: expect.any(Array) },
+    { role: "verifier:1", rounds: 0, failure: "the session had not ended when this was written", usage: expect.any(Object) },
+  ]) });
 });
 
 it("writes rounds.json in session order after corrections arrive in reverse order", async () => {

@@ -196,7 +196,7 @@ describe("the receipt", () => {
     expect(lines[0]).toBe("Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)");
     expect(lines).toContain("Summary: Reviewed units u1. The operation changed.");
     expect(lines).toContain("1. Critical bug: README line <script>alert(1)</script> (README.md:2)");
-    expect(lines).toContain("2. Major maintainability: Admin function callable by anyone (db/x.sql:1)");
+    expect(lines).toContain("2. Major security: Admin function callable by anyone (db/x.sql:1)");
     expect(lines).toContain("3. Minor maintainability: Function body is a placeholder (db/x.sql:2)");
     for (const prose of ["Problem:", "Fix:", "Why it matters:", "default execute grant", "Revoke execute"]) expect(out).not.toContain(prose);
     const html = pathOf("Report", out);
@@ -349,7 +349,7 @@ describe("findings <numbers>", () => {
     for (const label of ["Where: README.md:2", "Problem: The line says more.", "Why it matters: Readers learn nothing.", "Fix: Say what the module does.", "Source: the reviewer"]) expect(out).toContain(label);
     out = "";
     expect(await findings(["all", "--cwd", dir])).toBe(0);
-    expect(out).toContain("2. Major maintainability: Admin function callable by anyone");
+    expect(out).toContain("2. Major security: Admin function callable by anyone");
     expect(out).toContain("Source: sqllint:function-default-public-execute");
     await expect(findings(["99", "--cwd", dir])).rejects.toThrow(/99 is not a finding of the last review/);
     await expect(findings(["--cwd", dir])).rejects.toThrow(/name the findings/);

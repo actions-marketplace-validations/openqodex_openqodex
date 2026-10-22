@@ -1,6 +1,7 @@
 import { FINDER_CONFIDENCE_FLOOR, VERIFY_BATCH_SIZE, checkSubmission, findingKey, outsideSnapshot, requiredCandidates, scannerCategory, severityRank } from "@openqodex/core";
 import type { Change, Config, FindAnswer, FindPass, FindingV2, Hunk, Report, ReportFinding, ReviewerSessionRecord, ReviewerUsage, ReviewUnit, RunManifest, ScanResult, SubmissionV2, TraceEntry, VerifyAnswer, VerifyBatch, VerifyCandidate, VerifyVerdict } from "@openqodex/core";
 import { MAX_CORRECTIONS, converse, deliverRanges } from "./conversation.js";
+import { TIMED_OUT } from "./agents/driver.js";
 import type { Conversation, CorrectionRound, Speaker } from "./conversation.js";
 import { checkFindAnswer, checkVerifyAnswer } from "./evidence-check.js";
 import { snapshotText, lineCounter } from "./snapshot.js";
@@ -10,7 +11,7 @@ import type { CallRecord, ReviewerRole } from "./usage.js";
 
 export const FINDERS_CONCURRENCY = 4;
 export const VERIFIERS_CONCURRENCY = 3;
-export type StagedSession = Speaker & { close(): void | Promise<void>; pid?: number | null; calls?: () => CallRecord[]; attempts?: readonly CallRecord[]; sentRounds?: number };
+export type StagedSession = Speaker & { close(): void | Promise<void>; kill?(): void; pid?: number | null; calls?: () => CallRecord[]; attempts?: readonly CallRecord[]; sentRounds?: number };
 export type StagedArgs = {
   openSession: (role: ReviewerRole) => StagedSession;
   findBrief: (unit: ReviewUnit, pass: FindPass) => { text: string; diffFiles: Set<string> };
@@ -30,6 +31,7 @@ export type StagedArgs = {
   say: (line: string) => void;
   onRound?: (round: CorrectionRound) => void;
   onStarted?: (role: ReviewerRole, pid: number | null) => void;
+  onEnded?: (session: StagedSessionRecord) => void;
   onBrief?: (role: ReviewerRole, text: string) => void;
   stopped?: () => boolean;
 };
@@ -108,6 +110,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     emit(() => args.onRound?.(round));
   };
   const failed = (talk: Conversation) => talk.failure ?? (args.traced && talk.trace.some(outsideSnapshot) ? "the reviewer tried to read outside the snapshot" : talk.errors.length > 0 ? talk.errors.join("; ") : null);
+  const recordOf = (r: Run): StagedSessionRecord => ({ role: r.role, ...(r.unit ? { unit: r.unit } : {}), rounds: r.talk.rounds, usage: r.talk.usage, failure: failed(r.talk), ...(r.examined ? { examined: r.examined } : {}), ...(r.dropped?.length ? { dropped: r.dropped } : {}) });
   const start = (role: ReviewerRole, order: number, name: string, brief: string, unit?: string): Run => {
     emit(() => args.onBrief?.(role, brief));
     const session = args.openSession(role);
@@ -122,10 +125,12 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
   const close = (run: Run): Promise<void> => {
     const earlier = closedRuns.get(run);
     if (earlier) return earlier;
-    const pending = (async () => {
-      try { await run.session.close(); }
-      finally { live--; done++; }
-    })();
+    const pending = Promise.resolve().then(async () => {
+      try {
+        if (run.talk.failure === TIMED_OUT) run.session.kill?.();
+        await run.session.close();
+      } finally { live--; done++; emit(() => args.onEnded?.(recordOf(run))); }
+    });
     closedRuns.set(run, pending);
     return pending;
   };
@@ -213,7 +218,13 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
         let end = Math.min(i + VERIFY_BATCH_SIZE, list.length);
         // A scanner and a finder claim on one line need one verifier to decide which is
         // the duplicate. Claims of one kind on one line are already distinct, so they cut.
-        while (end < list.length && candidateLine(list[end - 1]!) === candidateLine(list[end]!) && list[end - 1]!.kind !== list[end]!.kind) end++;
+        if (end < list.length && candidateLine(list[end - 1]!) === candidateLine(list[end]!)) {
+          let first = end - 1;
+          let last = end + 1;
+          while (first > i && candidateLine(list[first - 1]!) === candidateLine(list[end]!)) first--;
+          while (last < list.length && candidateLine(list[last]!) === candidateLine(list[end]!)) last++;
+          if (list.slice(first, last).some((c) => c.kind !== list[first]!.kind)) end = last;
+        }
         batches.push({ file, hunks: hunks.filter((h) => h.path === file), candidates: list.slice(i, end) });
         i = end;
       }
@@ -268,7 +279,12 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     if (hostFailure !== null) throw hostFailure;
     verified.sort((a, b) => a.number - b.number);
     const sourceOf = (c: VerifyCandidate) => c.kind === "scanner" ? c.candidate.token : c.candidate.lens ? `lens:${c.candidate.lens}` : null;
-    const findingOf = (v: VerifyVerdict, c: VerifyCandidate): FindingV2 => ({ severity: v.severity, category: c.kind === "finder" ? c.candidate.category : scannerCategory(c.candidate.source), confidence: v.confidence, file_path: v.file_path, line_number: v.line_number, ...(v.line_end !== undefined ? { line_end: v.line_end } : {}), title: v.title, problem: v.problem, consequence: v.consequence, fix: v.fix, suggested_change: v.suggested_change ?? null, source: sourceOf(c), candidate: c.kind === "scanner" ? c.id : null });
+    const findingOf = (v: VerifyVerdict, c: VerifyCandidate, owner: Verified): FindingV2 => {
+      const duplicate = owner.batch.candidates.find((item) => item.kind === "finder" && owner.answer.verdicts.some((v) => v.id === item.id && v.verdict === "confirmed" && v.duplicate_of === c.id));
+      const scanned = c.kind === "scanner" ? scannerCategory(c.candidate.source) : null;
+      const category = c.kind === "finder" ? c.candidate.category : scanned === "security" ? scanned : duplicate?.kind === "finder" ? duplicate.candidate.category : scanned!;
+      return { severity: v.severity, category, confidence: v.confidence, file_path: v.file_path, line_number: v.line_number, ...(v.line_end !== undefined ? { line_end: v.line_end } : {}), title: v.title, problem: v.problem, consequence: v.consequence, fix: v.fix, suggested_change: v.suggested_change ?? null, source: sourceOf(c), candidate: c.kind === "scanner" ? c.id : null };
+    };
     const analysis = findings.flatMap((f) => f.answer.analysis).map((a) => a.changed.trim().replace(/\s+/g, " ")).find(Boolean)?.split(/(?<=[.!?])\s+/)[0];
     const summary = `Reviewed ${findings.length === 0 ? "no completed finder units" : `units ${[...new Set(findings.map((f) => f.answer.unit))].join(", ")}`}.${analysis ? ` ${analysis}` : ""}`;
     const assemble = () => {
@@ -282,7 +298,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
         if (v.verdict === "confirmed") {
           // Observations pass the same judge before being taken out of the
           // verdict. This also accounts for confirmed scanner observations.
-          const finding = findingOf(v, c);
+          const finding = findingOf(v, c, owner);
           submission.findings.push(finding);
           findingOwners.push(owner);
           items.push({ v, c, owner, finding });
@@ -339,12 +355,16 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     if (!built.checked.ok) throw new Error(`staged assembly could not be checked: ${built.checked.errors.join("; ")}`);
     const report = built.checked.report;
     const shownKeys = new Set(report.findings.map(findingKey));
-    const observationKeys = new Set<string>();
+    const observationKeys = new Set(built.items.filter((item) => item.v.tier === "observation").map((item) => findingKey({ ...item.finding, line_end: item.finding.line_end ?? item.finding.line_number, candidate: item.finding.candidate ?? null })));
+    const shownObservationKeys = new Set((built.visible?.ok ? built.visible.report.findings : report.findings)
+      .filter((f) => observationKeys.has(findingKey(f)))
+      .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || (b.confidence ?? 0) - (a.confidence ?? 0)).slice(0, 12).map(findingKey));
     const duplicateKeys = new Set<string>();
+    // Survivors that are only observations while a kept duplicate is shown as a finding.
+    const supersededKeys = new Set<string>();
     const byId = new Map(built.items.map((item) => [item.c.id, item]));
     for (const item of built.items) {
       const key = findingKey({ ...item.finding, line_end: item.finding.line_end ?? item.finding.line_number, candidate: item.finding.candidate ?? null });
-      if (item.v.tier === "observation") observationKeys.add(key);
       let target = item;
       const seen = new Set<string>();
       while (target.v.duplicate_of && !seen.has(target.c.id)) {
@@ -355,7 +375,9 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
       }
       if (target !== item) {
         const targetKey = findingKey({ ...target.finding, line_end: target.finding.line_end ?? target.finding.line_number, candidate: target.finding.candidate ?? null });
-        if (targetKey !== key) duplicateKeys.add(key);
+        const shown = target.v.tier === "finding" ? shownKeys.has(targetKey) : item.v.tier === "observation" && shownObservationKeys.has(targetKey);
+        if (targetKey !== key && shown) duplicateKeys.add(key);
+        else if (targetKey !== key && item.v.tier === "finding" && target.v.tier === "observation" && shownKeys.has(key) && observationKeys.has(targetKey)) supersededKeys.add(targetKey);
       }
     }
     const observations: ReportFinding[] = [];
@@ -363,12 +385,12 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
       const key = findingKey(f);
       if (duplicateKeys.has(key)) return [];
       const entry = { ...f };
-      if (observationKeys.has(key)) { observations.push(entry); return []; }
+      if (observationKeys.has(key)) { if (!supersededKeys.has(key)) observations.push(entry); return []; }
       return [entry];
     });
     if (built.visible?.ok) for (const f of built.visible.report.findings) {
       const key = findingKey(f);
-      if (observationKeys.has(key) && !duplicateKeys.has(key) && !observations.some((o) => findingKey(o) === key)) observations.push({ ...f });
+      if (observationKeys.has(key) && !duplicateKeys.has(key) && !supersededKeys.has(key) && !observations.some((o) => findingKey(o) === key)) observations.push({ ...f });
     }
     observations.sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || (b.confidence ?? 0) - (a.confidence ?? 0));
     report.below_threshold = Math.max(0, report.below_threshold - observations.filter((o) => !shownKeys.has(findingKey(o))).length);
@@ -392,7 +414,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     report.verdict = missing.length > 0 ? "incomplete" : blocking && report.findings.some((f) => severityRank(f.severity) >= severityRank(blocking)) ? "blocked" : "passed";
     const calls = runs.flatMap((r) => [...(r.session.calls?.() ?? r.session.attempts ?? [])]);
     const trace = runs.flatMap((r) => r.talk.trace.map((t) => ({ ...t, session: r.role })));
-    const sessions = runs.map((r): StagedSessionRecord => ({ role: r.role, ...(r.unit ? { unit: r.unit } : {}), rounds: r.talk.rounds, usage: r.talk.usage, failure: failed(r.talk), ...(r.examined ? { examined: r.examined } : {}), ...(r.dropped?.length ? { dropped: r.dropped } : {}) }));
+    const sessions = runs.map(recordOf);
     const submission = { ...built.submission, findings: built.submission.findings.filter((_, i) => {
       const item = built.items[i]!;
       if (item.c.kind === "scanner") return true;

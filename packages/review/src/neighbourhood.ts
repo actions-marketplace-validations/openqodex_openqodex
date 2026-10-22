@@ -1,12 +1,12 @@
 // Identifiers on the changed lines, ranked by rarity, with their other
 // declarations and uses. The snapshot is plain files, not a git database.
-import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changedHunks, display, escapeMarkdown, redactSecrets, secretTexts } from "@openqodex/core";
 import type { Change, ImpactSummary } from "@openqodex/core";
 import { PACKET_DIR, PACKET_ROOT } from "@openqodex/graph";
 import { redactStored } from "./redact.js";
-import { MAX_FILE_BYTES, snapshotFiles, snapshotText } from "./snapshot.js";
+import { MAX_FILE_BYTES, snapshotText } from "./snapshot.js";
 
 // One place a symbol occurs. `kind` says whether a declaration regex matched
 // the line (a label, never a selector). `context` is the lines around it,
@@ -188,9 +188,27 @@ export function buildNeighbourhood(args: { change: Change; snapshotDir: string; 
   };
   try {
     started = now();
-    const allPaths = snapshotFiles(args.snapshotDir);
-    const paths = allPaths.filter(eligible);
-    const present = new Set(allPaths);
+    const paths: string[] = [];
+    const walk = (dir: string): void => {
+      if (expired()) return;
+      for (const entry of readdirSync(join(args.snapshotDir, dir), { withFileTypes: true })) {
+        if (IGNORED.has(entry.name)) continue;
+        const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+        if (entry.isDirectory()) walk(path);
+        else if (entry.isFile()) paths.push(path);
+        if (timedOut) break;
+      }
+    };
+    walk("");
+    paths.sort();
+    const present = new Set(paths);
+    // Changed files still seed names even when their directory has no sites.
+    for (const file of args.change.files) {
+      if (eligible(file.path)) continue;
+      if (expired()) break;
+      try { if (lstatSync(join(args.snapshotDir, file.path)).isFile()) present.add(file.path); }
+      catch { /* A deleted file has no snapshot text to seed. */ }
+    }
     const readText = snapshotText(args.snapshotDir);
     let filesRead = 0;
     const read = (path: string): string[] | null => {

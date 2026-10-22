@@ -79,6 +79,18 @@ describe("find brief", () => {
     expect(diffFiles).toEqual(new Set(unit.files));
   });
 
+  it("does not count a file with missing diff text as delivered", () => {
+    const { diffFiles } = buildFindBrief(args({ change: { ...change, diffs: [] } }), unit, "local");
+    expect(diffFiles.has("app/search.py")).toBe(false);
+  });
+
+  it("does not count a file as delivered when one of its unit hunks has no rows", () => {
+    const { diffFiles } = buildFindBrief(args(), { ...unit, hunks: [
+      ...unit.hunks, { id: "h0", path: "app/search.py", start: 1, end: 1, deletion: false },
+    ] }, "local");
+    expect(diffFiles.has("app/search.py")).toBe(false);
+  });
+
   it("shows the file header once when the unit has several hunks in that file", () => {
     const grouped = { ...unit, hunks: [...unit.hunks, { id: "h2", path: "app/search.py", start: 41, end: 41, deletion: false }] };
     const { text } = buildFindBrief(args(), grouped, "local");
@@ -163,8 +175,8 @@ describe("find brief", () => {
       ]]]),
     }) });
     const { text } = buildFindBrief(input, { ...unit, hunks: [
-      { id: "h1", path: "app/search.py", start: 1, end: 1, deletion: true },
-      { id: "h2", path: "app/search.py", start: 1, end: 1, deletion: true },
+      { id: "h1", path: "app/search.py", start: 1, end: 1, deletion: true, point: 0 },
+      { id: "h2", path: "app/search.py", start: 1, end: 1, deletion: true, point: 1 },
     ] }, "local");
     const first = text.slice(text.indexOf("### h1"), text.indexOf("### h2"));
     const second = text.slice(text.indexOf("### h2"));

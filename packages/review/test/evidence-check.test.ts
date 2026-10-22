@@ -22,6 +22,25 @@ it("checks deletion evidence in removed lines even when its file is gone", () =>
   expect(checkEvidence(cite, () => null, change)).toBeNull();
   expect(checkEvidence({ ...cite, quote: "unsafe operation" }, () => null, change)).not.toBeNull();
 });
+it("keeps a deleted-file candidate and its confirmed verdict with removed evidence at anchor 1", () => {
+  const { change } = fixture(["a.txt"]);
+  change.files[0]!.status = "deleted";
+  change.coverage.clear();
+  change.deletionPoints.set("a.txt", [{ after: 0, lines: 1, anchors: [1] }]);
+  change.diffs = [{ path: "a.txt", text: "@@ -1 +0,0 @@\n-old operation\n" }];
+  const unit = unitsOf(change, hunkRefs(change))[0]!;
+  const c = { ...candidate("a.txt"), evidence: [{ file_path: "a.txt", line_number: 1, quote: "old operation", removed: true as const }] };
+  const found = checkFindAnswer({ version: "find-1", change_id: change.id, unit: unit.id, examined: ["h1"], analysis: [{ hunk: "h1", changed: "The module was deleted.", could_break: "Callers still import it." }], candidates: [c] }, unit, change, () => null);
+  expect(found.errors).toEqual([]);
+  expect(found.rejected).toEqual([]);
+  const item = { id: "k1", kind: "finder" as const, candidate: c, foundBy: [] };
+  const checked = checkVerifyAnswer({ version: "verify-1", change_id: change.id, verdicts: [verdict(item)] }, { file: "a.txt", hunks: unit.hunks, candidates: [item] }, change, () => null, () => null);
+  expect(checked.errors).toEqual([]);
+});
+it.each(["unsafe operation", "unsafe operation\n"])("rejects a quote at line 3 past a one-line file's end: %j", (text) => {
+  const { change } = fixture();
+  expect(checkEvidence({ file_path: "a.txt", line_number: 3, quote: "unsafe operation" }, () => text, change)).not.toBeNull();
+});
 it("strips unknown keys and names a missing examination and analysis", () => {
   const { change, dir } = fixture();
   const unit = unitsOf(change, hunkRefs(change))[0]!;

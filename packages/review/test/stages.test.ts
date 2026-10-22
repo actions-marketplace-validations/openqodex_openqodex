@@ -14,6 +14,7 @@ import { afterAll, expect, it } from "vitest";
 import { buildFindBrief, buildVerifyBrief, completionRecord, readCoverage } from "@openqodex/core";
 import type { FindAnswer, ReviewUnit, VerifyAnswer, VerifyBatch } from "@openqodex/core";
 import { runStagedReview } from "../src/stages.js";
+import { TIMED_OUT } from "../src/agents/driver.js";
 import type { StagedArgs } from "../src/stages.js";
 import { modelSession } from "../src/model-loop.js";
 import type { ModelSession } from "../src/model-loop.js";
@@ -28,6 +29,7 @@ function setup(answerer?: Answerer, files?: string[]) {
   const requests: ModelRequest[] = [];
   const realBriefs = new Map<string, { unit?: ReviewUnit; batch?: VerifyBatch; pass?: string }>();
   const shared: import("../src/usage.js").CallRecord[] = [];
+  const budgetState = { pending: Promise.resolve(), refused: false };
   const opened: ModelSession[] = [];
   let stopped = false;
   let allow = true;
@@ -48,9 +50,9 @@ function setup(answerer?: Answerer, files?: string[]) {
     findBrief: (unit, pass) => ({ text: JSON.stringify({ unit, pass }), diffFiles: new Set(unit.files) }),
     verifyBrief: (batch) => ({ text: JSON.stringify({ batch }) }),
     openSession: (role) => {
-      const session = modelSession({ reviewer: model, role, shared, box: { snapshotDir: f.dir, change: f.change, secrets: [], graph: null, graphNote: null }, now: () => clock, budget: { deadlineMs: 60_000, authorize: async (call) => { budgets.push(call); return allow; } } });
+      const session = modelSession({ reviewer: model, role, shared, budgetState, box: { snapshotDir: f.dir, change: f.change, secrets: [], graph: null, graphNote: null }, now: () => clock, budget: { deadlineMs: 60_000, authorize: async (call) => { budgets.push(call); await new Promise((resolve) => setTimeout(resolve, 0)); return allow; } } });
       const id = opened.push(session);
-      return { send: (text) => session.send(text), attempts: session.attempts, get sentRounds() { return session.sentRounds; }, close: async () => { closed.add(id); await session.close(); } };
+      return { send: (text) => session.send(text), attempts: session.attempts, get sentRounds() { return session.sentRounds; }, kill: () => session.kill(), close: async () => { closed.add(id); await session.close(); } };
     },
   };
   return { ...f, args, requests, realBriefs, opened, budgets, closed, refuse: () => { allow = false; }, advance: (ms: number) => { clock += ms; }, stop: () => { stopped = true; opened.forEach((s) => s.kill()); } };
@@ -120,6 +122,11 @@ it("gives four finders and their verifier sessions unique call ids and merged us
   expect(f.budgets.at(-1)!.usageSoFar.attempts).toBeGreaterThan(0);
   expect(f.closed.size).toBe(f.opened.length);
 });
+it("serializes delayed budget checks across four parallel finders so none see stale invoked counts", async () => {
+  const f = setup();
+  await runStagedReview(f.args);
+  expect(f.budgets.slice(0, 4).map((call) => call.usageSoFar.invoked)).toEqual([0, 1, 2, 3]);
+});
 it("closes every open session when stopped while providers are pending", async () => {
   let pending = 0;
   let reached!: () => void;
@@ -154,7 +161,7 @@ it("keeps findings from other batches when one verifier cannot fix its prose", a
   expect(r.report.findings.map((f) => f.file_path)).toEqual(["b.txt"]);
   expect(r.missing.join(" ")).toContain("correction rounds");
 });
-it("folds confirmed duplicates and ranks observations without reviewer provenance", async () => {
+it("keeps a duplicate finding when its confirmed survivor is only an observation", async () => {
   const f = setup((answer, _request, brief) => {
     if (answer.version === "find-1") answer.candidates = [candidate(brief.unit!.files[0]!, brief.pass === "local" ? "First claim" : "Second claim")];
     if (answer.version === "verify-1") { answer.verdicts[0]!.tier = "observation"; answer.verdicts[1]!.duplicate_of = answer.verdicts[0]!.id; }
@@ -162,10 +169,31 @@ it("folds confirmed duplicates and ranks observations without reviewer provenanc
   });
   f.config.blockOnSeverity = "major";
   const r = await runStagedReview(f.args);
-  expect(r.report.findings).toEqual([]);
-  expect(r.report.observations).toHaveLength(2);
-  expect(r.report.observations![0]!.found_by).toBeUndefined();
-  expect(r.report.verdict).toBe("passed");
+  expect(r.report.findings.map((finding) => finding.title)).toEqual(["Second claim", "Second claim"]);
+  // The survivor is shown once, as the kept finding, not again as an observation.
+  expect(r.report.observations).toHaveLength(0);
+  expect(r.report.verdict).toBe("blocked");
+});
+it.each([
+  ["keeps a duplicate finding when its survivor is below the confidence floor", "below confidence"],
+  ["keeps a duplicate finding when its survivor is below the severity threshold", "below severity"],
+  ["folds a duplicate finding when its survivor is visible at the same tier", "a visible finding"],
+])("%s", async (_name, condition) => {
+  const f = setup((answer, _request, brief) => {
+    if (answer.version === "find-1") answer.candidates = [candidate(brief.unit!.files[0]!, brief.pass === "local" ? "First claim" : "Second claim")];
+    if (answer.version === "verify-1") {
+      const [survivor, duplicate] = answer.verdicts;
+      if (condition === "below confidence") survivor!.confidence = 0.6;
+      if (condition === "below severity") survivor!.severity = "minor";
+      duplicate!.confidence = 0.95;
+      duplicate!.duplicate_of = survivor!.id;
+    }
+    return answer;
+  }, ["a.txt"]);
+  f.args.confidenceFloor = 0.7;
+  f.config.severityThreshold = "major";
+  const r = await runStagedReview(f.args);
+  expect(r.report.findings.map((finding) => finding.title)).toEqual([condition === "a visible finding" ? "First claim" : "Second claim"]);
 });
 
 // B4's real briefs must be exercised after they replace the contract stubs.
@@ -218,6 +246,65 @@ it("makes no new calls after a budget refusal and keeps it in missing work", asy
   expect(r.sessions.some((s) => s.role.endsWith("retry1"))).toBe(false);
   expect(r.missing.join(" ")).toContain("budget refused");
   expect(f.requests.some((r) => r.purpose === "verify")).toBe(false);
+  expect(f.budgets).toHaveLength(1);
+});
+
+it("refuses a live finder's next tool-result call without asking authorize after another session was refused", async () => {
+  const f = setup();
+  const shared: import("../src/usage.js").CallRecord[] = [];
+  const budgetState = { pending: Promise.resolve(), refused: false };
+  const asked: number[] = [];
+  let refused!: () => void;
+  const refusal = new Promise<void>((resolve) => { refused = resolve; });
+  const invoked: ModelRequest[] = [];
+  const reviewer: ModelReviewer = { kind: "model", model: "fixture", maxOutputTokens: 4096, async complete(request) {
+    invoked.push(request);
+    await refusal;
+    return { ...reply(null), message: { text: "", toolCalls: [{ id: "read", name: "read_file", args: { path: "a.txt" } }] } };
+  } };
+  f.args.openSession = (role) => modelSession({ reviewer, role, shared, budgetState, now: f.args.now, box: { snapshotDir: f.dir, change: f.change, secrets: [], graph: null, graphNote: null }, budget: { deadlineMs: 60_000, authorize: async (call) => {
+    asked.push(call.usageSoFar.invoked);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (asked.length === 2) { refused(); return false; }
+    return true;
+  } } });
+  const r = await runStagedReview(f.args);
+  expect(asked).toEqual([0, 1]);
+  expect(invoked).toHaveLength(1);
+  expect(r.usage.calls.filter((call) => call.reviewer === invoked[0]!.callId.slice(0, -2)).map((call) => call.outcome)).toEqual(["ok", "refused"]);
+});
+
+it("kills a timed-out finder before awaiting its close so cleanup cannot consume verifier time", async () => {
+  const f = setup(undefined, ["a.txt"]);
+  const order: string[] = [];
+  let opened = 0;
+  const open = f.args.openSession;
+  f.args.openSession = (role) => {
+    if (++opened > 1) return open(role);
+    let killed = false;
+    let release!: () => void;
+    const gone = new Promise<void>((resolve) => { release = resolve; });
+    return {
+      send: async () => ({ finalText: "", calls: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, sessionId: null, failure: TIMED_OUT }),
+      kill: () => { killed = true; order.push("kill"); release(); },
+      close: async () => { order.push("close"); if (!killed) setTimeout(release, 20); await gone; },
+    };
+  };
+  await runStagedReview(f.args);
+  expect(order).toEqual(["kill", "close"]);
+  expect(f.requests.some((r) => r.purpose === "verify")).toBe(true);
+});
+
+it("keeps a confirmed finder's security category when it duplicates a non-security scanner", async () => {
+  const f = setup((answer) => {
+    if (answer.version === "find-1") answer.candidates.forEach((c) => { c.category = "security"; });
+    if (answer.version === "verify-1") answer.verdicts.filter((v) => v.id.startsWith("k")).forEach((v) => { v.duplicate_of = "c1"; });
+    return answer;
+  }, ["a.txt"]);
+  f.scan.candidates.push({ ...scanner("a.txt"), source: "ruff", token: "ruff:test" });
+  const r = await runStagedReview(f.args);
+  expect(r.report.findings).toHaveLength(1);
+  expect(r.report.findings[0]).toMatchObject({ candidate: "c1", category: "security" });
 });
 
 // A host write failure must stop the run, rather than becoming a retry.
@@ -379,6 +466,17 @@ it("splits twelve scanner candidates on one line into two batches", async () => 
   const briefs = f.requests.filter((request) => request.purpose === "verify").map((request) => JSON.parse(request.messages[1]!.text).batch as VerifyBatch);
   expect(briefs.map((b) => b.candidates.length)).toEqual([6, 6]);
   expect(completion(r, f).status).toBe("complete");
+});
+
+it("keeps six scanners and two finders on one line in a single batch so both can name scanner duplicates", async () => {
+  const f = setup((answer) => {
+    if (answer.version === "find-1" && answer.candidates.length) answer.candidates.push(candidate("a.txt", "Second defect"));
+    return answer;
+  }, ["a.txt"]);
+  for (let i = 0; i < 6; i++) f.scan.candidates.push({ ...scanner("a.txt", `c${i + 1}`), ruleId: `rule-${i + 1}` });
+  await runStagedReview(f.args);
+  const batches = f.requests.filter((request) => request.purpose === "verify").map((request) => JSON.parse(request.messages[1]!.text).batch as VerifyBatch);
+  expect(batches.map((b) => b.candidates.map((c) => c.id))).toEqual([["c1", "c2", "c3", "c4", "c5", "c6", "k1", "k2"]]);
 });
 
 it("corrects a long scanner refutation in its existing verifier session", async () => {

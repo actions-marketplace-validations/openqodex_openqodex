@@ -624,7 +624,7 @@ export type ReviewerSessionRecord = {
 
 // A changed hunk with the id the tool gave it (`h1`, `h2`, ...). `start` and
 // `end` are lines of the new file; a deletion's are its anchors.
-export type HunkRef = { id: string; path: string; start: number; end: number; deletion: boolean };
+export type HunkRef = { id: string; path: string; start: number; end: number; deletion: boolean; point?: number };
 
 // A find unit: one changed file, or a group of small files whose diffs stay
 // under the unit size bound, or one slice of a large file. Every hunk of the

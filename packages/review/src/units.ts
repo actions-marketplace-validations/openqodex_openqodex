@@ -6,7 +6,14 @@ export const MAX_UNIT_DIFF_BYTES = 120 * 1024;
 
 export function hunkRefs(change: Change): HunkRef[] {
   const order = new Map(change.files.map((f, i) => [f.path, i]));
+  const points = new Map<string, number>();
   return changedHunks(change)
+    .map((h) => {
+      if (!h.deletion) return h;
+      const point = points.get(h.path) ?? 0;
+      points.set(h.path, point + 1);
+      return { ...h, point };
+    })
     .sort((a, b) => (order.get(a.path) ?? 0) - (order.get(b.path) ?? 0) || a.start - b.start || Number(a.deletion) - Number(b.deletion))
     .map((h, i) => ({ id: `h${i + 1}`, ...h }));
 }
