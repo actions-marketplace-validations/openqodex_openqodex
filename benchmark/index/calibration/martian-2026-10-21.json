@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "status": "failed",
+  "board": {
+    "name": "martian",
+    "repository": "withmartian/code-review-benchmark",
+    "commit": "e616e849755441da38f18bf3adba2c9583b03803",
+    "judgeModel": "gpt-5.2",
+    "promptHash": "c04a15540cb245ee8659012294324322a7f43f552fd8e7bfb3a3cc37cc961bdb",
+    "metric": "F1",
+    "profile": "core",
+    "pinHash": "3b8c10c4b22f4822ad7653fdfe02e243894dc4d075be3b3bc3b696fe78f31d6f"
+  },
+  "vendor": "Augment",
+  "labelUnit": "golden comment caught or missed across all categories",
+  "build": {
+    "commit": "d9593999c8ff4b46ed2af48159b833fabca75c3b",
+    "tree": "44e069802c76737f71f41572494e967c1aadf51c",
+    "bundleHash": "117d55ba250151d8bdbe84e7cb9da7520d337acdaa3470086b7d524f49e7a66d",
+    "version": "0.12.0"
+  },
+  "startedAt": "2026-10-22T00:02:06.347Z",
+  "endedAt": "2026-10-22T00:07:19.089Z",
+  "promptHash": "c04a15540cb245ee8659012294324322a7f43f552fd8e7bfb3a3cc37cc961bdb",
+  "judgeModel": "gpt-5.2",
+  "counts": null,
+  "agreement": {
+    "positive": null,
+    "negative": null
+  },
+  "costUsd": 0.54204325,
+  "costBasis": "Reported token usage from completed cached responses at the pinned public rates, not an invoice; any interrupted upstream request has unknown cost.",
+  "pricesHash": "80b6284ce3a71edba665278bfa1b5f61e75995bdea0c4123ce0b855b6837f405",
+  "relay": {
+    "usage": {
+      "responses": 118,
+      "missing": 0,
+      "inputTokens": 218771,
+      "outputTokens": 11371,
+      "cachedTokens": 0
+    }
+  },
+  "progress": {
+    "inputReviews": 50,
+    "goldenComments": 173,
+    "extractedReviews": 50,
+    "dedup": {
+      "total": 47,
+      "succeeded": 46,
+      "fallbacks": 1
+    },
+    "completedReviewEvaluations": 0
+  },
+  "failure": "Stopped after repeated invalid deduplication group responses: 46 succeeded, 1 fallback; cached invalid response replayed on retries. No further calibration attempt.",
+  "labels": []
+}

@@ -7,9 +7,13 @@
 // 3. Binding or the first upstream 401/404 lets evaluation rounds start.
 // 4. Requests, removals or upstream statuses are missing from eval.json.
 // 5. Another local process spends the key through the relay while a run lasts.
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { join } from "node:path";
+import { leaksIn } from "./board-files.mjs";
+import { endpointSecrets } from "./model-env.mjs";
 
 // Find top-level members without reserializing their values. Commas inside
 // strings, arrays and nested objects do not split a member. JSON.parse
@@ -57,14 +61,78 @@ function adaptParameters(body) {
 }
 
 /** A loopback-only relay with opaque credentials and counters safe to save. */
-export async function startRelay(settings, { trackUsage = false, onFailure } = {}) {
+export async function startRelay(settings, { trackUsage = false, onFailure, cacheDir, maxConnectionDrops = 0 } = {}) {
   const apiKey = randomBytes(32).toString("hex");
   const expected = Buffer.from(`Bearer ${apiKey}`);
   const stats = { relay: true, requests: 0, stripped: 0, parameterChanges: { chat_template_kwargs: 0, temperature: 0, top_p: 0, max_tokens: 0 }, upstreamStatuses: {} };
   if (trackUsage) stats.usage = { responses: 0, missing: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  if (cacheDir) { mkdirSync(cacheDir, { recursive: true }); stats.cacheHits = 0; stats.connectionDrops = 0; }
   let failed = false;
   const target = new URL(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`);
   const request = target.protocol === "https:" ? httpsRequest : httpRequest;
+  const digest = (text) => createHash("sha256").update(text).digest("hex");
+  const accounted = new Set();
+  const secrets = cacheDir ? endpointSecrets(settings.baseUrl, settings.apiKey) : [];
+  const accountUsage = (body, id) => {
+    if (!trackUsage || accounted.has(id)) return;
+    accounted.add(id);
+    stats.usage.responses++;
+    const usage = JSON.parse(body).usage;
+    if (!Number.isInteger(usage?.prompt_tokens) || !Number.isInteger(usage?.completion_tokens)) stats.usage.missing++;
+    else {
+      stats.usage.inputTokens += usage.prompt_tokens;
+      stats.usage.outputTokens += usage.completion_tokens;
+      stats.usage.cachedTokens += usage.prompt_tokens_details?.cached_tokens ?? 0;
+    }
+  };
+  // Buffer a whole response so a dropped body cannot become a cached verdict.
+  // Only calibration opts in; other boards retain their original fail-fast relay.
+  const completion = (body) => new Promise((resolve, reject) => {
+    const upstream = request(target, { method: "POST", headers: { "content-type": "application/json", [settings.authHeader]: settings.apiKey } }, (response) => {
+      const status = response.statusCode;
+      stats.upstreamStatuses[status] = (stats.upstreamStatuses[status] ?? 0) + 1;
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("error", () => reject(new Error("connection drop")));
+      response.on("end", () => resolve({ status, body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    upstream.on("error", () => reject(new Error("connection drop")));
+    upstream.end(body);
+  });
+  const stop = (message) => { failed = true; onFailure?.(message); };
+  const cachedCompletion = async (body) => {
+    const id = digest(body);
+    const file = join(cacheDir, `${id}.json`);
+    if (existsSync(file)) {
+      const saved = JSON.parse(readFileSync(file, "utf8"));
+      if (saved.requestHash !== id || saved.responseHash !== digest(saved.body) || leaksIn(saved.body, secrets)) throw new Error("invalid cached verdict");
+      accountUsage(saved.body, id);
+      stats.cacheHits++;
+      return { status: 200, body: saved.body };
+    }
+    for (;;) {
+      if (failed) return { status: 503, body: "Judge relay stopped after an upstream failure" };
+      let result;
+      try { result = await completion(body); }
+      catch {
+        stats.connectionDrops++;
+        if (!failed && stats.connectionDrops <= maxConnectionDrops) continue;
+        if (!failed) stop(`judge relay: upstream connection failed; stopped after ${stats.connectionDrops} drops`);
+        return { status: 502, body: "Judge relay: upstream connection failed" };
+      }
+      if (result.status >= 400) {
+        if (onFailure) stop(`judge relay: upstream returned ${result.status}; stopped`);
+        return { status: result.status, body: "Judge relay: upstream request failed" };
+      }
+      const answer = JSON.parse(result.body);
+      if (!answer.choices?.[0]?.message || answer.choices[0].finish_reason === "length" || leaksIn(result.body, secrets)) throw new Error("unsafe or malformed verdict");
+      const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+      writeFileSync(temporary, `${JSON.stringify({ requestHash: id, responseHash: digest(result.body), body: result.body })}\n`, { mode: 0o600 });
+      renameSync(temporary, file);
+      accountUsage(result.body, id);
+      return result;
+    }
+  };
   const server = createServer(async (req, res) => {
     // Only the evaluator holds the placeholder; any other caller is refused before anything is forwarded.
     const given = Buffer.from(req.headers.authorization ?? "");
@@ -84,6 +152,11 @@ export async function startRelay(settings, { trackUsage = false, onFailure } = {
       const adapted = adaptParameters(Buffer.concat(chunks).toString("utf8"));
       stats.stripped += adapted.changes.chat_template_kwargs;
       for (const [name, count] of Object.entries(adapted.changes)) stats.parameterChanges[name] += count;
+      if (cacheDir) {
+        const result = await cachedCompletion(adapted.body);
+        res.writeHead(result.status, { "content-type": "application/json" }).end(result.body);
+        return;
+      }
       const upstream = request(target, {
         method: "POST",
         headers: { "content-type": "application/json", [settings.authHeader]: settings.apiKey },
@@ -125,6 +198,7 @@ export async function startRelay(settings, { trackUsage = false, onFailure } = {
       res.on("close", () => upstream.destroy());
       upstream.end(adapted.body);
     } catch {
+      if (cacheDir) { stop("judge relay: invalid request or cached verdict; stopped"); res.writeHead(502).end("Judge relay stopped"); return; }
       res.writeHead(400).end("AACR judge relay: invalid request body");
     }
   });

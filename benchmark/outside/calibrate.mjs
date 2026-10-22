@@ -45,25 +45,27 @@ function pythonForPipeline() {
 export async function main(argv = process.argv.slice(2)) {
   if (argv.length !== 2 || argv[0] !== "--board" || !["greptile", "martian"].includes(argv[1])) throw new Error("usage: node benchmark/outside/calibrate.mjs --board greptile|martian");
   const name = argv[1]; const startedAt = new Date().toISOString();
-  const date = startedAt.slice(0, 10);
+  const date = new Intl.DateTimeFormat("en-CA").format(new Date(startedAt));
   const output = join(benchRoot, "index/calibration", `${name}-${date}.json`);
   if (existsSync(output)) throw new Error(`${name}-${date}.json exists; calibration records are never overwritten`);
   const board = boardFingerprint(name); const build = installedBuild();
-  const run = join(benchRoot, "results", `calibration-${name}-${startedAt.replace(/[:.]/g, "-")}`);
+  const run = join(benchRoot, "results", `calibration-${name}-${name === "martian" ? date : startedAt.replace(/[:.]/g, "-")}`);
   mkdirSync(run, { recursive: true });
   const inputs = name === "greptile" ? await greptileInputs() : await martianInputs();
   if ((name === "greptile" ? GREPTILE_PROMPT_HASH : inputs.promptHash) !== board.promptHash) throw new Error("calibration prompts differ from the board pin");
   const python = name === "martian" ? pythonForPipeline() : null;
   let relay;
   try {
-    relay = await relayClient();
+    // Request hashes include the model, prompts and review text; the folder
+    // also separates board and source pins before a restart can replay them.
+    relay = await relayClient(name === "martian" ? { cacheDir: join(run, "verdicts", hash(JSON.stringify({ board, sources: inputs.sources }))) } : {});
     let verdicts; let published; let classes; let score = null;
     if (name === "greptile") {
       verdicts = await judgeGreptile(inputs.cases, { truthSet: "greptile", complete: (request) => relay.complete(GREPTILE_PROMPT, request) });
       write(join(run, "blind-verdicts.json"), verdicts);
       published = inputs.published(); classes = ["caught", "missed"];
     } else {
-      const out = join(run, "outside/martian");
+      const out = join(run, startedAt.replace(/[:.]/g, "-"), "outside/martian");
       write(join(out, "benchmark_data.json"), inputs.data);
       const code = await runPipeline({ out, convert: { tools: [{ tool: "augment", held: false }] }, checkout: inputs.checkout, python, state: inputs.state, judge: martianJudge(), settings: relay.settings, calibration: true, signal: relay.signal });
       relay.signal.throwIfAborted();

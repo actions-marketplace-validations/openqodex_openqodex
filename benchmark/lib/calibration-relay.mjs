@@ -5,8 +5,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { startRelay, checkRelay } from "./aacr-relay.mjs";
 
-export async function relayClient() {
-  const child = spawn("/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', process.execPath, fileURLToPath(import.meta.url), "--serve"], { stdio: ["ignore", "ignore", "ignore", "ipc"], env: process.env });
+export async function relayClient({ cacheDir } = {}) {
+  const child = spawn("/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', process.execPath, fileURLToPath(import.meta.url), "--serve", ...(cacheDir ? [cacheDir] : [])], { stdio: ["ignore", "ignore", "ignore", "ipc"], env: process.env });
   const controller = new AbortController();
   let next = 0;
   const pending = new Map();
@@ -44,7 +44,8 @@ async function serve() {
     let safe = ""; const filter = redactor(endpointSecrets(settings.baseUrl, settings.apiKey), (s) => { safe += s; });
     filter.write(error.message); filter.end(); process.send({ error: safe });
   };
-  const relay = await startRelay(settings, { trackUsage: true, onFailure: (error) => process.send({ error }) });
+  const cacheDir = process.argv[3];
+  const relay = await startRelay(settings, { trackUsage: true, ...(cacheDir ? { cacheDir, maxConnectionDrops: 3 } : {}), onFailure: (error) => process.send({ error }) });
   process.on("disconnect", () => { relay.close().finally(() => process.exit()); });
   process.on("message", async (m) => {
     if (m.op === "counts") process.send({ id: m.id, counts: relay.counts() });

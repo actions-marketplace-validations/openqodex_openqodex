@@ -16,3 +16,8 @@ Written before implementation.
 12. Calibration runs on changed upstream pipeline bytes.
 13. The relay omits usage, making cost look like zero.
 14. Public GitHub reviews use unauthenticated requests despite an authenticated gh session, or pagination drops comments.
+15. A Martian restart pays again for a completed request, or reuses a response for changed request bytes or board pins.
+16. One dropped connection restarts completed items instead of retrying only that request.
+17. More than three connection drops are retried, or an HTTP failure is treated as a retryable drop.
+18. Cached responses lose their usage, or a truncated response is cached as a completed verdict.
+19. A cached response writes the upstream key or endpoint to disk.

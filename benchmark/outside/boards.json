@@ -413,7 +413,7 @@
       "judge": {
         "deployment": "judge",
         "prompt": {
-          "sha256": "0c70d7761b922aa95398764539d8b99d23fdfafcbf5ad908b234487177d6703c",
+          "sha256": "6f8d2bcad75c8ce488c2c518b1752ae566a540c865e80ceddddae213ba09e388",
           "hashCovers": "The Greptile semantic identification prompt in greptile-judge.mjs."
         }
       }
