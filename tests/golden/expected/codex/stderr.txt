@@ -2,6 +2,19 @@ Reviewing the change against HEAD: 11 files, +45 -16
 Scanners: 15 ran, 5 had nothing to check, 24 candidates to check
 Redacted secrets in 1 file of the snapshot
 Code graph: 4 files in <SECONDS> s (0 parsed, 4 from cache, fresh)
-Reviewer: codex 0.160.0 started; this takes one to three minutes
+Reviewer: codex 0.160.0; staged review, 1 units, 2 finder sessions, then verifiers; this takes several minutes
+Finder for unit u1 (correctness and safety) started
+Finder for unit u1 (interfaces and conventions) started
+Verifier 1 for app/config.py started
+Verifier 10 for package-lock.json started
+Verifier 11 for app/server.py started
+Verifier 2 for .github/workflows/ci.yml started
+Verifier 3 for Dockerfile started
+Verifier 4 for Dockerfile started
+Verifier 5 for infra/main.tf started
+Verifier 6 for deploy/deployment.yaml started
+Verifier 7 for scripts/deploy.sh started
+Verifier 8 for db/migrations/002_index_item_names.sql started
+Verifier 9 for app/search.py started
 Report: <DEMO>/.openqodex/reviews/<RUN_ID>/report.html
 Markdown: <DEMO>/.openqodex/reviews/<RUN_ID>/report.md

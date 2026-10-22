@@ -10,7 +10,7 @@
   },
   "report": ".openqodex/reviews/<RUN_ID>/report.md",
   "html": "<DEMO>/.openqodex/reviews/<RUN_ID>/report.html",
-  "counts": "7 major, 10 minor",
+  "counts": "14 major, 13 minor",
   "missing": null,
   "written_at": "<TIMESTAMP>"
 }

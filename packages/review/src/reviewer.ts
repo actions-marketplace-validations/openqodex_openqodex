@@ -1,4 +1,4 @@
-// The reviewer contract, version 1 (`reviewerContract`): what reviews a
+// The reviewer contract, version 2 (`reviewerContract`): what reviews a
 // change for the brain. A reviewer is one of two kinds.
 //   agent  a coding agent a driver starts as a process (Claude Code, Codex):
 //          it reads the snapshot with its own read-only tools, and the run
