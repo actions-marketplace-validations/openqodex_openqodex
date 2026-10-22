@@ -32,6 +32,8 @@ import {
   buildExcerptDisplay,
   buildInventory,
   buildReviewerBrief,
+  buildFindBrief,
+  buildVerifyBrief,
   checkSubmission,
   REVIEWER_TOOLS,
   REVIEWER_WEB_TOOLS,
@@ -41,6 +43,7 @@ import {
   getTreeChange,
   getWholeRepo,
   modelCoverage,
+  modelCompletionRecord,
   phaseClock,
   readCoverage,
   redactSecrets,
@@ -85,6 +88,9 @@ import { converse, deliverRanges, redactSnapshot } from "./conversation.js";
 import type { Conversation, CorrectionRound, Speaker } from "./conversation.js";
 import { modelSession, modelToolEntry } from "./model-loop.js";
 import type { ModelSession } from "./model-loop.js";
+import { buildNeighbourhood, renderNeighbourhoodBlock } from "./neighbourhood.js";
+import type { Neighbourhood } from "./neighbourhood.js";
+import { runStagedReview } from "./stages.js";
 import { modelEvidence } from "./evidence.js";
 import { modelRecord, modelReport, reviewRender } from "./model-record.js";
 import { agentReviewer } from "./reviewer.js";
@@ -101,6 +107,7 @@ import { serverScope } from "./scoped.js";
 import type { ScopedParts } from "./scoped.js";
 import { admitted, withinScopes } from "./scopes.js";
 import { hashSnapshot, lineCounter, snapshotText } from "./snapshot.js";
+import { TOOL_NAMES } from "./tools/index.js";
 import type { ToolBox } from "./tools/index.js";
 import { usageTotals } from "./usage.js";
 import type { CallRecord, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
@@ -191,7 +198,7 @@ export type ReviewEvent =
   // The brief and what goes with it, before the reviewer starts.
   | { type: "brief"; manifest: RunManifest; scan: ScanResult; brief: string; impact: ImpactSummary }
   // The reviewer started.
-  | { type: "started"; driver: string; version: string; pid: number | null }
+  | { type: "started"; driver: string; version: string; pid: number | null; role?: ReviewerRole }
   // A correction round, as it is sent, redacted with the scan's secrets.
   | { type: "round"; round: CorrectionRound };
 
@@ -463,13 +470,17 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
   // process group and files, ended synchronously.
   let checking: (() => void) | null = null;
   let over = false;
+  let stopped = false;
+  const liveSessions = new Set<{ kill?(): void; close(): void | Promise<void> }>();
   // Ctrl-C or a kill in the host: the reviewer's process group and the
   // snapshot go too, synchronously, since the host exits right after. The
   // reviewer runs in a group of its own, so nothing else would stop it.
   deps.onStop?.(() => {
     if (over) return;
+    stopped = true;
     checking?.();
     session?.kill?.();
+    for (const live of liveSessions) { if (live.kill) live.kill(); else void live.close(); }
     if (snapshot !== null) deps.snapshots.removeNow(repoRoot, snapshot as Snapshot);
   });
   const scanHost: ScanHost = { resolveTool: deps.resolveTool, onProgress: say, onScan: (scan) => deps.onEvent({ type: "scan", scan }), ...(deps.scratchRoot !== undefined ? { scratchRoot: deps.scratchRoot } : {}) };
@@ -508,6 +519,11 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     let brief: { text: string; diffFiles: Set<string> };
     // The graph a model reviewer's find_callers asks, and why there is none.
     let graph: Graph | null = null;
+    let neighbourhood: Neighbourhood = { symbols: [], packetPath: null, partial: null, durationMs: 0 };
+    const neighbourhoodBlock = (files?: readonly string[]) => {
+      try { return renderNeighbourhoodBlock(neighbourhood, files); }
+      catch (error) { neighbourhood.partial = (error instanceof Error ? error.message : String(error)).split("\n")[0]!; return ""; }
+    };
     if (prep.whole) {
       clock.enter("graph");
       const hot = await buildHotSpots(p, graphHost, inputs.noGraph);
@@ -532,9 +548,14 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           throw error;
         }
       }
+      try {
+        neighbourhood = buildNeighbourhood({ change: { ...change, diffs: (change.diffs ?? []).map((d) => ({ ...d, text: redact(d.text) })) }, snapshotDir: prep.snapshot.tree, impact, secrets: p.secrets, now: deps.now });
+      } catch (error) {
+        neighbourhood.partial = (error instanceof Error ? error.message : String(error)).split("\n")[0]!;
+      }
       clock.enter("brief");
       lenses = selectLenses(change, undefined, ruleCoverage(p));
-      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
+      brief = buildReviewerBrief({ change, scan, lenses, config, secrets: p.secrets, impactBlock: [renderImpactBlock(impact), neighbourhoodBlock()].filter(Boolean).join("\n\n"), instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown });
     }
     const manifest: RunManifest = {
       version: MANIFEST_VERSION,
@@ -578,6 +599,79 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       graphNote: graph === null ? `the graph is ${impact.status}${impact.reasons.length > 0 ? `: ${impact.reasons.join("; ")}` : ""}` : null,
       ...(deps.scoped?.folderScopes ? { admit: deps.scoped.admit } : {}),
     };
+    const staged = config.stages && !prep.whole && refused === null;
+    if (staged) {
+      const startedIso = new Date(deps.now()).toISOString();
+      const started = deps.now();
+      const shared: CallRecord[] = [];
+      const modelSessions: ModelSession[] = [];
+      const briefArgs = { change, scan, lenses, config, secrets: p.secrets, impactBlock: renderImpactBlock(impact), instructions: instructions.text, instructionFiles: instructions.files, ...(instructions.from ? { instructionsFrom: instructions.from } : {}), target: prep.target, confidenceFloor: inputs.confidenceFloor, context: context?.shown };
+      clock.enter("reviewer");
+      const stagedRun = await runStagedReview({
+        snapshotDir: prep.snapshot.tree, change, citationChange: full, scan, config, manifest, secrets: p.secrets, deadline, now: deps.now, traced, confidenceFloor: inputs.confidenceFloor, say, stopped: () => stopped,
+        findBrief: (unit, pass) => buildFindBrief({ ...briefArgs, neighbourhoodBlock: neighbourhoodBlock(unit.files) }, unit, pass),
+        verifyBrief: (batch) => buildVerifyBrief({ ...briefArgs, neighbourhoodBlock: neighbourhoodBlock([batch.file]) }, batch),
+        openSession: (role) => {
+          if (stopped) throw new Error("the review stopped");
+          const modelSessionForRole = model ? modelSession({ reviewer: model.reviewer, role, budget: model.budget, box, now: deps.now, deadline, shared }) : null;
+          if (modelSessionForRole) modelSessions.push(modelSessionForRole);
+          const metered = agent ? meterSession(agentReviewer(agent.driver, { snapshotDir: prep.snapshot.tree, deadline, bin: agent.bin, web: inputs.web }), { driver: agent.driver.name, role, now: deps.now }) : null;
+          const opened = modelSessionForRole ?? metered!.session;
+          liveSessions.add(opened);
+          let closed = false;
+          return {
+            send: (text) => opened.send(text),
+            pid: metered?.session.pid ?? null,
+            ...(modelSessionForRole ? { attempts: modelSessionForRole.attempts, get sentRounds() { return modelSessionForRole.sentRounds; } } : { calls: () => metered!.calls() }),
+            close: async () => { if (closed) return; closed = true; await opened.close(); liveSessions.delete(opened); },
+          };
+        },
+        onStarted: (role, pid) => {
+          deps.onEvent({ type: "started", driver: agent?.driver.name ?? "model", version: agent?.version ?? model!.reviewer.model, pid, role });
+          say(`Reviewer: ${role} started${pid !== null ? ` (process ${pid})` : ""}; this takes several minutes`);
+        },
+        onRound: (round) => deps.onEvent({ type: "round", round: redactStored(round, p.secrets) }),
+      });
+      clock.enter("finalize");
+      const after = hashSnapshot(prep.snapshot.tree);
+      const modelLog = modelSessions.flatMap((s) => s.log);
+      const coverage = model
+        ? modelCoverage({ change, briefSent: modelSessions.some((s) => s.sentRounds > 0), briefFiles: stagedRun.briefFiles, toolLog: modelLog.map(modelToolEntry), delivered: stagedRun.delivered, lineCount })
+        : readCoverage({ change, briefFiles: stagedRun.briefFiles, trace: traced ? stagedRun.trace : [], lineCount, delivered: stagedRun.delivered });
+      const notes = [...(instructions.notes ?? []), ...(neighbourhood.partial ? [`Code around the change is partial: ${neighbourhood.partial}`] : [])];
+      const report = redactStored({ ...stagedRun.report, impact, ...(notes.length ? { notes } : {}), timings: clock.timings() }, p.secrets);
+      if (model) {
+        const evidence: ModelReviewEvidence = redactStored({
+          reviewer: "primary", model: model.reviewer.model, changeId: change.id, snapshot: { tree: prep.tree, before, after }, candidates: { total: stagedRun.required, disposed: stagedRun.disposed }, coverage, briefSent: modelSessions.some((s) => s.sentRounds > 0), toolLog: modelLog, attempts: stagedRun.usage.calls, rounds: stagedRun.sessions.reduce((n, s) => n + s.rounds, 0), submissionErrors: [], failure: null, tools: [...TOOL_NAMES], startedAt: startedIso, endedAt: new Date(deps.now()).toISOString(), durationMs: deps.now() - started, sessions: stagedRun.sessions, missing: stagedRun.missing,
+        }, p.secrets);
+        // The optional second reviewer retains its existing single pass.
+        let second: SecondRun | null = null;
+        if (deps.model?.second && !evidence.attempts.some((a) => a.outcome === "refused") && !stopped) {
+          clock.enter("reviewer");
+          second = await runSecondReviewer({ reviewer: deps.model.second, budget: model.budget, box, earlier: evidence.attempts, now: deps.now, deadline,
+            started: (s) => { session = s; liveSessions.add(s); say(`Second reviewer: model ${deps.model!.second!.model} started`); },
+            converse: (s) => converse({ session: s, snapshotDir: prep.snapshot.tree, brief: brief.text, deadline, traced: true, say, now: deps.now,
+              check: (submission, trace, delivered) => {
+                const checked = checkSubmission({ change: full, scan, manifest, config, submission, lineCount, confidenceFloor: inputs.confidenceFloor });
+                return { report: checked.ok ? checked.report : null, errors: checked.ok ? [] : checked.errors, unread: modelCoverage({ change, briefSent: true, briefFiles: brief.diffFiles, toolLog: (trace as ToolLogEntry[]).map(modelToolEntry), delivered, lineCount }).unread, required: checked.required, disposed: checked.disposed };
+              },
+              deliver: (unread, earlier) => deliverRanges({ snapshotDir: prep.snapshot.tree, unread, earlier, secrets: p.secrets, change }),
+              onRound: (round) => { const kept = redactStored({ ...round, by: "second" as const }, p.secrets); stagedRun.rounds.push(kept); deps.onEvent({ type: "round", round: kept }); },
+            }),
+            evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: deps.model!.second!.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: after, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
+          });
+          clock.enter("finalize");
+        }
+        const calls = [...stagedRun.usage.calls, ...(second?.evidence.attempts ?? [])];
+        return await finish({ ended: "model-reviewed", report, evidence, submission: stagedRun.submission, change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds: stagedRun.rounds, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
+      }
+      const totals = stagedRun.usage.totals;
+      const reviewer: ReviewerRecord = { driver: agent!.driver.name, version: agent!.version, pid: null, started_at: startedIso, ended_at: new Date(deps.now()).toISOString(), duration_ms: deps.now() - started, rounds: stagedRun.sessions.reduce((n, s) => n + s.rounds, 0), usage: { turns: stagedRun.sessions.reduce((n, s) => n + s.usage.turns, 0), input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, cost_usd: totals.costUsd }, sessions: stagedRun.sessions };
+      const completion = redactStored(completionRecord({ change, reviewer, snapshot: { tree: prep.tree, before, after }, candidates: { total: stagedRun.required, disposed: stagedRun.disposed }, coverage, trace: stagedRun.trace, submissionErrors: [], wholeRepo: false, missing: stagedRun.missing, traced, tools: inputs.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS }), p.secrets);
+      report.completion = completion;
+      if (completion.status !== "complete") report.verdict = "incomplete";
+      return await finish({ ended: "reviewed", report, completion, display: buildDisplay({ change: full, secrets: p.secrets }), submission: stagedRun.submission, trace: redactStored(stagedRun.trace, p.secrets), change: full, secrets: p.secrets, whole: false, target: prep.target ?? null, usage: redactStored(stagedRun.usage, p.secrets), ...(context ? { context: context.manifest } : {}) });
+    }
     let modelTalk: ModelSession | null = null;
     // An agent's usage is recorded round by round as its turns come back;
     // the turns reach the conversation unchanged.
@@ -595,13 +689,13 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       });
       session = modelTalk;
       deps.onEvent({ type: "started", driver: "model", version: model.reviewer.model, pid: null });
-      say(`Reviewer: model ${model.reviewer.model} started; this takes one to three minutes`);
+      say(`Reviewer: model ${model.reviewer.model} started; this takes several minutes`);
     } else if (refused === null && agent) {
       metered = meterSession(agentReviewer(agent.driver, { snapshotDir: prep.snapshot.tree, deadline, bin: agent.bin, web: inputs.web }), { driver: agent.driver.name, now: deps.now });
       session = metered.session;
       pid = metered.session.pid;
       deps.onEvent({ type: "started", driver: agent.driver.name, version: agent.version, pid });
-      say(`Reviewer: ${agent.driver.name} ${agent.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes one to three minutes`);
+      say(`Reviewer: ${agent.driver.name} ${agent.version} started${pid !== null ? ` (process ${pid})` : ""}; this takes several minutes`);
     }
     const startedIso = new Date(deps.now()).toISOString();
     const now = deps.now();
@@ -734,6 +828,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     return await finish({ ended: "reviewed", report, completion, display, submission: talk.submission, trace: talk.trace, change: full, secrets: p.secrets, whole: prep.whole !== undefined, target: prep.target ?? null, usage: { calls, totals: usageTotals(calls) }, ...(context ? { context: context.manifest } : {}) });
   } finally {
     over = true;
+    for (const live of liveSessions) await live.close();
     graphLease?.release();
     if (snapshot !== null) await deps.snapshots.remove(repoRoot, snapshot as Snapshot);
   }
@@ -1006,9 +1101,23 @@ async function reviewInScope(
   const answered = r.report.summary !== null;
   const dispositions = answered ? dispositionsOf(r.report, r.submission, r.scan) : [];
   const second = r.second ?? null;
-  let completion = modelRecord(r.evidence, { second: second?.evidence ?? null, secrets: r.secrets });
+  let completion = r.evidence.sessions ? modelCompletionRecord({
+    changeId: r.evidence.changeId,
+    model: r.evidence.model,
+    snapshot: r.evidence.snapshot,
+    candidates: r.evidence.candidates,
+    coverage: r.evidence.coverage,
+    toolLog: r.evidence.toolLog.map(modelToolEntry),
+    attempts: r.evidence.attempts.map((c) => ({ callId: c.callId, purpose: c.purpose, attempt: c.attempt, authorized: c.outcome !== "refused", outcome: c.outcome, usage: c.outcome !== "ok" ? null : { model: c.model ?? model.model, ...(c.servedModel ? { servedModel: c.servedModel } : {}), inputTokens: c.inputTokens, outputTokens: c.outputTokens, ...(c.cacheReadTokens !== undefined ? { cacheReadTokens: c.cacheReadTokens } : {}), ...(c.cacheWriteTokens !== undefined ? { cacheWriteTokens: c.cacheWriteTokens } : {}), ...(c.costUsd !== undefined ? { costUsd: c.costUsd } : {}) }, durationMs: c.durationMs })),
+    tools: r.evidence.tools,
+    submissionErrors: r.evidence.submissionErrors,
+    failure: r.evidence.failure,
+    sessions: r.evidence.sessions,
+    missing: r.evidence.missing,
+    ...(second ? { second: modelRecord(second.evidence, { secrets: r.secrets }) } : {}),
+  }) : modelRecord(r.evidence, { second: second?.evidence ?? null, secrets: r.secrets });
   let checked = r.report;
-  let foundBy = r.report.findings.map(() => [model.model]);
+  let foundBy = r.report.findings.map((f) => f.found_by ?? [model.model]);
   let disagreements: ReviewResult["disagreements"] = [];
   let secondDropped: Report["dropped"] | null = null;
   if (second) {

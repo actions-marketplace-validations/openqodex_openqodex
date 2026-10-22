@@ -59,7 +59,11 @@ import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reviewChange } from "../src/review-change.js";
+import { DEFAULT_CONFIG } from "@openqodex/core";
+import { reviewChange as runReviewChange } from "../src/review-change.js";
+
+// These regressions exercise the single-session contract explicitly.
+const reviewChange: typeof runReviewChange = (input, reviewer, options, version) => runReviewChange({ ...input, config: { ...DEFAULT_CONFIG, ...input.config, stages: false } }, reviewer, options, version);
 import type { AuthorizeRequest, ReviewChangeOptions, ReviewResult } from "../src/reviewer.js";
 import { fixtureModel, recorded } from "./fixture-model.js";
 import type { Finding, Fixture, FixtureOptions } from "./fixture-model.js";
@@ -659,7 +663,6 @@ describe("conventions from the trusted merge base", () => {
     git(repo.dir, "commit", "-qam", "Change the implementation and rules");
     const head = git(repo.dir, "rev-parse", "HEAD");
     const model = fixtureModel();
-    const { DEFAULT_CONFIG } = await import("@openqodex/core");
     const result = await reviewChange(
       { clonePath: repo.dir, mergeBaseSha: base, headSha: head, scopes: ["src"], config: { ...DEFAULT_CONFIG, instructionsFiles: ["src/rules.md", "AGENTS.md"], exclude: ["**/*.md"] } },
       model,
@@ -679,7 +682,6 @@ describe("conventions from the trusted merge base", () => {
 
 it("keeps convention omissions when the review stops with nothing to review", async () => {
   const repo = changeRepo();
-  const { DEFAULT_CONFIG } = await import("@openqodex/core");
   const result = await reviewChange(
     { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.base, config: { ...DEFAULT_CONFIG, instructionsFiles: ["missing-rule.md"] } },
     fixtureModel(),
@@ -692,7 +694,6 @@ it("keeps convention omissions when the review stops with nothing to review", as
 
 it("accepts a host config made before instructionsFiles existed", async () => {
   const repo = changeRepo();
-  const { DEFAULT_CONFIG } = await import("@openqodex/core");
   const config = structuredClone(DEFAULT_CONFIG);
   delete config.instructionsFiles;
   const result = await reviewChange(

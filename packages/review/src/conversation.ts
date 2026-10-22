@@ -12,7 +12,7 @@ import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
 import type { ReviewerRole } from "./usage.js";
 
-const MAX_CORRECTIONS = 2;
+export const MAX_CORRECTIONS = 2;
 const HEARTBEAT_MS = 15_000;
 // An answer bigger than this is not read.
 const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
@@ -326,14 +326,24 @@ export async function converse(args: {
   onRound?: (round: Omit<CorrectionRound, "by">) => void;
   // The failure of a turn the deadline stopped, in place of TIMED_OUT.
   timedOut?: string;
+  heartbeat?: boolean;
+  // Continue in the same verifier session after assembly found an error.
+  continuation?: { conversation: Conversation; errors: string[] };
 }): Promise<Conversation> {
   const startedAt = args.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
-  const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
-  heartbeat.unref();
+  const c: Conversation = args.continuation?.conversation ?? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
+  const heartbeat = args.heartbeat === false ? null : setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
+  heartbeat?.unref();
   try {
     let text = args.brief;
+    if (args.continuation) {
+      if (c.rounds > MAX_CORRECTIONS) return c;
+      c.errors = args.continuation.errors;
+      args.onRound?.({ round: c.rounds, errors: c.errors, delivered: [], later: 0, answer: c.submission });
+      text = ["Your answer failed these assembly checks. Fix every one.", ...renumber(c.errors), "Then answer again with the whole JSON object and nothing else."].join("\n");
+    }
     for (;;) {
+      if (args.now() >= args.deadline) { c.failure = args.timedOut ?? TIMED_OUT; break; }
       c.rounds++;
       let timer: NodeJS.Timeout | undefined;
       const late = new Promise<Turn>((done) => {
@@ -384,7 +394,7 @@ export async function converse(args: {
       ].join("\n");
     }
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat !== null) clearInterval(heartbeat);
     c.endedAt = args.now();
   }
   return c;

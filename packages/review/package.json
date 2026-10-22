@@ -25,6 +25,7 @@
   "dependencies": {
     "@openqodex/core": "workspace:*",
     "@openqodex/graph": "workspace:*",
-    "@openqodex/scanners": "workspace:*"
+    "@openqodex/scanners": "workspace:*",
+    "zod": "^4.6.5"
   }
 }

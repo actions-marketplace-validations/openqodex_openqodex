@@ -42,6 +42,10 @@ async function freeze() {
     const scan = JSON.parse(readFileSync(join(out, "scan.json"), "utf8"));
     const report = JSON.parse(readFileSync(join(out, "report.json"), "utf8"));
     writeFileSync(join(here, "stand-ins/submission.json"), answerText(scan, report.change_id));
+    const byFile = {};
+    for (const finding of answerFor(scan, report.change_id).findings) (byFile[finding.file_path] ??= []).push(finding);
+    writeFileSync(join(here, "stand-ins/find-answers.json"), `${JSON.stringify(byFile, null, 2)}\n`);
+    console.log(`golden: finder locations frozen by file, ${Object.keys(byFile).length} files`);
     console.log(`golden: answer frozen, ${scan.candidates.length} candidates raised, change ${report.change_id}`);
   } finally {
     rmSync(prepared.work, { recursive: true, force: true });

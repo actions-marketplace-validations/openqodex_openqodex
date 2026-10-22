@@ -3,7 +3,7 @@
 // rendering built from it. Every value here comes from the brain's own
 // measurements: the requests it built, the tool calls it ran and the usage
 // each response carried. Nothing comes from what the reviewer says it did.
-import type { Coverage, TraceEntry } from "@openqodex/core";
+import type { Coverage, ReviewerSessionRecord, TraceEntry } from "@openqodex/core";
 
 // Which reviewer of the review made a call: the primary, the second
 // reviewer a host may add (step 4), or, in a staged review (reviewer
@@ -143,5 +143,7 @@ export type ModelReviewEvidence = {
   tools: string[];
   startedAt: string;
   endedAt: string;
+  sessions?: ReviewerSessionRecord[];
+  missing?: string[];
   durationMs: number;
 };

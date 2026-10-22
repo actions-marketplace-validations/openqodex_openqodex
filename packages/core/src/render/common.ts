@@ -13,6 +13,20 @@ export function orderFindings<F extends { severity: Severity }>(findings: readon
   return SEVERITIES_DESC.flatMap((s) => findings.filter((f) => f.severity === s));
 }
 
+// Observations keep the severity order, then the most confident first.
+export function orderObservations(report: Report): ReportFinding[] {
+  return orderFindings([...(report.observations ?? [])].sort((a, b) => (b.confidence ?? -1) - (a.confidence ?? -1)));
+}
+
+export function observationsOmittedLine(report: Report): string | null {
+  const omitted = report.observations_omitted ?? 0;
+  return omitted > 0 ? `${plural(omitted, "more observation was", "more observations were")} left out.` : null;
+}
+
+export function findingTitle(f: ReportFinding): string {
+  return `${f.severity[0]?.toUpperCase()}${f.severity.slice(1)} ${f.category}: ${f.title}`;
+}
+
 // Text from a scanner or the agent made safe for a terminal: every run of
 // whitespace (line breaks included) becomes one space, and every remaining
 // C0 or C1 control character is dropped, so nothing can move the cursor,

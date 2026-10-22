@@ -84,7 +84,7 @@ type Run = { repo: string; home: string; during: During[]; lines: string[]; ende
 // line it hands over, and every stop it offers, is kept here.
 async function runCore(dir: string, driver: ReviewerDriver): Promise<{ lines: string[]; ended: string }> {
   const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
-  const config = structuredClone(DEFAULT_CONFIG);
+  const config = { ...structuredClone(DEFAULT_CONFIG), stages: false };
   const parts = laptopParts({ flags: global, scope: {}, noGraph: true, timeoutMs: 60_000, drivers: [driver] }, dir, config);
   const lines: string[] = [];
   const stops: (() => void)[] = [];
@@ -154,6 +154,6 @@ describe("the review core with the laptop's parts", () => {
     const r = await review();
     expect(written).toEqual([]);
     expect(r.lines).toContainEqual(expect.stringMatching(/^Scanners: 1 ran, \d+ had nothing to check, [1-9]\d* candidates? to check$/));
-    expect(r.lines).toContain("Reviewer: claude 9.9.9 started (process 1); this takes one to three minutes");
+    expect(r.lines).toContain("Reviewer: claude 9.9.9 started (process 1); this takes several minutes");
   });
 });

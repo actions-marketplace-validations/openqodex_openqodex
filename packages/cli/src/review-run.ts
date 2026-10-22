@@ -19,7 +19,7 @@
 // review and a missing reviewer all exit 2.
 import { join, relative, resolve } from "node:path";
 import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, resolveInstructionRef, writeLatest, writeReportFiles } from "@openqodex/core";
-import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
+import type { ChangeScope, Config, Latest, ReviewerSessionRecord, Severity } from "@openqodex/core";
 import { DEPTH_ENV, TIMED_OUT, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
 import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
 import { createToolResolver } from "@openqodex/scanners";
@@ -228,8 +228,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   const redact = (text: string): string => redactSecrets(text, secrets);
   // --report-dir: whether a reviewer started, and which, so a caller tells
   // a review that stopped from one that never began without reading stderr.
-  const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string }): void => {
-    if (o.reportDir !== undefined) write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
+  const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string; sessions?: ReviewerSessionRecord[] }): void => {
+    write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
   };
   // rounds.json: every correction round sent to the reviewer, already
   // redacted by the core, written when the reviewer starts and again as
@@ -292,6 +292,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // The command passes no model reviewer, so the core never ends this way here.
     if (result.ended === "model-reviewed") throw new OpenQodexError("the review core ended with a model reviewer, which the command never gives it");
     const { report, completion, change } = result;
+    noteReviewer({ started: completion.reviewer !== null, driver: completion.reviewer?.driver, version: completion.reviewer?.version, sessions: completion.reviewer?.sessions });
     const shown = (folder as RunFolder | null)!.shown;
     // Every file, record and line printed from here on is drawn from `out`.
     const out = reviewOutputs({ report, display: result.display, dir, redact, version: __OPENQODEX_VERSION__ });

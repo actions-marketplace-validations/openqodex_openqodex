@@ -1,6 +1,7 @@
 import type { Report, ReportFinding } from "../types.js";
 import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, sourceLabel, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
+import { renderObservations } from "./review.js";
 
 const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
 
@@ -69,6 +70,9 @@ export function renderMarkdown(report: Report): string {
   out.push("", "## Findings", "");
   if (report.findings.length === 0) out.push("No findings on the changed lines.");
   else out.push(...findingTable(report.findings));
+
+  const observations = renderObservations(report);
+  if (observations) out.push("", observations.trimEnd());
 
   if (report.outside_change.length > 0) {
     out.push("", "## Outside the changed lines", "", "Shown for information; these never count toward the verdict.", "");

@@ -7,7 +7,7 @@
 // only the diff in the brief or a correction round can show it. A reviewer
 // whose trace is not complete (Codex) reports no reads, so for it only the
 // brief and the correction rounds count.
-import type { Change, CompletionRecord, ModelAttempt, ModelCompletionRecord, ModelToolEntry, ReviewerRecord } from "./types.js";
+import type { Change, CompletionRecord, ModelAttempt, ModelCompletionRecord, ModelToolEntry, ReviewerRecord, ReviewerSessionRecord } from "./types.js";
 
 // One tool call of the reviewer. `path` is relative to the snapshot when
 // `inside`, else as the agent named it. `range` is the first and last line a
@@ -135,9 +135,10 @@ export function completionRecord(args: {
   // (Codex): the trace is then a diagnostic list, and neither its paths nor
   // its tool names can complete or fail the review. True when left out.
   traced?: boolean;
+  missing?: string[];
 }): CompletionRecord {
   const traced = args.traced ?? true;
-  const missing: string[] = [];
+  const missing: string[] = [...(args.missing ?? [])];
   if (args.reviewer === null) missing.push("no reviewer process was started by openqodex");
   if (args.failure) missing.push(args.failure);
   if (args.snapshot.after === null || args.snapshot.after !== args.snapshot.before) {
@@ -231,8 +232,10 @@ export function modelCompletionRecord(args: {
   // Why the conversation ended without an answer that could be checked.
   failure?: string | null;
   second?: ModelCompletionRecord;
+  sessions?: ReviewerSessionRecord[];
+  missing?: string[];
 }): ModelCompletionRecord {
-  const missing: string[] = [];
+  const missing: string[] = [...(args.missing ?? [])];
   const add = (line: string) => {
     if (!missing.includes(line)) missing.push(line);
   };
@@ -279,6 +282,7 @@ export function modelCompletionRecord(args: {
     tool_log: args.toolLog,
     attempts: args.attempts,
     ...(args.second ? { second: args.second } : {}),
+    ...(args.sessions ? { sessions: args.sessions } : {}),
     trace_complete: true,
   };
 }

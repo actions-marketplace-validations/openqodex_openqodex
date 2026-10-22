@@ -5,16 +5,20 @@ import {
   candidateLocation,
   coverageLine,
   display,
+  findingTitle,
   firstLine,
   location,
+  observationsOmittedLine,
+  orderObservations,
   sourceLabel,
   verdictLine,
 } from "./common.js";
 
 // Every value that came from a scanner or the agent goes through `display`
 // before the renderer adds its own colour codes.
-function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): string[] {
-  const lines = [`  ${c.bold(display(location(f)))}  ${display(f.title)}`];
+function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>, observation = false): string[] {
+  const title = observation ? findingTitle(f) : f.title;
+  const lines = [`  ${c.bold(display(location(f)))}  ${display(title)}`];
   const desc = display(firstLine(f.description));
   if (desc) lines.push(`    ${desc}`);
   // A finding from the agent's own reading has no source to name.
@@ -61,6 +65,14 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
     const label = `${severity[0]?.toUpperCase()}${severity.slice(1)} (${group.length})`;
     out.push("", severity === "critical" || severity === "major" ? c.red(label) : c.yellow(label));
     for (const f of group) out.push(...findingLines(f, c));
+  }
+
+  const observations = orderObservations(report);
+  const omitted = observationsOmittedLine(report);
+  if (observations.length > 0 || omitted) {
+    out.push("", "Observations (do not count toward the verdict):");
+    for (const f of observations) out.push(...findingLines(f, c, true));
+    if (omitted) out.push(omitted);
   }
 
   if (report.outside_change.length > 0) {
