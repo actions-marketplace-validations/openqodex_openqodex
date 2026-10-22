@@ -51,7 +51,7 @@ After the install, say to your agent: "review my change with openqodex". In your
 For agents, the same install with no question:
 
 ```
-npx -y openqodex@0.13.0 init --yes --agent <host>
+npx -y openqodex@0.14.0 init --yes --agent <host>
 ```
 
 `<host>` is `claude-code`, `codex`, `cursor` or `cline`. In its default sandbox mode, Codex gives commands no network. From Codex, run this line in your own terminal. The [quickstart](https://github.com/openqodex/openqodex/blob/main/docs/quickstart.md) has a prompt to paste into your agent.
