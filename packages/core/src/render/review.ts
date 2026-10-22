@@ -4,7 +4,7 @@
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
 import type { ModelCompletionRecord, Report, ReportFinding, ReviewerRecord } from "../types.js";
-import { candidateLocation, coverageLine, display, escapeMarkdown, findingTitle, firstLine, location, notOpenedLabel, observationsOmittedLine, orderFindings, orderObservations, severityBreakdown, verdictLine } from "./common.js";
+import { candidateLocation, coverageLine, display, escapeMarkdown, findingTitle, firstLine, location, lowConfidenceReason, notOpenedLabel, observationsOmittedLine, orderFindings, orderObservations, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 type Line =
@@ -158,7 +158,7 @@ function lines(report: Report): Line[] {
   }
   if (report.low_confidence.length > 0) {
     out.push({ kind: "heading", text: "Below the confidence floor (not counted)" });
-    for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})` });
+    for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})${lowConfidenceReason(l)}` });
   }
   if (c) {
     out.push({ kind: "heading", text: "Coverage" });

@@ -23,6 +23,10 @@ export function observationsOmittedLine(report: Report): string | null {
   return omitted > 0 ? `${plural(omitted, "more observation was", "more observations were")} left out.` : null;
 }
 
+export function lowConfidenceReason(entry: Report["low_confidence"][number]): string {
+  return entry.reason ? ` (${entry.reason})` : "";
+}
+
 export function findingTitle(f: ReportFinding): string {
   return `${f.severity[0]?.toUpperCase()}${f.severity.slice(1)} ${f.category}: ${f.title}`;
 }

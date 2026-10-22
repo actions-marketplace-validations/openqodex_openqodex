@@ -853,7 +853,10 @@ export type Report = {
   // changed line. Shown, never counted toward the verdict.
   outside_change: ReportFinding[];
   // review only: agent findings dropped for low confidence, with the floor
-  low_confidence: { title: string; file_path: string; confidence: number; floor: number }[];
+  low_confidence: { title: string; file_path: string; confidence: number; floor: number;
+    // staged review: why the candidate was not counted
+    reason?: string;
+  }[];
   // review only: candidates the agent neither raised nor dropped. They count
   // toward the verdict at their reviewSeverity.
   not_reviewed: Candidate[];

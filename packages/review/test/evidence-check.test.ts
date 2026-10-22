@@ -1,6 +1,7 @@
 // Failure cases: invented quotes, wrong line windows, removed evidence
 // checked against head text, missing examination, unknown verdict ids,
 // unresolved scanners, and confirmed anchors outside the change.
+// A refuted scanner's reason must pass prose checks before assembly.
 import { afterAll, expect, it } from "vitest";
 import { checkEvidence, checkFindAnswer, checkVerifyAnswer } from "../src/evidence-check.js";
 import { hunkRefs, unitsOf } from "../src/units.js";
@@ -68,4 +69,12 @@ it("rejects a scanner marked as a duplicate of a finder", () => {
   const batch = { file: "a.txt", hunks: hunkRefs(change), candidates: [c, k] };
   const value = { version: "verify-1", change_id: change.id, verdicts: [{ ...verdict(c), duplicate_of: "k1" }, verdict(k)] };
   expect(checkVerifyAnswer(value, batch, change, snapshotText(dir), lineCounter(dir)).errors).toContain("candidate c1.duplicate_of: a scanner candidate survives; mark the finder candidate as the duplicate");
+});
+
+it("rejects a refuted scanner reason with three sentences during verification", () => {
+  const { change, dir } = fixture();
+  const c = { kind: "scanner" as const, id: "c1", candidate: scanner("a.txt") };
+  const batch = { file: "a.txt", hunks: hunkRefs(change), candidates: [c] };
+  const value = { version: "verify-1", change_id: change.id, verdicts: [{ ...verdict(c, "refuted"), reason: "The input is checked. The operation is safe. The caller is trusted." }] };
+  expect(checkVerifyAnswer(value, batch, change, snapshotText(dir), lineCounter(dir)).errors).toContain("candidate c1.reason: has 3 sentences; the limit is 2");
 });

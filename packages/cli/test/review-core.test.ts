@@ -17,16 +17,17 @@
 //  4. The core writes process.env.
 //  5. The core prints to stdout or stderr instead of handing every line to
 //     the progress callback.
+//  6. rounds.json keeps concurrent arrival order after the staged run ends.
 import { stagedFake } from "../../review/test/staged-fake.js";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "@openqodex/core";
 import { DEPTH_ENV, runReviewCore } from "@openqodex/review";
 import type { ReviewerDriver, ReviewerSession, Turn } from "@openqodex/review";
 import { parseFlags } from "../src/flags.js";
-import { laptopParts } from "../src/review-run.js";
+import { laptopParts, runReview } from "../src/review-run.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -169,4 +170,38 @@ it("names each staged session and prints the staged receipt once", async () => {
   expect(r.lines).toContain("Finder for unit u1 (interfaces and conventions) started (process 1)");
   expect(r.lines).toContain("Verifier 1 for db/x.sql started (process 1)");
   expect(r.lines.filter((line) => line.startsWith("Reviewer:"))).toHaveLength(1);
+});
+
+it("writes rounds.json in session order after corrections arrive in reverse order", async () => {
+  const dir = repo();
+  const folder = tempDir("oq-core-rounds-");
+  const base = standIn(home, []);
+  const arrivals: string[] = [];
+  let release!: () => void;
+  const contractsCorrected = new Promise<void>((resolve) => { release = resolve; });
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    let first = true;
+    let pass = "";
+    session.send = async (text) => {
+      pass ||= /^Pass: (local|contracts)$/m.exec(text)?.[1] ?? "";
+      if (!first && pass === "contracts") release();
+      const turn = await send(text);
+      if (first && pass) {
+        first = false;
+        if (pass === "local") await contractsCorrected;
+        arrivals.push(pass);
+        return { ...turn, finalText: JSON.stringify({ ...JSON.parse(turn.finalText), examined: [] }) };
+      }
+      first = false;
+      return turn;
+    };
+    return session;
+  } };
+  const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
+  expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [driver], reportDir: folder })).toBe(0);
+  expect(arrivals).toEqual(["contracts", "local"]);
+  const rounds = JSON.parse(readFileSync(join(folder, "rounds.json"), "utf8")) as { by: string }[];
+  expect(rounds.map((round) => round.by)).toEqual(["finder:u1:local", "finder:u1:contracts"]);
 });

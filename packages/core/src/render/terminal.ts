@@ -8,6 +8,7 @@ import {
   findingTitle,
   firstLine,
   location,
+  lowConfidenceReason,
   observationsOmittedLine,
   orderObservations,
   sourceLabel,
@@ -95,7 +96,7 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
   if (report.low_confidence.length > 0) {
     out.push("", "Below the confidence floor (not counted)");
     for (const l of report.low_confidence) {
-      out.push(`  ${display(l.file_path)}  ${display(l.title)} (confidence ${l.confidence}, floor ${l.floor})`);
+      out.push(`  ${display(l.file_path)}  ${display(l.title)} (confidence ${l.confidence}, floor ${l.floor})${lowConfidenceReason(l)}`);
     }
   }
   if (report.not_reviewed_paths.length > 0) {

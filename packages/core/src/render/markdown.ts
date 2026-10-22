@@ -1,5 +1,5 @@
 import type { Report, ReportFinding } from "../types.js";
-import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, sourceLabel, verdictLine } from "./common.js";
+import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, lowConfidenceReason, sourceLabel, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 import { renderObservations } from "./review.js";
 
@@ -101,7 +101,7 @@ export function renderMarkdown(report: Report): string {
   if (report.low_confidence.length > 0) {
     out.push("", "## Below the confidence floor", "", "| File | Finding | Confidence | Floor |", "|---|---|---|---|");
     for (const l of report.low_confidence) {
-      out.push(`| ${code(l.file_path)} | ${cell(l.title)} | ${l.confidence} | ${l.floor} |`);
+      out.push(`| ${code(l.file_path)} | ${cell(l.title + lowConfidenceReason(l))} | ${l.confidence} | ${l.floor} |`);
     }
   }
   if (report.not_reviewed_paths.length > 0) {

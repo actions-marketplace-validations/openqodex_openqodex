@@ -58,14 +58,14 @@ export function checkFindAnswer(value: unknown, unit: ReviewUnit, change: Change
   const rejected: RejectedEvidence[] = [];
   answer.candidates.forEach((c, i) => {
     if (c.lens && !lenses.includes(c.lens)) c.lens = null;
-    const evidenceErrors: string[] = [];
-    if (snapshotText(c.file_path) === null) errors.push(`candidates[${i}].file_path: ${c.file_path} is not a text file in the snapshot`);
-    if (c.line_end !== undefined && c.line_end < c.line_number) errors.push(`candidates[${i}].line_end: it is before line_number`);
+    const candidateErrors: string[] = [];
+    if (snapshotText(c.file_path) === null) candidateErrors.push(`candidates[${i}].file_path: ${c.file_path} is not a text file in the snapshot`);
+    if (c.line_end !== undefined && c.line_end < c.line_number) candidateErrors.push(`candidates[${i}].line_end: it is before line_number`);
     for (const e of c.evidence) {
       const error = checkEvidence(e, snapshotText, change);
-      if (error) evidenceErrors.push(`candidates[${i}]: ${error}`);
+      if (error) candidateErrors.push(`candidates[${i}]: ${error}`);
     }
-    if (evidenceErrors.length) rejected.push({ candidate: c, errors: evidenceErrors });
+    if (candidateErrors.length) rejected.push({ candidate: c, errors: candidateErrors });
   });
   return { answer, errors: [...errors, ...rejected.flatMap((r) => r.errors)], answerErrors: errors, rejected, parsed: true };
 }
@@ -100,6 +100,7 @@ export function checkVerifyAnswer(value: unknown, batch: VerifyBatch, change: Ch
     if (v.duplicate_of && (!ids.has(v.duplicate_of) || v.duplicate_of === v.id)) errors.push(`${at}.duplicate_of: name another id in this batch`);
     const c = batch.candidates.find((c) => c.id === v.id);
     if (c?.kind === "scanner" && v.verdict === "unresolved") errors.push(`${at}: a scanner candidate is confirmed or refuted`);
+    if (c?.kind === "scanner" && v.verdict === "refuted") errors.push(...proseErrors(`${at}.reason`, v.reason, null, 2));
     if (v.line_end !== undefined && v.line_end < v.line_number) errors.push(`${at}.line_end: it is before line_number`);
     if (v.duplicate_of) {
       const target = answer.verdicts.find((item) => item.id === v.duplicate_of);

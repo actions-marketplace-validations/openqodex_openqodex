@@ -53,6 +53,7 @@ const emptyUsage = (): ReviewerUsage => ({ turns: 0, input_tokens: null, output_
 const noDelivery = () => ({ text: "", delivered: [], left: [], later: 0, leak: false });
 const normalTitle = (title: string) => title.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const candidateFile = (c: VerifyCandidate) => c.kind === "finder" ? c.candidate.file_path : c.candidate.filePath;
+const candidateLine = (c: VerifyCandidate) => c.kind === "finder" ? c.candidate.line_number : c.candidate.lineStart;
 
 async function pool<T>(jobs: T[], limit: number, work: (job: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -207,8 +208,15 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     for (const c of candidates) files.set(candidateFile(c), [...(files.get(candidateFile(c)) ?? []), c]);
     const batches: VerifyBatch[] = [];
     for (const [file, list] of files) {
-      list.sort((a, b) => (a.kind === "finder" ? a.candidate.line_number : a.candidate.lineStart) - (b.kind === "finder" ? b.candidate.line_number : b.candidate.lineStart));
-      for (let i = 0; i < list.length; i += VERIFY_BATCH_SIZE) batches.push({ file, hunks: hunks.filter((h) => h.path === file), candidates: list.slice(i, i + VERIFY_BATCH_SIZE) });
+      list.sort((a, b) => candidateLine(a) - candidateLine(b) || Number(a.kind === "finder") - Number(b.kind === "finder"));
+      for (let i = 0; i < list.length;) {
+        let end = Math.min(i + VERIFY_BATCH_SIZE, list.length);
+        // A scanner and a finder claim on one line need one verifier to decide which is
+        // the duplicate. Claims of one kind on one line are already distinct, so they cut.
+        while (end < list.length && candidateLine(list[end - 1]!) === candidateLine(list[end]!) && list[end - 1]!.kind !== list[end]!.kind) end++;
+        batches.push({ file, hunks: hunks.filter((h) => h.path === file), candidates: list.slice(i, end) });
+        i = end;
+      }
     }
     const verifyCheck = (batch: VerifyBatch, accept: (answer: VerifyAnswer | null) => void): Parameters<typeof converse>[0]["check"] => (value) => {
       const result = checkVerifyAnswer(value, batch, citationChange, read, lineCount, scan);

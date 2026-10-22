@@ -274,6 +274,8 @@ export type ReviewCoreResult =
       whole: boolean;
       target: RunTarget | null;
       usage: { calls: CallRecord[]; totals: UsageTotals };
+      // Staged correction rounds in session order, after the live events.
+      rounds?: CorrectionRound[];
       context?: NonNullable<RunManifest["context"]>;
     }
   // A model reviewer ran (`ReviewDeps.model`). No agent completion record is
@@ -682,14 +684,14 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
           clock.enter("finalize");
         }
         const calls = [...stagedRun.usage.calls, ...(second?.evidence.attempts ?? [])];
-        return await finish({ ended: "model-reviewed", report, evidence, submission: stagedRun.submission, change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds: stagedRun.rounds, ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
+        return await finish({ ended: "model-reviewed", report, evidence, submission: stagedRun.submission, change: full, scan, secrets: p.secrets, usage: { calls, totals: usageTotals(calls) }, rounds: redactStored(stagedRun.rounds, p.secrets), ...(second ? { second } : {}), ...(context ? { context: context.manifest } : {}) });
       }
       const totals = stagedRun.usage.totals;
       const reviewer: ReviewerRecord = { driver: agent!.driver.name, version: agent!.version, pid: null, started_at: startedIso, ended_at: new Date(deps.now()).toISOString(), duration_ms: deps.now() - started, rounds: stagedRun.sessions.reduce((n, s) => n + s.rounds, 0), usage: { turns: stagedRun.sessions.reduce((n, s) => n + s.usage.turns, 0), input_tokens: totals.inputTokens, output_tokens: totals.outputTokens, cost_usd: totals.costUsd }, sessions: stagedRun.sessions };
       const completion = redactStored(completionRecord({ change, reviewer, snapshot: { tree: prep.tree, before, after }, candidates: { total: stagedRun.required, disposed: stagedRun.disposed }, coverage, trace: stagedRun.trace, submissionErrors: [], wholeRepo: false, missing: stagedRun.missing, traced, tools: inputs.web ? [...REVIEWER_TOOLS, ...REVIEWER_WEB_TOOLS] : REVIEWER_TOOLS }), p.secrets);
       report.completion = completion;
       if (completion.status !== "complete") report.verdict = "incomplete";
-      return await finish({ ended: "reviewed", report, completion, display: buildDisplay({ change: full, secrets: p.secrets }), submission: stagedRun.submission, trace: redactStored(stagedRun.trace, p.secrets), change: full, secrets: p.secrets, whole: false, target: prep.target ?? null, usage: redactStored(stagedRun.usage, p.secrets), ...(context ? { context: context.manifest } : {}) });
+      return await finish({ ended: "reviewed", report, completion, display: buildDisplay({ change: full, secrets: p.secrets }), submission: stagedRun.submission, trace: redactStored(stagedRun.trace, p.secrets), change: full, secrets: p.secrets, whole: false, target: prep.target ?? null, usage: redactStored(stagedRun.usage, p.secrets), rounds: redactStored(stagedRun.rounds, p.secrets), ...(context ? { context: context.manifest } : {}) });
     }
     let modelTalk: ModelSession | null = null;
     // An agent's usage is recorded round by round as its turns come back;

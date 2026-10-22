@@ -6,6 +6,10 @@
 // findings, scanners stay unresolved, failed sessions erase other findings,
 // same-line defects collapse, retry call ids collide, stop leaves sessions
 // open, and finders use the verifier's reserved time.
+// Round 2 failures: a missing file or inverted range discards a good answer,
+// a line tie splits duplicate candidates, and refutation prose waits for assembly.
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { buildFindBrief, buildVerifyBrief, completionRecord, readCoverage } from "@openqodex/core";
 import type { FindAnswer, ReviewUnit, VerifyAnswer, VerifyBatch } from "@openqodex/core";
@@ -279,7 +283,7 @@ it("closes an accepted verifier before opening its fresh assembly correction", a
   const f = setup((answer, request) => {
     if (answer.version === "verify-1") {
       answer.verdicts.forEach((v) => { v.verdict = "refuted"; });
-      if (!request.callId.includes(":assembly")) answer.verdicts.find((v) => v.id === "c1")!.reason = "word ".repeat(30);
+      if (!request.callId.includes(":assembly")) answer.verdicts.find((v) => v.id === "c1")!.file_path = "missing.txt";
       else {
         corrected = true;
         expect(f.closed.size).toBe(f.opened.length - 1);
@@ -302,7 +306,7 @@ it("drops only the offending scanner when its assembly corrections are exhausted
     if (answer.version === "verify-1") {
       const scanner = answer.verdicts.find((v) => v.id === "c1")!;
       scanner.verdict = "refuted";
-      scanner.reason = "word ".repeat(30);
+      scanner.file_path = "missing.txt";
     }
     return answer;
   }, ["a.txt"]);
@@ -322,4 +326,74 @@ it("keeps candidate ids and session records stable when finders finish in revers
     return { roles: r.sessions.map((s) => s.role), candidates: f.requests.filter((r) => r.purpose === "verify").flatMap((r) => (JSON.parse(r.messages[1]!.text).batch as VerifyBatch).candidates.map((c) => [c.id, c.kind === "finder" ? c.candidate.file_path : c.candidate.filePath])) };
   };
   expect(await run(true)).toEqual(await run(false));
+});
+
+it.each(["a missing file", "an inverted line range"])("drops a finder candidate with %s and completes with the good candidate", async (fault) => {
+  const f = setup((answer) => {
+    if (answer.version === "find-1" && answer.candidates.length) {
+      const bad = candidate("a.txt", "Invalid candidate");
+      if (fault === "a missing file") bad.file_path = "missing.txt";
+      else { bad.line_number = 2; bad.line_end = 1; }
+      answer.candidates.push(bad);
+    }
+    return answer;
+  }, ["a.txt"]);
+  const r = await runStagedReview(f.args);
+  expect(r.report.findings.map((finding) => finding.title)).toEqual(["Unsafe operation"]);
+  expect(r.sessions[0]!.dropped).toContainEqual(expect.objectContaining({ title: "Invalid candidate" }));
+  expect(r.rounds.filter((round) => round.by === "finder:u1:local")).toHaveLength(2);
+  expect(f.requests.filter((request) => request.purpose === "verify")).toHaveLength(1);
+  expect(completion(r, f).status).toBe("complete");
+});
+
+it("keeps seven candidates in one batch when the sixth and seventh share a line, with the scanner first", async () => {
+  const f = setup((answer, _request, brief) => {
+    if (answer.version === "find-1" && answer.candidates.length) answer.candidates = Array.from({ length: 6 }, (_, i) => ({ ...candidate("a.txt", `Defect ${i}`), line_number: i + 1, evidence: [{ file_path: "a.txt", line_number: i + 1, quote: "unsafe operation" }] }));
+    if (answer.version === "verify-1") for (const v of answer.verdicts) {
+      const c = brief.batch!.candidates.find((c) => c.id === v.id)!;
+      v.line_number = c.kind === "scanner" ? c.candidate.lineStart : c.candidate.line_number;
+    }
+    return answer;
+  }, ["a.txt"]);
+  writeFileSync(join(f.dir, "a.txt"), "unsafe operation\n".repeat(6));
+  f.change.coverage.set("a.txt", new Set([1, 2, 3, 4, 5, 6]));
+  f.scan.candidates.push({ ...scanner("a.txt"), lineStart: 6, lineEnd: 6 });
+  const r = await runStagedReview(f.args);
+  const briefs = f.requests.filter((request) => request.purpose === "verify").map((request) => JSON.parse(request.messages[1]!.text).batch as VerifyBatch);
+  expect(briefs).toHaveLength(1);
+  expect(briefs[0]!.candidates.map((c) => c.id)).toEqual(["k1", "k2", "k3", "k4", "k5", "c1", "k6"]);
+  expect(completion(r, f).status).toBe("complete");
+});
+
+it("splits twelve scanner candidates on one line into two batches", async () => {
+  const f = setup((answer, _request, brief) => {
+    if (answer.version === "find-1") answer.candidates = [];
+    if (answer.version === "verify-1") for (const v of answer.verdicts) {
+      const c = brief.batch!.candidates.find((c) => c.id === v.id)!;
+      v.line_number = c.kind === "scanner" ? c.candidate.lineStart : c.candidate.line_number;
+    }
+    return answer;
+  }, ["a.txt"]);
+  for (let i = 0; i < 12; i++) f.scan.candidates.push({ ...scanner("a.txt"), id: `c${i + 1}`, ruleId: `rule-${i + 1}` });
+  const r = await runStagedReview(f.args);
+  const briefs = f.requests.filter((request) => request.purpose === "verify").map((request) => JSON.parse(request.messages[1]!.text).batch as VerifyBatch);
+  expect(briefs.map((b) => b.candidates.length)).toEqual([6, 6]);
+  expect(completion(r, f).status).toBe("complete");
+});
+
+it("corrects a long scanner refutation in its existing verifier session", async () => {
+  const f = setup((answer, request) => {
+    if (answer.version === "find-1") answer.candidates = [];
+    else for (const v of answer.verdicts) {
+      v.verdict = "refuted";
+      v.reason = request.purpose === "verify" ? "The input is checked. The operation is safe. The caller is trusted." : "The input is checked before this operation.";
+    }
+    return answer;
+  }, ["a.txt"]);
+  f.scan.candidates.push(scanner("a.txt"));
+  const r = await runStagedReview(f.args);
+  expect(r.sessions.filter((s) => s.role.startsWith("verifier:")).map((s) => s.role)).toEqual(["verifier:1"]);
+  expect(r.rounds[0]!.errors).toContain("candidate c1.reason: has 3 sentences; the limit is 2");
+  expect(r.submission.dropped).toHaveLength(1);
+  expect(completion(r, f).status).toBe("complete");
 });

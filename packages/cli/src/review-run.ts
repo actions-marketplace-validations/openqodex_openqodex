@@ -241,13 +241,14 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   // rounds.json: every correction round sent to the reviewer, already
   // redacted by the core, written when the reviewer starts and again as
   // each round goes, so a run stopped part way still holds the rounds sent.
+  // The finished staged run replaces arrival order with session order.
   // A record of the review, not the review: a write that fails is named
   // once on stderr and the review goes on.
   const rounds: CorrectionRound[] = [];
   let roundsFailed = false;
-  const writeRounds = (): void => {
+  const writeRounds = (saved = rounds): void => {
     try {
-      write({ "rounds.json": `${JSON.stringify(rounds, null, 2)}\n` });
+      write({ "rounds.json": `${JSON.stringify(saved, null, 2)}\n` });
     } catch (error) {
       if (!roundsFailed) warn(`openqodex: could not write rounds.json, so this run's correction rounds are not saved: ${redact((error as Error).message.split("\n")[0] ?? "")}`);
       roundsFailed = true;
@@ -299,6 +300,7 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // The command passes no model reviewer, so the core never ends this way here.
     if (result.ended === "model-reviewed") throw new OpenQodexError("the review core ended with a model reviewer, which the command never gives it");
     const { report, completion, change } = result;
+    if (result.rounds) writeRounds(result.rounds);
     noteReviewer({ started: completion.reviewer !== null, driver: completion.reviewer?.driver, version: completion.reviewer?.version, sessions: completion.reviewer?.sessions });
     const shown = (folder as RunFolder | null)!.shown;
     // Every file, record and line printed from here on is drawn from `out`.
