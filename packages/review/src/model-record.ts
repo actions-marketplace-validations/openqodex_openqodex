@@ -45,10 +45,12 @@ function build(e: ModelReviewEvidence, second?: ModelCompletionRecord): ModelCom
     candidates: e.candidates,
     coverage: e.coverage,
     toolLog: e.toolLog.map(toolEntry),
-    attempts: e.attempts.filter((c) => c.reviewer === e.reviewer).map((c) => attempt(c, e.model)),
+    attempts: e.attempts.filter((c) => e.sessions ? c.reviewer !== "second" : c.reviewer === e.reviewer).map((c) => attempt(c, e.model)),
     tools: e.tools,
     submissionErrors: e.submissionErrors,
     failure: e.failure,
+    ...(e.sessions ? { sessions: e.sessions } : {}),
+    ...(e.missing ? { missing: e.missing } : {}),
     ...(second ? { second } : {}),
   });
 }

@@ -44,4 +44,4 @@ export type { ScopedParts, ServerScope } from "./scoped.js";
 export { GROUP_DIFF_BYTES, MAX_UNIT_DIFF_BYTES, hunkRefs, unitsOf } from "./units.js";
 export { checkEvidence, checkFindAnswer, checkVerifyAnswer } from "./evidence-check.js";
 export { FINDERS_CONCURRENCY, VERIFIERS_CONCURRENCY, runStagedReview } from "./stages.js";
-export type { StagedArgs, StagedResult, StagedSession } from "./stages.js";
+export type { StagedArgs, StagedResult, StagedSession, StagedSessionRecord } from "./stages.js";

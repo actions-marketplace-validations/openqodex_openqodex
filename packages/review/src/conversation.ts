@@ -190,6 +190,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   };
   for (const h of args.unread) {
     if (h.deletion) {
+      if (args.earlier?.some((d) => d.deletion && d.path === h.path && d.start === h.start && d.end === h.end)) continue;
       const block = removedBlock(h);
       if (block === null) {
         left.push(h);
@@ -327,7 +328,9 @@ export async function converse(args: {
   // The failure of a turn the deadline stopped, in place of TIMED_OUT.
   timedOut?: string;
   heartbeat?: boolean;
-  // Continue in the same verifier session after assembly found an error.
+  staged?: boolean;
+  sessionName?: string;
+  // Seed a fresh verifier with its saved answer after assembly found an error.
   continuation?: { conversation: Conversation; errors: string[] };
 }): Promise<Conversation> {
   const startedAt = args.now();
@@ -340,10 +343,11 @@ export async function converse(args: {
       if (c.rounds > MAX_CORRECTIONS) return c;
       c.errors = args.continuation.errors;
       args.onRound?.({ round: c.rounds, errors: c.errors, delivered: [], later: 0, answer: c.submission });
-      text = ["Your answer failed these assembly checks. Fix every one.", ...renumber(c.errors), "Then answer again with the whole JSON object and nothing else."].join("\n");
+      args.say(`${args.sessionName ?? "Reviewer"}: correction round ${c.rounds} of ${MAX_CORRECTIONS}`);
+      text = [args.brief, "Previous answer:", JSON.stringify(c.submission), "Your answer failed these assembly checks. Fix every one.", ...renumber(c.errors), "Then answer again with the whole JSON object and nothing else."].join("\n");
     }
     for (;;) {
-      if (args.now() >= args.deadline) { c.failure = args.timedOut ?? TIMED_OUT; break; }
+      if ((args.staged || args.continuation) && args.now() >= args.deadline) { c.failure = args.timedOut ?? TIMED_OUT; break; }
       c.rounds++;
       let timer: NodeJS.Timeout | undefined;
       const late = new Promise<Turn>((done) => {
@@ -384,7 +388,7 @@ export async function converse(args: {
       if (problems.length === 0 && given.delivered.length === 0) break;
       c.delivered.push(...given.delivered);
       c.carried.push(given.delivered);
-      args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
+      args.say(args.sessionName ? `${args.sessionName}: correction round ${c.rounds} of ${MAX_CORRECTIONS}` : `Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
       args.onRound?.({ round: c.rounds, errors: result.errors.map((e) => e.replace(/^\d+\.\s+/, "")), delivered: given.delivered, later: given.later, answer: "value" in parsed ? parsed.value : null });
       text = [
         ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),

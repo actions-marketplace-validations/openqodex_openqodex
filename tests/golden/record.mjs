@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixDemoSecret } from "./fixture-secret.mjs";
 import { normalize, normalizedLastReview, normalizedSnapshotHash, sha256 } from "./normalize.mjs";
@@ -94,19 +94,24 @@ export async function capture(prepared, destination) {
     writeFileSync(executable, `#!${process.execPath}\n${readFileSync(source, "utf8")}`);
     chmodSync(executable, 0o755);
     cpSync(join(here, "stand-ins/submission.json"), join(provider, "submission.json"));
+    // The staged review's finders answer from the frozen planted locations.
+    cpSync(join(here, "stand-ins/find-answers.json"), join(provider, "find-answers.json"));
     const started = Date.now();
     const result = await command("env", ["-u", "CLAUDECODE", process.execPath, bin, "review", "--reviewer", driver, "--skip", SKIPPED, "--format", "json", "--no-color"], demo, { ...env, PATH: [provider, dirname(process.execPath), env.PATH].join(delimiter) });
     const reviewMs = Date.now() - started;
     if (![0, 1].includes(result.code)) throw new Error(`${driver} review exited ${result.code}: ${result.stderr}`);
     const latest = JSON.parse(readFileSync(join(home, "last-review", repoId, "last-review.json"), "utf8"));
     const dir = latest.dir;
-    const names = readdirSync(dir).sort();
+    // Every file of the run folder, the staged briefs under briefs/ included.
+    const names = readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath ?? e.path, e.name))).sort();
     for (const name of required) if (!names.includes(name)) throw new Error(`${driver} review omitted ${name}`);
     const rawReport = readFileSync(join(dir, "report.json"), "utf8");
     const report = JSON.parse(rawReport);
     const scan = JSON.parse(readFileSync(join(dir, "scan.json"), "utf8"));
     const submission = JSON.parse(readFileSync(join(dir, "submission.json"), "utf8"));
-    if (report.completion.status !== "complete" || submission.dropped.length !== 0 || submission.findings.length !== scan.candidates.length || scan.candidates.some((c) => !submission.findings.some((f) => f.candidate === c.id))) {
+    // Every scanner candidate is raised and none dropped; the staged finders
+    // add the planted bugs no scanner names, so more findings are allowed.
+    if (report.completion.status !== "complete" || submission.dropped.length !== 0 || submission.findings.length < scan.candidates.length || scan.candidates.some((c) => !submission.findings.some((f) => f.candidate === c.id))) {
       throw new Error(`${driver} did not complete with every scanner candidate raised: ${JSON.stringify(report.completion)}`);
     }
     const context = { home, demo, repoId, runId: basename(dir), snapshot: readFileSync(join(provider, "snapshot-path"), "utf8"), generation: report.impact?.build?.generation ?? null };

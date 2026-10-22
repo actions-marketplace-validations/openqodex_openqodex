@@ -31,3 +31,10 @@ it("splits a 130 KB file diff at hunk ranges under 120 KB", () => {
   expect(units.every((u) => u.diffBytes <= MAX_UNIT_DIFF_BYTES)).toBe(true);
   expect(units.flatMap((u) => u.hunks)).toEqual(refs);
 });
+
+// Failure case: a binary-only file starts finders without any hunk.
+it("skips a changed file with no hunks", () => {
+  const { change } = fixture(["a.txt"]);
+  change.coverage.clear();
+  expect(unitsOf(change, hunkRefs(change))).toEqual([]);
+});

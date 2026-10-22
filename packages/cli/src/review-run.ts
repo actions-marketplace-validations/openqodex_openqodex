@@ -223,10 +223,17 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   let folder: RunFolder | null = null;
   let secrets: string[] = [];
   const write = (files: Record<string, string>): void => (folder as RunFolder | null)!.write(files);
+  const writeStagedBrief = (role: string, text: string): void => {
+    const dir = join(folder!.dir, "briefs");
+    const files = { [`${role.replace(/:/g, "-")}.md`]: redact(text) };
+    if (reportWriter) reportFolderWriter(dir, repoRoot)(files);
+    else writeReportFiles(repoRoot, dir, files, PRIVATE);
+  };
   // The one redaction every output of this run goes through (redact.ts:
   // each matched secret and each line of a multi-line one).
   const redact = (text: string): string => redactSecrets(text, secrets);
-  // --report-dir: whether a reviewer started, and which, so a caller tells
+  // Every run folder records whether a reviewer started and its sessions.
+  // A caller tells
   // a review that stopped from one that never began without reading stderr.
   const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string; sessions?: ReviewerSessionRecord[] }): void => {
     write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
@@ -377,6 +384,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
               "brief.md": e.brief,
               "impact.json": `${JSON.stringify(e.impact, null, 2)}\n`,
             });
+          } else if (e.type === "staged-brief") {
+            writeStagedBrief(e.role, e.brief);
           } else if (e.type === "started") {
             noteReviewer({ started: true, driver: e.driver, version: e.version });
             writeRounds();

@@ -1,5 +1,5 @@
 // Model provider stand-in, using the stream test's stdin and stream-json shape.
-const { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } = require("node:fs");
+const { mkdtempSync, renameSync, rmSync, cpSync, existsSync, readFileSync, realpathSync, writeFileSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 const { createInterface } = require("node:readline");
 const args = process.argv.slice(2);
@@ -12,8 +12,14 @@ writeFileSync(join(folder, "snapshot-path"), snapshot);
 // hash: the harness checks that hash and records it normalised. A correction
 // round starts the provider again and keeps the first copy.
 const copy = join(folder, "snapshot");
-try { cpSync(snapshot, copy, { recursive: true, force: false, errorOnExist: false, filter: (path) => path !== join(snapshot, ".git") }); }
-catch (error) { if (!["EEXIST", "ENOTEMPTY"].includes(error.code)) throw error; }
+if (!existsSync(copy)) {
+  const pending = mkdtempSync(join(folder, "snapshot-pending-"));
+  try {
+    cpSync(snapshot, pending, { recursive: true, filter: (path) => path !== join(snapshot, ".git") });
+    try { renameSync(pending, copy); }
+    catch (error) { if (!["EEXIST", "ENOTEMPTY"].includes(error.code)) throw error; }
+  } finally { rmSync(pending, { recursive: true, force: true }); }
+}
 // Answers are derived from the brief's ids and frozen planted locations.
 // The quotes come from the snapshot at those locations, never live scanners.
 const frozen = JSON.parse(readFileSync(join(folder, "submission.json"), "utf8"));
@@ -38,34 +44,24 @@ function answerForPrompt(prompt) {
     const seen = new Set();
     const list = existsSync(join(folder, "find-answers.json")) ? Object.values(JSON.parse(readFileSync(join(folder, "find-answers.json"), "utf8"))).flat() : frozen.findings;
     for (const f of list) {
-      if (!hunks.some((h) => h.file === f.file_path && f.line_number >= h.start && f.line_number <= h.end)) continue;
+      const hunk = hunks.find((h) => h.file === f.file_path && f.line_number >= h.start && f.line_number <= h.end)
+        ?? hunks.find((h) => h.file === f.file_path && Math.min(Math.abs(h.start - f.line_number), Math.abs(h.end - f.line_number)) <= 2);
+      if (!hunk) continue;
+      // A deleted line can move the planted location beside its anchor.
+      const anchor = Math.max(hunk.start, Math.min(hunk.end, f.line_number));
       const key = `${f.file_path}:${f.line_number}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const quote = readFileSync(join(snapshot, f.file_path), "utf8").split("\n")[f.line_number - 1];
       if (!quote?.trim()) continue;
-      candidates.push({ severity: f.severity, category: f.category, confidence: 0.8, file_path: f.file_path, line_number: f.line_number, line_end: f.line_end, title: f.title, claim: f.problem, evidence: [{ file_path: f.file_path, line_number: f.line_number, quote }] });
+      candidates.push({ severity: f.severity, category: f.category, confidence: 0.8, file_path: f.file_path, line_number: anchor, line_end: Math.max(anchor, f.line_end ?? f.line_number), title: f.title, claim: f.problem, evidence: [{ file_path: f.file_path, line_number: f.line_number, quote }] });
     }
     return JSON.stringify({ version: "find-1", change_id, unit, examined: hunks.map((h) => h.id), analysis: hunks.map((h) => ({ hunk: h.id, changed: "The planted operation changes here.", could_break: "Unsafe inputs can affect this operation." })), candidates });
   }
   const candidates = new Map();
-  // Prefer structured candidates when the brief renders them as JSON.
-  for (const block of brief.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)) {
-    let value;
-    try { value = JSON.parse(block[1]); } catch { continue; }
-    const walk = (v) => {
-      if (!v || typeof v !== "object") return;
-      if (/^[ck]\d+$/.test(v.id ?? "")) candidates.set(v.id, v);
-      for (const child of Object.values(v)) if (child && typeof child === "object") { if (Array.isArray(child)) child.forEach(walk); else walk(child); }
-    };
-    walk(value);
-  }
-  // The scanner list keeps the single-pass candidate row format.
-  for (const m of brief.matchAll(/^- ([ck]\d+) \[([^\]]+)\] ([^:\s]+):(\d+) /gm)) candidates.set(m[1], { id: m[1], file_path: m[3], line_number: Number(m[4]) });
-  for (const m of brief.matchAll(/^###\s+([ck]\d+)\b([^\n]*)\n([\s\S]*?)(?=^###\s|$(?![\s\S]))/gm)) {
-    if (candidates.has(m[1])) continue;
-    const location = /([^\s`]+\.[a-zA-Z0-9]+):(\d+)/.exec(m[2] + "\n" + m[3]);
-    if (location) candidates.set(m[1], { id: m[1], file_path: location[1], line_number: Number(location[2]) });
+  for (const m of brief.matchAll(/^### ([ck]\d+) \((finder|scanner)\)\n([\s\S]*?)(?=^### |^## )/gm)) {
+    const location = /^- Location: (.+):(\d+)(?:-(\d+))?$/m.exec(m[3]);
+    if (location) candidates.set(m[1], { id: m[1], file_path: location[1], line_number: Number(location[2]), line_end: Number(location[3] ?? location[2]), title: /^- Title: (.*)$/m.exec(m[3])?.[1] });
   }
   if (!candidates.size) throw new Error("verify brief has no candidate ids");
   const unresolved = process.env.OPENQODEX_STANDIN_UNRESOLVED_SCANNER === "1" && answerRound === 1;
@@ -73,8 +69,9 @@ function answerForPrompt(prompt) {
     const details = c.candidate ?? c;
     const file_path = details.file_path ?? details.filePath;
     const line_number = details.line_number ?? details.lineStart;
-    const template = frozen.findings.find((f) => f.file_path === file_path && f.line_number === line_number) ?? frozen.findings[0];
-    return { id, verdict: unresolved && id.startsWith("c") ? "unresolved" : "confirmed", reason: "The planted operation is unsafe on this changed line.", severity: template.severity, confidence: 1, file_path, line_number, title: template.title, problem: template.problem, consequence: template.consequence, fix: template.fix, tier: "finding" };
+    const templates = existsSync(join(folder, "find-answers.json")) ? Object.values(JSON.parse(readFileSync(join(folder, "find-answers.json"), "utf8"))).flat() : frozen.findings;
+    const template = templates.find((f) => details.title && f.title === details.title) ?? templates.find((f) => f.file_path === file_path && f.line_number === line_number) ?? frozen.findings[0];
+    return { id, verdict: unresolved && id.startsWith("c") ? "unresolved" : "confirmed", reason: "The planted operation is unsafe on this changed line.", severity: template.severity, confidence: 1, file_path, line_number, line_end: details.line_end ?? line_number, title: template.title, problem: template.problem, consequence: template.consequence, fix: template.fix, tier: "finding" };
   });
   for (const v of verdicts) {
     if (!v.id.startsWith("k")) continue;

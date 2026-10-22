@@ -59,12 +59,13 @@ import { chmodSync, cpSync, existsSync, readdirSync, writeFileSync } from "node:
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stagedAnswer } from "./staged-fake.js";
 import { DEFAULT_CONFIG } from "@openqodex/core";
 import { reviewChange as runReviewChange } from "../src/review-change.js";
 
 // These regressions exercise the single-session contract explicitly.
 const reviewChange: typeof runReviewChange = (input, reviewer, options, version) => runReviewChange({ ...input, config: { ...DEFAULT_CONFIG, ...input.config, stages: false } }, reviewer, options, version);
-import type { AuthorizeRequest, ReviewChangeOptions, ReviewResult } from "../src/reviewer.js";
+import type { AuthorizeRequest, ModelReviewer, ReviewChangeOptions, ReviewResult } from "../src/reviewer.js";
 import { fixtureModel, recorded } from "./fixture-model.js";
 import type { Finding, Fixture, FixtureOptions } from "./fixture-model.js";
 import { changeRepo, git } from "./repos.js";
@@ -427,7 +428,8 @@ describe("scoped and incremental reviews through reviewChange", () => {
     expect(result.scope?.reason).toMatch(/^delta: only what changed since the previously reviewed commit [0-9a-f]{12} is reviewed/);
     const brief = briefOf(model);
     expect(brief).toContain("add(s, x), 1)");
-    expect(brief).not.toContain("return a - b;");
+    // The delta diff excludes the old change; its callee is useful neighbourhood context.
+    expect(brief.split("## Code around the change")[0]).not.toContain("return a - b;");
     expect(brief).not.toContain("db/x.sql");
     expect(result.status).toBe("complete");
     expect(result.findings).toEqual([expect.objectContaining({ file: "src/math.ts", lineStart: 2, title: "Subtraction in add" })]);
@@ -703,4 +705,38 @@ it("accepts a host config made before instructionsFiles existed", async () => {
   );
   expect(result.status).toBe("complete");
   expect(config).not.toHaveProperty("instructionsFiles");
+});
+
+// Failure cases: staging loses its sessions or missing work in the model
+// record, and the optional second reviewer starts before staging finishes.
+it.each([false, true])("records staged model sessions and missing work before the second reviewer, failed finder %s", async (failLocal) => {
+  const repo = changeRepo();
+  const asked: AuthorizeRequest[] = [];
+  const primary: ModelReviewer = {
+    kind: "model", model: "staged-fixture", maxOutputTokens: 4096,
+    async complete(request) {
+      if (failLocal && request.callId.startsWith("finder:u1:local")) throw new Error("finder unavailable");
+      const brief = request.messages.find((m) => m.role === "user")!.text;
+      const fixed = JSON.parse(recorded(brief));
+      for (const m of brief.matchAll(/^### (c\d+) \(scanner\)\n([\s\S]*?)(?=^### |^## )/gm)) {
+        const at = /^- Location: (.+):(\d+)$/m.exec(m[2]!)!;
+        fixed.dropped.push({ candidate: m[1], reason: "The function is internal and never exposed.", file_path: at[1], line_number: Number(at[2]) });
+      }
+      return { message: { text: stagedAnswer(brief, JSON.stringify(fixed), () => ""), toolCalls: [] }, usage: { model: "staged-fixture", inputTokens: 100, outputTokens: 30, costUsd: null } };
+    },
+  };
+  const result = await runReviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, primary, {
+    profile: "server", workDir: tempDir("oq-staged-model-work-"), installRoot: tempDir("oq-staged-model-tools-"), tools: { web: false, shell: false }, scanners: "preinstalled",
+    secondReviewer: fixtureModel({ model: "second-fixture", findings: [SUBTRACTION] }),
+    budget: { deadlineMs: 120_000, authorize: async (call) => { asked.push(call); return true; } },
+  });
+  expect(result.completion!.sessions!.length).toBeGreaterThanOrEqual(3);
+  expect(result.completion!.second!.status).toBe("complete");
+  expect(result.status, result.reason).toBe(failLocal ? "incomplete" : "complete");
+  if (failLocal) expect(result.completion!.missing.join(" ")).toMatch(/hunk h\d+ .*local pass/);
+  else expect(result.completion!.missing).toEqual([]);
+  const secondAt = asked.findIndex((call) => call.reviewer === "second");
+  expect(secondAt).toBeGreaterThan(1);
+  expect(asked.slice(secondAt).every((call) => call.reviewer === "second")).toBe(true);
+  expect(result.usage.calls.filter((call) => call.reviewer !== "second").map((call) => call.callId)).toEqual(result.completion!.attempts.map((call) => call.callId));
 });

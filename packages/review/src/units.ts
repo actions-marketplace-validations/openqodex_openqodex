@@ -39,6 +39,7 @@ export function unitsOf(change: Change, hunks: HunkRef[]): ReviewUnit[] {
     const text = (change.diffs ?? []).filter((d) => d.path === file.path).map((d) => d.text).join("");
     const bytes = Buffer.byteLength(text, "utf8");
     const refs = hunks.filter((h) => h.path === file.path);
+    if (refs.length === 0) continue;
     if (bytes <= GROUP_DIFF_BYTES) {
       if (small === null || small.diffBytes + bytes > GROUP_DIFF_BYTES) small = add([], [], 0);
       small.files.push(file.path);

@@ -55,6 +55,7 @@
 //     report.json or the receipt without the redaction: a line of a private
 //     key quoted in the summary, a secret in a suggested change, a dropped
 //     reason or a file name, or a secret in the repository's absolute path.
+import { stagedFake } from "../../review/test/staged-fake.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -100,16 +101,15 @@ type Answer = (text: string) => Partial<Turn>;
 
 // The model provider stand-in: each send answers with the next recorded turn.
 function fake(answers: Answer[], available = true): ReviewerDriver {
-  let sent: string[] = [];
   return {
     name: "claude",
     traced: true,
     async detect() {
       return available ? { ok: true as const, version: "9.9.9", bin: "/fake/claude" } : { ok: false as const, missing: "claude is not installed", fix: "install Claude Code" };
     },
-    start(): ReviewerSession {
-      sent = [];
-      return {
+    start({ snapshotDir }): ReviewerSession {
+      const sent: string[] = [];
+      return stagedFake({
         pid: 4242,
         async send(text: string): Promise<Turn> {
           sent.push(text);
@@ -117,7 +117,7 @@ function fake(answers: Answer[], available = true): ReviewerDriver {
           return { finalText: "", calls: [], usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 }, sessionId: "fake", failure: null, ...next(sent[0] ?? text) };
         },
         async close() {},
-      };
+      }, snapshotDir);
     },
   };
 }
@@ -194,9 +194,9 @@ describe("the receipt", () => {
     expect(await review(dir, fake([three]), ["--quiet"])).toBe(0);
     const lines = out.trimEnd().split("\n");
     expect(lines[0]).toBe("Passed with warnings: 3 findings (1 critical, 1 major, 1 minor)");
-    expect(lines).toContain("Summary: Adds an admin SQL function and a README line.");
+    expect(lines).toContain("Summary: Reviewed units u1. The operation changed.");
     expect(lines).toContain("1. Critical bug: README line <script>alert(1)</script> (README.md:2)");
-    expect(lines).toContain("2. Major security: Admin function callable by anyone (db/x.sql:1)");
+    expect(lines).toContain("2. Major maintainability: Admin function callable by anyone (db/x.sql:1)");
     expect(lines).toContain("3. Minor maintainability: Function body is a placeholder (db/x.sql:2)");
     for (const prose of ["Problem:", "Fix:", "Why it matters:", "default execute grant", "Revoke execute"]) expect(out).not.toContain(prose);
     const html = pathOf("Report", out);
@@ -349,7 +349,7 @@ describe("findings <numbers>", () => {
     for (const label of ["Where: README.md:2", "Problem: The line says more.", "Why it matters: Readers learn nothing.", "Fix: Say what the module does.", "Source: the reviewer"]) expect(out).toContain(label);
     out = "";
     expect(await findings(["all", "--cwd", dir])).toBe(0);
-    expect(out).toContain("2. Major security: Admin function callable by anyone");
+    expect(out).toContain("2. Major maintainability: Admin function callable by anyone");
     expect(out).toContain("Source: sqllint:function-default-public-execute");
     await expect(findings(["99", "--cwd", dir])).rejects.toThrow(/99 is not a finding of the last review/);
     await expect(findings(["--cwd", dir])).rejects.toThrow(/name the findings/);

@@ -417,7 +417,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // the reviewer's prose: the source has its own line in the report. A rule id
 // made of letters only ("expression") is an ordinary word and is not banned;
 // its token ("actionlint:expression") still is.
-function scannerTerms(scan: ScanResult): { term: string; re: RegExp; what: string }[] {
+export function scannerTerms(scan: ScanResult): { term: string; re: RegExp; what: string }[] {
   const ran = scan.scanners.map((s) => String(s.scanner));
   // A custom scanner is also named without its "custom:" prefix.
   const names = new Set([...BUILTIN_SCANNERS, ...ran, ...ran.filter((n) => n.startsWith("custom:")).map((n) => n.slice("custom:".length))]);
@@ -434,7 +434,7 @@ function scannerTerms(scan: ScanResult): { term: string; re: RegExp; what: strin
 
 // The mechanical style rules of one prose field. `banned` is null for text
 // that may name a scanner (a dropped candidate's reason).
-function proseErrors(at: string, text: string, banned: ReturnType<typeof scannerTerms> | null, sentenceLimit: number | null): string[] {
+export function proseErrors(at: string, text: string, banned: ReturnType<typeof scannerTerms> | null, sentenceLimit: number | null): string[] {
   const errors: string[] = [];
   if (text.includes(EM_DASH)) errors.push(`${at}: has an em dash; use a comma, a colon or a full stop`);
   if (CONTROL_CHAR.test(text)) errors.push(`${at}: has a control character or a line break; write one line of plain text`);

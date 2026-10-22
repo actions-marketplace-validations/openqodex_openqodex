@@ -55,3 +55,17 @@ it("rejects missing ids and duplicate cycles", () => {
   value.verdicts.pop();
   expect(checkVerifyAnswer(value, batch, change, snapshotText(dir), lineCounter(dir)).errors.join(" ")).toContain("candidate c2");
 });
+
+// Failure cases: quotes span lines, and a duplicate hides a scanner.
+it("matches a multiline quote in the joined cited window", () => {
+  const { change } = fixture();
+  expect(checkEvidence({ file_path: "a.txt", line_number: 2, quote: "first\n  second" }, () => "before\nfirst\nsecond\nafter", change)).toBeNull();
+});
+it("rejects a scanner marked as a duplicate of a finder", () => {
+  const { change, dir } = fixture();
+  const c = { kind: "scanner" as const, id: "c1", candidate: scanner("a.txt") };
+  const k = { kind: "finder" as const, id: "k1", candidate: candidate("a.txt"), foundBy: [] };
+  const batch = { file: "a.txt", hunks: hunkRefs(change), candidates: [c, k] };
+  const value = { version: "verify-1", change_id: change.id, verdicts: [{ ...verdict(c), duplicate_of: "k1" }, verdict(k)] };
+  expect(checkVerifyAnswer(value, batch, change, snapshotText(dir), lineCounter(dir)).errors).toContain("candidate c1.duplicate_of: a scanner candidate survives; mark the finder candidate as the duplicate");
+});

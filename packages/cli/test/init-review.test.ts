@@ -36,6 +36,7 @@
 //     (finished, incomplete, skipped, unavailable) and which reviewer was found;
 //     or a review that ran but could not write report.html is called skipped,
 //     with "nothing to review".
+import { stagedFake, stagedAnswer } from "../../review/test/staged-fake.js";
 import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -85,9 +86,9 @@ function fake(): ReviewerDriver & { started: number } {
     async detect() {
       return { ok: true as const, version: "9.9.9", bin: "/fake/claude" };
     },
-    start(): ReviewerSession {
+    start({ snapshotDir }): ReviewerSession {
       driver.started++;
-      return {
+      return stagedFake({
         pid: 4242,
         async send(text: string): Promise<Turn> {
           const id = /`change_id`: `([0-9a-f]{12})`/.exec(text)?.[1] ?? "missing";
@@ -95,7 +96,7 @@ function fake(): ReviewerDriver & { started: number } {
           return { finalText, calls: [{ tool: "Read", input: { file_path: "notes.txt" }, ok: true, read: { path: "notes.txt", start: 1, lines: 1 } }], usage: { turns: 1, input_tokens: 1, output_tokens: 1, cost_usd: null }, sessionId: "fake", failure: null };
         },
         async close() {},
-      };
+      }, snapshotDir);
     },
   };
   return driver;
@@ -120,7 +121,7 @@ describe("the review init ends with", () => {
   it("1. with a change, prints the receipt of a complete review, whose report names the reviewer", async () => {
     const driver = fake();
     await reviewAfterInit({ repoRoot: repo(true), runner: "openqodex", interactive: false, drivers: [driver] });
-    expect(driver.started).toBe(1);
+    expect(driver.started).toBe(2);
     // The config disables both scanners: the developer's choice, not a gap.
     expect(out).toContain("Passed: no findings");
     const md = /^Markdown: (\/.+\/report\.md)$/m.exec(out)?.[1];
@@ -220,6 +221,7 @@ function standIn(): string {
       "const args = process.argv.slice(2);",
       "if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }",
       "if (args[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
+      `const stagedAnswer = ${stagedAnswer.toString()};`,
       "let id = 'missing';",
       "const say = (e) => process.stdout.write(JSON.stringify(e) + '\\n');",
       "say({ type: 'system', subtype: 'init', session_id: 'fake', tools: ['Glob', 'Grep', 'Read'], mcp_servers: [] });",
@@ -231,7 +233,7 @@ function standIn(): string {
       "    const text = JSON.parse(buf.slice(0, nl)).message.content;",
       "    buf = buf.slice(nl + 1);",
       "    id = /`change_id`: `([0-9a-f]{12})`/.exec(text)?.[1] ?? id;",
-      "    const result = JSON.stringify({ version: 2, change_id: id, summary: 'Adds a notes file.', findings: [], dropped: [] });",
+      "    const result = stagedAnswer(text, JSON.stringify({ version: 2, change_id: id, summary: 'Adds a notes file.', findings: [], dropped: [] }), () => '');",
       "    say({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, result });",
       "  }",
       "});",
@@ -389,7 +391,7 @@ describe("7. what init wrote is not part of the first review", () => {
     appendFileSync(join(dir, "CLAUDE.md"), "\n<!-- openqodex -->\nReview before you push.\n");
     const driver = seeing("CLAUDE.md");
     await reviewAfterInit({ repoRoot: dir, runner: "openqodex", interactive: false, drivers: [driver], initFiles: new Map([[join(dir, "CLAUDE.md"), mine]]) });
-    expect(driver.seen).toEqual([mine]);
+    expect(driver.seen).toEqual([mine, mine]);
   });
 
   it("a file init created is the whole change: nothing is reviewed", async () => {

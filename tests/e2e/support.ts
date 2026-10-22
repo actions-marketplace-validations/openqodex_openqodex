@@ -197,11 +197,14 @@ export function rustHome(): NodeJS.ProcessEnv {
 
 // The golden providers speak the real driver protocols. Only the model is
 // frozen; the CLI, snapshot, scanners and completion checks still run.
-export function stagedProviderEnv(driver: "claude" | "codex" = "claude"): NodeJS.ProcessEnv {
+export function stagedProviderEnv(driver: "claude" | "codex" = "claude", behavior: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const provider = tempDir("oq-staged-provider-");
   const source = join(root, "tests/golden/stand-ins", `${driver}.cjs`);
   const executable = join(provider, driver);
-  writeFileSync(executable, `#!${process.execPath}\n${readFileSync(source, "utf8")}`);
+  // Driver environments intentionally omit fixture switches. The provider
+  // owns them, so set them in the test provider before it reads its prompt.
+  const switches = ["OPENQODEX_STANDIN_FAIL_FINDER", "OPENQODEX_STANDIN_UNRESOLVED_SCANNER"].filter((key) => behavior[key] !== undefined).map((key) => `process.env[${JSON.stringify(key)}] = ${JSON.stringify(behavior[key])};`).join("\n");
+  writeFileSync(executable, `#!${process.execPath}\n${switches}\n${readFileSync(source, "utf8")}`);
   chmodSync(executable, 0o755);
   for (const name of ["submission.json", "find-answers.json"]) {
     const path = join(root, "tests/golden/stand-ins", name);

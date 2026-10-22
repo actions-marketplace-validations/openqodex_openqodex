@@ -29,6 +29,7 @@
 // 12. `--reviewer-web off` (the GitHub Action passes it) loses to the user
 //     config, or needs the file edited: a config written as a flow mapping
 //     breaks, and a run that dies leaves the file changed.
+import { stagedFake } from "../../review/test/staged-fake.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -76,8 +77,9 @@ function fake(calls: Turn["calls"] = [], name = "claude", available = true): Fak
       return available ? { ok: true as const, version: "9.9.9", bin: `/fake/${name}` } : { ok: false as const, missing: `${name} is not installed`, fix: `install ${name}` };
     },
     start(opts): ReviewerSession {
+      const { snapshotDir } = opts;
       driver.starts.push({ web: opts.web });
-      return {
+      return stagedFake({
         pid: 4242,
         async send(text: string): Promise<Turn> {
           const id = /`change_id`: `([0-9a-f]{12})`/.exec(text)?.[1] ?? "missing";
@@ -86,7 +88,7 @@ function fake(calls: Turn["calls"] = [], name = "claude", available = true): Fak
           return { finalText, calls: [read, ...calls], usage: { turns: 1, input_tokens: 1, output_tokens: 1, cost_usd: null }, sessionId: "fake", failure: null };
         },
         async close() {},
-      };
+      }, snapshotDir);
     },
   };
   return driver;
@@ -128,7 +130,7 @@ describe("choosing the reviewer", () => {
   it("1. auto passes by Cursor, which is not enabled, and starts Claude Code", async () => {
     const claude = fake();
     expect(await review([cursorDriver, claude])).toBe(0);
-    expect(claude.starts).toHaveLength(1);
+    expect(claude.starts).toHaveLength(2);
     expect((JSON.parse(out) as Report).completion?.reviewer?.driver).toBe("claude");
   });
 
@@ -137,14 +139,14 @@ describe("choosing the reviewer", () => {
     const codex = fake([], "codex");
     const claude = fake();
     expect(await review([codex, claude])).toBe(0);
-    expect(claude.starts).toHaveLength(1);
+    expect(claude.starts).toHaveLength(2);
     expect(codex.starts).toHaveLength(0);
   });
 
   it("9. auto with only Codex available picks Codex, and the report names it", async () => {
     const codex = fake([], "codex");
     expect(await review([fake([], "claude", false), codex])).toBe(0);
-    expect(codex.starts).toHaveLength(1);
+    expect(codex.starts).toHaveLength(2);
     const completion = (JSON.parse(out) as Report).completion;
     expect(completion?.reviewer?.driver).toBe("codex");
     expect(completion?.trace_complete).toBe(false);
@@ -155,7 +157,7 @@ describe("choosing the reviewer", () => {
     const codex = fake([], "codex");
     const claude = fake();
     expect(await review([claude, codex])).toBe(0);
-    expect(codex.starts).toHaveLength(1);
+    expect(codex.starts).toHaveLength(2);
     expect(claude.starts).toHaveLength(0);
   });
 
@@ -179,7 +181,7 @@ describe("choosing the reviewer", () => {
     userConfig("reviewer: codex\n");
     const claude = fake();
     expect(await review([codexDriver, claude], "claude")).toBe(0);
-    expect(claude.starts).toHaveLength(1);
+    expect(claude.starts).toHaveLength(2);
   });
 
   it("7. a reviewer: or reviewer_web: value openqodex does not know stops the run and names the file", async () => {
@@ -207,7 +209,7 @@ describe("web tools", () => {
     expect(DEFAULT_REVIEWER_WEB).toBe("on");
     const claude = fake();
     expect(await review([claude])).toBe(0);
-    expect(claude.starts).toEqual([{ web: true }]);
+    expect(claude.starts).toEqual([{ web: true }, { web: true }]);
     const args = claudeArgs(true);
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,WebSearch,WebFetch");
     expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch");
@@ -217,7 +219,7 @@ describe("web tools", () => {
     userConfig("reviewer_web: off\n");
     const claude = fake();
     expect(await review([claude])).toBe(0);
-    expect(claude.starts).toEqual([{ web: false }]);
+    expect(claude.starts).toEqual([{ web: false }, { web: false }]);
     const args = claudeArgs(false);
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob");
     expect(args.join(" ")).not.toMatch(/WebSearch|WebFetch/);
@@ -227,7 +229,7 @@ describe("web tools", () => {
     const web = [{ tool: "WebSearch", input: { query: "flask pagination" }, ok: true, read: null }];
     const claude = fake(web);
     expect(await review([claude])).toBe(0);
-    expect(claude.starts).toEqual([{ web: true }]);
+    expect(claude.starts).toEqual([{ web: true }, { web: true }]);
     expect((JSON.parse(out) as Report).completion?.status).toBe("complete");
   });
 
@@ -237,12 +239,12 @@ describe("web tools", () => {
     const claude = fake();
     const { global } = parseFlags(["--cwd", repo(), "--no-color", "--format", "json"], {});
     expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", timeoutMs: 60_000, drivers: [claude], web: false })).toBe(0);
-    expect(claude.starts).toEqual([{ web: false }]);
+    expect(claude.starts).toEqual([{ web: false }, { web: false }]);
     expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(text);
     // Without the flag the same file turns the web tools on.
     const own = fake();
     expect(await review([own])).toBe(0);
-    expect(own.starts).toEqual([{ web: true }]);
+    expect(own.starts).toEqual([{ web: true }, { web: true }]);
   });
 
   it("5. with reviewer_web: off, a web tool call makes the run incomplete", async () => {

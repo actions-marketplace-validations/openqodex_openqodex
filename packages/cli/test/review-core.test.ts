@@ -17,6 +17,7 @@
 //  4. The core writes process.env.
 //  5. The core prints to stdout or stderr instead of handing every line to
 //     the progress callback.
+import { stagedFake } from "../../review/test/staged-fake.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -59,21 +60,21 @@ function standIn(home: string, during: During[]): ReviewerDriver {
     name: "claude",
     traced: true,
     detect: async () => ({ ok: true, version: "9.9.9", bin: "/fake/claude" }),
-    start(): ReviewerSession {
+    start({ snapshotDir }): ReviewerSession {
       let brief: string | null = null;
-      return {
+      return stagedFake({
         pid: 1,
         async send(text: string): Promise<Turn> {
           during.push({ sigint: process.listenerCount("SIGINT"), sigterm: process.listenerCount("SIGTERM"), env: { ...process.env }, checkouts: readdirSync(join(home, "checkouts")).length });
           brief ??= text;
           const id = /`change_id`: `([0-9a-f]{12})`/.exec(brief)?.[1] ?? "missing";
-          const candidates = [...new Set([...brief.matchAll(/^- (c\d+) \[/gm)].map((m) => m[1]))];
+          const candidates = [...new Set([...brief.matchAll(/^(?:- (c\d+) \[|### (c\d+) \(scanner\))/gm)].map((m) => m[1] ?? m[2]))];
           const dropped = candidates.map((c) => ({ candidate: c, reason: "the function is internal and never exposed", file_path: "db/x.sql", line_number: 1 }));
           const finalText = JSON.stringify({ version: 2, change_id: id, summary: "Adds an SQL function.", findings: [], dropped });
           return { finalText, calls: [{ tool: "Read", input: { file_path: "db/x.sql" }, ok: true, read: { path: "db/x.sql", start: 1, lines: 2 } }], usage: { turns: 1, input_tokens: 1, output_tokens: 1, cost_usd: null }, sessionId: "s", failure: null };
         },
         async close() {},
-      };
+      }, snapshotDir);
     },
   };
 }
@@ -82,9 +83,9 @@ type Run = { repo: string; home: string; during: During[]; lines: string[]; ende
 
 // The core with the laptop's parts and `driver` as the only reviewer. Every
 // line it hands over, and every stop it offers, is kept here.
-async function runCore(dir: string, driver: ReviewerDriver): Promise<{ lines: string[]; ended: string }> {
+async function runCore(dir: string, driver: ReviewerDriver, stages = false): Promise<{ lines: string[]; ended: string }> {
   const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
-  const config = { ...structuredClone(DEFAULT_CONFIG), stages: false };
+  const config = { ...structuredClone(DEFAULT_CONFIG), stages };
   const parts = laptopParts({ flags: global, scope: {}, noGraph: true, timeoutMs: 60_000, drivers: [driver] }, dir, config);
   const lines: string[] = [];
   const stops: (() => void)[] = [];
@@ -156,4 +157,16 @@ describe("the review core with the laptop's parts", () => {
     expect(r.lines).toContainEqual(expect.stringMatching(/^Scanners: 1 ran, \d+ had nothing to check, [1-9]\d* candidates? to check$/));
     expect(r.lines).toContain("Reviewer: claude 9.9.9 started (process 1); this takes several minutes");
   });
+});
+
+// Failure case: staged starts are logged as opaque roles or repeat the receipt.
+it("names each staged session and prints the staged receipt once", async () => {
+  const dir = repo();
+  const home = process.env.OPENQODEX_HOME!;
+  const r = await runCore(dir, standIn(home, []), true);
+  expect(r.lines).toContain("Reviewer: claude 9.9.9; staged review, 1 units, 2 finder sessions, then verifiers; this takes several minutes");
+  expect(r.lines).toContain("Finder for unit u1 (correctness and safety) started (process 1)");
+  expect(r.lines).toContain("Finder for unit u1 (interfaces and conventions) started (process 1)");
+  expect(r.lines).toContain("Verifier 1 for db/x.sql started (process 1)");
+  expect(r.lines.filter((line) => line.startsWith("Reviewer:"))).toHaveLength(1);
 });

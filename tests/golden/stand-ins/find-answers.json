@@ -129,6 +129,20 @@
       "fix": "Correct the flagged operation before using this change.",
       "source": "hadolint:DL3015",
       "candidate": "c22"
+    },
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 1,
+      "file_path": "Dockerfile",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Planted docker-root problem",
+      "problem": "This changed line introduces an unsafe operation.",
+      "consequence": "The affected behavior can fail when this path runs.",
+      "fix": "Correct the operation before using this change.",
+      "source": null,
+      "candidate": null
     }
   ],
   "infra/main.tf": [
@@ -349,6 +363,38 @@
       "fix": "Correct the flagged operation before using this change.",
       "source": "bandit:B608",
       "candidate": "c17"
+    }
+  ],
+  "package-lock.json": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 1,
+      "file_path": "package-lock.json",
+      "line_number": 11,
+      "line_end": 11,
+      "title": "Planted vulnerable-lodash problem",
+      "problem": "This changed line introduces an unsafe operation.",
+      "consequence": "The affected behavior can fail when this path runs.",
+      "fix": "Correct the operation before using this change.",
+      "source": null,
+      "candidate": null
+    }
+  ],
+  "app/server.py": [
+    {
+      "severity": "major",
+      "category": "bug",
+      "confidence": 1,
+      "file_path": "app/server.py",
+      "line_number": 23,
+      "line_end": 23,
+      "title": "Planted pagination-off-by-one problem",
+      "problem": "This changed line introduces an unsafe operation.",
+      "consequence": "The affected behavior can fail when this path runs.",
+      "fix": "Correct the operation before using this change.",
+      "source": null,
+      "candidate": null
     }
   ]
 }

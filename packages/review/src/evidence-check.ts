@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { FINDER_CONFIDENCE_FLOOR } from "@openqodex/core";
-import type { Change, EvidenceCitation, FindAnswer, ReviewUnit, VerifyAnswer, VerifyBatch } from "@openqodex/core";
+import { FINDER_CONFIDENCE_FLOOR, proseErrors, scannerTerms } from "@openqodex/core";
+import type { Change, EvidenceCitation, FindAnswer, FindCandidate, ReviewUnit, ScanResult, VerifyAnswer, VerifyBatch } from "@openqodex/core";
 
 type SnapshotText = (path: string) => string | null;
 const normal = (text: string) => text.replace(/\s+/g, " ").trim();
@@ -22,29 +22,30 @@ export function checkEvidence(c: EvidenceCitation, snapshotText: SnapshotText, c
   if (c.removed) {
     const diff = change.diffs?.find((d) => d.path === c.file_path || change.files.some((f) => f.path === d.path && f.oldPath === c.file_path));
     let oldLine = 0;
-    let matches = false;
+    const removed: string[] = [];
     for (const row of diff?.text.split("\n") ?? []) {
       const header = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(row);
       if (header) { oldLine = Number(header[1]); continue; }
       if (oldLine === 0) continue;
       if (row.startsWith("-")) {
-        if (Math.abs(oldLine - c.line_number) <= 2 && normal(row.slice(1)).includes(quote)) matches = true;
+        if (Math.abs(oldLine - c.line_number) <= 2) removed.push(row.slice(1));
         oldLine++;
       } else if (row.startsWith(" ")) oldLine++;
       else if (!row.startsWith("+") && !row.startsWith("\\")) oldLine = 0;
     }
-    return matches ? null : `evidence ${at}: the quote is not in the removed lines of this file's diff`;
+    return normal(removed.join(" ")).includes(quote) ? null : `evidence ${at}: the quote is not in the removed lines of this file's diff`;
   }
   const text = snapshotText(c.file_path);
   if (text === null) return `evidence ${at}: the file is not a text file in the snapshot`;
   const lines = text.split("\n");
-  const matches = lines.slice(Math.max(0, c.line_number - 3), c.line_number + 2).some((s) => normal(s).includes(quote));
+  const matches = normal(lines.slice(Math.max(0, c.line_number - 3), c.line_number + 2).join(" ")).includes(quote);
   return matches ? null : `evidence ${at}: the quote is not within two lines of the cited line`;
 }
 
-export function checkFindAnswer(value: unknown, unit: ReviewUnit, change: Change, snapshotText: SnapshotText): { answer: FindAnswer; errors: string[] } {
+export type RejectedEvidence = { candidate: FindCandidate; errors: string[] };
+export function checkFindAnswer(value: unknown, unit: ReviewUnit, change: Change, snapshotText: SnapshotText, lenses: readonly string[] = []): { answer: FindAnswer; errors: string[]; answerErrors: string[]; rejected: RejectedEvidence[]; parsed: boolean } {
   const parsed = findSchema.safeParse(value);
-  if (!parsed.success) return { answer: { version: "find-1", change_id: change.id, unit: unit.id, examined: [], analysis: [], candidates: [] }, errors: shapeErrors(parsed.error) };
+  if (!parsed.success) return { answer: { version: "find-1", change_id: change.id, unit: unit.id, examined: [], analysis: [], candidates: [] }, errors: shapeErrors(parsed.error), answerErrors: shapeErrors(parsed.error), rejected: [], parsed: false };
   const answer = parsed.data;
   const errors: string[] = [];
   if (!sameChange(answer.change_id, change)) errors.push(`change_id: use ${change.shortId}`);
@@ -54,15 +55,19 @@ export function checkFindAnswer(value: unknown, unit: ReviewUnit, change: Change
     if (!answer.analysis.some((a) => a.hunk === h.id)) errors.push(`analysis: hunk ${h.id} of ${h.path} needs its analysis`);
   }
   for (const id of [...answer.examined, ...answer.analysis.map((a) => a.hunk)]) if (!unit.hunks.some((h) => h.id === id)) errors.push(`hunk ${id} is not in unit ${unit.id}`);
+  const rejected: RejectedEvidence[] = [];
   answer.candidates.forEach((c, i) => {
+    if (c.lens && !lenses.includes(c.lens)) c.lens = null;
+    const evidenceErrors: string[] = [];
     if (snapshotText(c.file_path) === null) errors.push(`candidates[${i}].file_path: ${c.file_path} is not a text file in the snapshot`);
     if (c.line_end !== undefined && c.line_end < c.line_number) errors.push(`candidates[${i}].line_end: it is before line_number`);
     for (const e of c.evidence) {
       const error = checkEvidence(e, snapshotText, change);
-      if (error) errors.push(`candidates[${i}]: ${error}`);
+      if (error) evidenceErrors.push(`candidates[${i}]: ${error}`);
     }
+    if (evidenceErrors.length) rejected.push({ candidate: c, errors: evidenceErrors });
   });
-  return { answer, errors };
+  return { answer, errors: [...errors, ...rejected.flatMap((r) => r.errors)], answerErrors: errors, rejected, parsed: true };
 }
 
 // This repeats finalize.ts's private citesChange rule, including its
@@ -77,13 +82,14 @@ function citesChange(path: string, start: number, end: number, change: Change, l
   return null;
 }
 
-export function checkVerifyAnswer(value: unknown, batch: VerifyBatch, change: Change, snapshotText: SnapshotText, lineCount: (path: string) => number | null): { answer: VerifyAnswer; errors: string[] } {
+export function checkVerifyAnswer(value: unknown, batch: VerifyBatch, change: Change, snapshotText: SnapshotText, lineCount: (path: string) => number | null, scan?: ScanResult): { answer: VerifyAnswer; errors: string[] } {
   const parsed = verifySchema.safeParse(value);
   if (!parsed.success) return { answer: { version: "verify-1", change_id: change.id, verdicts: [] }, errors: shapeErrors(parsed.error) };
   const answer = parsed.data;
   const errors: string[] = [];
   if (!sameChange(answer.change_id, change)) errors.push(`change_id: use ${change.shortId}`);
   const ids = new Set(batch.candidates.map((c) => c.id));
+  const banned = scannerTerms(scan ?? { candidates: batch.candidates.flatMap((c) => c.kind === "scanner" ? [c.candidate] : []), scanners: [] } as unknown as ScanResult);
   for (const c of batch.candidates) {
     const n = answer.verdicts.filter((v) => v.id === c.id).length;
     if (n !== 1) errors.push(`candidate ${c.id}: needs exactly one verdict, got ${n}`);
@@ -95,7 +101,16 @@ export function checkVerifyAnswer(value: unknown, batch: VerifyBatch, change: Ch
     const c = batch.candidates.find((c) => c.id === v.id);
     if (c?.kind === "scanner" && v.verdict === "unresolved") errors.push(`${at}: a scanner candidate is confirmed or refuted`);
     if (v.line_end !== undefined && v.line_end < v.line_number) errors.push(`${at}.line_end: it is before line_number`);
+    if (v.duplicate_of) {
+      const target = answer.verdicts.find((item) => item.id === v.duplicate_of);
+      if (v.verdict !== "confirmed" || target?.verdict !== "confirmed") errors.push(`${at}.duplicate_of: both candidates must be confirmed`);
+      if (c?.kind === "scanner" && batch.candidates.find((item) => item.id === v.duplicate_of)?.kind === "finder") errors.push(`${at}.duplicate_of: a scanner candidate survives; mark the finder candidate as the duplicate`);
+    }
     if (v.verdict === "confirmed") {
+      for (const field of ["title", "problem", "consequence", "fix"] as const) {
+        if (v[field].trim() === "") errors.push(`${at}.${field}: must not be empty`);
+        errors.push(...proseErrors(`${at}.${field}`, v[field], banned, field === "title" ? null : 2));
+      }
       if (snapshotText(v.file_path) === null) errors.push(`${at}: ${v.file_path} is not a text file in the snapshot`);
       const wrong = citesChange(v.file_path, v.line_number, v.line_end ?? v.line_number, change, lineCount);
       if (wrong) errors.push(`${at}: ${wrong}`);
