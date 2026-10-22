@@ -62,11 +62,11 @@ afterAll(removeTempDirs);
 const LOOP = fileURLToPath(new URL("../loop.mjs", import.meta.url));
 const CASE = "flask-path-traversal";
 const LOSSES = { recall: 2, criticalMajorRecall: 2, precision: 2, severityAgreement: 3, incompleteRate: 2, redundancy: 5, cleanFindings: 0.1, costPerReview: 0.15, secondsPerReview: 0.2 };
-// A review answers in one call of 27 output tokens; at 500 dollars per
-// million output tokens it costs $0.0135. A call's worst case is its 30
-// token allowance, $0.015, which one review's $0.02 cap holds.
+// This case needs two finder calls and no verifier when findings are empty.
+// Each fills its 30 token allowance at $500 per million, costing $0.015.
+// The $0.03 review cap fits both calls so these tests reach the loop rules.
 const SCRIPT = { version: 1, model: "scripted", served: "scripted-1", prices: { input: 0, cachedInput: 0, output: 500 }, summary: "The scripted model's answer.", findings: [], dropReason: "The scripted model drops every candidate; it reads no code.", reply: null };
-const REVIEW_MAX_USD = 0.02;
+const REVIEW_MAX_USD = 0.03;
 const MAX_OUTPUT_TOKENS = 30;
 // The reviewer of the saved score sets: a real deployment's name, no script.
 const REAL = "model:gpt-6.1-sol";
@@ -344,11 +344,12 @@ describe("the daily cap is exceeded by a stage 2 decision that was forecast unde
     const ledger = join(root, "daily", "reviewer.jsonl");
     const results = join(root, "daily", "results");
     // RC-0001 passed stage 1 at $0.001 a review, so stage 2's three reviews
-    // are forecast at $0.003. Another change spent $59.97 on the server
-    // today, leaving $0.03, which one review's $0.02 cap fits in. Each
-    // review really costs $0.0135: three of them would pass the cap.
+    // are forecast at $0.003. Another change spent $59.969 on the server
+    // today; with stage 1's $0.001 that leaves $0.03, which one staged
+    // review's $0.03 cap fits in. Three reviews at $0.03 each would pass
+    // the daily cap.
     const stage1 = { ...stageLine("RC-0001", { stage: 1, done: true, spendUsd: 0.001 }), spend: { serverUsd: 0.001, serverReviews: 1, laptopUsd: 0, laptopReviews: 0, runs: [] } };
-    const other = stageLine("RC-0002", { stage: 1, spendUsd: 59.97, event: "decided", decision: "stopped-early" });
+    const other = stageLine("RC-0002", { stage: 1, spendUsd: 59.969, event: "decided", decision: "stopped-early" });
     writeLines(ledger, [validation(), baseline(), proposed("RC-0001"), proposed("RC-0002"), stage1, other]);
 
     const r = loop(ledger, results, ["step", "--change", "RC-0001", "--parent", parentRun]);
@@ -378,10 +379,10 @@ describe("the day's room leaves out spend already on disk", () => {
   it("counts a candidate run's unrecorded spend against the room before any review starts", () => {
     const ledger = join(root, "on-disk", "reviewer.jsonl");
     const results = join(root, "on-disk", "results");
-    // Stage 1 of RC-0001 made its candidate run, $0.0135 for one review, and
+    // Stage 1 of RC-0001 made its candidate run, $0.03 for one review, and
     // the ledger never recorded it. With $59.97 spent today the room is
-    // $0.03 by the ledger, but $0.0165 with the run's own spend: less than
-    // one review's $0.02 cap.
+    // $0.03 by the ledger, but zero with the run's own spend: less than
+    // one review's $0.03 cap.
     const candidate = join(results, `RC-0001-${basename(parentRun)}`);
     runBench(candidate, ["--repeat", "1", "--change", "RC-0001"]);
     const stage1 = stageLine("RC-0001", { stage: 1, done: true });
