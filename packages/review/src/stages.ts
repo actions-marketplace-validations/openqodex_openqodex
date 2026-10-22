@@ -355,7 +355,10 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     if (!built.checked.ok) throw new Error(`staged assembly could not be checked: ${built.checked.errors.join("; ")}`);
     const report = built.checked.report;
     const shownKeys = new Set(report.findings.map(findingKey));
-    const observationKeys = new Set(built.items.filter((item) => item.v.tier === "observation").map((item) => findingKey({ ...item.finding, line_end: item.finding.line_end ?? item.finding.line_number, candidate: item.finding.candidate ?? null })));
+    const keyOf = (item: typeof built.items[number]) => findingKey({ ...item.finding, line_end: item.finding.line_end ?? item.finding.line_number, candidate: item.finding.candidate ?? null });
+    // A key a shown finding owns stays a finding, whatever tier another item with that key was given.
+    const shownFindingTierKeys = new Set(built.items.filter((item) => item.v.tier === "finding").map(keyOf).filter((key) => shownKeys.has(key)));
+    const observationKeys = new Set(built.items.filter((item) => item.v.tier === "observation").map(keyOf).filter((key) => !shownFindingTierKeys.has(key)));
     const shownObservationKeys = new Set((built.visible?.ok ? built.visible.report.findings : report.findings)
       .filter((f) => observationKeys.has(findingKey(f)))
       .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || (b.confidence ?? 0) - (a.confidence ?? 0)).slice(0, 12).map(findingKey));
@@ -364,20 +367,24 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     const supersededKeys = new Set<string>();
     const byId = new Map(built.items.map((item) => [item.c.id, item]));
     for (const item of built.items) {
-      const key = findingKey({ ...item.finding, line_end: item.finding.line_end ?? item.finding.line_number, candidate: item.finding.candidate ?? null });
+      const key = keyOf(item);
+      // Along a chain of duplicates, the first link that is shown folds this item.
       let target = item;
+      let folded = false;
       const seen = new Set<string>();
       while (target.v.duplicate_of && !seen.has(target.c.id)) {
         seen.add(target.c.id);
         const next = byId.get(target.v.duplicate_of);
         if (!next) break;
         target = next;
-      }
-      if (target !== item) {
-        const targetKey = findingKey({ ...target.finding, line_end: target.finding.line_end ?? target.finding.line_number, candidate: target.finding.candidate ?? null });
+        const targetKey = keyOf(target);
         const shown = target.v.tier === "finding" ? shownKeys.has(targetKey) : item.v.tier === "observation" && shownObservationKeys.has(targetKey);
-        if (targetKey !== key && shown) duplicateKeys.add(key);
-        else if (targetKey !== key && item.v.tier === "finding" && target.v.tier === "observation" && shownKeys.has(key) && observationKeys.has(targetKey)) supersededKeys.add(targetKey);
+        if (targetKey !== key && shown) { folded = true; break; }
+      }
+      if (folded) duplicateKeys.add(key);
+      else if (target !== item) {
+        const targetKey = keyOf(target);
+        if (targetKey !== key && item.v.tier === "finding" && target.v.tier === "observation" && shownKeys.has(key) && observationKeys.has(targetKey)) supersededKeys.add(targetKey);
       }
     }
     const observations: ReportFinding[] = [];

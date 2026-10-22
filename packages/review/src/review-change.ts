@@ -704,7 +704,8 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
     let metered: { session: ReviewerSession; calls(): CallRecord[] } | null = null;
     let pid: number | null = null;
     clock.enter("reviewer");
-    if (refused === null && model) {
+    const notStarted = refused ?? (stopped ? "the review stopped before the reviewer was started" : null);
+    if (notStarted === null && model) {
       modelTalk = modelSession({
         reviewer: model.reviewer,
         role: "primary",
@@ -716,7 +717,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
       session = register(modelTalk);
       deps.onEvent({ type: "started", driver: "model", version: model.reviewer.model, pid: null });
       say(`Reviewer: model ${model.reviewer.model} started; this takes several minutes`);
-    } else if (refused === null && agent) {
+    } else if (notStarted === null && agent) {
       metered = meterSession(agentReviewer(agent.driver, { snapshotDir: prep.snapshot.tree, deadline, bin: agent.bin, web: inputs.web }), { driver: agent.driver.name, now: deps.now });
       session = register(metered.session);
       pid = metered.session.pid;
@@ -768,7 +769,7 @@ export async function runReviewCore(inputs: ReviewInputs, deps: ReviewDeps): Pro
         evidence: (s, t, startedAt) => modelEvidence({ role: "second", model: reviewer.model, session: s, talk: t, change, snapshot: { tree: prep.tree, before: first.snapshot.after ?? first.snapshot.before, after: hashSnapshot(prep.snapshot.tree) }, briefFiles: brief.diffFiles, lineCount, secrets: p.secrets, startedAt }),
       });
     };
-    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: refused, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
+    const talk: Conversation = session === null ? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: notStarted, submission: null, delivered: [], carried: [], startedAt: now, endedAt: now } : await converse({
       session,
       snapshotDir: prep.snapshot.tree,
       brief: brief.text,

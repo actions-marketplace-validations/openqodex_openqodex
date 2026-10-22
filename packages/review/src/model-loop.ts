@@ -145,7 +145,9 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
       const earlier = budgetState.pending;
       let release!: () => void;
       budgetState.pending = new Promise<void>((resolve) => { release = resolve; });
-      await earlier;
+      // A stop while waiting leaves the queue; this slot opens once the holder is done.
+      const acquired = await Promise.race([earlier.then(() => true), stopReply.then(() => false)]);
+      if (!acquired) { void earlier.then(release); return { failure: stopped ?? "the review stopped" }; }
       try {
         if (stopped !== null) return { failure: stopped };
         if (late()) return { failure: DEADLINE_PASSED };

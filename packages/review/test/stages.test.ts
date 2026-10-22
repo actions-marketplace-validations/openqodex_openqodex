@@ -174,6 +174,68 @@ it("keeps a duplicate finding when its confirmed survivor is only an observation
   expect(r.report.observations).toHaveLength(0);
   expect(r.report.verdict).toBe("blocked");
 });
+it("keeps a finding whose key an observation below the floor shares", async () => {
+  // Two lens candidates on one range share a key whatever their titles say.
+  const f = setup((answer, _request, brief) => {
+    if (answer.version === "find-1") answer.candidates = [{ ...candidate(brief.unit!.files[0]!, brief.pass === "local" ? "First claim" : "Second claim"), lens: "shape" }];
+    if (answer.version === "verify-1") {
+      const [survivor, duplicate] = answer.verdicts;
+      survivor!.tier = "observation";
+      survivor!.confidence = 0.6;
+      duplicate!.confidence = 0.95;
+      duplicate!.duplicate_of = survivor!.id;
+    }
+    return answer;
+  }, ["a.txt"]);
+  f.manifest.lenses.push({ name: "shape", confidenceFloor: 0.5 });
+  f.args.confidenceFloor = 0.7;
+  f.config.blockOnSeverity = "major";
+  const r = await runStagedReview(f.args);
+  expect(r.report.findings.map((finding) => finding.title)).toEqual(["Second claim"]);
+  expect(r.report.observations ?? []).toHaveLength(0);
+  expect(r.report.verdict).toBe("blocked");
+});
+it("folds a duplicate into the first shown link of its chain when the chain's end is below the floor", async () => {
+  const f = setup((answer, _request, brief) => {
+    if (answer.version === "find-1") answer.candidates = brief.pass === "local"
+      ? [1, 2].map((line) => ({ ...candidate("a.txt", `Claim ${line}`), line_number: line, evidence: [{ file_path: "a.txt", line_number: line, quote: "unsafe operation" }] }))
+      : [{ ...candidate("a.txt", "Claim 3"), line_number: 3, evidence: [{ file_path: "a.txt", line_number: 3, quote: "unsafe operation" }] }];
+    if (answer.version === "verify-1") {
+      const byLine = new Map(brief.batch!.candidates.map((c) => [c.kind === "finder" ? c.candidate.line_number : 0, c.id]));
+      for (const v of answer.verdicts) {
+        const c = brief.batch!.candidates.find((c) => c.id === v.id)!;
+        v.line_number = c.kind === "finder" ? c.candidate.line_number : 1;
+        v.title = c.kind === "finder" ? c.candidate.title : v.title;
+        if (v.line_number === 1) v.confidence = 0.6;
+        if (v.line_number === 2) v.duplicate_of = byLine.get(1);
+        if (v.line_number === 3) v.duplicate_of = byLine.get(2);
+      }
+    }
+    return answer;
+  }, ["a.txt"]);
+  writeFileSync(join(f.dir, "a.txt"), "unsafe operation\n".repeat(3));
+  f.change.coverage.set("a.txt", new Set([1, 2, 3]));
+  f.args.confidenceFloor = 0.7;
+  const r = await runStagedReview(f.args);
+  expect(r.report.findings.map((finding) => finding.title)).toEqual(["Claim 2"]);
+});
+it("lets a stopped session leave the budget queue while another session holds the lock", async () => {
+  const budgetState = { pending: Promise.resolve(), refused: false };
+  const f = fixture(["a.txt"]);
+  const reviewer: ModelReviewer = { kind: "model", model: "fixture", maxOutputTokens: 4096, async complete() { return reply({ version: 2, change_id: f.change.id, summary: "Nothing.", findings: [], dropped: [] }); } };
+  const open = (role: "finder:u1:local" | "finder:u1:contracts", authorize: () => Promise<boolean>) => modelSession({ reviewer, role, shared: [], budgetState, box: { snapshotDir: f.dir, change: f.change, secrets: [], graph: null, graphNote: null }, now: () => Date.now(), budget: { deadlineMs: 60_000, authorize } });
+  const holder = open("finder:u1:local", () => new Promise<boolean>(() => {}));
+  const waiter = open("finder:u1:contracts", async () => true);
+  const holding = holder.send("first");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const waiting = waiter.send("second");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  waiter.kill();
+  const outcome = await Promise.race([waiting.then(() => "returned", () => "returned"), new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 300))]);
+  expect(outcome).toBe("returned");
+  holder.kill();
+  await holding.catch(() => undefined);
+});
 it.each([
   ["keeps a duplicate finding when its survivor is below the confidence floor", "below confidence"],
   ["keeps a duplicate finding when its survivor is below the severity threshold", "below severity"],
