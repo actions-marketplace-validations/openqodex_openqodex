@@ -244,7 +244,7 @@ export function candidateItems({ runId, build = null, commit = null, suite, spli
     const raw = first?.scan?.candidates ?? [];
     // A review that saved no report says nothing of what it raised or dropped.
     if (raw.length === 0 || (reviewed && !first.report)) continue;
-    const shown = new Set([...(first.report?.findings ?? []), ...(first.report?.outside_change ?? [])].map((f) => f.candidate).filter((x) => typeof x === "string"));
+    const shown = new Set(shownFindings(first.report).map((f) => f.candidate).filter((x) => typeof x === "string"));
     const held = new Set((first.submission?.findings ?? []).map((f) => f?.candidate).filter((x) => typeof x === "string"));
     const dropped = new Set((first.report?.dropped ?? []).map((d) => d?.candidate?.id).filter((x) => typeof x === "string" && !shown.has(x) && !held.has(x)));
     const spec = specs[j.case];

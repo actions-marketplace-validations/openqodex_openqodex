@@ -294,7 +294,7 @@ export function finalizeReview(args: {
   const floors = new Map(manifest.lenses.map((l) => [l.name, l.confidenceFloor]));
 
   const findings: ReportFinding[] = [];
-  const outside: ReportFinding[] = [];
+  const outside: ReportFinding[] = outsideFromScan(scan);
   const lowConfidence: Report["low_confidence"] = [];
   const raised = new Set<string>();
 
@@ -321,7 +321,7 @@ export function finalizeReview(args: {
       suggested_change: f.suggested_change,
       source: f.source,
       candidate: f.candidate ?? null,
-      notes: outsideReason ? [outsideReason] : [],
+      notes: [...(outsideReason ? [outsideReason] : []), ...fixedNotes(scan.candidates.find((c) => c.id === f.candidate))],
     };
     (outsideReason ? outside : findings).push(entry);
   }
@@ -570,7 +570,7 @@ export function checkSubmission(args: {
       suggested_change: f.suggested_change ?? null,
       source,
       candidate: f.candidate ?? null,
-      notes: [],
+      notes: fixedNotes(byId.get(f.candidate ?? "")),
       problem: f.problem,
       consequence: f.consequence,
       fix: f.fix,
@@ -592,7 +592,7 @@ export function checkSubmission(args: {
     summary: sub.summary,
     findings: kept,
     below_threshold: deduped.length - kept.length,
-    outside_change: [],
+    outside_change: outsideFromScan(scan),
     low_confidence: lowConfidence,
     not_reviewed: [],
     dropped: live
@@ -613,6 +613,15 @@ const SECURITY_SCANNERS = new Set<ScannerSource>(["gitleaks", "semgrep", "bandit
 
 export function scannerCategory(source: ScannerSource): Category {
   return SECURITY_SCANNERS.has(source) || source.startsWith("custom:") ? "security" : "maintainability";
+}
+
+function fixedNotes(c: Candidate | undefined): string[] {
+  if (c?.fixedIn === undefined) return [];
+  return [c.fixedIn.length ? `Scanner: fixed in ${c.fixedIn.join(", ")}` : "Scanner: no fixed version published"];
+}
+
+export function outsideFromScan(scan: ScanResult): ReportFinding[] {
+  return (scan.outside ?? []).map((c) => ({ ...candidateFinding(c), candidate: null, notes: ["In the tree before this change."] }));
 }
 
 function candidateFinding(c: Candidate): ReportFinding {
@@ -672,7 +681,7 @@ export function scanReport(args: { change: Change; scan: ScanResult; config: Con
     summary: null,
     findings,
     below_threshold: live.length - findings.length,
-    outside_change: [],
+    outside_change: outsideFromScan(scan),
     low_confidence: [],
     not_reviewed: [],
     dropped: [],

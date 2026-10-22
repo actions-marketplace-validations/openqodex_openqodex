@@ -45,6 +45,7 @@ import {
   readCoverage,
   redactSecrets,
   requiredCandidates,
+  outsideFromScan,
   safeGit,
   selectLenses,
   verdictFor,
@@ -345,7 +346,7 @@ function incompleteReport(change: Change, scan: ScanResult, config: Config, now:
     summary: null,
     findings: [],
     below_threshold: 0,
-    outside_change: [],
+    outside_change: outsideFromScan(scan),
     low_confidence: [],
     not_reviewed: requiredCandidates(scan, config),
     dropped: [],
@@ -389,7 +390,8 @@ async function prepare(inputs: ReviewInputs, deps: ReviewDeps, scanHost: ScanHos
       const lfs = await deps.snapshots.lfsPaths(snapshot.tree, change.changedPaths);
       if (lfs > 0) warn(`${lfs} changed ${lfs === 1 ? "file is" : "files are"} stored in Git LFS and not fetched: the review sees the pointer files`);
       const runTarget: RunTarget = { spec: inputs.target, base_ref: t.baseRef, base_source: t.baseSource, base_sha: t.baseSha, merge_base: t.mergeBase, head_sha: t.headSha, repo_root: repoRoot, checkout: snapshot.tree };
-      const readBase = deps.scoped ? { readBase: deps.scoped.readBase } : {};
+      const scopedParts = deps.scoped;
+      const readBase = scopedParts ? { readBase: scopedParts.readBase, inventory: async () => scopedParts.inventory(snapshot.tree).map((f) => f.path) } : {};
       clock.enter("scan");
       const scanned = await scanChange({ repoRoot, workDir: snapshot.tree, config, change, only, skip, host: scanHost, ...readBase });
       // A delta review scans only the delta, but the snapshot, the tools and

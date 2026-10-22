@@ -47,6 +47,7 @@
 //      the GHSA id, so cargo-deny's finding of the same advisory, named by
 //      its RustSec id, never merges with it.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseOsvScannerJson } from "./osv-scanner.js";
 
@@ -173,7 +174,7 @@ describe("references and the message (C)", () => {
     );
     expect(finding).toMatchObject({ source: "osv-scanner", ruleId: "GHSA-p6mc-m468-83gw" });
     expect(finding.message).toBe(
-      "lodash@4.17.20: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype pollution in lodash",
+      "lodash@4.17.20: GHSA-p6mc-m468-83gw (CVE-2020-8203). Prototype pollution in lodash. No fixed version published",
     );
   });
 });
@@ -257,5 +258,39 @@ describe("choosing the place to anchor (13, 14)", () => {
     const json = report("/work/repo/service/package-lock.json", [pkg("lodash", "4.17.20", [{ id: "GHSA-x" }])]);
     expect(parseOsvScannerJson(json, files, { repoDir: "/work/repo" })[0].filePath).toBe("service/package-lock.json");
     expect(parseOsvScannerJson(json, files)[0].filePath).toBe("service/package-lock.json");
+  });
+});
+
+// Failure cases: wrong affected entry, missing fixes, reordered fixes, and a cut suffix.
+describe("fixed versions", () => {
+  const captured = JSON.parse(readFileSync(new URL("../../test/fixtures/osv-lodash-2.6.0.json", import.meta.url), "utf8"));
+  function fixed(affected: unknown, summary = "Known vulnerability") {
+    const data = structuredClone(captured);
+    data.results[0].packages[0].package.ecosystem = "npm:registry";
+    data.results[0].packages[0].vulnerabilities = [{ id: "GHSA-fix", affected, summary }];
+    data.results[0].packages[0].groups = [];
+    return parseOsvScannerJson(JSON.stringify(data), new Map())[0];
+  }
+  const entry = (name: string, ecosystem: string, versions: string[]) => ({ package: { name, ecosystem }, ranges: [{ events: versions.map((fixed) => ({ fixed })) }] });
+  it("reads fixed events from the matching package and ecosystem only", () => {
+    expect(fixed([entry("other", "npm", ["9"]), entry("lodash", "PyPI", ["8"]), entry("lodash", "npm", ["4.17.21"])])).toMatchObject({ fixedIn: ["4.17.21"], message: expect.stringMatching(/\. Fixed in 4\.17\.21$/) });
+  });
+  it("ignores affected entries from another ecosystem", () => {
+    expect(fixed([entry("lodash", "PyPI", ["8"])])).toMatchObject({ fixedIn: [], message: expect.stringMatching(/\. No fixed version published$/) });
+  });
+  it("names the absence of a published fixed event", () => {
+    expect(fixed([{ package: { name: "lodash", ecosystem: "npm" }, ranges: [{ events: [{ introduced: "0" }] }] }]).message).toMatch(/No fixed version published$/);
+  });
+  it("lists distinct fixed events in OSV order", () => {
+    expect(fixed([entry("lodash", "npm", ["15.5.28", "16.4.1", "15.5.28"])])).toMatchObject({ fixedIn: ["15.5.28", "16.4.1"], message: expect.stringMatching(/Fixed in 15\.5\.28, 16\.4\.1$/) });
+  });
+  it("never cuts the fixed version suffix at the message limit", () => {
+    const f = fixed([entry("lodash", "npm", ["4.17.21"])], "Long summary ".repeat(100));
+    expect(f.message.length).toBeLessThanOrEqual(500);
+    expect(f.message).toMatch(/\. Fixed in 4\.17\.21$/);
+  });
+  it("reads matching npm fixed events from captured 2.6.0 JSON", () => {
+    const findings = parseOsvScannerJson(JSON.stringify(captured), new Map());
+    expect(findings.find((f) => f.ruleId === "GHSA-p6mc-m468-83gw")?.fixedIn).toEqual(["4.17.19"]);
   });
 });

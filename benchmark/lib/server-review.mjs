@@ -67,6 +67,7 @@ import { gitEnv, repoRoot } from "./cases.mjs";
 import { loadModelEnv, probedDeployment } from "./model-env.mjs";
 import { createOpenAIReviewer } from "./openai-reviewer.mjs";
 import { attemptDir, scannerRows } from "./runner.mjs";
+import { shownFindings } from "./score.mjs";
 import { createScriptedReviewer, DEFAULT_SCRIPT, readScript } from "./scripted-model.mjs";
 
 const BOARDS = new URL("../outside/boards.json", import.meta.url);
@@ -333,7 +334,7 @@ export function serverSampleRecord({ job, attempt, startedAt, wallMs, result, re
     verdict: report?.verdict ?? null,
     requestedModel: requested ?? null,
     ...servedOf(result),
-    findings: report && Array.isArray(report.findings) ? report.findings.length + (report.outside_change?.length ?? 0) : result ? result.findings.length : null,
+    findings: report && Array.isArray(report.findings) ? shownFindings(report).length : result ? result.findings.length : null,
     usage: t ? { calls: t.attempts, input_tokens: t.inputTokens, output_tokens: t.outputTokens, cache_read_tokens: t.cacheReadTokens, cost_usd: t.costUsd } : null,
     reviewerMs: result?.timings?.reviewer_ms ?? null,
     rounds: result ? result.rounds.length : null,

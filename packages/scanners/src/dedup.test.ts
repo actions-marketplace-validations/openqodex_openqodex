@@ -103,6 +103,8 @@ describe("dedupByRuleClass", () => {
 //   6. osv-scanner and cargo-deny report one RustSec advisory on the same
 //      Cargo.lock entry and both stay, or the lower severity is kept; or two
 //      different advisories on one crate merge.
+//   7. A higher-severity winner loses the absorbed finding's fixed versions,
+//      or overwrites its own explicit fixed-version information.
 describe("dedupByRuleClass, one problem named by several scanners", () => {
   const workflow = ".github/workflows/ci.yml";
   const untrusted = '"github.event.pull_request.title" is potentially untrusted. avoid using it directly in inline scripts. instead, pass it through an environment variable.';
@@ -174,5 +176,28 @@ describe("dedupByRuleClass, one problem named by several scanners", () => {
     expect(dedupByRuleClass([osv, elsewhere, other])).toEqual([osv, elsewhere, other]);
     // A GHSA id osv-scanner gives an advisory with no RustSec id stays its own.
     expect(ruleClassFor(fakeFinding({ source: "osv-scanner", ruleId: "GHSA-43w2-9j62-hq99" }))).toBe("osv-scanner:GHSA-43w2-9j62-hq99");
+  });
+
+  it.each([false, true])("carries fixed versions from an absorbed RustSec advisory, tracking absorption: %s (7)", (track) => {
+    const osv = fakeFinding({ source: "osv-scanner", ruleId: "RUSTSEC-2021-0003", filePath: "Cargo.lock", severity: "medium", fixedIn: ["0.2.14"] });
+    const deny = { ...osv, source: "cargo-deny" as const, severity: "high" as const };
+    delete deny.fixedIn;
+    const absorbed = track ? new Map<StaticFinding, StaticFinding>() : undefined;
+    const result = dedupByRuleClass([osv, deny], undefined, absorbed);
+    expect(result).toEqual([deny]);
+    expect(result[0].fixedIn).toEqual(["0.2.14"]);
+    if (absorbed) expect(absorbed.get(osv)).toBe(deny);
+  });
+
+  it.each([{ fixedIn: [] }, { fixedIn: ["0.2.15"] }])("preserves a winner's explicit fixed versions: $fixedIn (7)", ({ fixedIn }) => {
+    const winner = fakeFinding({ fixedIn });
+    const loser = fakeFinding({ severity: "medium", fixedIn: ["0.2.14"] });
+    expect(dedupByRuleClass([loser, winner])[0].fixedIn).toEqual(fixedIn);
+  });
+
+  it("carries an explicit empty fixed-version list from an exact repeat (7)", () => {
+    const winner = fakeFinding();
+    const loser = fakeFinding({ severity: "medium", fixedIn: [] });
+    expect(dedupByRuleClass([winner, loser])[0].fixedIn).toEqual([]);
   });
 });

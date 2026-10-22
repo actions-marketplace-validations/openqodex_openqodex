@@ -95,6 +95,9 @@ type Outcome = {
 export async function runScanners(args: {
   repoDir: string;
   changedPaths: string[];
+  // A supplied snapshot list, or discovery deferred until a tree adapter runs.
+  // Absent for callers that scan only the change.
+  inventory?: string[] | (() => Promise<string[]>);
   // The changed lines. Absent for a whole-repo review: then every finding
   // in a file of `changedPaths` is kept, whatever its line.
   coverage?: DiffCoverage;
@@ -128,7 +131,19 @@ export async function runScanners(args: {
   // their own checks.
   // A refused file a scanner would have checked is named in its reason.
   const { inputs, refused } = scannerInputs(args.repoDir, args.changedPaths);
-  const chosen = selectScanners({ repoDir: args.repoDir, paths: inputs, config: args.config, facts });
+  const treeAdapters = ADAPTERS.filter((a) => a.tree && selected(a.source) && !args.config.disabledScanners.includes(a.source) && !a.skip?.());
+  let treeInputs: ReturnType<typeof scannerInputs> | undefined;
+  let inventoryError: string | null = null;
+  if (args.inventory !== undefined && treeAdapters.length > 0) {
+    try {
+      const inventory = typeof args.inventory === "function" ? await args.inventory() : args.inventory;
+      const paths = [...new Set(treeAdapters.flatMap((a) => a.files(inventory, facts)))];
+      if (paths.length > 0) treeInputs = scannerInputs(args.repoDir, paths);
+    } catch (err) {
+      inventoryError = `Repository lockfiles: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  const chosen = selectScanners({ repoDir: args.repoDir, paths: inputs, inventory: treeInputs?.inputs, config: args.config, facts });
   const choices = new Map(chosen.map((c) => [c.scanner, c]));
   const selection: ScannerSelection[] = [
     ...chosen.map(({ scanner, wanted, paths, projects, skip }) => ({ scanner, wanted, paths, projects, skip })),
@@ -136,10 +151,14 @@ export async function runScanners(args: {
   ];
   const builtins = ADAPTERS.filter((a) => selected(a.source)).map((adapter) =>
     guard(adapter.source, async () => {
-      const outcome = await runBuiltin(adapter, choices.get(adapter.source)!, facts, { ...args, changedPaths: inputs, scratch });
-      const held = refused.size === 0 || outcome.summary.status === "disabled" ? [] : adapter.files([...refused.keys()], facts);
+      const treeError = treeAdapters.includes(adapter) ? inventoryError : null;
+      const choice = choices.get(adapter.source)!;
+      if (treeError && choice.paths.length === 0) return skippedOutcome(adapter.source, "failed", treeError, Date.now());
+      const outcome = await runBuiltin(adapter, choice, facts, { ...args, changedPaths: inputs, scratch, inventoryError: treeError });
+      const heldBack = new Map([...refused, ...(adapter.tree ? treeInputs?.refused ?? [] : [])]);
+      const held = heldBack.size === 0 || outcome.summary.status === "disabled" ? [] : adapter.files([...heldBack.keys()], facts);
       if (held.length === 0) return outcome;
-      const named = held.map((p) => `${p}: ${refused.get(p)}`).join("; ");
+      const named = held.map((p) => `${p}: ${heldBack.get(p)}`).join("; ");
       return { ...outcome, summary: { ...outcome.summary, reason: outcome.summary.reason ? `${named}; ${outcome.summary.reason}` : named } };
     }),
   );
@@ -162,8 +181,16 @@ export async function runScanners(args: {
     if (coverage ? overlapsCoverage(f, coverage) : inScope.has(f.filePath)) return null;
     return inScope.has(f.filePath) ? "changed-lines" : "outside-change";
   };
+  const informational = new Set<StaticFinding>();
+  const treePaths = new Map(ADAPTERS.filter((a) => a.tree).map((a) => [a.source,
+    new Set((choices.get(a.source)?.paths ?? []).map((p) => path.normalize(p))),
+  ]));
   let merged = raw.filter((f) => {
     const stage = lineStage(f);
+    if (stage !== null && args.inventory !== undefined && treePaths.get(f.source as BuiltinScanner)?.has(f.filePath)) {
+      informational.add(f);
+      return true;
+    }
     if (stage !== null) dropped.set(f, stage);
     return stage === null;
   });
@@ -201,9 +228,12 @@ export async function runScanners(args: {
     const settings = new Set(merged.filter((f) => f.ruleId === SETTINGS_RULE && isOwnCandidate(f)));
     const fixtures = dropFixtureFindings(merged.filter((f) => !settings.has(f)));
     postFixture = [...fixtures.kept, ...settings];
-    fixturesDropped = fixtures.droppedCount;
     const survived = new Set(postFixture);
-    for (const f of merged) if (!survived.has(f)) dropped.set(f, "fixture");
+    for (const f of merged) {
+      if (survived.has(f)) continue;
+      dropped.set(f, "fixture");
+      if (!informational.has(f)) fixturesDropped++;
+    }
   }
 
   const postRules =
@@ -224,7 +254,8 @@ export async function runScanners(args: {
   // line start, line end, rule id, message.
   const ensemble = [...ADAPTERS.map((a) => a.source), ...(args.custom ?? []).map((c) => c.source)];
   const order = placeOrder(ensemble);
-  const ordered = [...postRules].sort(order);
+  const ordered = postRules.filter((f) => !informational.has(f)).sort(order);
+  const outsideFindings = postRules.filter((f) => informational.has(f)).sort(order);
   const mergedInto = new Map<StaticFinding, string[]>();
   const absorbed = new Map<StaticFinding, StaticFinding>();
   const deduped = dedupByRuleClass(ordered, mergedInto, absorbed);
@@ -241,6 +272,12 @@ export async function runScanners(args: {
       reviewSeverity: mapScannerSeverity(f.severity),
       ...(mergedInto.has(f) ? { alsoReportedBy: mergedInto.get(f) } : {}),
     };
+  });
+  const outside: Candidate[] = outsideFindings.map((f, i) => {
+    const id = `o${i + 1}`;
+    ids.set(f, id);
+    dropped.set(f, "shown");
+    return { ...f, message: redactCut(f.message, secrets), id, token: `${f.source}:${f.ruleId}`, reviewSeverity: mapScannerSeverity(f.severity) };
   });
   const { trail, omitted, stages } = trailOf(raw.concat(own), { dropped, absorbed, ids, order, secrets });
 
@@ -263,6 +300,7 @@ export async function runScanners(args: {
   return {
     scan: {
       candidates,
+      ...(outside.length > 0 ? { outside } : {}),
       scanners,
       fixturesDropped,
       secretFingerprints: fingerprintSecrets(secrets),
@@ -310,7 +348,7 @@ const TRAIL_MAX = 5000;
 
 // Kept and merged first: past TRAIL_MAX the trail loses the findings
 // farthest from the change, never a candidate or what dedup folded into one.
-const TRAIL_ORDER: readonly TrailStage[] = ["kept", "merged", "disabled-rule", "fixture", "changed-lines", "outside-change"];
+const TRAIL_ORDER: readonly TrailStage[] = ["kept", "shown", "merged", "disabled-rule", "fixture", "changed-lines", "outside-change"];
 
 // One trail entry per finding, a scanner's or OpenQodex's own: the stage
 // that dropped it, the candidate it became (`id`), or the candidate dedup
@@ -336,13 +374,14 @@ function trailOf(
     fixture: "fixtures",
     "disabled-rule": "rules",
     merged: "merged",
+    shown: "shown",
   };
   const staged = findings.map((f) => {
     const stage: TrailStage = at.dropped.get(f) ?? (at.absorbed.has(f) ? "merged" : "kept");
     const field = COUNTED[stage];
     if (field !== undefined) {
       const counts = stages.get(f.source) ?? { changedLines: 0, fixtures: 0, rules: 0, merged: 0 };
-      counts[field] += 1;
+      counts[field] = (counts[field] ?? 0) + 1;
       stages.set(f.source, counts);
     }
     return { f, stage };
@@ -357,7 +396,7 @@ function trailOf(
       severity: f.severity,
       stage,
     };
-    if (stage === "kept") entry.id = at.ids.get(f);
+    if (stage === "kept" || stage === "shown") entry.id = at.ids.get(f);
     if (stage === "merged") entry.into = at.ids.get(at.absorbed.get(f)!);
     return entry;
   });
@@ -539,6 +578,7 @@ async function runBuiltin(
     config: Config;
     resolveTool: ResolveTool;
     scratch: Scratch;
+    inventoryError: string | null;
   },
 ): Promise<Outcome> {
   const started = Date.now();
@@ -565,12 +605,17 @@ async function runBuiltin(
   const result = await adapter.run({
     repoDir: args.repoDir,
     changedPaths: args.changedPaths,
+    ...(adapter.tree ? { treePaths: choice.paths.filter((p) => !args.changedPaths.includes(p)) } : {}),
     tool,
     coverage: args.coverage,
     facts,
     scratch: args.scratch,
   });
-  return ranOutcome(source, result, tool?.version ?? null, ranFrom, { resolveMs, files: choice.paths.length });
+  if (args.inventoryError) {
+    if (result.error) result.error = `${result.error}; ${args.inventoryError}`;
+    else result.note = [result.note, args.inventoryError].filter(Boolean).join("; ");
+  }
+  return ranOutcome(source, result, tool?.version ?? null, ranFrom, { resolveMs, files: choice.paths.length }, adapter.tree);
 }
 
 async function runCustom(
@@ -630,9 +675,10 @@ function ranOutcome(
   version: string | null,
   started: number,
   cost: Cost,
+  errorIsFailure = false,
 ): Outcome {
   if (result.skipped) return skippedOutcome(scanner, "disabled", result.skipped, started, cost);
-  const failed = result.error !== null && result.findings.length === 0;
+  const failed = result.error !== null && (result.findings.length === 0 || errorIsFailure);
   return {
     summary: {
       scanner,
@@ -913,8 +959,11 @@ export function dedupByRuleClass(
     }
     for (const f of kept.values()) emitted.add(f);
     if (merged && others.length > 0) merged.set(winner, others);
-    if (absorbed) {
-      for (const f of bucket) if (!emitted.has(f)) absorbed.set(f, f.source === winner.source ? kept.get(f.ruleId)! : winner);
+    for (const f of bucket) {
+      if (emitted.has(f)) continue;
+      const into = f.source === winner.source ? kept.get(f.ruleId)! : winner;
+      if (into.fixedIn === undefined && f.fixedIn !== undefined) into.fixedIn = f.fixedIn;
+      absorbed?.set(f, into);
     }
   }
   // Walk the input once so survivors keep their input order.
