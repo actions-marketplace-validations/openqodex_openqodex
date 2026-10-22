@@ -173,14 +173,16 @@ export function splitArgs(files: string[], budgetBytes: number): string[][] {
 // Runs `step` once per chunk of `files`, one after another, under the
 // scanner's one timeout: each step gets the milliseconds still left. The
 // findings of every chunk are merged in order; a failed step fails the run.
+// `completed`, when given, retains completed chunks even when a later one fails.
 export async function runInChunks<T>(
   name: string,
   files: string[],
   timeoutMs: number,
   step: (chunk: string[], timeLeftMs: number) => Promise<T[]>,
+  completed?: T[],
 ): Promise<T[]> {
   const deadline = Date.now() + timeoutMs;
-  const out: T[] = [];
+  const out: T[] = completed ?? [];
   for (const chunk of splitArgs(files, ARG_BUDGET_BYTES)) {
     const left = deadline - Date.now();
     if (left <= 0) throw new Error(`${name} timed out after ${Math.round(timeoutMs / 1000)}s`);

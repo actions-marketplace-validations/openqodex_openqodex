@@ -48,6 +48,7 @@ export type StaticFinding = {
   severity: ScannerSeverity;
   message: string; // secrets already redacted by the adapter
   reference: string | null;
+  fixedIn?: string[];
 };
 
 // A scanner finding that survived the changed-line filter, the fixture
@@ -101,8 +102,9 @@ export type RulePack = { pack: string; sha256: string; bytes: number };
 
 // `changedLines`: the changed-line filter (a file outside the change, or no
 // changed line in the span); `fixtures`: the fixture filter; `rules`:
-// review.disabled_rules; `merged`: dedup, into another candidate.
-export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number };
+// review.disabled_rules; `merged`: dedup, into another candidate;
+// `shown`: tree advisories shown for information, never candidates.
+export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number; shown?: number };
 
 // What the selector chose for one scanner on this change: whether it runs,
 // the changed files that call for it, the project folders that decide how
@@ -113,8 +115,9 @@ export type ScannerSelection = { scanner: ScannerSource; wanted: boolean; paths:
 // Where a scanner finding left the pipeline: "outside-change" (its file is
 // not in the change), "changed-lines" (its file is, but no line of its span
 // changed), "fixture", "disabled-rule", "merged" (dedup folded it into the
-// candidate `into`) or "kept" (it is the candidate `id`).
-export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept";
+// candidate `into`), "shown" (outside advisory `id`), or "kept"
+// (it is the candidate `id`).
+export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept" | "shown";
 
 // One raw finding of one scanner, or one of OpenQodex's own candidates
 // about the change, and what became of it. Never the message, which can
@@ -136,6 +139,8 @@ export type SecretFingerprint = { length: number; sha256: string };
 
 export type ScanResult = {
   candidates: Candidate[];
+  // Tree advisories shown for information, never review candidates.
+  outside?: Candidate[];
   scanners: ScannerRunSummary[];
   fixturesDropped: number;
   secretFingerprints: SecretFingerprint[];

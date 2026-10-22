@@ -34,6 +34,11 @@ const version = JSON.parse(read("packages/cli/package.json")).version;
 const BIN = join(root, "packages/cli/dist/bin.js");
 
 const README = "README.md";
+const dependencySentence = "Every supported lockfile in the repository is checked against osv.dev at every review and scan of a change.";
+for (const page of [README, "docs/scanners.md"]) {
+  if (!read(page).includes(dependencySentence)) fail(page, "must state the repository lockfile check");
+}
+if (ADAPTERS.find((a) => a.source === "osv-scanner")?.tree !== true) fail(README, "the every supported lockfile claim needs a tree adapter");
 const AGENT_PAGES = [README, "docs/for-agents.md", "docs/quickstart.md", "skills/openqodex/SKILL.md"];
 
 // The names the pages use for a scanner, by adapter source.

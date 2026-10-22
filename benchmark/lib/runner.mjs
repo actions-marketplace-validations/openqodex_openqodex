@@ -61,7 +61,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { REVIEWER_FAILED } from "./reviewers.mjs";
 import { SCAN_CONFIG } from "./scan-score.mjs";
-import { RULES_VERSION, jobIdOf } from "./score.mjs";
+import { RULES_VERSION, jobIdOf, shownFindings } from "./score.mjs";
 
 // The arguments of one laptop review (Claude Code or Codex through
 // `openqodex review`), the same for planted and pull request cases.
@@ -420,7 +420,7 @@ export function sampleRecord({ job, attempt, result, report, who, startedAt, fai
     verdict: report?.verdict ?? null,
     reviewerUsed: who ?? null,
     ...(job.reviewer === "claude" ? claudeModels(usageRecord) : {}),
-    findings: report ? report.findings.length + (report.outside_change?.length ?? 0) : null,
+    findings: report ? shownFindings(report).length : null,
     usage: report?.completion?.reviewer?.usage ?? null,
     reviewerMs: report?.completion?.reviewer?.duration_ms ?? null,
     rounds: report?.completion?.reviewer?.rounds ?? null,

@@ -60,6 +60,7 @@ describe("scan", () => {
     const dir = demo("timings-scan");
     scan = run("timings-scan", dir, ["scan"]);
     report = readJson<Report>(join(reportDir(dir), "report.json"));
+    console.log(`Demo scan_ms: ${report.timings?.scan_ms}`);
   }, 600_000);
 
   it("1, 2, 3, 5. times the change and the scan, scan_ms covers the slowest scanner, and no other phase is named", () => {

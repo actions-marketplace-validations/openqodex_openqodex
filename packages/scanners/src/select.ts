@@ -35,12 +35,13 @@ export type ScannerChoice = {
 export { DISABLED_REASON };
 export const NOTHING_TO_CHECK = "nothing to check";
 
-export function selectScanners(args: { repoDir: string; paths: string[]; config: Config; facts?: RepoFacts }): ScannerChoice[] {
+export function selectScanners(args: { repoDir: string; paths: string[]; config: Config; facts?: RepoFacts; inventory?: string[] }): ScannerChoice[] {
   const facts = args.facts ?? repoFacts(args.repoDir);
   return ADAPTERS.map((adapter) => {
     const base = { scanner: adapter.source, inProcess: IN_PROCESS.has(adapter.source), paths: [] as string[], projects: [] as string[], reason: null };
     if (args.config.disabledScanners.includes(adapter.source)) return { ...base, wanted: false, skip: DISABLED_REASON };
-    const files = adapter.files(args.paths, facts);
+    const paths = adapter.tree && args.inventory ? [...new Set([...args.paths, ...args.inventory])] : args.paths;
+    const files = adapter.files(paths, facts);
     if (files.length === 0) return { ...base, wanted: false, skip: adapter.idle?.(args.paths, facts) ?? NOTHING_TO_CHECK };
     const projects = adapter.projects?.(files, facts) ?? [];
     const skip = adapter.skip?.() ?? null;
