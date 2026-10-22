@@ -23,6 +23,10 @@ describe("board calibration", () => {
     const r = record(); r.build = { ...build, tree: "e".repeat(40) };
     expect(() => validateCalibration(r, { build, board })).toThrow(/build/);
   });
+  it("refuses judge failures even when the remaining labels agree", () => {
+    const r = { ...record(), judgeFailures: { items: 1, labels: 2, byClass: { positive: 1, negative: 1 } } };
+    expect(() => validateCalibration(r, { build, board })).toThrow(/judge failures/);
+  });
   it("judges blind before reading published labels", async () => {
     let judged = false;
     const complete = async (request) => {

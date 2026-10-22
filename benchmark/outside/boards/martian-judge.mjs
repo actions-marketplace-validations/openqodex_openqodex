@@ -221,7 +221,7 @@ export async function main(argv = process.argv.slice(2)) {
  * returns 0, or 1 with the problems printed. main() verifies the checkout
  * first.
  */
-export async function runPipeline({ out, convert, checkout, python, state, judge, settings, calibration = false, signal }) {
+export async function runPipeline({ out, convert, checkout, python, state, judge, settings, calibration = false, signal, beforeStep }) {
   const secrets = endpointSecrets(settings.baseUrl, settings.apiKey);
   const plan = calibration ? calibrationSteps(judge.id) : steps(judge.id);
   const work = join(out, "work");
@@ -255,6 +255,7 @@ export async function runPipeline({ out, convert, checkout, python, state, judge
   let dedupFallbacks = null;
   for (const s of plan) {
     signal?.throwIfAborted();
+    await beforeStep?.({ step: s.step, work });
     say(`\n== ${s.step} ==\n`);
     const r = await runStep(...withoutCore(python, s.args), { cwd: work, env: s.judge ? withJudge : base, emit, secrets, keepStdout: Boolean(s.stdout), signal });
     if (s.stdout) writeFileSync(join(work, s.stdout), r.stdout);

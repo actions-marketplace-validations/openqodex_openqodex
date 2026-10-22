@@ -37,6 +37,7 @@ export function compareLabels(verdicts, published, classes) {
 export const agreementOf = (counts) => Object.fromEntries(Object.entries(counts.byClass).map(([name, c]) => [name, c.total === 0 ? null : c.agree / c.total]));
 
 export function validateCalibration(record, { build, board }) {
+  need(record.status !== "failed" && !record.judgeFailures?.items, "judge failures prevent accepting this calibration");
   need(equal(record.build, build), "build differs from the comparison build");
   need(equal(record.board, board) && record.judgeModel === board.judgeModel && record.promptHash === board.promptHash, "board, prompt or judge differs from the comparison board");
   need(record.version === 1 && typeof record.vendor === "string" && record.vendor.length > 0 && typeof record.labelUnit === "string" && record.labelUnit.length > 0 && Number.isFinite(record.costUsd) && record.costUsd >= 0, "missing vendor, label unit or cost");

@@ -21,3 +21,7 @@ Written before implementation.
 17. More than three connection drops are retried, or an HTTP failure is treated as a retryable drop.
 18. Cached responses lose their usage, or a truncated response is cached as a completed verdict.
 19. A cached response writes the upstream key or endpoint to disk.
+20. The captured dedup answer repeats indices 5 and 6, is cached, and is replayed instead of making a fresh ask. Existing cache entries must pass the same stage validation as new answers.
+21. Invalid JSON, an extraction without string issues, incomplete or duplicate dedup indices, or a match without a boolean and numeric confidence is cached as a verdict.
+22. Three invalid answers abort later items, multiply through the pipeline's own retries, disappear from the failure count, or omit their paid usage. Invalid text must survive beside the cache.
+23. A failed judge item becomes a negative label or a successful calibration. Its affected reviews and published class counts must remain in the record as failures.
