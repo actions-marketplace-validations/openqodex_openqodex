@@ -22,7 +22,7 @@ export type Choice = { kind: "all" } | { kind: "target"; target: string } | null
 // review's usual 45 seconds left semgrep, osv-scanner and hadolint out of the
 // demo's first run on an Apple Silicon Mac (measured 2026-10-07): the first
 // review had the fewest scanners of any. Two minutes covers the big downloads on an
-// ordinary line and still bounds the wait; the review itself takes one to three.
+// ordinary line and still bounds the wait; the review itself takes a few minutes.
 export const FIRST_REVIEW_INSTALL_WAIT_MS = 120_000;
 
 // How the first review ended: it ran to a complete report (finished), ran
@@ -96,7 +96,7 @@ async function firstReview(o: Parameters<typeof reviewAfterInit>[0]): Promise<{ 
     const change = await getChange({ repoRoot: o.repoRoot, scope: {}, exclude: config.exclude, defaultBase: config.defaultBase, overlay });
     if (change.files.length > 0) {
       out();
-      out("Reviewing your change now. This takes one to three minutes.");
+      out("Reviewing your change now. This takes a few minutes.");
       return await review({ overlay });
     }
     if (!o.interactive) {

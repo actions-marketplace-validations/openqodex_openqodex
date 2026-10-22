@@ -30,7 +30,8 @@
             "path": "db/migrate/archive.rb",
             "line": 8,
             "body": "Archive migration loses rows. The migration deletes the archived ledger rows instead of moving them to the archive table, and no test covers the archive endpoint when the ledger is empty. Archived history is lost for good. Fix: Move the rows in one transaction, and add a test for an empty ledger.",
-            "created_at": "2026-10-11T10:00:00.000Z"
+            "created_at": "2026-10-11T10:00:00.000Z",
+            "tier": "finding"
           }
         ],
         "openqodex": {
@@ -78,13 +79,15 @@
             "path": "src/checkout.ts",
             "line": 40,
             "body": "Coupon can be applied twice. The cart total is read before the discount lock is taken. Also, the refund handler logs the full card number. Both put customers at risk. Fix: Take the discount lock before reading the total, and mask the card number before logging.",
-            "created_at": "2026-10-11T10:00:00.000Z"
+            "created_at": "2026-10-11T10:00:00.000Z",
+            "tier": "finding"
           },
           {
             "path": "src/checkout.ts",
             "line": 41,
             "body": "Discount lock taken after the total is read. The cart total is read before the discount lock is taken. One coupon can be applied twice. Fix: Take the lock first.",
-            "created_at": "2026-10-11T10:00:00.000Z"
+            "created_at": "2026-10-11T10:00:00.000Z",
+            "tier": "finding"
           }
         ],
         "openqodex": {
@@ -128,13 +131,15 @@
             "path": "src/orders/page.py",
             "line": 12,
             "body": "First page of orders is skipped. The pagination offset multiplies the page number without subtracting one. The first page of orders is never shown. Fix: Subtract one from the page number before multiplying.",
-            "created_at": "2026-10-11T10:00:00.000Z"
+            "created_at": "2026-10-11T10:00:00.000Z",
+            "tier": "finding"
           },
           {
             "path": "src/orders/page.py",
             "line": 3,
             "body": "Vague constant name. The constant is named VALUE. A reader cannot tell what it holds. Fix: Name it PAGE_SIZE.",
-            "created_at": "2026-10-11T10:00:00.000Z"
+            "created_at": "2026-10-11T10:00:00.000Z",
+            "tier": "finding"
           }
         ],
         "openqodex": {
