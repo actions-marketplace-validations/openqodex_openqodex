@@ -64,6 +64,7 @@ export function renderMarkdown(report: Report): string {
     `Change ${code(report.change_id.slice(0, 12))} against ${code(report.base.ref)} (${code(report.base.sha.slice(0, 12))}), ${files} ${files === 1 ? "file" : "files"}, +${additions} -${deletions}.`,
   ];
   if (report.summary) out.push("", "## Summary", "", quote(report.summary));
+  if (report.notes?.length) out.push("", "## Review notes", "", ...report.notes.map((note) => `- ${cell(note)}`));
 
   out.push("", "## Findings", "");
   if (report.findings.length === 0) out.push("No findings on the changed lines.");

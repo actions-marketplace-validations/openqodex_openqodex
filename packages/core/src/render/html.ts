@@ -581,7 +581,7 @@ function accounting(report: Report): string {
   const scanners = report.scanners ?? [];
   const own = findings.filter((f) => !f.candidate).length;
   const fromScanners = findings.length - own;
-  const notKept = scanners.map((s) => [s.scanner, (s.rawCount || 0) - (s.keptCount || 0)] as const).filter(([, n]) => n > 0);
+  const notKept = scanners.map((s) => [s.scanner, (s.rawCount || 0) - (s.keptCount || 0) - (s.stages?.shown || 0)] as const).filter(([, n]) => n > 0);
   const dropped = report.dropped ?? [];
   const notReviewed = report.not_reviewed ?? [];
   const low = report.low_confidence ?? [];
@@ -804,7 +804,8 @@ ${masthead(report, complete, impactSentence(report))}
 </div>
 ${verdictBar(report, complete, findings, filesTotal)}
 <main class="page">
-${summary(report)}
+${summary(report)}${report.notes?.length ? `
+<section class="coverage" aria-label="Review notes"><h2>Review notes</h2><ul>${report.notes.map((note) => `<li>${text(note)}</li>`).join("")}</ul></section>` : ""}
 ${coverage(report)}
 <div class="review-body">
 ${filesNav(entries, findingsByPath, filesTotal)}

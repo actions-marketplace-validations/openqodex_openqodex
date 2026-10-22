@@ -61,6 +61,7 @@ export function makeConfig(over: Partial<Config> = {}): Config {
     exclude: [],
     disabledRules: [],
     includeFixtures: false,
+    instructionsFiles: [],
     disabledScanners: [],
     custom: [],
     ...over,

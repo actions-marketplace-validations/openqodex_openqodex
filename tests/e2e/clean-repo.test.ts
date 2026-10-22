@@ -16,6 +16,7 @@ describe("clean repository", () => {
     const dir = baseline(); appendFileSync(join(dir, "app/server.py"), "\n# Harmless comment\n");
     const result = run("clean-comment", dir, ["scan", "--format", "json"]);
     expect(result.status).toBe(0);
+    expect(report(dir).outside_change).toEqual([]);
     expect(report(dir).findings.map((f) => `${f.file_path}:${f.source}`)).toEqual([]);
   });
 });

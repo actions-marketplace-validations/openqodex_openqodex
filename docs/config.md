@@ -22,6 +22,7 @@ An unknown key prints a warning and is ignored. A name in `scanners.disable` tha
 | `review.disabled_rules` | `[]` | Globs on a finding's citation, such as gitleaks:generic-api-key or lens:react-*. |
 | `review.default_base` | `null` | The branch or ref to diff against when the branch has no upstream; null uses the remote's default branch. |
 | `review.include_fixtures` | `false` | Keep scanner findings in test fixtures, mocks and snapshots. |
+| `review.instructions_files` | `[]` | Repo-relative convention paths or globs the owners chose for the reviewer. Empty reads none. |
 | `scanners.disable` | `[]` | Built-in scanners to switch off, by name. |
 | `scanners.custom` | `[]` | Open source scanners to add by GitHub link; each runs only after openqodex trust. |
 | `graph.enabled` | `true` | Show the callers and importers of the changed code in the brief. |
@@ -53,6 +54,25 @@ scanners:
 graph:
   enabled: true
 ```
+
+## Convention files
+
+`review.instructions_files` defaults to `[]`. Only the files the owners list are supplied to the reviewer. There is no automatic discovery during a review.
+
+```yaml
+review:
+  instructions_files: ["CONTRIBUTING.md", "docs/style.md"]
+```
+
+Paths are relative to the repository. Globs use `*`, `**` and `?`. They match tracked regular files in lexical order within each entry. Untracked and ignored files need an explicit path. A source list over 4 MB or 50,000 paths is refused as a whole and noted. Files follow the configured order, with duplicates supplied once. A file is at most 32 KB, and the chosen files together are at most 64 KB. A missing path, link, folder, path outside the repository or file past either cap is skipped whole. The receipt and report notes name every omission. A glob with no match is silent.
+
+`init` lists known candidates with their sizes and asks which files the reviewer may use. With no interactive terminal, including `--yes`, it selects nothing and prints the key to set. A review with an empty list prints one hint when candidates exist. Files containing only shipped OpenQodex sections or an unchanged shipped rule file do not count as candidates. Re-running init keeps existing entries in place, drops deselected candidates and appends new choices. It keeps comments and anchors on retained entries. It writes into `pr_review` when that is the existing block. An agent must ask the developer before adding paths.
+
+The brief quotes the chosen files after `.openqodex/custom-instructions.md`. Only conventions that apply to the changed code count. Stated scopes and exceptions apply. Custom instructions win on conflict; a later file never silently overrides an earlier one.
+
+Exact shipped OpenQodex team and instruction sections, current and previous, are removed from the quoted copy, with a note. An unchanged shipped Cursor or Cline rule file is omitted whole, with a note when chosen. Edited files and edited text between those markers stay. A changed launcher command also makes a shipped rule file an owner-edited file. The manifest binds to each supplied file's original bytes and source. Finalize checks only that selection, so changing a skipped file does not invalidate the review.
+
+Local reviews read the developer's own work tree. The Action reads from the commit used for config. The library reads from the merge base inside the review's scopes. Code exclusions do not exclude chosen settings files. Conventions added to the base branch after divergence are not seen by the library. Supplied files and omissions appear in report notes, including the HTML and Markdown reports.
 
 ## Keys from the hosted review
 
@@ -126,6 +146,8 @@ Globs match the path from the repository root, with forward slashes:
 - `?` matches one character except `/`.
 
 There is no negation and no character class.
+
+A glob may be at most 1,024 characters, here, in `review.disabled_rules` and in a custom scanner's `paths`. A longer one could not be matched in bounded time, so OpenQodex refuses the file and names the key; it never treats such a glob as matching nothing.
 
 A `**/` prefix does not match a file at the repository root. `**/*.min.js` matches `web/app.min.js` but not `app.min.js`. To match both, list `**/*.min.js` and `*.min.js`.
 

@@ -14,7 +14,7 @@ AI agents: read the [agent guide](https://github.com/openqodex/openqodex/blob/ma
 
 OpenQodex reviews your code change before you push it. Your change is the commits you have not pushed plus everything uncommitted. OpenQodex runs on your machine, from your coding agent or your terminal.
 
-First, OpenQodex runs the scanners that fit the files you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. A finding is one problem at one place in the code, with a severity. OpenQodex keeps the scanner findings on the lines you changed. It drops findings in test fixtures and in rules you switched off.
+First, OpenQodex runs the scanners that fit the files you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. A finding is one problem at one place in the code, with a severity. OpenQodex keeps the scanner findings on the lines you changed. It drops findings in test fixtures and in rules you switched off. Every supported lockfile in the repository is checked against osv.dev at every review and scan of a change. Advisories outside the changed lines are shown, never counted, and kept out of the reviewer's brief. Each advisory names its fixed versions, or says no fixed version is published.
 
 Then OpenQodex starts a reviewer: a separate Claude Code or Codex process on your own login. By default, the agent that wrote the code does not review it. The reviewer must raise or drop each scanner finding, with a reason. Scripts check that it answered every scanner finding. They also check that it was given every changed line. Then you choose which findings your agent fixes.
 
@@ -51,7 +51,7 @@ After the install, say to your agent: "review my change with openqodex". In your
 For agents, the same install with no question:
 
 ```
-npx -y openqodex@0.12.0 init --yes --agent <host>
+npx -y openqodex@0.13.0 init --yes --agent <host>
 ```
 
 `<host>` is `claude-code`, `codex`, `cursor` or `cline`. In its default sandbox mode, Codex gives commands no network. From Codex, run this line in your own terminal. The [quickstart](https://github.com/openqodex/openqodex/blob/main/docs/quickstart.md) has a prompt to paste into your agent.
@@ -71,7 +71,7 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 - `review --all` reviews every file of the repository, less the paths that `review.paths.exclude` leaves out.
 - `review <branch>` reviews a branch. `review '#42'` reviews a pull request.
 - A review is complete only when every stage ran. Otherwise, `review` prints "Review incomplete" with what is missing. Then it exits 2.
-- The push gate looks for a review of what you push. So does the git pre-push hook that `init` adds, for each `git push` that runs git hooks. `git push --no-verify` skips that hook.
+- The push gate inside your agent looks for a review of your current work. It does not know what a push sends. For a plain `git push`, it asks whether your current work has a passing review. For any other push command, it says it cannot tell. The git pre-push hook that `init` adds checks the exact commits a push sends, for each `git push` that runs git hooks. `git push --no-verify` skips that hook.
 - Both warn by default. They block only when `.openqodex/config.yaml` sets `review.block_on_severity`. Severities run from `critical` through `major`, `minor` and `nitpick` to `info`. A finding at or above the set severity blocks the push.
 - The GitHub Action runs the full review on a pull request when the workflow gives it an Anthropic API key. Without a key, it runs the scanners only. The pre-commit hook also runs the scanners only.
 - `openqodex graph` answers questions about the code, such as who calls a function. An MCP server is a local tool server that your agent starts. `init` gives your agent the graph questions through an MCP server. For the Cline VS Code extension, `init` prints the entry for you to add.
@@ -85,7 +85,7 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 - Inside the Codex sandbox, a second Codex process does not start. So Codex cannot be the reviewer there. OpenQodex tested this with codex-cli 0.160.0 on macOS.
 - No review on your own API key, except in the GitHub Action.
 - No Homebrew formula, no install script and no Docker image in this version. Install through npm.
-- No offline copy of the vulnerability databases. osv-scanner asks osv.dev. cargo-deny downloads the RustSec advisory database.
+- No offline copy of the vulnerability databases. osv-scanner checks every lockfile at every review and scan of a change, through osv.dev. cargo-deny downloads the RustSec advisory database.
 - No review finds every problem. The report names each stage that did not run.
 
 <!-- benchmark-results:start -->
@@ -97,12 +97,18 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 | Codex (codex-graph-on) | gpt-6.1-sol | Planted bugs, dev split | 115/153 (75.2%) | 125/146 (85.6%) to 146/146 (100.0%) | 6/6 (100.0%) | not measured |
 | Scanner only (scan) | no model | Planted bugs, dev split | 32/51 (62.7%) | 35/45 (77.8%) to 40/45 (88.9%) | 1/2 (50.0%) | not measured |
 
+AACR-Bench is a set of real pull requests. Its own evaluator gives the board numbers below.
+
+| Reviewer | Model | Cases | Issue recall | Semantic precision | Semantic recall | Semantic F1 | Noise rate | Line precision | Line recall | Cost per review |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Library (model-gpt-6.1-sol-graph-on) | gpt-6.1-sol | AACR-Bench, dev split, dev-laptop subset | not yet ruled | 22.8% | 5.2% | 8.5% | 77.2% | 49.4% | 11.3% | $0.0839 |
+
 [Full results and how to read them](https://github.com/openqodex/openqodex/blob/main/docs/benchmark-results.md)
 <!-- benchmark-results:end -->
 
 ## Built-in scanners
 
-OpenQodex has 22 built-in scanners. A scanner runs only when your change holds a file it reads. Some scanners also read the project or folder around a changed file. Each scanner that needs a download gets it on first use. OpenQodex pins each download to one version.
+OpenQodex has 22 built-in scanners. Most scanners run when your change holds a file they read. osv-scanner checks every supported lockfile in the repository at every review and scan of a change. Some scanners also read the project or folder around a changed file. Each scanner that needs a download gets it on first use. OpenQodex pins each download to one version.
 
 | What it checks | Built-in scanners |
 |---|---|

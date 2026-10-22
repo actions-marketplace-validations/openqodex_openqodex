@@ -81,6 +81,8 @@ Inside a repository, `init` creates two files in `.openqodex/`, and so does the 
 - `.openqodex/config.yaml`: the config, every key at its default with a comment. `config` lists every key. It is not created while a `.openqodex.yaml` sits at the root of the repository; that file is still read, and `init` says how to move it.
 - `.openqodex/custom-instructions.md`: what a reviewer of this repository must know: conventions, what never to flag, what always to check. The review brief carries its text word for word. A file over 32 KB stops the review with a message; nothing in it is cut. The brief shows it to the reviewer as quoted text from the repository, because anyone who can commit can change it. It can widen or narrow what the reviewer flags, and a candidate dropped because of it says so in the report; it cannot give the reviewer a tool, skip a check or change the finding shape.
 
+The brief can also quote [convention files](config.md#convention-files) chosen by the developer. Never add a path on your own. Ask which files the reviewer may use, then set only what they name.
+
 Both are meant to be committed, so the whole team shares them. A file that exists is never touched. `.openqodex/.gitignore` keeps the review reports out of git, so after the first run `git status` shows only these files and the `.gitignore`.
 
 ## User scope and project scope
@@ -180,7 +182,7 @@ OpenQodex writes no Cline hook. The rule carries the instruction section and ask
 
 ## What the push gate does
 
-The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote for exactly the change being pushed, in your own `~/.openqodex/receipts/`. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
+The gate runs in Claude Code and Codex, through the hooks above, and in the git pre-push hook below. It looks for the record `review` wrote, in your own `~/.openqodex/receipts/`. The check inside your agent looks for the record of your current work and does not know what a push sends: for a plain `git push` it asks whether your current work has a passing review, and for any other push command it says it cannot tell. The git pre-push hook looks for the record of exactly the change being pushed. Report files a branch carries under `.openqodex/` never count. It never scans, never starts a review, and never approves a push for you: your agent's own permission prompt for `git push` still applies.
 
 - A complete review of this change that passed: the gate says nothing.
 - A complete review of this change that is blocked: the gate denies the push when `review.block_on_severity` is set, with the counts and the absolute path of `report.html`, and tells the agent to ask you "fix all, or tell me which?" and to fix only the findings you name.

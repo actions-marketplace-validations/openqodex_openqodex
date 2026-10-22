@@ -7,10 +7,10 @@
       "repository": "withmartian/code-review-benchmark",
       "commit": "e616e849755441da38f18bf3adba2c9583b03803",
       "judgeModel": "gpt-5.2",
-      "promptHash": "7370dfb21bed01655aada1d4d75f32e07c92e4c4c86dfc6cf6d47058a65ce16d",
+      "promptHash": "c04a15540cb245ee8659012294324322a7f43f552fd8e7bfb3a3cc37cc961bdb",
       "metric": "F1",
       "profile": "core",
-      "pinHash": "7a32987c51f7fe19c29950baeb1b9dbcbf41e7419def8649bbd699ca4039b54b"
+      "pinHash": "3b8c10c4b22f4822ad7653fdfe02e243894dc4d075be3b3bc3b696fe78f31d6f"
     },
     "aacr": {
       "name": "aacr",
@@ -375,6 +375,20 @@
       "agreement": {
         "caught": 0.8536585365853658,
         "missed": 0.8888888888888888
+      }
+    },
+    {
+      "file": "index/calibration/martian-2026-10-21.json",
+      "sha256": "aabb2975a9da6fc2099dfe311228f545381430a3de7499d837299daf95b2a90d",
+      "build": {
+        "commit": "c88b31bd989a871529088183b3c2908a3059f7c4",
+        "tree": "d6c42f75807e742ba15b21e3207469fe4cf202ce",
+        "bundleHash": "117d55ba250151d8bdbe84e7cb9da7520d337acdaa3470086b7d524f49e7a66d",
+        "version": "0.12.0"
+      },
+      "agreement": {
+        "positive": 0.9245283018867925,
+        "negative": 0.9692307692307692
       }
     }
   ],

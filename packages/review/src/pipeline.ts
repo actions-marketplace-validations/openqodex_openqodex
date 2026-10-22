@@ -9,7 +9,7 @@ import { DIFF_CAP_BYTES, loadLensCatalog, safeGit, selectLensesForDiff } from "@
 import type { Change, Config, HotSpot, ImpactSummary, ResolveTool, RuleCoverage, ScanResult, ScannerSource, SelectedLens, WholeRepo } from "@openqodex/core";
 import { buildGraph, detectImpact, emptyImpact, hotSymbols, isManifest, langOf } from "@openqodex/graph";
 import type { Graph, GraphStore, Lease, ListedFile } from "@openqodex/graph";
-import { customAdapters, runScanners } from "@openqodex/scanners";
+import { customAdapters, repoInventory, runScanners } from "@openqodex/scanners";
 import { redactStored } from "./redact.js";
 
 export type PipelineResult = {
@@ -64,6 +64,7 @@ export async function scanChange<C extends Change>(args: {
   // How a base version is read, when not with git show in repoRoot (the
   // server review's scope-checking reader over its private clone).
   readBase?: (path: string, maxBytes: number) => Promise<Buffer | null>;
+  inventory?: string[] | (() => Promise<string[]>);
 }): Promise<PipelineResult & { change: C }> {
   const { repoRoot, config, change, host } = args;
   const workDir = args.workDir ?? repoRoot;
@@ -73,6 +74,7 @@ export async function scanChange<C extends Change>(args: {
     repoDir: workDir,
     changedPaths: change.changedPaths,
     coverage: args.wholeRepo ? undefined : change.coverage,
+    ...(args.wholeRepo ? {} : { inventory: args.inventory ?? (() => repoInventory(workDir, config)) }),
     baseText: async (path) => {
       if (args.readBase) return (await args.readBase(path, BASE_TEXT_BYTES))?.toString("utf8") ?? null;
       const r = await safeGit(repoRoot, ["show", "--no-textconv", `${change.baseSha}:${path}`]);

@@ -67,6 +67,7 @@ import { gitEnv, repoRoot } from "./cases.mjs";
 import { loadModelEnv, probedDeployment } from "./model-env.mjs";
 import { createOpenAIReviewer } from "./openai-reviewer.mjs";
 import { attemptDir, scannerRows } from "./runner.mjs";
+import { shownFindings } from "./score.mjs";
 import { createScriptedReviewer, DEFAULT_SCRIPT, readScript } from "./scripted-model.mjs";
 
 const BOARDS = new URL("../outside/boards.json", import.meta.url);
@@ -231,7 +232,7 @@ const within = (child, parent) => {
  * address, so that only the refusal was saved (failure 5). Throws before any
  * review when the work root lies in the clone or the results folder.
  */
-export async function serverAttempt({ reviewChange, job, attempt, out, repo, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null, appearsIn = null }) {
+export async function serverAttempt({ reviewChange, job, attempt, out, repo, config, reviewer, meter, deadlineMs, workRoot, installRoot, hide = (t) => t, stopped = () => null, appearsIn = null }) {
   for (const [what, dir] of [["the clone", repo.dir], ["the results folder", out]]) {
     if (within(workRoot, dir)) throw new Error(`the work root ${workRoot} lies in ${what} (${dir}); a review writes only in a workDir of its own, outside both`);
   }
@@ -253,7 +254,7 @@ export async function serverAttempt({ reviewChange, job, attempt, out, repo, rev
   let error = null;
   try {
     result = await reviewChange(
-      { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head },
+      { clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, ...(config === undefined ? {} : { config }) },
       meter.wrap(reviewer),
       { profile: "server", workDir, installRoot, budget: { authorize: meter.authorize, deadlineMs }, tools: { web: false, shell: false }, scanners: "preinstalled", onProgress: (line) => progress.push(line) },
     );
@@ -333,7 +334,7 @@ export function serverSampleRecord({ job, attempt, startedAt, wallMs, result, re
     verdict: report?.verdict ?? null,
     requestedModel: requested ?? null,
     ...servedOf(result),
-    findings: report && Array.isArray(report.findings) ? report.findings.length + (report.outside_change?.length ?? 0) : result ? result.findings.length : null,
+    findings: report && Array.isArray(report.findings) ? shownFindings(report).length : result ? result.findings.length : null,
     usage: t ? { calls: t.attempts, input_tokens: t.inputTokens, output_tokens: t.outputTokens, cache_read_tokens: t.cacheReadTokens, cost_usd: t.costUsd } : null,
     reviewerMs: result?.timings?.reviewer_ms ?? null,
     rounds: result ? result.rounds.length : null,

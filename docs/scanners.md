@@ -1,6 +1,6 @@
 # Scanners
 
-OpenQodex has twenty-two built-in scanners. A scanner runs only when the change holds a file that it reads. OpenQodex pins each downloaded scanner to one version. OpenQodex does not use a copy of a built-in scanner from your `PATH`.
+OpenQodex has twenty-two built-in scanners. Most scanners run when the change holds a file they read. Every supported lockfile in the repository is checked against osv.dev at every review and scan of a change. OpenQodex pins each downloaded scanner to one version. OpenQodex does not use a copy of a built-in scanner from your `PATH`.
 
 ## Terms
 
@@ -35,18 +35,20 @@ A selected scanner reads the whole changed file, except where its section below 
 | cargo-deny | the Rust project |
 | trivy, Checkov and TFLint | the folder of each changed Terraform file |
 
+OpenQodex keeps scanner findings on changed lines as candidates. Dependency advisories from osv-scanner outside those lines appear under "Outside the changed lines": shown for information, never counted toward the verdict, and never in the reviewer's brief. Each osv-scanner advisory names its fixed versions or says "No fixed version published". The fixture and disabled-rule filters also apply to these advisories. The severity threshold does not hide them. SARIF includes only findings and unreviewed candidates, so it carries no outside advisories.
+
 OpenQodex keeps the scanner findings on changed lines. Then it drops findings in fixture files, unless `review.include_fixtures` is on. It also drops findings of the rules that `review.disabled_rules` names. Then it merges findings that name the same problem on the same lines. "What scan.json records" below lists these steps.
 
 ## All built-in scanners
 
 <!-- scanner-table:start -->
-| What it checks | Scanner | Version | Runs when the change holds | Needs |
+| What it checks | Scanner | Version | Runs for | Needs |
 |---|---|---|---|---|
 | Secrets in code | gitleaks | 8.21.2 | any file | nothing |
 | Security problems in code | semgrep | 1.94.0 | any file | Python 3.11, downloaded through uv; the Semgrep registry |
 | Security problems in code | bandit | 1.9.4 | a `.py` or `.pyi` file | the same Python as semgrep |
 | Security problems in code | brakeman | 6.2.1 | a Ruby or Rails file in a Rails app | Ruby 3.0 or newer |
-| Dependencies with known vulnerabilities | osv-scanner | 2.6.0 | a lockfile, such as `package-lock.json` or `uv.lock` | osv.dev |
+| Dependencies with known vulnerabilities | osv-scanner | 2.6.0 | every supported lockfile in the repository at every review and scan of a change | osv.dev |
 | Dependencies with known vulnerabilities | cargo-deny | 0.20.2 | `Cargo.lock` | Cargo; github.com for the RustSec database |
 | Lint | ruff | 0.8.4 | a `.py` or `.pyi` file | nothing |
 | Lint | oxlint | 1.86.0 | a JavaScript or TypeScript file | nothing |
@@ -76,7 +78,7 @@ Several scanners run only part of their checks, as OpenQodex runs them. These ar
 - trivy runs `trivy config` only, its misconfiguration checks for Terraform, CloudFormation and Kubernetes. It does not run trivy's vulnerability, secret, licence or image scanning.
 - Checkov runs its Terraform, CloudFormation and Kubernetes checks only. It does not run Helm, Kustomize, secret, dependency or image checks. Each Checkov finding has the scanner severity medium.
 - brakeman runs only for a Rails app. Its licence is not open source.
-- osv-scanner checks the lockfiles that its section lists, against osv.dev. It does not read `package.json` or `go.sum`.
+- osv-scanner checks every lockfile that its section lists in the repository, against osv.dev at every review and scan of a change. `scanners.disable: [osv-scanner]` turns this check off. `--offline` skips it. It does not read `package.json` or `go.sum`.
 - cargo-deny checks RustSec advisories and crate sources. It does not check licences.
 - golangci-lint runs its default analyzers plus gosec, the Go security checks.
 - SQLFluff runs eight rules about wrong results and dead code. OpenQodex switches its layout and style rules off.
@@ -85,7 +87,7 @@ Several scanners run only part of their checks, as OpenQodex runs them. These ar
 
 ## Which scanners run, and why
 
-One selector decides which scanners a set of files calls for. A review, a scan, `init`, `doctor --install` and the GitHub Action all use it the same way. A review and a scan ask it about the change. `init`, `doctor --install` and the Action ask it about every file of the repository. These are the tracked files and the untracked files that git does not ignore. With the answer, they download ahead the scanners that later reviews will need.
+One selector decides which scanners a set of files calls for. A review, a scan, `init`, `doctor --install` and the GitHub Action all use it the same way. A review and a scan ask it about the change and, for osv-scanner only, the repository inventory. `init`, `doctor --install` and the Action ask it about every file of the repository. These are the tracked files and the untracked files that git does not ignore. With the answer, they download ahead the scanners that later reviews will need.
 
 The selector checks these things, in this order:
 
@@ -180,10 +182,11 @@ A scanner that fails or is missing does not change the exit code. The report lis
 
 Each scan and each review writes `scan.json` next to its report. Besides the candidates, it records how the selector chose each scanner for the change. It also records what became of each finding that a scanner raised. So a finding that a filter dropped, or that a merge folded away, still counts for its scanner. OpenQodex does not print these records.
 
+- `outside`: one entry per dependency advisory outside the changed lines, with ids `o1`, `o2` and so on. These stay separate from `candidates`.
 - `selection`: one entry for each built-in scanner, then one for each custom scanner, as the selector chose them. `--only` and `--skip` do not change it. Each entry has these fields:
   - `scanner`: the scanner.
   - `wanted`: whether it runs for this change.
-  - `paths`: the changed files that call for it. For a custom scanner, these are the changed files that its `paths` globs match.
+  - `paths`: the files that call for it, including inventory lockfiles for osv-scanner. For a custom scanner, these are the changed files that its `paths` globs match.
   - `projects`: the project folders that decide how it runs.
   - `skip`: why it does not run.
 - `trail`: one entry for each finding that a scanner raised. It also holds one entry for each settings or suppression candidate that OpenQodex raised about the change. Each entry has `token` (`<scanner>:<rule>`), `file`, `lineStart`, `lineEnd`, the scanner's `severity` and `stage`. `stage` is the step that dropped or kept the finding:
@@ -192,13 +195,14 @@ Each scan and each review writes `scan.json` next to its report. Besides the can
   - `fixture`: its file is a fixture, mock or snapshot, and `review.include_fixtures` is off.
   - `disabled-rule`: `review.disabled_rules` names it.
   - `merged`: it names the same problem on the same lines as a finding that OpenQodex kept. `into` holds that candidate's id.
+  - `shown`: it is a dependency advisory shown outside the changed lines. `id` holds its outside id.
   - `kept`: it became a candidate. `id` holds that candidate's id.
 
-  An entry does not hold the finding's message, because a message can quote a secret. The entries come in stage order: kept, merged, disabled-rule, fixture, changed-lines, then outside-change. Within a stage, they come in order of scanner, file, lines and rule. The trail holds at most 5,000 entries. `trailOmitted` counts the rest.
+  An entry does not hold the finding's message, because a message can quote a secret. The entries come in stage order: kept, shown, merged, disabled-rule, fixture, changed-lines, then outside-change. Within a stage, they come in order of scanner, file, lines and rule. The trail holds at most 5,000 entries. `trailOmitted` counts the rest.
 - Each scanner's entry under `scanners`, in `scan.json` and `report.json`, also has these fields:
-  - `stages`: how many of its trail entries each step dropped. `changedLines` counts the outside-change and changed-lines entries. `fixtures`, `rules` and `merged` count the other three steps.
+  - `stages`: how many of its trail entries each step dropped. `changedLines` counts the outside-change and changed-lines entries. `fixtures`, `rules` and `merged` count the other three steps. `shown` counts advisories shown for information, separate from dropped results.
   - `resolveMs`: the time spent to find, check or install its tool before it ran.
-  - `files`: the number of changed files that OpenQodex handed it.
+  - `files`: the number of files that OpenQodex handed it, including inventory lockfiles.
 
 A scanner's `rawCount` is the number of its trail entries, less OpenQodex's own settings and suppression candidates. The number of all its trail entries is its `keptCount` plus the counts in its `stages`.
 
@@ -356,7 +360,7 @@ These are the known misses, where OpenQodex reads less than the scanner:
 ## osv-scanner
 
 - Version: 2.6.0.
-- Runs when: a lockfile in the table below changed. A change to `go.sum` or `package.json` alone does not start osv-scanner. osv-scanner reads the lockfiles in the table.
+- Runs when: there is a change to review or scan and the repository holds a supported lockfile. At every review and scan of a change, osv-scanner checks every lockfile in the table below, less excluded paths and links. `package.json` and `go.sum` are not supported lockfiles. Changed lockfiles and the remaining lockfiles run in parallel, each with its own 90 second budget. A failure in the latter keeps completed chunks and the changed-lockfile findings, and reports partial coverage. Without changed lockfiles, a tree failure is reported as failed.
 - Needs: network access to osv.dev.
 - Network: osv-scanner sends the names and versions of the dependencies in those lockfiles to osv.dev. As OpenQodex runs it, osv-scanner sends no source code. OpenQodex switches its other lookups off:
   - `--no-resolve`: no transitive resolution of a `pom.xml` through deps.dev.
@@ -365,7 +369,7 @@ These are the known misses, where OpenQodex reads less than the scanner:
 - Aliases: osv-scanner can group advisories as aliases of one another. OpenQodex reports such a group as one finding. The finding uses the group's RustSec id when it has one, and otherwise its first id.
 - `--offline`: OpenQodex does not run it. The report lists it as disabled.
 
-| Ecosystem | Lockfiles that start osv-scanner |
+| Ecosystem | Supported lockfiles |
 |---|---|
 | JavaScript | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` |
 | Python | `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `uv.lock`, `pylock.toml`, a `.txt` file with `requirements` in its name |

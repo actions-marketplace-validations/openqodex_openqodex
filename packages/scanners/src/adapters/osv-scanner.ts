@@ -1,6 +1,6 @@
 // OSV-Scanner adapter (dependency vulnerabilities). Runs osv-scanner 2's
-// `scan source --format json --lockfile <path> ...` against each changed
-// lockfile in the working tree and normalizes the vendor JSON into
+// `scan source --format json --lockfile <path> ...` against each admitted
+// lockfile in the repository and normalizes the vendor JSON into
 // StaticFinding[]. This is the only scanner in the ensemble that sees
 // known vulnerabilities in third-party dependencies; the others scan
 // first-party source, not the dependency graph.
@@ -41,13 +41,16 @@ import { safeFileArgs } from "../safe-args.js";
 import { RUSTSEC_ID } from "../same-problem.js";
 import type { Adapter } from "./index.js";
 import { suchAs } from "./words.js";
-import { readRepoFile } from "./read.js";
+import { readRepoFile, repoFileOrReason } from "./read.js";
 
 const OSV_TIMEOUT_MS = 90_000;
 const OSV_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 // A lockfile bigger than this is not read for line mapping; its advisories
 // anchor to line 1.
 const LOCKFILE_MAX_BYTES = 50 * 1024 * 1024;
+// Tree line numbers are informational. Bound their aggregate text while
+// changed lockfiles still get line mapping independently of this budget.
+const TREE_LOCKFILE_TEXT_MAX_BYTES = 64 * 1024 * 1024;
 
 export const OSV_OFFLINE_REASON = "offline, dependency lookups are off";
 
@@ -57,9 +60,8 @@ function offlineReason(): string | null {
   return isOffline() ? OSV_OFFLINE_REASON : null;
 }
 
-// Lockfile / manifest basenames OSV-Scanner understands. We only invoke
-// it when the change touched one of these, so a non-dependency change is a
-// no-op (zero cost, no error). Kept as a basename allowlist rather than
+// Lockfile / manifest basenames OSV-Scanner understands.
+// Kept as a basename allowlist rather than
 // a glob so we don't pass random files to --lockfile and get a parse
 // error per file.
 //
@@ -107,6 +109,7 @@ const LOCKFILE_BASENAMES = new Set<string>([
 export type OsvScannerRunArgs = {
   repoDir: string;
   changedPaths: string[];
+  treePaths?: string[];
   tool: ResolvedTool | null;
   coverage?: DiffCoverage;
 };
@@ -127,10 +130,10 @@ function isLockfilePath(p: string): boolean {
 const LOOKUPS_OFF = ["--no-resolve", "--experimental-disable-plugins", "directory", "--no-call-analysis", "all"];
 
 export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterResult> {
-  // safeFileArgs is defense in depth: each path is the value of a
-  // --lockfile flag, but a flag-shaped path is never handed on.
-  const lockfiles = safeFileArgs(args.changedPaths.filter(isLockfilePath));
-  if (lockfiles.length === 0) return { findings: [], error: null };
+  const lockfiles = args.changedPaths.filter(isLockfilePath).map((p) => path.normalize(p));
+  const changed = new Set(lockfiles);
+  const tree = (args.treePaths ?? []).filter(isLockfilePath).map((p) => path.normalize(p)).filter((p) => !changed.has(p));
+  if (lockfiles.length === 0 && tree.length === 0) return { findings: [], error: null };
   const skipped = offlineReason();
   if (skipped) return { findings: [], error: null, skipped };
   if (!args.tool) return { findings: [], error: "not installed" };
@@ -139,22 +142,16 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
   // without doing IO per advisory. A read failure for one lockfile just
   // means its advisories anchor to line 1 (still inside the diff if the
   // file was added wholesale); never fatal.
-  const lockfileLines = new Map<string, string[]>();
-  for (const rel of lockfiles) {
-    try {
-      const content = await readRepoFile(args.repoDir, rel, LOCKFILE_MAX_BYTES);
-      lockfileLines.set(path.normalize(rel), content.split("\n"));
-    } catch {
-      // Best effort; missing content falls back to line 1 in the parser.
-    }
-  }
+  const lockfileLines = await readLockfileLines(args.repoDir, lockfiles, tree);
 
   // One process per chunk of lockfiles, so a whole-repo list stays under
   // the argument limit; the findings of every chunk are merged.
   const tool = args.tool;
-  try {
-    const findings = await runInChunks("osv-scanner", lockfiles, OSV_TIMEOUT_MS, async (chunk, left) => {
-      const cliArgs = ["scan", "source", "--format", "json", ...LOOKUPS_OFF, ...chunk.flatMap((rel) => ["--lockfile", rel])];
+  const scan = (paths: string[], completed?: StaticFinding[]) =>
+    runInChunks("osv-scanner", paths, OSV_TIMEOUT_MS, async (chunk, left) => {
+      // Escape only command arguments, so repository identity never depends
+      // on the spelling needed to keep a leading dash out of flag parsing.
+      const cliArgs = ["scan", "source", "--format", "json", ...LOOKUPS_OFF, ...safeFileArgs(chunk).flatMap((rel) => ["--lockfile", rel])];
       const run = await execTool(tool.path, cliArgs, {
         cwd: args.repoDir,
         timeoutMs: left,
@@ -192,18 +189,67 @@ export async function runOsvScanner(args: OsvScannerRunArgs): Promise<AdapterRes
         throw new Error(`osv-scanner exit ${run.exitCode}: ${run.stderr.trim().slice(-300)}`);
       }
       return found;
-    });
-    return { findings, error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { findings: [], error: message.slice(0, 300) };
+    }, completed);
+  const completed: StaticFinding[] = [];
+  const [changedResult, treeError] = await Promise.all([
+    scan(lockfiles).then(
+      (findings) => ({ findings, error: null }),
+      (err: unknown): { findings: StaticFinding[]; error: string } => ({ findings: [], error: errorMessage(err) }),
+    ),
+    scan(tree, completed).then(
+      () => null,
+      (err: unknown) => `Repository lockfiles: ${errorMessage(err)}`,
+    ),
+  ]);
+  const findings = changedResult.findings.concat(completed);
+  if (changedResult.error) return { findings, error: [changedResult.error, treeError].filter(Boolean).join("; ") };
+  return treeError && lockfiles.length > 0 ? { findings, error: null, note: treeError } : { findings, error: treeError };
+}
+
+// Register identity before any reads. Failed and budget-skipped reads still
+// have exact keys, so a nested lockfile cannot inherit a sibling's lines.
+// The optional limits let tests exercise real file reads with small files.
+export async function readLockfileLines(
+  repoDir: string,
+  changedPaths: string[],
+  treePaths: string[],
+  limits: { fileBytes?: number; treeBytes?: number } = {},
+): Promise<Map<string, string[]>> {
+  const lines = new Map<string, string[]>([...changedPaths, ...treePaths].map((rel) => [path.normalize(rel), []]));
+  const maxBytes = limits.fileBytes ?? LOCKFILE_MAX_BYTES;
+  for (const rel of changedPaths) {
+    try {
+      lines.set(path.normalize(rel), (await readRepoFile(repoDir, rel, maxBytes)).split("\n"));
+    } catch {
+      // An unreadable changed lockfile anchors to line 1.
+    }
   }
+  let remaining = limits.treeBytes ?? TREE_LOCKFILE_TEXT_MAX_BYTES;
+  for (const rel of treePaths) {
+    if (remaining <= 0) break;
+    try {
+      const checked = await repoFileOrReason(repoDir, rel, maxBytes);
+      if ("reason" in checked) continue;
+      if (checked.size > remaining) break;
+      const content = await readRepoFile(repoDir, rel, Math.min(maxBytes, remaining));
+      remaining -= Buffer.byteLength(content, "utf8");
+      lines.set(path.normalize(rel), content.split("\n"));
+    } catch {
+      // An unreadable tree lockfile stays informational at line 1.
+    }
+  }
+  return lines;
+}
+
+function errorMessage(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 300);
 }
 
 export const osvScanner: Adapter = {
   source: "osv-scanner",
-  files: (changedPaths) => safeFileArgs(changedPaths.filter(isLockfilePath)),
-  why: (files) => `lockfiles, ${suchAs(files)}`,
+  tree: true,
+  files: (changedPaths) => changedPaths.filter(isLockfilePath),
+  why: (files) => `lockfiles in the repository, ${suchAs(files)}`,
   skip: offlineReason,
   run: (args) => runOsvScanner(args),
 };
@@ -215,6 +261,7 @@ type OsvVulnerability = {
   details?: unknown;
   aliases?: unknown;
   severity?: unknown;
+  affected?: unknown;
   database_specific?: { severity?: unknown };
 };
 type OsvGroup = { ids?: unknown; aliases?: unknown; max_severity?: unknown };
@@ -261,6 +308,7 @@ export function parseOsvScannerJson(
         const leader = leaderOf.get(id);
         if (leader !== undefined && leader !== id) continue;
         const severity = severityForVuln(vuln, maxSeverityByVulnId.get(id));
+        const fixedIn = fixedVersions(vuln.affected, pkgName, pkg.package?.ecosystem);
         out.push({
           source: "osv-scanner",
           ruleId: id,
@@ -268,7 +316,8 @@ export function parseOsvScannerJson(
           lineStart: range.start,
           lineEnd: range.end,
           severity,
-          message: vulnMessage(pkgName, pkgVersion, vuln),
+          message: vulnMessage(pkgName, pkgVersion, vuln, fixedIn),
+          fixedIn,
           reference: id.startsWith("CVE-")
             ? `https://nvd.nist.gov/vuln/detail/${id}`
             : `https://osv.dev/vulnerability/${id}`,
@@ -457,7 +506,24 @@ function qualitativeToSeverity(raw: string): StaticFindingSeverity | null {
   return null;
 }
 
-function vulnMessage(pkgName: string, pkgVersion: string, vuln: OsvVulnerability): string {
+function fixedVersions(affected: unknown, name: string, ecosystem: unknown): string[] {
+  if (!Array.isArray(affected) || typeof ecosystem !== "string") return [];
+  const fixed: string[] = [];
+  for (const entry of affected) {
+    if (!entry || entry.package?.name !== name || typeof entry.package?.ecosystem !== "string") continue;
+    if (entry.package.ecosystem.split(":")[0] !== ecosystem.split(":")[0]) continue;
+    if (!Array.isArray(entry.ranges)) continue;
+    for (const range of entry.ranges) {
+      if (!Array.isArray(range?.events)) continue;
+      for (const event of range.events) {
+        if (typeof event?.fixed === "string" && event.fixed && !fixed.includes(event.fixed)) fixed.push(event.fixed);
+      }
+    }
+  }
+  return fixed;
+}
+
+function vulnMessage(pkgName: string, pkgVersion: string, vuln: OsvVulnerability, fixedIn: string[]): string {
   const id = typeof vuln.id === "string" ? vuln.id : "advisory";
   const aliases = Array.isArray(vuln.aliases)
     ? (vuln.aliases as unknown[]).filter((a): a is string => typeof a === "string")
@@ -470,10 +536,11 @@ function vulnMessage(pkgName: string, pkgVersion: string, vuln: OsvVulnerability
         ? vuln.details
         : "Known vulnerability";
   const where = pkgVersion ? `${pkgName}@${pkgVersion}` : pkgName || "dependency";
-  return trimMessage(`${where}: ${id}${aliasStr}. ${summary}`);
+  const suffix = fixedIn.length > 0 ? `. Fixed in ${fixedIn.join(", ")}` : ". No fixed version published";
+  return trimMessage(`${where}: ${id}${aliasStr}. ${summary}`, Math.max(0, 500 - suffix.length)) + suffix;
 }
 
-function trimMessage(m: string): string {
+function trimMessage(m: string, limit: number): string {
   const collapsed = m.replace(/\s+/g, " ").trim();
-  return collapsed.length > 500 ? collapsed.slice(0, 497) + "..." : collapsed;
+  return collapsed.length > limit ? collapsed.slice(0, Math.max(0, limit - 3)) + "..." : collapsed;
 }

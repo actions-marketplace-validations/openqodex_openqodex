@@ -48,6 +48,7 @@ export type StaticFinding = {
   severity: ScannerSeverity;
   message: string; // secrets already redacted by the adapter
   reference: string | null;
+  fixedIn?: string[];
 };
 
 // A scanner finding that survived the changed-line filter, the fixture
@@ -101,8 +102,9 @@ export type RulePack = { pack: string; sha256: string; bytes: number };
 
 // `changedLines`: the changed-line filter (a file outside the change, or no
 // changed line in the span); `fixtures`: the fixture filter; `rules`:
-// review.disabled_rules; `merged`: dedup, into another candidate.
-export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number };
+// review.disabled_rules; `merged`: dedup, into another candidate;
+// `shown`: tree advisories shown for information, never candidates.
+export type ScannerStages = { changedLines: number; fixtures: number; rules: number; merged: number; shown?: number };
 
 // What the selector chose for one scanner on this change: whether it runs,
 // the changed files that call for it, the project folders that decide how
@@ -113,8 +115,9 @@ export type ScannerSelection = { scanner: ScannerSource; wanted: boolean; paths:
 // Where a scanner finding left the pipeline: "outside-change" (its file is
 // not in the change), "changed-lines" (its file is, but no line of its span
 // changed), "fixture", "disabled-rule", "merged" (dedup folded it into the
-// candidate `into`) or "kept" (it is the candidate `id`).
-export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept";
+// candidate `into`), "shown" (outside advisory `id`), or "kept"
+// (it is the candidate `id`).
+export type TrailStage = "outside-change" | "changed-lines" | "fixture" | "disabled-rule" | "merged" | "kept" | "shown";
 
 // One raw finding of one scanner, or one of OpenQodex's own candidates
 // about the change, and what became of it. Never the message, which can
@@ -136,6 +139,8 @@ export type SecretFingerprint = { length: number; sha256: string };
 
 export type ScanResult = {
   candidates: Candidate[];
+  // Tree advisories shown for information, never review candidates.
+  outside?: Candidate[];
   scanners: ScannerRunSummary[];
   fixturesDropped: number;
   secretFingerprints: SecretFingerprint[];
@@ -293,6 +298,7 @@ export type Config = {
   disabledRules: string[];
   defaultBase: string | null; // the branch or ref the default scope diffs against when there is no upstream; null: the remote's default branch
   includeFixtures: boolean;
+  instructionsFiles?: string[]; // repo-relative convention paths or globs chosen by the owners; default []
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
   // the code graph in the brief; enabled by default. maxFiles caps new parses per build.
@@ -822,6 +828,10 @@ export type RunTimings = {
 export type ContextKind = "lesson" | "comment" | "summary" | "note" | "prior_finding";
 export type ContextItem = { kind: ContextKind; text: string; source: string; scopes?: string[] };
 
+// A convention quoted in the brief, chosen explicitly in the repository config.
+export type InstructionFile = { path: string; text: string; source?: string };
+export type InstructionProvenance = { path: string; source: string; sha256: string | null; bytes: number | null; omitted: string | null; transformed?: string };
+
 // manifest.json in the report folder, written by `review --agent`, read by
 // `review --finalize` so a review is bound to the change, the config and the
 // scan it was briefed on.
@@ -831,9 +841,11 @@ export type RunManifest = {
   config_hash: string; // sha256 of the canonical JSON of the effective Config
   created_at: string;
   lenses: { name: string; confidenceFloor: number }[];
-  // sha256 of .openqodex/custom-instructions.md as the brief read it, null
-  // when there was none; absent in runs made before the field existed.
+  // sha256 of the owners' raw instructions and each admitted convention
+  // path and raw text, in order; null for none. Older runs hash only the owners' file.
   instructions_hash?: string | null;
+  // Chosen convention files, their raw hashes, sources and omissions.
+  instruction_files?: InstructionProvenance[];
   // The openqodex version that wrote the brief; finalize runs on that
   // version. Absent in manifests before version 3.
   runtime_version?: string;

@@ -12,7 +12,11 @@
 //    rule ran on every changed file the lens matches; or it stands down when
 //    the rule ran on only some of them, or not at all.
 // 8. CRLF frontmatter fences reject a valid lens with mixed line endings.
-import { readFileSync, readdirSync } from "node:fs";
+// 9. A trigger glob over the limit is accepted and silently matches nothing.
+// 10. A refusal does not name the lens file and escaped trigger glob.
+// 11. A valid trigger glob of exactly 1,024 characters is refused.
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -58,6 +62,30 @@ describe("parseLens", () => {
 
   it("throws when frontmatter delimiters are missing", () => {
     expect(() => parseLens("no frontmatter")).toThrow(/frontmatter/);
+  });
+
+  it("refuses a trigger glob over the limit instead of silently matching nothing (9)", () => {
+    const glob = "*".repeat(1025);
+    expect(() => parseLens(`---\nname: long-glob\ndescription: d\ntriggers:\n  files: ["*.ts", "${glob}"]\n---\nbody`))
+      .toThrow(`lens long-glob: trigger file glob exceeds 1024 characters: ${JSON.stringify(glob)}`);
+  });
+
+  it("names the lens file and escaped trigger glob in the refusal (10)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "openqodex-lens-"));
+    const glob = '"\n' + "*".repeat(1025);
+    try {
+      writeFileSync(join(dir, "long-trigger.md"), `---\nname: long-glob\ndescription: d\ntriggers:\n  files: [${JSON.stringify(glob)}]\n---\nbody`);
+      expect(() => loadLensCatalog(dir))
+        .toThrow(`failed to parse lens long-trigger.md: lens long-glob: trigger file glob exceeds 1024 characters: ${JSON.stringify(glob)}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a trigger glob of exactly 1024 characters (11)", () => {
+    const glob = "*".repeat(1024);
+    const lens = parseLens(`---\nname: limit-glob\ndescription: d\ntriggers:\n  files: ["${glob}"]\n---\nbody`);
+    expect(lens.triggers.files).toEqual([glob]);
   });
 });
 

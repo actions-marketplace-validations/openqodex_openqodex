@@ -84,7 +84,7 @@ import { repoRoot } from "./lib/cases.mjs";
 import { loadModelEnv } from "./lib/model-env.mjs";
 import { createOpenAIReviewer } from "./lib/openai-reviewer.mjs";
 import { lockRun } from "./lib/runner.mjs";
-import { WORDING_SENTENCES, attemptOf, classify, wordingBlock, wordingTotals } from "./lib/score.mjs";
+import { WORDING_SENTENCES, shownFindings, attemptOf, classify, wordingBlock, wordingTotals } from "./lib/score.mjs";
 import { renderWording } from "./score.mjs";
 
 const BOARDS = new URL("./outside/boards.json", import.meta.url);
@@ -267,7 +267,7 @@ async function main() {
         const report = readJson(join(folder, "samples", c, config, n, "report", "report.json"));
         if (!report) continue;
         const items = [];
-        for (const f of [...(report.findings ?? []), ...(report.outside_change ?? [])]) {
+        for (const f of shownFindings(report)) {
           const m = classify(f, spec);
           if (m.outcome !== "hit") continue;
           const bug = spec.bugs.find((b) => b.id === m.bug);

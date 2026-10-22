@@ -51,7 +51,7 @@ The reviewer is a fresh Claude Code process (`claude -p`) with no memory of your
 - reads a frozen copy of the change in `~/.openqodex/checkouts/`, never your folder. Secrets the scanners found are redacted in that copy first.
 - has the read, search and list tools, plus Claude Code's WebSearch and WebFetch. It has no shell, no edits, no MCP server and no subagent.
 - edits nothing and runs none of the repository's code.
-- loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files, and none of the repository's.
+- loads none of your Claude Code settings, hooks, plugins, memory or `CLAUDE.md` files as agent instructions. Repository files chosen in `review.instructions_files` are quoted as convention data in the brief. See [Convention files](config.md#convention-files).
 - gets only the environment variables Claude Code needs to run and find its login. Other tokens in your shell, such as `GITHUB_TOKEN` or `NPM_TOKEN`, never reach it.
 
 Claude Code's own permission rules refuse a read outside the frozen copy. OpenQodex also checks every tool call the reviewer makes. It marks the review incomplete when a call names a path outside the copy. The report lists the files the reviewer read.
@@ -68,7 +68,7 @@ When Codex is installed and logged in too, a review you run from Claude Code sti
 
 ## The push gate
 
-`init` adds one `PreToolUse` hook to Claude Code. It matches the `Bash` tool and runs only for `git push` commands. The hook looks for the record `review` wrote for exactly the change being pushed. It never scans, never starts a review, and never approves a push for you.
+`init` adds one `PreToolUse` hook to Claude Code. It matches the `Bash` tool and runs only for `git push` commands. The hook looks for the record `review` wrote for your current work. It does not know what a push sends: for a plain `git push` it asks whether your current work has a passing review, and for any other push command it says it cannot tell. The git pre-push hook below checks the exact commits a push sends. It never scans, never starts a review, and never approves a push for you.
 
 By default the gate only warns:
 

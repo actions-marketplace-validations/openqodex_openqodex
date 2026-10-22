@@ -307,6 +307,10 @@ describe("a rule constant changes without a version bump, and old and new scores
   // in lib/score.mjs and the new version's hash is added here.
   // A change of layout alone moves the hash too, and needs a bump all the same.
   const KNOWN_RULES = {
+    // W8-2: Greptile suite scoring through its board judge, denominator fixed at 50.
+    10: "e4582b7f4f7e8ed377e132c5f2db92403faeb9e9a975ff87b15eca07de0f7ef8",
+    // Scanner outside advisories are information; legacy untagged findings still count.
+    9: "b6578e57058519e7bc379a35538cf57ca94be81bd4a830c2ab34d310922af96f",
     3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
     // Severity agreement and the finder of each found truth item.
     4: "01790c27b9e182e7c6b4c142c8e04a0c020eb5f739bd0efab7c601b6877963db",

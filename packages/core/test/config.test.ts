@@ -26,6 +26,10 @@
 //     and info findings after the upgrade to the minor default.
 // 17. The default config text that init writes reads back to something
 //     other than DEFAULT_CONFIG, warns, or misses a key the schema reads.
+// 19. A glob longer than the matcher takes (MAX_GLOB) is accepted and then
+//     matches nothing: an exclude stops excluding, a disabled rule comes
+//     back on, and a custom scanner's paths select no file, so the scanner
+//     never runs. The error must name the file, the key and the limit.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -38,6 +42,7 @@ import {
   parseConfig,
   schemaKeys,
 } from "../src/config.js";
+import { MAX_GLOB } from "../src/glob.js";
 import { OpenQodexError } from "../src/types.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
@@ -79,6 +84,7 @@ review:
   disabled_rules: ["gitleaks:generic-api-key", "lens:react-*"]
   default_base: develop
   include_fixtures: true
+  instructions_files: [CONTRIBUTING.md, docs/style.md]
 scanners:
   disable: [brakeman, rubocop]
   custom:
@@ -132,6 +138,7 @@ describe("loadConfig", () => {
       exclude: ["vendor/**", "*.min.js"],
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,
+      instructionsFiles: ["CONTRIBUTING.md", "docs/style.md"],
       disabledScanners: ["brakeman", "rubocop"],
       custom: [
         {
@@ -291,6 +298,7 @@ colour: blue
 review:
   block_on_severty: critical
   include_fixtures: true
+  instructions_files: [CONTRIBUTING.md, docs/style.md]
 scanners:
   custom:
     - source: https://github.com/a/b
@@ -360,6 +368,21 @@ scanners:
     expect(error("scanners:\n  custom:\n    - { source: https://github.com/a/b, run: t, name: ../x }\n")).toMatch(
       /scanners\.custom\[0\]\.name: /,
     );
+  });
+
+  it("refuses a glob longer than the matcher takes, naming the file, the key and the limit", () => {
+    const long = JSON.stringify(`${"x".repeat(MAX_GLOB)}*`);
+    const limit = `longer than ${MAX_GLOB} characters, the most a glob can have; shorten it`;
+    expect(error(`review:\n  paths:\n    exclude: ["vendor/**", ${long}]\n`)).toBe(`.openqodex/config.yaml: review.paths.exclude[1]: ${limit}`);
+    expect(error(`review:\n  disabled_rules: [${long}]\n`)).toBe(`.openqodex/config.yaml: review.disabled_rules[0]: ${limit}`);
+    expect(error(`scanners:\n  custom:\n    - { source: https://github.com/a/b, run: t, paths: ["**/*.tf", ${long}] }\n`)).toBe(
+      `.openqodex/config.yaml: scanners.custom[0].paths[1]: ${limit}`,
+    );
+    // The hosted file's pr_review block is named as written.
+    expect(error(`pr_review:\n  disabled_rules: [${long}]\n`)).toBe(`.openqodex/config.yaml: pr_review.disabled_rules[0]: ${limit}`);
+    // A glob at the limit is read as written.
+    const atLimit = `${"x".repeat(MAX_GLOB - 1)}*`;
+    expect(parseConfig(`review:\n  paths:\n    exclude: [${JSON.stringify(atLimit)}]\n`).config.exclude).toEqual([atLimit]);
   });
 
   it("requires a map block for json-map", () => {

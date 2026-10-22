@@ -102,7 +102,7 @@ import { langOf } from "../../packages/graph/dist/index.js";
 import { DROP_CLASSES, classifyReportDrops, countDrops } from "./drops.mjs";
 import { semgrepPacksOf } from "./external.mjs";
 import { OWN_RULES, findersOf } from "./scan-score.mjs";
-import { canonical, names, normPath, originOf, population } from "./score.mjs";
+import { canonical, names, normPath, originOf, population, shownFindings } from "./score.mjs";
 
 // Bump on any change to a definition above or a rule below.
 export const SCANNERS_VERSION = 1;
@@ -238,6 +238,9 @@ export function analyseSample({ job, spec, scan, report = null, submission = nul
     const filterLosses = (scan.trail ?? [])
       .filter((e) => (e.stage === "changed-lines" || e.stage === "fixture") && onItem({ file: normPath(e.file), start: e.lineStart, end: Math.max(e.lineEnd ?? e.lineStart, e.lineStart) }, item))
       .map((e) => ({ scanner: finderOfToken(e.token), token: e.token, stage: e.stage }));
+    const shown = (scan.trail ?? [])
+      .filter((e) => e.stage === "shown" && onItem({ file: normPath(e.file), start: e.lineStart, end: Math.max(e.lineEnd ?? e.lineStart, e.lineStart) }, item))
+      .map((e) => ({ scanner: finderOfToken(e.token), token: e.token, stage: e.stage }));
     return {
       id: item.id,
       file: normPath(item.file),
@@ -251,11 +254,12 @@ export function analyseSample({ job, spec, scan, report = null, submission = nul
       // Per scanner in the selection: in, out, unreachable or unknown; null with no selection.
       remit: selection === null ? null : remit,
       filterLosses,
+      shown,
     };
   });
 
   const reviewed = mode !== "scan" && report !== null;
-  const shown = new Set([...(report?.findings ?? []), ...(report?.outside_change ?? [])].map((f) => f.candidate).filter((x) => typeof x === "string"));
+  const shown = new Set(shownFindings(report).map((f) => f.candidate).filter((x) => typeof x === "string"));
   const answered = Array.isArray(submission?.findings) ? submission.findings : null;
   const held = new Set((answered ?? []).map((f) => f?.candidate).filter((x) => typeof x === "string" && !shown.has(x)));
   const drops = reviewed ? classifyReportDrops(report, scan) : [];
@@ -446,6 +450,7 @@ export function scannerReport(run) {
   };
   const misses = [];
   const filterLosses = [];
+  const shown = [];
   const allDrops = [];
   const items = new Map();
   const totals = { samples: run.samples.length, candidates: 0, raised: 0, held: 0, dropped: 0, unanswered: 0, unreviewed: 0 };
@@ -503,6 +508,7 @@ export function scannerReport(run) {
         r.lost.set(key, (r.lost.get(key) ?? 0) + 1);
       }
       for (const loss of t.filterLosses) filterLosses.push({ sample: s.sample, caseId: s.caseId, truth: t.id, ...loss });
+      for (const entry of t.shown) shown.push({ sample: s.sample, caseId: s.caseId, truth: t.id, ...entry });
       // The remit of every scanner the scan names: from the selection, else
       // unknown. A scanner the runner says had no matching files was handed
       // none, so nothing is in its file remit.
@@ -628,6 +634,7 @@ export function scannerReport(run) {
     time,
     misses,
     filterLosses,
+    shown,
     // Merged findings placed at their candidate's lines, since the trail did not record their own.
     mergedAtCandidateLines: run.samples.reduce((a, x) => a + x.mergedAtCandidateLines, 0),
   };

@@ -14,6 +14,8 @@ import {
   isRepoState,
   loadConfig,
   redactSecrets,
+  resolveInstructionFiles,
+  instructionSetHash,
   renderHtml,
   renderJson,
   renderMarkdown,
@@ -368,13 +370,14 @@ export function exitFor(report: Report): number {
 // sha256 of the instructions file, null when there is none. Finalize compares
 // it with the brief's, so a review always follows the instructions as they are.
 export function instructionsHash(text: string): string | null {
-  return text === "" ? null : createHash("sha256").update(text).digest("hex");
+  return instructionSetHash(text, []);
 }
 
 // The owners' instructions as the brief takes them, and their hash: from the
 // repository's file, or from the file `review --instructions` names. The
 // untouched template says nothing about this repo: no block for it.
-export function ownersInstructions(repoRoot: string, secrets: string[], path?: string): { text: string; hash: string | null } {
-  const raw = path === undefined ? readInstructions(repoRoot) : readInstructionsAt(repoRoot, path);
-  return { text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets), hash: instructionsHash(raw) };
+export async function ownersInstructions(repoRoot: string, secrets: string[], path?: string, options: { paths?: readonly string[]; source?: string; readOwners?: boolean } = {}) {
+  const raw = options.readOwners === false && path === undefined ? "" : path === undefined ? readInstructions(repoRoot) : readInstructionsAt(repoRoot, path);
+  const conventions = await resolveInstructionFiles({ repoRoot, paths: options.paths ?? [], owners: raw, source: options.source });
+  return { ...conventions, text: raw === "" || raw === instructionsTemplate() ? "" : redactSecrets(raw, secrets) };
 }

@@ -32,6 +32,9 @@ runs:
         path: ${{ runner.temp }}/openqodex-e2e-home
         key: scanners-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
     # The steps below mirror scripts/gate.sh one for one.
+    - name: Shipped instruction templates
+      shell: bash
+      run: node scripts/instruction-sections.mjs --check
     - name: Build
       shell: bash
       run: pnpm build

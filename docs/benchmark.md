@@ -14,7 +14,7 @@ Run `node scripts/benchmark-results.mjs` after an accepted index change, then co
 
 Each full-page row names its configuration, split, subset when present, mode, path and rules version. A row with a split hash shows its first 12 characters. Repeats come from the entry's `repeat` field. Missing measurements are shown as not measured. A run with findings, every one unresolved and none a hit, shows its issue recall as not yet ruled. The full page also shows location recall. The README leaves out a row of a suite with a board, such as AACR-Bench, until the row has board numbers or a ruled hit. The full page shows every row. Precision bounds describe unresolved findings, not confidence intervals. The recall interval is the saved 95% cluster interval.
 
-An A/A twin uses the parent's run id with `-aa` appended. The script pairs it only when its group, bundle hash, case set hash, rules hash and repeats match. Its noise is the absolute difference in issues found across all repeats, also shown per repeat. AACR board numbers come from the entry's `outside.aacr.byConfig.<config>.mean`, using the shape `score.mjs --outside aacr` writes. A row without that block says "not yet board-scored". The publish step does not copy that block into the index yet (issue #201). Board numbers do not decide acceptance.
+An A/A twin uses the parent's run id with `-aa` appended. The script pairs it only when its group, bundle hash, case set hash, rules hash and repeats match. Its noise is the absolute difference in issues found across all repeats, also shown per repeat. AACR board numbers come from the entry's `outside.aacr.byConfig.<config>.mean`, using the shape `score.mjs --outside aacr` writes. A row without that block says "not yet board-scored". The publish step copies that block from the run's `score.json` into its index entry. The README puts rows with board numbers in a table of their own. Board numbers do not decide acceptance.
 
 ## Frozen comparisons and vendor rows
 
@@ -35,6 +35,8 @@ A run must match the frozen cases, build and reviewer settings, including `effor
 ## What it measures
 
 Each case is a small git repository with a base commit and an uncommitted change, the same shape a developer has before a push. The change carries planted bugs, each with a file, a line range, a kind (`bug`, `security`, `performance`, `maintainability` or `style`), a severity and the scanner or the reasoning expected to find it. The benchmark runs the real built CLI on each case, with the real reviewer, with the code graph off and on, three times each.
+
+The benchmark scores the review, not the dependency list. Outside entries count only when their `origin` is `agent`; scanner advisories outside the changed lines are information. The scorers, board converters, judge, queue, drops and causes use this rule.
 
 From the saved reports it counts (score format 3):
 
@@ -220,6 +222,8 @@ Publish-run uses these patterns on every packaged file. Entry numbers count nonb
 | This machine's home folder and the cross-platform home-path expression | Yes | Prevents paths under macOS, Linux and Windows home folders from leaving the machine. |
 
 The tracked-files scrub in `scripts/scrub.mjs` still applies every pattern, including typography.
+
+Board numbers can come after a run is published, so they never change its asset. The asset leaves out `outside/`, the folder of the board's own output. The asset's `score.json` leaves out its `outside` block. The scrub still reads the whole `score.json`, because the index entry copies that block. `score.json` names a run folder outside the repository by its relative path, never by an absolute one. On a run that has a `score.json`, `score.mjs --outside aacr` with no other option adds only the `outside` block. It keeps the rest of `score.json`, `outcomes.jsonl` and `unresolved.jsonl` as they are. For a run that already has an index entry, `publish-run.mjs --write-index` changes only the entry's `outside` block and uploads nothing. It refuses a run that packages to another asset than the entry names. Before an `outside` block enters an entry, `publish-run.mjs` computes it again from `outside/aacr`. It refuses a `score.json` whose block differs, such as one edited by hand. `trend.mjs --accept` refuses an entry whose `outside` block differs from the run's `score.json`. A copy fetched from the asset has no board numbers, so accept refuses it for an entry that has them. Accept records the block's hash (`boardHash`) beside the score hash in `benchmark/index/accepted.json`. A board refresh of an accepted entry records it there too. The results script and the trend refuse an accepted entry whose block no longer has that hash.
 
 The 11 runs made before the results left the repository are legacy runs: their index entries say `legacy: true`, carry no intervals and are never accepted as a baseline. Each one's asset also carries, under `_archive/<commit>/`, the scorer of every commit that wrote one of its score files, and `benchmark/legacy/recipes.json` says which scorer and which specs wrote which file and how each number below is read from the runs. After fetching, this rescores a run with its own scorers and checks every number this page quotes from it:
 
@@ -821,3 +825,23 @@ No planted bug moved. The false finding of `5227579` (the purge reply's count in
 ## Claims cite a run
 
 A release note, a README line, a post or a reply that states anything about review quality (bugs found, false findings, speed or cost of a review) cites a published benchmark run: its index entry (`benchmark/index/runs/<run-id>.json`), the score file it quotes from the run's asset (`score.json`, or `score-<folder>.json` with the specs it used), the build and the reviewer's model. A number that no published run backs is not written.
+
+## Chosen convention cases
+
+`--suite conventions` runs three authored cases under `benchmark/suites/conventions/`. They use the demo's Flask items endpoint and add the same `GET /health` handler, named `health_check`. That name and behavior are valid on their own. The violation case chooses `CONTRIBUTING.md`, whose verb-noun rule requires `get_health`. Its truth item expects the rule citation `CONTRIBUTING.md#verb-noun`, naming both the file and the rule. The exception case chooses the same rule with an explicit exemption for this health handler. The no-rule control has no convention file and an empty selection. Both controls are clean, with no accepted extras: format 3 counts any finding on them as false.
+
+These cases use the planted `case.json`, `base/` and `change/` format. They have their own suite name and hashes. To select one case, use `--cases conventions/violation`, or `--suite conventions --cases violation`. They do not enter the frozen corpus or its splits. The laptop runner passes the case config and the base commit as the instructions source. The server runner passes the case's parsed config to the library. Existing suites keep their inputs.
+
+Build the cases without running a reviewer:
+
+```sh
+node benchmark/run.mjs --suite conventions --materialise-only --reviewers model:gpt-6.1-sol
+```
+
+Run one repeat with the model endpoint already configured:
+
+```sh
+node benchmark/run.mjs --suite conventions --reviewers model:gpt-6.1-sol --repeat 1 --max-usd 5 --review-max-usd 1 --max-minutes 15
+```
+
+Score the saved run with `node benchmark/score.mjs <run-folder>`. A violation finding must name `CONTRIBUTING.md`. The exception and control must have no findings. The scorer checks those expectations from the saved case specs.

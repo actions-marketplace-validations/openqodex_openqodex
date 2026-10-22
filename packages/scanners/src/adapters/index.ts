@@ -32,6 +32,8 @@ import { zizmor, ZIZMOR_CONFIGS } from "./zizmor.js";
 
 export type Adapter = {
   source: BuiltinScanner;
+  // Runs on matching repository files as well as the change.
+  tree?: true;
   // The paths of the change this scanner checks; none means it has nothing
   // to check. `facts` says which project each path is in and what an
   // extensionless file is.
@@ -54,6 +56,7 @@ export type Adapter = {
   run(args: {
     repoDir: string;
     changedPaths: string[];
+    treePaths?: string[];
     tool: ResolvedTool | null;
     coverage?: DiffCoverage;
     facts: RepoFacts;
@@ -75,7 +78,7 @@ export const ADAPTERS: readonly Adapter[] = [
   squawk,
   // SQL queries that return a wrong result or hold dead code.
   sqlfluff,
-  // Dependency vulnerabilities. No-op unless a lockfile changed.
+  // Dependency vulnerabilities across the repository inventory.
   osvScanner,
   // Rust dependency policy: RustSec advisories and crate sources. No-op
   // unless a Cargo.lock changed.

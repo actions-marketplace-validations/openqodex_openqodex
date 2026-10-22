@@ -1,0 +1,8 @@
+{
+  "id": "no-rule",
+  "guards": "a convention is invented when the owners chose no rule files",
+  "language": "python",
+  "framework": "flask",
+  "clean": true,
+  "bugs": []
+}

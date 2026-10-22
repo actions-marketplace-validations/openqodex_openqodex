@@ -26,15 +26,23 @@ export const SERVER_GIT_ENV: Readonly<Record<string, string>> = Object.freeze({ 
 
 const BASE = ["core.hooksPath=/dev/null", "core.fsmonitor=false", "submodule.recurse=false", "gc.auto=0", "maintenance.auto=false"];
 
-function runGit(cwd: string, argv: string[], input?: string, env?: Record<string, string>): Promise<SafeGitResult> {
+function runGit(cwd: string, argv: string[], input?: string, env?: Record<string, string>, maxBytes?: number): Promise<SafeGitResult> {
   return new Promise((done, fail) => {
     const child = spawn("git", argv, { cwd, env: { ...safeGitEnv(), ...env }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout?.on("data", (b: Buffer) => out.push(b));
+    let bytes = 0;
+    let overflow = false;
+    child.stdout?.on("data", (b: Buffer) => {
+      bytes += b.length;
+      if (maxBytes !== undefined && bytes > maxBytes) {
+        overflow = true;
+        child.kill();
+      } else out.push(b);
+    });
     child.stderr?.on("data", (b: Buffer) => err.push(b));
     child.on("error", (e) => fail(new OpenQodexError(`could not run git: ${e.message}`)));
-    child.on("close", (code) => done({ code: code ?? 1, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8") }));
+    child.on("close", (code) => overflow ? fail(new OpenQodexError(`git output is over ${maxBytes} bytes`)) : done({ code: code ?? 1, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8") }));
     if (input !== undefined) child.stdin?.end(input);
   });
 }
@@ -74,6 +82,6 @@ export function safeGitConfig(cwd: string): Promise<string[]> {
 
 // `env`: variables this one call needs, set after the inherited GIT_* ones
 // are removed (the review fills its snapshot from a temporary object folder).
-export async function safeGit(cwd: string, args: string[], input?: string, env?: Record<string, string>): Promise<SafeGitResult> {
-  return runGit(cwd, [...(await safeGitConfig(cwd)), ...args], input, env);
+export async function safeGit(cwd: string, args: string[], input?: string, env?: Record<string, string>, maxBytes?: number): Promise<SafeGitResult> {
+  return runGit(cwd, [...(await safeGitConfig(cwd)), ...args], input, env, maxBytes);
 }

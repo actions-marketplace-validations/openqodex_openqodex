@@ -45,3 +45,5 @@ Added after the third code review:
 
 33. On a push event or with `config-from: head`, a commit makes `.openqodex`, `.openqodex/config.yaml` or `.openqodex/custom-instructions.md` a link, and `doctor`, the scan or the review reads it from the checkout: the link stops the run, so a blocking finding becomes a tool failure, or the run reads the file the link points at.
 34. The `version` or `claude-code-version` input is longer than 64 characters, or has a major, minor or patch number over 9 digits, which npm's version parser refuses and reads as a tag.
+
+35. A chosen convention file committed as a link is followed or stops a review, instead of being omitted by name while the review completes.

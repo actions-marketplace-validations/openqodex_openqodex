@@ -49,7 +49,7 @@ const result = await reviewChange(
 - `clonePath`: the host's clone. It must hold both commits and the history between them.
 - `mergeBaseSha`: the merge base of the pull request, as the host's comparison gives it. It is not the target branch's tip. The library proves that both ids are full commit ids of commits in the clone and that the merge base is an ancestor of the head, then works out the change itself. A diff from the host is never an input.
 - `headSha`: the commit under review.
-- `config` (optional): a parsed `Config` (`parseConfig`). The defaults when left out. Nothing is read from the clone's own `.openqodex` files.
+- `config` (optional): a parsed `Config` (`parseConfig`). The defaults when left out. The library reads no config or custom-instructions file from the clone. `config.instructionsFiles`, parsed from `review.instructions_files`, names the convention files to read from the merge base's git objects. It defaults to `[]`. Only paths inside `scopes` are supplied. `review.paths.exclude` filters code, not chosen settings files. A hand-built `Config` may omit `instructionsFiles`; it defaults to `[]`. Each omitted path is named in `result.notes`.
 - `instructions` (optional): the repository owners' own rules for the review, as text of at most 32 KB (more is refused, never cut). The brief quotes them under the owners' heading with the framing the laptop gives `.openqodex/custom-instructions.md`: they decide what to flag and what not to, and they never switch a check off, skip a candidate or change the answer's shape. Give advisory material, such as earlier comments, as `context`.
 - `previousReviewedSha`, `fullReviewRequested`, `scopes` and `context` (optional): an incremental review, a review limited to folders, and context items such as lessons and earlier comments. See "Incremental, scoped and context" below.
 
@@ -79,7 +79,7 @@ const result = await reviewChange(
 - `rounds`: every correction round sent, the second reviewer's after the primary's, each `{ by, round, errors, delivered, later, answer }`: the reviewer it went to (`primary` or `second`), the answer it corrects (1 for the answer to the brief), every check that answer failed, the changed ranges the round carried, how many more it promised for a next round, and the answer the checks judged (null when it was not JSON). A finding a check rejected and the next answer left out shows here. Redacted like the report.
 - `completion`: the model completion record, contract `openqodex-model-review-1`. Its proof is the brain's own data: the snapshot before and after, every changed range with how it was delivered, every tool call, every candidate raised or dropped, and every model attempt with its authorization and usage. Nothing in it comes from the reviewer.
 - `scope`: `{ kind, reason }`. `kind` is `delta` when only what changed since `previousReviewedSha` was the reviewer's to review, else `full`; `reason` says why. Null when a proof failed first.
-- `notes`: what the review could not hold, one plain line each: a file renamed into the scopes from outside them (reviewed as a new file), a link or a submodule the snapshot left out, a base version outside the scopes that was asked for and not read, and a second reviewer's failure that left the review complete.
+- `notes`: the convention files supplied, their sources, transformations and omissions, plus what the review could not hold, one plain line each: a file renamed into the scopes from outside them (reviewed as a new file), a link or a submodule the snapshot left out, a base version outside the scopes that was asked for and not read, and a second reviewer's failure that left the review complete.
 - `context`: every context item given, in order, with its hash, and why the brief left one out.
 - `disagreements`: the scanner candidates one reviewer raised and the other dropped, when a second reviewer ran.
 - `timings`: how long each phase of the review took, in milliseconds: `change_ms` (proving the merge base and working out the change), `scan_ms`, `graph_ms`, `brief_ms`, `reviewer_ms` (the model calls, the second reviewer's included), `finalize_ms`, and `total_ms`, the time from the call to the result, read from the clock. A phase the review did not reach is left out, except `change_ms` and `scan_ms`, which are then 0. The JSON report of a review a reviewer was given holds the same object.
@@ -149,7 +149,7 @@ Each call is checked before it runs. A path outside the snapshot is refused and 
 - It never prints, never adds a signal handler and never writes a `process.env` variable.
 - It never gives the reviewer a web tool or a shell.
 - It never retries a model call, and never calls the model after the budget refused.
-- It never reads an instructions file or a config from the clone: the host gives the config.
+- The host gives config and custom instructions. Only explicitly chosen convention files are read from the clone, from the merge base and inside the scopes. Links and files over 32 KB or past the 64 KB total are skipped whole and named in the notes. Conventions adopted on the base branch after divergence are not seen.
 - It never updates itself.
 
 ## Preinstalling the scanners in an image

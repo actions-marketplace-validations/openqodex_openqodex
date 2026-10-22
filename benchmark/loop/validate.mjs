@@ -279,6 +279,16 @@ export function simulateHarm({ seed = SIM_DEFAULTS.seed, world: shape = {} } = {
 // Whether a case is in the harmed share: a fixed hash of its id.
 export const harmed = (caseId) => createHash("sha256").update(`openqodex-harm\0${caseId}`).digest().readUInt32BE(0) / 2 ** 32 < HARM_SHARE;
 
+// Scoring indexes findings followed by agent outside entries. Keep their
+// raw positions so scanner information cannot shift a harmful removal.
+export function removeShownFindings(report, drop) {
+  const findings = report.findings ?? [];
+  const outside = report.outside_change ?? [];
+  const positions = findings.map((_, i) => i).concat(outside.flatMap((f, i) => f.origin === "scanner" ? [] : [findings.length + i]));
+  const rawDrop = new Set([...drop].map((i) => positions[i]));
+  return { ...report, findings: findings.filter((_, i) => !rawDrop.has(i)), outside_change: outside.filter((_, i) => !rawDrop.has(findings.length + i)) };
+}
+
 // The saved run scored twice: as saved, and with every hit of the harmed
 // cases removed from the reports of `repeats`. Returns both scorings' jobs
 // per configuration.
@@ -294,9 +304,7 @@ function scoredWithHarm({ folder, specs, decisions }) {
     const caseId = asSaved.jobs.find((j) => j.case === a.case)?.caseId;
     if (!caseId || !harmed(caseId)) continue;
     const drop = hits.get(`${a.case}\0${a.config}\0${a.repeat}`) ?? new Set();
-    // shownFindings order: findings, then outside_change.
-    const n = (a.report.findings ?? []).length;
-    a.report = { ...a.report, findings: (a.report.findings ?? []).filter((_, i) => !drop.has(i)), outside_change: (a.report.outside_change ?? []).filter((_, i) => !drop.has(n + i)) };
+    a.report = removeShownFindings(a.report, drop);
   }
   const withHarm = scoreRun(harmedRun, { decisions: decisions.lines, people: decisions.people });
   return { asSaved, withHarm, manifest: plain.manifest };

@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "yaml";
 import { unquoteDiffPath } from "./diff.js";
-import { matchesGlob } from "./glob.js";
+import { matchesGlob, MAX_GLOB } from "./glob.js";
 import type { Change, SelectedLens } from "./types.js";
 
 export type LensTriggers = {
@@ -67,6 +67,11 @@ export function parseLens(text: string): Lens {
   const files = Array.isArray(triggersRaw.files)
     ? triggersRaw.files.filter((x): x is string => typeof x === "string")
     : undefined;
+  for (const glob of files ?? []) {
+    if (glob.length > MAX_GLOB) {
+      throw new Error(`lens ${name}: trigger file glob exceeds ${MAX_GLOB} characters: ${JSON.stringify(glob)}`);
+    }
+  }
   const hunkRegex = typeof triggersRaw.hunk_regex === "string" ? triggersRaw.hunk_regex : undefined;
   if (triggersRaw.replaced_lines !== undefined && typeof triggersRaw.replaced_lines !== "boolean") {
     throw new Error(`lens ${name}: replaced_lines must be a boolean`);
