@@ -490,3 +490,49 @@ describe("a change that silences a scanner is never hidden by the threshold (15)
     expect(r.report.below_threshold).toBe(0);
   });
 });
+
+// Failure cases: a report builder loses scanner information or counts it,
+// and a raised candidate loses the scanner's published fix versions.
+// An explicit empty fix list loses its no-fix note, or an older scan with
+// no fixedIn field incorrectly claims no fix exists, in either review format.
+describe("dependency information", () => {
+  const outside: Candidate = { id: "o1", token: "osv-scanner:GHSA-old", source: "osv-scanner", ruleId: "GHSA-old", filePath: "package-lock.json", lineStart: 4, lineEnd: 5, severity: "high", reviewSeverity: "major", message: "lodash@4.17.15: GHSA-old. Fixed in 4.17.21", reference: null, fixedIn: ["4.17.21"] };
+  it("carries outside entries through legacy review and scan reports without blocking", () => {
+    const change = makeChange(); const scan = makeScan({ candidates: [], outside: [outside] });
+    const args = { change, scan, manifest: makeManifest(change), config: makeConfig({ blockOnSeverity: "minor", severityThreshold: "critical" }) };
+    for (const report of [scanReport(args), finalizeReview({ ...args, submission: makeSubmission({ findings: [], dropped: [] }) })]) {
+      expect(report.outside_change).toEqual([expect.objectContaining({ origin: "scanner", candidate: null, source: outside.token, notes: ["In the tree before this change."] })]);
+      expect(report.verdict).toBe("passed"); expect(report.below_threshold).toBe(0);
+    }
+  });
+  it("keeps fixed versions when a legacy reviewer raises a candidate", () => {
+    const change = makeChange(); const scan = makeScan(); scan.candidates[0] = { ...scan.candidates[0], fixedIn: ["4.17.21"] };
+    const report = finalizeReview({ change, scan, manifest: makeManifest(change), config: makeConfig(), submission: makeSubmission() });
+    expect(report.findings[0].notes).toContain("Scanner: fixed in 4.17.21");
+  });
+
+  it.each([{ fixedIn: undefined }, { fixedIn: [] }, { fixedIn: ["4.17.21"] }])("preserves fixed-version knowledge in both review formats: $fixedIn", ({ fixedIn }) => {
+    const change = makeChange();
+    const scan = makeScan({ candidates: [{ ...SQL_CANDIDATE }] });
+    if (fixedIn !== undefined) scan.candidates[0] = { ...scan.candidates[0], fixedIn };
+    const args = { change, scan, manifest: makeManifest(change), config: makeConfig() };
+    const legacy = finalizeReview({ ...args, submission: makeSubmission({ dropped: [] }) });
+    const { description: _description, suggested_change: _suggested, ...raised } = finding({});
+    const modern = checkSubmission({ ...args, lineCount: () => 100, submission: {
+      version: 2,
+      change_id: change.id,
+      summary: "Checked the query.",
+      findings: [{
+        ...raised,
+        problem: "The query inserts untrusted input.",
+        consequence: "An attacker can execute SQL.",
+        fix: "Bind the value as a query parameter.",
+      }],
+      dropped: [],
+    } });
+    if (!modern.ok) throw new Error(modern.errors.join("\n"));
+    const notes = fixedIn === undefined ? [] : fixedIn.length ? ["Scanner: fixed in 4.17.21"] : ["Scanner: no fixed version published"];
+    expect(legacy.findings[0].notes).toEqual(notes);
+    expect(modern.report.findings[0].notes).toEqual(notes);
+  });
+});

@@ -202,10 +202,10 @@ export function scoreBrief(spec, brief) {
   return { graph: block === null ? "off" : "on", gaps, callers, failures };
 }
 
-// Every finding the developer is shown: on the change, and outside it.
+// Review findings on the change and outside it, except scanner information.
 export function shownFindings(report) {
   if (!report) return [];
-  return [...(report.findings ?? []), ...(report.outside_change ?? [])];
+  return [...(report.findings ?? []), ...(report.outside_change ?? []).filter((f) => f.origin !== "scanner")];
 }
 
 // One saved review of one case: `report` is report.json (null when the run
@@ -577,7 +577,7 @@ export function regressions(oldSamples, newSamples) {
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
 //     that item on that spec version.
-export const RULES_VERSION = 8;
+export const RULES_VERSION = 9;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
