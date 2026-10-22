@@ -296,7 +296,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
     if (hostFailure !== null) throw hostFailure;
     verified.sort((a, b) => a.number - b.number);
     const sourceOf = (c: VerifyCandidate) => c.kind === "scanner" ? c.candidate.token : c.candidate.lens ? `lens:${c.candidate.lens}` : null;
-    const findingOf = (v: VerifyVerdict, c: VerifyCandidate, owner: Verified): FindingV2 => {
+    const findingOf = (v: VerifyVerdict, c: VerifyCandidate): FindingV2 => {
       return { severity: v.severity, category: v.category, confidence: v.confidence, file_path: v.file_path, line_number: v.line_number, ...(v.line_end !== undefined ? { line_end: v.line_end } : {}), title: v.title, problem: v.problem, consequence: v.consequence, fix: v.fix, suggested_change: v.suggested_change ?? null, source: sourceOf(c), candidate: c.kind === "scanner" ? c.id : null };
     };
     const analysis = findings.flatMap((f) => f.answer.analysis).map((a) => a.changed.trim().replace(/\s+/g, " ")).find(Boolean)?.split(/(?<=[.!?])\s+/)[0];
@@ -312,7 +312,7 @@ export async function runStagedReview(args: StagedArgs): Promise<StagedResult> {
         if (v.verdict === "confirmed") {
           // Observations pass the same judge before being taken out of the
           // verdict. This also accounts for confirmed scanner observations.
-          const finding = findingOf(v, c, owner);
+          const finding = findingOf(v, c);
           submission.findings.push(finding);
           findingOwners.push(owner);
           items.push({ v, c, owner, finding });
