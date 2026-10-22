@@ -14,7 +14,12 @@
 // 13. A local manifest supplies a build tree without a verified run folder.
 // 14. A vendor page snapshot is missing or its bytes differ from the row's hash.
 // 15. Calibration build identity or agreement differs from the reference.
-// 16. Calibration agreement is below 90 percent on either class.
+// 16. Calibration agreement is below 90 percent on either class without a ruling.
+// 17. A matching person's ruling cannot admit a calibration below the bar.
+// 18. A ruling's percentages differ from the saved calibration.
+// 19. A ruling names someone missing from people.json, or no person at all.
+// 20. A ruling names a board without a calibration record.
+// 21. Page data loses per-class agreement or requires a ruling above the bar.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,6 +52,17 @@ function calibrationFixture(f) {
   write(join(f.root, file), calibration);
   f.record.calibrations = [{ file, sha256: sha256(readFileSync(join(f.root, file))), ...structuredClone(calibration) }];
   return calibration;
+}
+function ruledCalibrationFixture() {
+  const f = fixture();
+  const calibration = read(join(benchRoot, "index/calibration/greptile-2026-10-21.json"));
+  calibration.build = { ...f.build };
+  f.record.boards.greptile = calibration.board;
+  const file = "index/calibration/greptile.json";
+  write(join(f.root, file), calibration);
+  f.record.calibrations = [{ file, sha256: sha256(readFileSync(join(f.root, file))), build: calibration.build, agreement: calibration.agreement }];
+  f.record.calibrationRulings = [{ board: "greptile", decidedBy: "Sid", decidedOn: "2026-10-22", agreement: { caught: 85.37, missed: 88.89 } }];
+  return f;
 }
 function runFixture(f, tree = true, list = "private") {
   const entry = read(join(benchRoot, "index/runs/2026-10-12-b43b25b-aacr-gpt61.json"));
@@ -179,13 +195,54 @@ describe("frozen comparisons", () => {
     const f = fixture(); calibrationFixture(f); f.record.calibrations[0].agreement.positive = 0.95;
     expect(() => validateComparison(f.record, f.options)).toThrow(/calibration.*agreement/);
   });
-  for (const name of ["positive", "negative"]) it(`refuses a calibration below 90 percent on ${name}`, () => {
+  for (const name of ["positive", "negative"]) it(`refuses a calibration below 90 percent on ${name} without a ruling`, () => {
     const f = fixture(); const calibration = calibrationFixture(f);
     calibration.counts.byClass[name] = { total: 10, agree: 8, disagree: 2 };
     calibration.counts.agree = 18; calibration.counts.disagree = 2; calibration.agreement[name] = 0.8;
     const c = f.record.calibrations[0]; Object.assign(c, structuredClone(calibration));
     write(join(f.root, c.file), calibration); c.sha256 = sha256(readFileSync(join(f.root, c.file)));
     expect(() => validateComparison(f.record, f.options)).toThrow(/90 percent/);
+  });
+  it("refuses the sub-bar Greptile calibration without a ruling", () => {
+    const f = ruledCalibrationFixture(); delete f.record.calibrationRulings;
+    expect(() => validateComparison(f.record, f.options)).toThrow(/90 percent/);
+  });
+  it("accepts the sub-bar calibration with matching ruling percentages and exposes them to the page", () => {
+    const f = ruledCalibrationFixture(); sign(f.record);
+    const result = validateComparison(f.record, f.options);
+    expect(result.accepted).toBe(true);
+    expect(result.boards.greptile.judgeAgreement).toEqual({ caught: 85.37, missed: 88.89 });
+    expect(result.boards.aacr.judgeAgreement).toBeNull();
+  });
+  for (const name of ["caught", "missed"]) it(`refuses a ruling whose ${name} percentage differs from the calibration record`, () => {
+    const f = ruledCalibrationFixture(); f.record.calibrationRulings[0].agreement[name] += 0.01;
+    sign(f.record);
+    expect(() => validateComparison(f.record, f.options)).toThrow(/ruling.*agreement/);
+  });
+  for (const name of ["Unlisted person", "", "Codex"]) it(`refuses a calibration ruling by ${name || "a missing person"}`, () => {
+    const f = ruledCalibrationFixture(); f.record.calibrationRulings[0].decidedBy = name;
+    expect(() => validateComparison(f.record, f.options)).toThrow(/ruling.*person/);
+  });
+  for (const board of ["aacr", "unknown"]) it(`refuses a ruling for ${board} without a calibration record`, () => {
+    const f = ruledCalibrationFixture(); f.record.calibrationRulings[0].board = board;
+    f.record.calibrations = [];
+    expect(() => validateComparison(f.record, f.options)).toThrow(/ruling.*calibration record/);
+  });
+  it("accepts the saved Martian calibration with one excluded deduplication item and exposes both agreement classes", () => {
+    const f = fixture();
+    const calibration = read(join(benchRoot, "index/calibration/martian-2026-10-21.json"));
+    expect(calibration.status).toBe("complete");
+    expect(calibration.excluded).toEqual({ count: 1, reason: expect.stringMatching(/deduplication.*three invalid.*two.*labels/i) });
+    expect(calibration.judgeFailures).toMatchObject({ items: 1, labels: 2 });
+    calibration.build = { ...f.build };
+    f.record.boards.martian = calibration.board;
+    const file = "index/calibration/martian.json";
+    write(join(f.root, file), calibration);
+    f.record.calibrations = [{ file, sha256: sha256(readFileSync(join(f.root, file))), build: calibration.build, agreement: calibration.agreement }];
+    sign(f.record);
+    const result = validateComparison(f.record, f.options);
+    expect(result.accepted).toBe(true);
+    expect(result.boards.martian.judgeAgreement).toEqual({ positive: 92.45, negative: 96.92 });
   });
   it("refuses reference paths outside the benchmark folder", () => {
     const { options, record } = fixture();

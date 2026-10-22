@@ -24,4 +24,7 @@ Written before implementation.
 20. The captured dedup answer repeats indices 5 and 6, is cached, and is replayed instead of making a fresh ask. Existing cache entries must pass the same stage validation as new answers.
 21. Invalid JSON, an extraction without string issues, incomplete or duplicate dedup indices, or a match without a boolean and numeric confidence is cached as a verdict.
 22. Three invalid answers abort later items, multiply through the pipeline's own retries, disappear from the failure count, or omit their paid usage. Invalid text must survive beside the cache.
-23. A failed judge item becomes a negative label or a successful calibration. Its affected reviews and published class counts must remain in the record as failures.
+23. A failed judge item becomes a negative label or vanishes from the record. Its affected reviews and published class counts must remain in the record as exclusions.
+24. A calibration with one excluded deduplication item and agreement on both remaining classes is marked failed or exits 1. The saved Martian record must pass with its failure details intact.
+25. Below-bar agreement makes a completed calibration exit 1; only missing agreement or a missing class should do that. Comparison acceptance still enforces its agreement bar or matching ruling.
+26. A comparison accepts judge failures without a matching excluded item count and reason.

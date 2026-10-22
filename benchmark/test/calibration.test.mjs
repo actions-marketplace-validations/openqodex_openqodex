@@ -1,6 +1,6 @@
 // Failure list: calibration-failures.md, written before implementation.
 import { describe, expect, it } from "vitest";
-import { agreementOf, checkedBytes, compareLabels, costOfUsage, martianLabels, validateCalibration } from "../lib/calibration.mjs";
+import { agreementOf, checkedBytes, compareLabels, costOfUsage, finalizeCalibration, martianLabels, validateCalibration } from "../lib/calibration.mjs";
 import { judgeGreptile } from "../outside/boards/greptile-judge.mjs";
 import { MARTIAN_CITED } from "../lib/martian-board.mjs";
 import { calibrationSteps } from "../outside/boards/martian-judge.mjs";
@@ -23,9 +23,39 @@ describe("board calibration", () => {
     const r = record(); r.build = { ...build, tree: "e".repeat(40) };
     expect(() => validateCalibration(r, { build, board })).toThrow(/build/);
   });
-  it("refuses judge failures even when the remaining labels agree", () => {
+  it("refuses judge failures without recorded exclusions even when the remaining labels agree", () => {
     const r = { ...record(), judgeFailures: { items: 1, labels: 2, byClass: { positive: 1, negative: 1 } } };
-    expect(() => validateCalibration(r, { build, board })).toThrow(/judge failures/);
+    expect(() => validateCalibration(r, { build, board })).toThrow(/exclu/);
+  });
+  it("completes a calibration with an excluded deduplication item and exits 0", () => {
+    const r = { ...record(), judgeFailures: { items: 1, reviews: 1, labels: 2, failures: [{ stage: "dedup", attempts: 3 }] } };
+    expect(finalizeCalibration(r)).toBe(0);
+    expect(r).toMatchObject({ status: "complete", excluded: { count: 1, reason: expect.any(String) } });
+    expect(r.counts.total).toBe(2);
+    expect(validateCalibration(r, { build, board })).toBe(r);
+    r.excluded.count = 2;
+    expect(() => validateCalibration(r, { build, board })).toThrow(/exclu/);
+    r.excluded.count = 1; r.excluded.reason = "";
+    expect(() => validateCalibration(r, { build, board })).toThrow(/exclu/);
+  });
+  it("completes below-bar agreement and exits 0 while comparison acceptance still refuses it", () => {
+    const r = record();
+    r.counts.byClass.caught = { total: 10, agree: 8, disagree: 2 };
+    Object.assign(r.counts, { total: 11, agree: 9, disagree: 2 });
+    r.agreement = agreementOf(r.counts);
+    expect(finalizeCalibration(r)).toBe(0);
+    expect(r.status).toBe("complete");
+    expect(() => validateCalibration(r, { build, board })).toThrow(/90 percent/);
+  });
+  for (const mode of ["no labels", "empty class", "missing class", "missing agreement"]) it(`marks a calibration failed and exits 1 with ${mode}`, () => {
+    const r = record();
+    if (mode === "no labels" || mode === "empty class") {
+      r.counts = compareLabels(mode === "no labels" ? [] : labels.slice(0, 1), mode === "no labels" ? [] : labels.slice(0, 1), ["caught", "missed"]);
+      r.agreement = agreementOf(r.counts);
+    } else if (mode === "missing class") delete r.counts.byClass.missed;
+    else delete r.agreement;
+    expect(finalizeCalibration(r)).toBe(1);
+    expect(r.status).toBe("failed");
   });
   it("judges blind before reading published labels", async () => {
     let judged = false;

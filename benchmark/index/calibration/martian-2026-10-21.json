@@ -1053,5 +1053,15 @@
       }
     ]
   },
-  "status": "failed"
+  "status": "complete",
+  "excluded": {
+    "count": 1,
+    "reason": "One deduplication item exhausted three invalid judge answers. Its review and two positive golden-comment labels were excluded from agreement; 171 labels remain across both classes. Details remain in judgeFailures."
+  },
+  "statusCorrection": {
+    "date": "2026-10-22",
+    "from": "failed",
+    "to": "complete",
+    "reason": "The runner incorrectly treated an excluded judge item as a failed calibration. Agreement was computed for both remaining classes, so the calibration is complete. Counts, agreement, usage and cost are unchanged."
+  }
 }

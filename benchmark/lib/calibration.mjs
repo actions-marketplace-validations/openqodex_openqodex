@@ -35,15 +35,12 @@ export function compareLabels(verdicts, published, classes) {
 }
 
 export const agreementOf = (counts) => Object.fromEntries(Object.entries(counts.byClass).map(([name, c]) => [name, c.total === 0 ? null : c.agree / c.total]));
+export const agreementPercentages = (agreement) => Object.fromEntries(Object.entries(agreement).map(([name, value]) => [name, Number((value * 100).toFixed(2))]));
 
-export function validateCalibration(record, { build, board }) {
-  need(record.status !== "failed" && !record.judgeFailures?.items, "judge failures prevent accepting this calibration");
-  need(equal(record.build, build), "build differs from the comparison build");
-  need(equal(record.board, board) && record.judgeModel === board.judgeModel && record.promptHash === board.promptHash, "board, prompt or judge differs from the comparison board");
-  need(record.version === 1 && typeof record.vendor === "string" && record.vendor.length > 0 && typeof record.labelUnit === "string" && record.labelUnit.length > 0 && Number.isFinite(record.costUsd) && record.costUsd >= 0, "missing vendor, label unit or cost");
+function validateAgreement(record) {
   const counts = record.counts;
   const classes = Object.keys(counts?.byClass ?? {}).sort();
-  need(equal(classes, board.name === "greptile" ? ["caught", "missed"] : ["negative", "positive"]), "agreement must give both published classes");
+  need(equal(classes, record.board.name === "greptile" ? ["caught", "missed"] : ["negative", "positive"]), "agreement must give both published classes");
   let total = 0; let agree = 0; let disagree = 0;
   for (const [name, c] of Object.entries(counts.byClass)) {
     need([c.total, c.agree, c.disagree].every((n) => Number.isInteger(n) && n >= 0) && c.total === c.agree + c.disagree, `invalid counts for ${name}`);
@@ -52,7 +49,27 @@ export function validateCalibration(record, { build, board }) {
   }
   need(counts.total === total && counts.agree === agree && counts.disagree === disagree, "aggregate counts differ from class counts");
   need(equal(record.agreement, agreementOf(counts)), "agreement differs from saved counts");
-  need(Object.values(record.agreement).every((v) => v >= 0.9), "agreement must be at least 90 percent on each class");
+}
+
+// Completion means agreement was computed for both classes. The comparison
+// applies its acceptance bar separately, after checking the record's pins.
+export function finalizeCalibration(record) {
+  if (record.judgeFailures?.items) record.excluded = { count: record.judgeFailures.items, reason: "Judge items exhausted invalid-answer retries; their affected reviews and published labels were excluded from agreement. See judgeFailures for stages, attempts and per-class label counts." };
+  try { validateAgreement(record); } catch (error) { record.status = "failed"; record.failure = error.message; return 1; }
+  record.status = "complete";
+  return 0;
+}
+
+// The comparison checks the ruling's board, person and date before passing
+// its percentages here. A ruling never bypasses record integrity checks.
+export function validateCalibration(record, { build, board, agreementRuling }) {
+  need(record.status !== "failed", "failed calibration has no agreement on both published classes");
+  if (record.judgeFailures?.items) need(record.status === "complete" && record.excluded?.count === record.judgeFailures.items && Number.isInteger(record.excluded.count) && record.excluded.count > 0 && typeof record.excluded.reason === "string" && record.excluded.reason.trim().length > 0, "judge failures must have a matching excluded item count and reason");
+  need(equal(record.build, build), "build differs from the comparison build");
+  need(equal(record.board, board) && record.judgeModel === board.judgeModel && record.promptHash === board.promptHash, "board, prompt or judge differs from the comparison board");
+  need(record.version === 1 && typeof record.vendor === "string" && record.vendor.length > 0 && typeof record.labelUnit === "string" && record.labelUnit.length > 0 && Number.isFinite(record.costUsd) && record.costUsd >= 0, "missing vendor, label unit or cost");
+  validateAgreement(record);
+  need(Object.values(record.agreement).every((v) => v >= 0.9) || (agreementRuling !== undefined && equal(agreementRuling, agreementPercentages(record.agreement))), "agreement must be at least 90 percent on each class without a matching calibration ruling");
   return record;
 }
 

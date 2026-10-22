@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFi
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, repoRoot } from "../lib/cases.mjs";
-import { agreementOf, compareLabels, costOfUsage, hash, martianLabels, validateCalibration } from "../lib/calibration.mjs";
+import { agreementOf, compareLabels, costOfUsage, finalizeCalibration, hash, martianLabels } from "../lib/calibration.mjs";
 import { greptileInputs, martianInputs } from "../lib/calibration-inputs.mjs";
 import { martianItems, relayClient } from "../lib/calibration-relay.mjs";
 import { boardFingerprint, buildFingerprint } from "../lib/comparison.mjs";
@@ -88,15 +88,16 @@ export async function main(argv = process.argv.slice(2)) {
     const counts = compareLabels(verdicts, published, classes);
     const counters = await relay.counts();
     const record = { version: 1, board, vendor: name === "greptile" ? "Greptile" : "Augment", labelUnit: name === "greptile" ? "case against original Greptile truth" : "golden comment caught or missed across all categories", build, startedAt, endedAt: new Date().toISOString(), promptHash: board.promptHash, judgeModel: relay.model, counts, agreement: agreementOf(counts), costUsd: costOfUsage(counters.usage, relay.model), costBasis: "Reported token usage at the pinned public rates in outside/prices.json, not an invoice.", pricesHash: hash(readFileSync(join(benchRoot, "outside/prices.json"))), relay: counters, sources: inputs.sources, score, labels: verdicts.map((r) => ({ ...r, published: published.find((p) => p.id === r.id).label })) };
-    if (judgeFailures) { record.judgeFailures = judgeFailures; record.status = judgeFailures.items ? "failed" : "completed"; }
+    if (judgeFailures) record.judgeFailures = judgeFailures;
+    const exitCode = finalizeCalibration(record);
     if (JSON.stringify(installedBuild()) !== JSON.stringify(build)) throw new Error("product build changed during calibration");
     write(output, record);
     for (const [name, c] of Object.entries(counts.byClass)) console.log(`${name}: ${c.agree}/${c.total} agree (${(100 * c.agree / c.total).toFixed(2)} percent), ${c.disagree} disagree`);
     console.log(`total: ${counts.agree} agree, ${counts.disagree} disagree; cost USD ${record.costUsd.toFixed(6)}`);
     if (judgeFailures) console.log(`judge failures: ${judgeFailures.items} items, ${judgeFailures.reviews} reviews, ${judgeFailures.labels} labels`);
     console.log(`record: benchmark/index/calibration/${name}-${date}.json`);
-    try { validateCalibration(record, { build, board }); } catch (error) { console.error(error.message); return 1; }
-    return 0;
+    if (exitCode) console.error(record.failure);
+    return exitCode;
   } catch (error) {
     const counters = relay ? await relay.counts().catch(() => null) : null;
     write(join(run, "failure.json"), { board: name, startedAt, build, error: error.message, relay: counters });
