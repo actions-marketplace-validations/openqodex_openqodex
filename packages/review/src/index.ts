@@ -32,6 +32,8 @@ export { TOOL_DEFINITIONS, TOOL_NAMES, TOOL_REPLY_BYTES, runTool } from "./tools
 export type { ToolBox, ToolOutcome } from "./tools/index.js";
 export { admitted } from "./scopes.js";
 export type { Admit } from "./scopes.js";
+export { NEIGHBOURHOOD_BLOCK_BYTES, NEIGHBOURHOOD_MAX_BYTES, NEIGHBOURHOOD_TIME_MS, buildNeighbourhood, renderNeighbourhoodBlock } from "./neighbourhood.js";
+export type { Neighbourhood, NeighbourhoodSite, NeighbourhoodSymbol } from "./neighbourhood.js";
 export { MissingObjects, materialize, materializedSnapshots, scopedBaseReader, snapshotInventory } from "./materialize.js";
 export type { Materialized, MaterializedFile, SkippedEntry } from "./materialize.js";
 export { decideIncremental, deltaChange, reviewChanges } from "./incremental.js";

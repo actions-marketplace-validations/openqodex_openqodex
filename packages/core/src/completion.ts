@@ -16,7 +16,9 @@ import type { Change, CompletionRecord, ModelAttempt, ModelCompletionRecord, Mod
 // reported (a command, a search), kept as a diagnostic only. `own`: a call
 // outside the snapshot on the agent's own saved output of this session
 // (Claude Code's tool-results folder), which reads no repository file.
-export type TraceEntry = { tool: string; path: string | null; inside: boolean | null; range: [number, number] | null; ok: boolean; detail?: string; own?: true };
+// `session`: in a staged review, the ReviewerRole of the session that made
+// the call (every session's calls are kept in one trace).
+export type TraceEntry = { tool: string; path: string | null; inside: boolean | null; range: [number, number] | null; ok: boolean; detail?: string; own?: true; session?: string };
 
 // Whether a call left the snapshot: anything not shown inside it, except the
 // agent's own saved output of this session.

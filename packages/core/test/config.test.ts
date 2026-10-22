@@ -85,6 +85,7 @@ review:
   default_base: develop
   include_fixtures: true
   instructions_files: [CONTRIBUTING.md, docs/style.md]
+  stages: false
 scanners:
   disable: [brakeman, rubocop]
   custom:
@@ -139,6 +140,7 @@ describe("loadConfig", () => {
       disabledRules: ["gitleaks:generic-api-key", "lens:react-*"],
       includeFixtures: true,
       instructionsFiles: ["CONTRIBUTING.md", "docs/style.md"],
+      stages: false,
       disabledScanners: ["brakeman", "rubocop"],
       custom: [
         {
