@@ -10,6 +10,7 @@ import { entryProblems, hashFolder, sha256 } from "./index.mjs";
 import { bundleHash } from "./runner.mjs";
 import { isPersonName, readPeople } from "./rulings.mjs";
 import { canonicalJson, entryHash, readSuite, SUITES } from "./suites.mjs";
+import { agreementPercentages, validateCalibration } from "./calibration.mjs";
 
 const HEX40 = /^[a-f0-9]{40}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
@@ -38,7 +39,7 @@ export function buildFingerprint({ root = benchRoot } = {}) {
   return { commit: p.commit, tree: p.tree, bundleHash: p.bundleHash, version };
 }
 
-const BOARD_SCORING = { martian: { metric: "F1", profile: "core" }, aacr: { metric: "semantic recall", profile: "accepted comments, test gaps excluded" }, reviewbench: { metric: "F1", profile: "official" } };
+const BOARD_SCORING = { greptile: { metric: "caught rate", profile: "greptile" }, martian: { metric: "F1", profile: "core" }, aacr: { metric: "semantic recall", profile: "accepted comments, test gaps excluded" }, reviewbench: { metric: "F1", profile: "official" } };
 export function boardFingerprint(name, { root = benchRoot } = {}) {
   const metadata = json(join(root, "outside/boards.json"));
   const board = metadata.boards?.[name];
@@ -46,7 +47,7 @@ export function boardFingerprint(name, { root = benchRoot } = {}) {
   const judge = board.judge;
   const deployment = judge?.deployment ? metadata.deployments?.[judge.deployment] : null;
   const model = deployment?.served ?? judge?.id;
-  const promptHash = judge?.prompt?.sha256 ?? judge?.sha256;
+  const promptHash = judge?.calibrationPrompts?.sha256 ?? judge?.prompt?.sha256 ?? judge?.sha256;
   need(text(model) && HEX64.test(promptHash ?? ""), `board ${name}: missing judge model or prompt hash`);
   need(BOARD_SCORING[name], `board ${name}: no metric and profile defined`);
   return { name, repository: board.repo, commit: board.commit, judgeModel: model, promptHash, ...BOARD_SCORING[name], pinHash: hash({ board, deployment }) };
@@ -79,7 +80,7 @@ export function freezeComparison({ release, boards, suites, reviewers, capUsd },
     version: 1, release,
     boards: Object.fromEntries(boards.map((name) => [name, boardFingerprint(name, { root })])),
     suites: Object.fromEntries(suites.map((name) => [name, suiteFingerprint(name, { root })])),
-    build, reviewers, calibrations: [], capUsd, runs: [],
+    build, reviewers, calibrations: [], calibrationRulings: [], capUsd, runs: [],
     acceptance: { person: "", date: "", hash: "" },
   };
   validateComparison(record, { root, build });
@@ -113,6 +114,18 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
   for (const [name, r] of Object.entries(record.reviewers)) need(object(r) && ["server", "laptop"].includes(r.path) && text(r.reviewer) && text(r.model) && ["on", "off"].includes(r.graph) && ["on", "off"].includes(r.web) && (r.effort === null || text(r.effort)) && ((r.path === "laptop" && r.maxOutputTokens === null) || (Number.isInteger(r.maxOutputTokens) && r.maxOutputTokens > 0)), `comparison reviewers.${name} must pin path, reviewer, model, graph, web, effort and maxOutputTokens`);
   need(Number.isFinite(record.capUsd) && record.capUsd > 0, "comparison capUsd must be positive dollars");
   need(Array.isArray(record.calibrations), "comparison calibrations must be an array");
+  need(record.calibrationRulings === undefined || Array.isArray(record.calibrationRulings), "comparison calibrationRulings must be an array");
+  const rulings = new Map();
+  for (const ruling of record.calibrationRulings ?? []) {
+    need(object(ruling) && text(ruling.board), "calibration ruling must name a board");
+    need(isPersonName(ruling.decidedBy, readPeople(join(root, "review-queue"))), "calibration ruling must name a person in review-queue/people.json");
+    need(date(ruling.decidedOn) && ruling.decidedOn.length === 10, "calibration ruling must give a calendar date with a day");
+    need(object(ruling.agreement) && Object.keys(ruling.agreement).length > 0 && Object.values(ruling.agreement).every((v) => Number.isFinite(v) && v >= 0 && v <= 100), "calibration ruling agreement must give per-class percentages");
+    need(!rulings.has(ruling.board), `duplicate calibration ruling for ${ruling.board}`);
+    rulings.set(ruling.board, ruling);
+  }
+  const boards = Object.fromEntries(Object.entries(record.boards).map(([name, board]) => [name, { ...board, judgeAgreement: null }]));
+  const calibrationBoards = new Set();
   const calibrationFiles = new Set();
   for (const c of record.calibrations) {
     need(object(c) && HEX64.test(c.sha256 ?? "") && buildProblems(c.build) && object(c.agreement) && Object.keys(c.agreement).length > 0 && Object.values(c.agreement).every(Number.isFinite), "calibration must pin file, sha256, build and agreement numbers");
@@ -123,7 +136,17 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     const calibration = json(file);
     need(equal(calibration.build, c.build), `calibration ${c.file} build differs from its reference`);
     need(equal(calibration.agreement, c.agreement), `calibration ${c.file} agreement differs from its reference`);
+    const calibrationBoard = record.boards[calibration.board?.name];
+    need(calibrationBoard, `calibration ${c.file} has no matching comparison board`);
+    const name = calibrationBoard.name;
+    const judgeAgreement = agreementPercentages(calibration.agreement);
+    const ruling = rulings.get(name);
+    if (ruling) need(equal(ruling.agreement, judgeAgreement), `calibration ruling ${name} agreement differs from its calibration record`);
+    validateCalibration(calibration, { build: record.build, board: calibrationBoard, agreementRuling: ruling?.agreement });
+    calibrationBoards.add(name);
+    boards[name].judgeAgreement = judgeAgreement;
   }
+  for (const name of rulings.keys()) need(calibrationBoards.has(name), `calibration ruling ${name} has no calibration record`);
   need(Array.isArray(record.runs), "comparison runs must be an array");
   const runs = new Set();
   for (const r of record.runs) {
@@ -152,7 +175,7 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
   need(object(a) && ["person", "date", "hash"].every((f) => typeof a[f] === "string"), "comparison acceptance must give person, date and hash");
   const unsigned = a.person === "" && a.date === "" && a.hash === "";
   need(unsigned || (isPersonName(a.person, readPeople(join(root, "review-queue"))) && date(a.date) && a.date.length === 10 && HEX64.test(a.hash) && a.hash === comparisonHash(record)), "comparison acceptance must name a person in review-queue/people.json, give a date and hash the complete record");
-  return { accepted: !unsigned, hash: comparisonHash(record) };
+  return { accepted: !unsigned, hash: comparisonHash(record), boards };
 }
 
 // A comparison release uses the accepted record committed on this branch.
