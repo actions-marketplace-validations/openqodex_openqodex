@@ -1,13 +1,5 @@
 # openqodex
 
-## 0.14.0
-
-### Minor Changes
-
-- [#229](https://github.com/openqodex/openqodex/pull/229) [`80b270c`](https://github.com/openqodex/openqodex/commit/80b270cede281b669dfa832509397c554a9afe50) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Check every repository lockfile at every review and scan of a change, show outside scanner advisories without counting them, and include fixed versions.
-
-- The library exports the graph's questions and its index files: `query`, `querySliced`, `OPERATIONS`, `SLICE_CHECKS`, `parseTarget`, `resolveTarget`, `prepareIndexes`, `writeIndex`, `readIndex`, `readIndexFrom`, `assemble`, `INDEX_FORMAT`, `serializeModel`, `deserializeModel`, `graphOf`, `floorReasons`, `hotSymbols` and `isTestPath`, with their types. A program builds a graph, saves the files `writeIndex` returns anywhere, reads them back with `readIndexFrom` and asks every question over the result. `writeIndex` now includes `projects.json`, so the files it returns are enough on their own.
-
 ## 0.13.0
 
 ### Minor Changes
