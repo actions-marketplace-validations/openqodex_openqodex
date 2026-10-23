@@ -585,13 +585,14 @@ export function regressions(oldSamples, newSamples) {
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
 //     that item on that spec version.
-// Rules version 9 scores observations. Failure list, written before the code:
+// Rules version 10 scores observations (version 9 made scanner outside
+// advisories information). Failure list, written before the code:
 // 44. An observation of a staged review is shown to the developer and never
 //     judged: shownFindings() lists report.observations after the findings,
 //     each marked tier "observation", so every score, board file and judge
 //     export sees it like a finding. A report without the field, or with an
 //     empty list, scores exactly as under version 8.
-export const RULES_VERSION = 9;
+export const RULES_VERSION = 10;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
