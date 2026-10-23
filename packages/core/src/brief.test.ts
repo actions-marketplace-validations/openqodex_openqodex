@@ -24,13 +24,17 @@
 //     instructions get, shares a heading with another kind, changes a rule
 //     of the brief, or carries a secret the scanners found; or a brief made
 //     with no item differs from one made before context items existed.
-// 12. The reviewer omits the rule to raise shown defects at the confidence
-//     floor, retains the leave-it-out rule, or weakens impact and scope rules.
-// 13. The judgement rule substitutes the default for a configured confidence
+// 12. A single-pass brief keeps the old suppression rule, treats missing
+//     tests as a finding, or puts the neighbourhood before graph impact.
+// 13. Whole-repo context or a new neighbourhood block leaks a secret.
+// 14. Missing coverage sits outside the whole-repo procedure's numbered steps.
+// 15. The reviewer omits shown defects or weakens impact and scope rules.
+// 16. The judgement rule substitutes the default for a configured confidence
 //     floor, including zero, while the other brief rules use that floor.
 import { describe, expect, it } from "vitest";
-import { buildBrief, buildReviewerBrief } from "./brief.js";
+import { buildBrief, buildReviewerBrief, buildWholeRepoBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
+import { redactSecrets } from "./redact.js";
 import { SECRET, SQL_CANDIDATE, makeChange, makeConfig, makeScan } from "./test-fixtures.js";
 import type { Candidate, Change, ContextItem, SelectedLens } from "./types.js";
 
@@ -197,7 +201,7 @@ describe("10. the reviewer brief's diff section", () => {
   it.each([0, 0.5, 0.9])("does not substitute the default for confidence floor %s", (confidenceFloor) => {
     const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [], confidenceFloor });
     expect(text).toContain(`Raise every defect you can show from the code with confidence ${confidenceFloor} or higher.`);
-    expect(text).toContain(`Raise only real problems on lines this change added or modified, or next to a deletion, with confidence ${confidenceFloor} or higher.`);
+    expect(text).toContain(`Raise findings with evidence you can point at, with confidence ${confidenceFloor} or higher. Anchor each on an added or modified line or a deletion anchor.`);
     expect(text).toContain(`Findings under ${confidenceFloor}, or under a cited lens's floor, are not counted.`);
   });
 
@@ -207,7 +211,7 @@ describe("10. the reviewer brief's diff section", () => {
     expect(text).toContain("Set confidence honestly. The floor removes the rest.");
     expect(text).not.toContain("A wrong finding is worse than a missed one");
     expect(text).not.toContain("leave it out");
-    expect(text).toContain("Raise only real problems on lines this change added or modified, or next to a deletion, with confidence 0.7 or higher.");
+    expect(text).toContain("Raise findings with evidence you can point at, with confidence 0.7 or higher. Anchor each on an added or modified line or a deletion anchor.");
     expect(text).toContain("Findings under 0.7, or under a cited lens's floor, are not counted.");
     expect(text).toContain("`severity` reflects impact on users or the system, not your confidence");
   });
@@ -284,5 +288,48 @@ describe("chosen conventions in briefs", () => {
     expect(out).toContain("custom-instructions.md` wins");
     expect(out).toContain("later file never silently overrides an earlier file");
     expect(out).toContain("including any file named CLAUDE.md, AGENTS.md or similar");
+  });
+});
+
+const singlePassArgs = () => ({
+  change: makeChange(), scan: makeScan(), lenses: [LENS], config: makeConfig(), secrets: [SECRET],
+  findingsPath: "agent-findings.json", finalizeCommand: "openqodex review --finalize",
+  inventory: [], inventoryPath: "inventory.json", hot: [], graphNote: null,
+});
+
+const singlePassBuilders = [
+  { name: "agent-led", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildBrief({ ...singlePassArgs(), ...blocks }) },
+  { name: "reviewer", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildReviewerBrief({ ...singlePassArgs(), ...blocks }).text },
+  { name: "whole repo", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildWholeRepoBrief({ ...singlePassArgs(), ...blocks }) },
+  { name: "whole repo reviewer", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildReviewerBrief({ ...singlePassArgs(), ...blocks, whole: { hot: [], graphNote: null, inventory: [] } }).text },
+];
+
+describe.each(singlePassBuilders)("$name investigation", ({ build }) => {
+  it("keeps the 0.7 floor without the old suppression rule", () => {
+    const text = build({});
+    expect(text).toMatch(/confidence (?:to )?0\.7 or higher/);
+    expect(text).not.toContain(["A wrong finding", "is worse than a missed one"].join(" "));
+    expect(text).toMatch(/Raise (?:every defect|what) you can show from the code/);
+    expect(text).toMatch(/(?:set|Set) confidence honestly/);
+    expect(text).toContain('Use "Code around the change" first');
+  });
+
+  it("keeps missing coverage in summary without raising a finding", () => {
+    const text = build({});
+    expect(text).toContain("Missing coverage is an observation. Mention it in `summary` and raise no finding for it.");
+    expect(text).not.toContain("raise one low-severity finding");
+    expect(text).not.toMatch(/^Missing coverage/m);
+  });
+
+  it("places the neighbourhood immediately after graph impact", () => {
+    const impactBlock = "## Impact\n\nGraph impact.";
+    const neighbourhoodBlock = "## Code around the change\n\nA caller in another file.";
+    expect(build({ impactBlock, neighbourhoodBlock })).toContain(`${impactBlock}\n\n${neighbourhoodBlock}`);
+  });
+
+  it("redacts secrets from graph impact and the neighbourhood", () => {
+    const text = build({ impactBlock: `## Impact\n\n${SECRET}`, neighbourhoodBlock: `## Code around the change\n\n${SECRET}` });
+    expect(text).not.toContain(SECRET);
+    expect(redactSecrets(text, [SECRET])).toBe(text);
   });
 });

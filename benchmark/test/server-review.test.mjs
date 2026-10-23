@@ -33,6 +33,10 @@
 // 8. A model review scores with no cost and no tokens, because the scorer
 //    reads only the laptop's completion record, so the score, the index and
 //    the forecast never see what a server run spent.
+// 9. Staged answers lose a script finding through missing hunk analysis or
+//    invalid evidence, or verify the wrong candidate. Check the saved
+//    finding and the find/verify protocol fields, including scanner refutations.
+// 10. A non-null reply stops being the answer in a staged or correction call.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -59,6 +63,7 @@ const CAPS = { maxUsd: 1, reviewMaxUsd: 0.5 };
 
 // A script for the scripted model; every field is the script's own.
 const script = (more = {}) => ({ version: 1, model: "scripted", served: "scripted-1", prices: { input: 0, cachedInput: 0, output: 0 }, summary: "Adds a download route.", findings: [], dropReason: "The candidate is not reachable from a request.", reply: null, ...more });
+const pathFinding = { severity: "critical", category: "security", confidence: 1, file_path: "files/app.py", line_number: 17, title: "Download path traversal", problem: "The request name is joined to the upload folder without checking the resolved path.", consequence: "A caller can read files outside the upload folder.", fix: "Resolve the path and reject paths outside the upload folder.", source: null };
 
 // The flask case in the server shape: the base and the change as two commits.
 function serverRepo(root) {
@@ -215,8 +220,10 @@ describe("an incomplete server review is scored as complete", () => {
 
   it("saves a complete review as complete, and the score counts it so", { timeout: 180_000 }, async () => {
     const root = tempDir("oq-server-complete-");
-    const { out, sample } = await oneRun(root, createScriptedReviewer(script()));
+    const { out, sample } = await oneRun(root, createScriptedReviewer(script({ findings: [pathFinding] })));
     expect(sample.record.status).toBe("complete");
+    const report = JSON.parse(readFileSync(join(out, "samples", CASE, "model-scripted-graph-on", "1", "report", "report.json"), "utf8"));
+    expect(report.findings).toMatchObject([pathFinding]);
     const { score } = scoreRun(loadRun(out));
     expect(score.population).toMatchObject({ planned: 1, complete: 1, incomplete: 0 });
   });
@@ -427,7 +434,7 @@ describe("a resume reaches another endpoint than the run's", () => {
 describe("the scripted model", () => {
   it("answers with the change id and every candidate the brief names, and reports its usage", async () => {
     const reviewer = createScriptedReviewer(script({ served: "scripted-x" }));
-    const brief = ["- `change_id`: `0123456789ab`, the change this brief is for.", "- c1 [semgrep:rule] files/app.py:17 (major) A path from a parameter."].join("\n");
+    const brief = ["# OpenQodex review brief", "- `change_id`: `0123456789ab`, the change this brief is for.", "- c1 [semgrep:rule] files/app.py:17 (major) A path from a parameter."].join("\n");
     const answer = await reviewer.complete({ callId: "c-1", attempt: 1, purpose: "brief", messages: [{ role: "system", text: "s" }, { role: "user", text: brief }], tools: [], maxOutputTokens: 1000 });
     expect(answer.message.toolCalls).toEqual([]);
     expect(JSON.parse(answer.message.text)).toMatchObject({ version: 2, change_id: "0123456789ab", findings: [], dropped: [{ candidate: "c1", file_path: "files/app.py", line_number: 17 }] });
@@ -437,5 +444,43 @@ describe("the scripted model", () => {
     const dir = tempDir("oq-scripted-");
     writeFileSync(join(dir, "s.json"), JSON.stringify(script()));
     expect(execFileSync(process.execPath, ["--input-type=module", "-e", `import { readScript } from ${JSON.stringify(pathToFileURL(join(benchRoot, "lib/scripted-model.mjs")).href)}; process.stdout.write(JSON.stringify(readScript(${JSON.stringify(join(dir, "s.json"))}).script));`], { encoding: "utf8" })).toBe(JSON.stringify(script()));
+  });
+  it("finds only this unit's findings with every hunk analysed and the exact diff evidence", async () => {
+    const reviewer = createScriptedReviewer(script({ findings: [pathFinding, { ...pathFinding, file_path: "other.py" }] }));
+    const brief = ["# OpenQodex review brief: find pass", "- `change_id`: `0123456789ab`.", "Unit: u2", "### h4 files/app.py 16-17", "```diff", "--- a/files/app.py", "+++ b/files/app.py", "@@ -16,1 +16,2 @@", "-    path = old_path", "+    name = request.args.get('name', '')", "+    path = os.path.join(UPLOAD_DIR, name)", "```", "### h5 files/app.py 24-24", "```diff", "@@ -23,0 +24,1 @@", "+    app.run(debug=True)", "```", "## Answer", "# OpenQodex review brief: verify pass"].join("\n");
+    const answer = await reviewer.complete({ messages: [{ role: "user", text: brief }, { role: "user", text: "Fix the previous answer." }], maxOutputTokens: 1000 });
+    const value = JSON.parse(answer.message.text);
+    expect(value).toMatchObject({ version: "find-1", change_id: "0123456789ab", unit: "u2", examined: ["h4", "h5"], candidates: [{ file_path: pathFinding.file_path, line_number: 17, claim: pathFinding.problem, evidence: [{ file_path: pathFinding.file_path, line_number: 17, quote: "    path = os.path.join(UPLOAD_DIR, name)" }] }] });
+    expect(value.analysis.map((a) => a.hunk)).toEqual(["h4", "h5"]);
+    for (const entry of value.analysis) {
+      expect(entry.changed.length).toBeGreaterThan(0);
+      expect(entry.could_break.length).toBeGreaterThan(0);
+    }
+    const empty = createScriptedReviewer(script());
+    expect(JSON.parse((await empty.complete({ messages: [{ role: "user", text: brief }], maxOutputTokens: 1000 })).message.text).candidates).toEqual([]);
+  });
+
+  it("verifies every candidate by title then location, and refutes scanner candidates with the script reason", async () => {
+    const other = { ...pathFinding, title: "Another claim", problem: "Another operation is unsafe." };
+    const reviewer = createScriptedReviewer(script({ findings: [other, pathFinding] }));
+    const brief = ["# OpenQodex review brief: verify pass", "- `change_id`: `0123456789ab`.", "### c1 (scanner)", "- Location: files/app.py:17", "- Severity: major", "- Category: security", "### k2 (finder)", "- Location: files/app.py:17-18", `- Title: ${pathFinding.title}`, "- Category: security", "### k3 (finder)", "- Location: files/app.py:17", "- Title: Renamed claim", "- Category: security"].join("\n");
+    const answer = await reviewer.complete({ messages: [{ role: "user", text: brief }], maxOutputTokens: 1000 });
+    const value = JSON.parse(answer.message.text);
+    expect(value).toEqual({ version: "verify-1", change_id: "0123456789ab", verdicts: [
+      { id: "c1", verdict: "refuted", reason: script().dropReason, severity: "major", category: "security", confidence: 1, file_path: "files/app.py", line_number: 17, line_end: 17, title: "", problem: "", consequence: "", fix: "", suggested_change: null, tier: "finding", duplicate_of: null },
+      { id: "k2", verdict: "confirmed", reason: pathFinding.problem, severity: pathFinding.severity, category: pathFinding.category, confidence: 1, file_path: pathFinding.file_path, line_number: 17, line_end: 18, title: pathFinding.title, problem: pathFinding.problem, consequence: pathFinding.consequence, fix: pathFinding.fix, suggested_change: null, tier: "finding", duplicate_of: null },
+      { id: "k3", verdict: "confirmed", reason: other.problem, severity: other.severity, category: other.category, confidence: 1, file_path: other.file_path, line_number: 17, line_end: 17, title: other.title, problem: other.problem, consequence: other.consequence, fix: other.fix, suggested_change: null, tier: "finding", duplicate_of: null },
+    ] });
+  });
+
+  it("sends a non-null reply unchanged for every brief kind and correction", async () => {
+    const reply = "The scripted broken answer.";
+    const reviewer = createScriptedReviewer(script({ reply }));
+    for (const heading of ["# OpenQodex review brief", "# OpenQodex review brief: find pass", "# OpenQodex review brief: verify pass"]) {
+      const messages = [{ role: "user", text: heading }];
+      expect((await reviewer.complete({ messages, maxOutputTokens: 1000 })).message.text).toBe(reply);
+      messages.push({ role: "user", text: "Fix the previous answer." });
+      expect((await reviewer.complete({ messages, maxOutputTokens: 1000 })).message.text).toBe(reply);
+    }
   });
 });

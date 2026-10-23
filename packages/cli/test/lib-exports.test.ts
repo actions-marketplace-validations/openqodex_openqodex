@@ -24,6 +24,7 @@
 //    toolchain table, grammars) is looked for beside the bundle.
 // 10. A host's code scan cannot tell a security lens from the others: the
 //     `security: true` of a lens file is not on the lens it loads.
+import { stagedAnswer } from "../../review/test/staged-fake.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -44,7 +45,25 @@ const require = createRequire(import.meta.url);
 // Every value the library exports: the functions by name and the four
 // namespaces that group them.
 const VALUES = [
+  "assemble",
   "buildGraph",
+  "deserializeModel",
+  "floorReasons",
+  "graphOf",
+  "hotSymbols",
+  "INDEX_FORMAT",
+  "isTestPath",
+  "OPERATIONS",
+  "parseTarget",
+  "prepareIndexes",
+  "query",
+  "querySliced",
+  "readIndex",
+  "readIndexFrom",
+  "resolveTarget",
+  "serializeModel",
+  "SLICE_CHECKS",
+  "writeIndex",
   "createToolResolver",
   "defaultLensDir",
   "detectImpact",
@@ -84,10 +103,32 @@ const TYPES = [
   "Change",
   "ChangedFile",
   "CompletionRecord",
+  "ModelCompletionRecord",
+  "AnyCompletionRecord",
+  "ModelToolEntry",
+  "ModelAttempt",
+  "ModelCallUsage",
   "Config",
   "DiffCoverage",
   "FileFacts",
   "Graph",
+  "Session",
+  "Request",
+  "Answer",
+  "Operation",
+  "Target",
+  "Item",
+  "Extra",
+  "ErrorCode",
+  "Tier",
+  "Evidence",
+  "Unknown",
+  "Cause",
+  "GenerationManifest",
+  "OpenGeneration",
+  "GraphStore",
+  "ProjectModel",
+  "ReadIndexFile",
   "ImpactSummary",
   "Lang",
   "Lens",
@@ -146,7 +187,32 @@ const TYPES = [
 // What each namespace holds: the same functions as the named exports.
 const NAMESPACES: Record<string, string[]> = {
   scanners: ["createToolResolver", "isFixturePath", "loadToolchain", "preinstallScanners", "ruleClassFor", "runScanners", "toolchainHash"],
-  graph: ["buildGraph", "detectImpact", "extractFacts", "PacketCollision", "PacketLeak", "writePacket"],
+  graph: [
+    "assemble",
+    "buildGraph",
+    "deserializeModel",
+    "detectImpact",
+    "extractFacts",
+    "floorReasons",
+    "graphOf",
+    "hotSymbols",
+    "INDEX_FORMAT",
+    "isTestPath",
+    "OPERATIONS",
+    "PacketCollision",
+    "PacketLeak",
+    "parseTarget",
+    "prepareIndexes",
+    "query",
+    "querySliced",
+    "readIndex",
+    "readIndexFrom",
+    "resolveTarget",
+    "serializeModel",
+    "SLICE_CHECKS",
+    "writeIndex",
+    "writePacket",
+  ],
   lenses: ["defaultLensDir", "loadLensCatalog", "selectLenses", "selectLensesForDiff"],
   render: ["renderJson", "renderMarkdown", "renderReview", "renderSarif"],
 };
@@ -407,16 +473,17 @@ describe("a bundled program with openqodex external", () => {
 // and reads the change id from the brief), a budget that allows every call,
 // an install root with no scanner in it, and a work folder of its own.
 const REVIEW_WORKER = `import { reviewChange } from "openqodex";
+const stagedAnswer = ${stagedAnswer.toString()};
 const [clonePath, mergeBaseSha, headSha, workDir, installRoot] = process.argv.slice(2);
 const reviewer = {
   kind: "model",
   model: "fixture-model",
   maxOutputTokens: 4096,
   async complete(request) {
-    const text = request.messages.map((m) => ("text" in m ? m.text : "")).join("\\n");
+    const text = request.messages.find((m) => m.role === "user")?.text ?? "";
     const id = /change_id\\W+([0-9a-f]{6,})/.exec(text)?.[1] ?? "";
     const answer = { version: 2, change_id: id, summary: "Reviewed the fixture change.", findings: [], dropped: [] };
-    return { message: { text: JSON.stringify(answer), toolCalls: [] }, usage: { model: "fixture-model", inputTokens: 100, outputTokens: 20, costUsd: null } };
+    return { message: { text: stagedAnswer(text, JSON.stringify(answer), () => ""), toolCalls: [] }, usage: { model: "fixture-model", inputTokens: 100, outputTokens: 20, costUsd: null } };
   },
 };
 const budget = { authorize: async () => true, deadlineMs: 120000 };

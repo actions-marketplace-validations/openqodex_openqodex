@@ -196,7 +196,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
       const lacking = judgeFieldsMissing(f);
       if (lacking.length > 0) held.push({ tool: job.tool, caseId: job.caseId, case: job.case, goldenUrl: url, index, findingId: ids[index], lacking });
     });
-    const comments = native !== null ? native.trim() ? [{ path: null, line: null, body: native, created_at: first.row.started_at ?? null }] : [] : shown.map((f) => ({ path: normPath(f.file_path) || null, line: Number.isInteger(f.line_number) ? f.line_number : null, body: martianBody(f), created_at: first?.row?.started_at ?? null }));
+    const comments = native !== null ? native.trim() ? [{ path: null, line: null, body: native, created_at: first.row.started_at ?? null }] : [] : shown.map((f) => ({ path: normPath(f.file_path) || null, line: Number.isInteger(f.line_number) ? f.line_number : null, body: martianBody(f), created_at: first?.row?.started_at ?? null, tier: f.tier ?? "finding" }));
     if (native !== null && first.row.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: first.row.failure ?? null });
     reviews.push({ url, review: { tool: job.tool, repo_name: null, pr_url: url, review_comments: comments, openqodex: { caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: statusOf(first), findingIds: ids } } });
   }

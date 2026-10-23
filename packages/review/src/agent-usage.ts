@@ -7,7 +7,7 @@
 // report prints (ReviewerRecord.usage) are not touched.
 import type { ReviewerUsage } from "@openqodex/core";
 import type { ReviewerSession, Turn } from "./agents/driver.js";
-import type { CallRecord } from "./usage.js";
+import type { CallRecord, ReviewerRole } from "./usage.js";
 
 const NONE: ReviewerUsage = { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null };
 
@@ -20,12 +20,12 @@ function added(now: number | null, before: number | null): number | null {
 }
 
 // The record of round `round` (from 1), from the total before it and the turn it ended with.
-export function agentRoundCall(args: { driver: string; round: number; before: ReviewerUsage; turn: Turn; durationMs: number }): CallRecord {
+export function agentRoundCall(args: { driver: string; round: number; before: ReviewerUsage; turn: Turn; durationMs: number; role?: ReviewerRole }): CallRecord {
   const models = args.turn.models ?? [];
   return {
-    callId: `${args.driver}-${args.round}`,
-    reviewer: "primary",
-    purpose: args.round === 1 ? "brief" : "correction",
+    callId: `${args.role ?? args.driver}-${args.round}`,
+    reviewer: args.role ?? "primary",
+    purpose: args.round > 1 ? "correction" : args.role?.startsWith("finder:") ? "find" : args.role?.startsWith("verifier:") ? "verify" : "brief",
     attempt: 1,
     model: models.length === 0 ? null : [...models].sort().join(", "),
     inputTokens: added(args.turn.usage.input_tokens, args.before.input_tokens),
@@ -40,7 +40,7 @@ export function agentRoundCall(args: { driver: string; round: number; before: Re
 // to the caller unchanged. A turn that arrives after the conversation gave
 // up on it (its deadline passed and the session was closed) is still
 // recorded, as failed.
-export function meterSession(session: ReviewerSession, opts: { driver: string; now: () => number }): { session: ReviewerSession; calls(): CallRecord[] } {
+export function meterSession(session: ReviewerSession, opts: { driver: string; role?: ReviewerRole; now: () => number }): { session: ReviewerSession; calls(): CallRecord[] } {
   const calls: CallRecord[] = [];
   let before = NONE;
   const metered: ReviewerSession = {
@@ -48,7 +48,7 @@ export function meterSession(session: ReviewerSession, opts: { driver: string; n
     async send(text: string): Promise<Turn> {
       const started = opts.now();
       const turn = await session.send(text);
-      calls.push(agentRoundCall({ driver: opts.driver, round: calls.length + 1, before, turn, durationMs: opts.now() - started }));
+      calls.push(agentRoundCall({ driver: opts.driver, role: opts.role, round: calls.length + 1, before, turn, durationMs: opts.now() - started }));
       before = turn.usage;
       return turn;
     },

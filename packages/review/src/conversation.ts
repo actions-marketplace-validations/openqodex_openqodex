@@ -12,7 +12,7 @@ import { classify } from "./agents/trace.js";
 import { MAX_FILE_BYTES, snapshotFiles } from "./snapshot.js";
 import type { ReviewerRole } from "./usage.js";
 
-const MAX_CORRECTIONS = 2;
+export const MAX_CORRECTIONS = 2;
 const HEARTBEAT_MS = 15_000;
 // An answer bigger than this is not read.
 const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
@@ -190,6 +190,7 @@ export function deliverRanges(args: { snapshotDir: string; unread: Hunk[]; earli
   };
   for (const h of args.unread) {
     if (h.deletion) {
+      if (args.earlier?.some((d) => d.deletion && d.path === h.path && d.start === h.start && d.end === h.end)) continue;
       const block = removedBlock(h);
       if (block === null) {
         left.push(h);
@@ -326,14 +327,27 @@ export async function converse(args: {
   onRound?: (round: Omit<CorrectionRound, "by">) => void;
   // The failure of a turn the deadline stopped, in place of TIMED_OUT.
   timedOut?: string;
+  heartbeat?: boolean;
+  staged?: boolean;
+  sessionName?: string;
+  // Seed a fresh verifier with its saved answer after assembly found an error.
+  continuation?: { conversation: Conversation; errors: string[] };
 }): Promise<Conversation> {
   const startedAt = args.now();
-  const c: Conversation = { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
-  const heartbeat = setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
-  heartbeat.unref();
+  const c: Conversation = args.continuation?.conversation ?? { rounds: 0, trace: [], usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, report: null, checked: null, errors: [], required: 0, disposed: 0, failure: null, submission: null, delivered: [], carried: [], startedAt, endedAt: startedAt };
+  const heartbeat = args.heartbeat === false ? null : setInterval(() => args.say(`Reviewer still working: ${Math.round((args.now() - startedAt) / 1000)} s`), HEARTBEAT_MS);
+  heartbeat?.unref();
   try {
     let text = args.brief;
+    if (args.continuation) {
+      if (c.rounds > MAX_CORRECTIONS) return c;
+      c.errors = args.continuation.errors;
+      args.onRound?.({ round: c.rounds, errors: c.errors, delivered: [], later: 0, answer: c.submission });
+      args.say(`${args.sessionName ?? "Reviewer"}: correction round ${c.rounds} of ${MAX_CORRECTIONS}`);
+      text = [args.brief, "Previous answer:", JSON.stringify(c.submission), "Your answer failed these assembly checks. Fix every one.", ...renumber(c.errors), "Then answer again with the whole JSON object and nothing else."].join("\n");
+    }
     for (;;) {
+      if ((args.staged || args.continuation) && args.now() >= args.deadline) { c.failure = args.timedOut ?? TIMED_OUT; break; }
       c.rounds++;
       let timer: NodeJS.Timeout | undefined;
       const late = new Promise<Turn>((done) => {
@@ -374,7 +388,7 @@ export async function converse(args: {
       if (problems.length === 0 && given.delivered.length === 0) break;
       c.delivered.push(...given.delivered);
       c.carried.push(given.delivered);
-      args.say(`Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
+      args.say(args.sessionName ? `${args.sessionName}: correction round ${c.rounds} of ${MAX_CORRECTIONS}` : `Correction round ${c.rounds} of ${MAX_CORRECTIONS}: ${problems.length} ${problems.length === 1 ? "problem" : "problems"}, ${given.delivered.length} unread changed ${given.delivered.length === 1 ? "range" : "ranges"} sent to the reviewer`);
       args.onRound?.({ round: c.rounds, errors: result.errors.map((e) => e.replace(/^\d+\.\s+/, "")), delivered: given.delivered, later: given.later, answer: "value" in parsed ? parsed.value : null });
       text = [
         ...(problems.length > 0 ? ["Your answer failed these checks. Fix every one.", "", ...problems, ""] : []),
@@ -384,7 +398,7 @@ export async function converse(args: {
       ].join("\n");
     }
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat !== null) clearInterval(heartbeat);
     c.endedAt = args.now();
   }
   return c;

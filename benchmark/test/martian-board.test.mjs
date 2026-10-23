@@ -335,6 +335,7 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
       line: 40,
       body: "Coupon can be applied twice. The cart total is read before the discount lock is taken. Also, the refund handler logs the full card number. Both put customers at risk. Fix: Take the discount lock before reading the total, and mask the card number before logging.",
       created_at: "2026-10-11T10:00:00.000Z",
+      tier: "finding",
     });
     // A finding outside the change is sent too.
     expect(data["https://github.com/oq-fixture/ledger/pull/7"].reviews[0].review_comments).toHaveLength(1);

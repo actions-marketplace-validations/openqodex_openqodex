@@ -5,6 +5,115 @@
     "inside": null,
     "range": null,
     "ok": true,
-    "detail": "{\"command\":\"/bin/cat app/server.py\"}"
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "finder:u1:local"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "finder:u1:contracts"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:1"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:2"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:3"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:4"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:5"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:6"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:7"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:8"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:9"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:10"
+  },
+  {
+    "tool": "shell",
+    "path": null,
+    "inside": null,
+    "range": null,
+    "ok": true,
+    "detail": "{\"command\":\"/bin/cat app/server.py\"}",
+    "session": "verifier:11"
   }
 ]

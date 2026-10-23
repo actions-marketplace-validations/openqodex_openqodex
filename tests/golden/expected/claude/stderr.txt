@@ -2,6 +2,19 @@ Reviewing the change against HEAD: 11 files, +45 -16
 Scanners: 15 ran, 5 had nothing to check, 24 candidates to check
 Redacted secrets in 1 file of the snapshot
 Code graph: 4 files in <SECONDS> s (5 parsed, 0 from cache, fresh)
-Reviewer: claude 2.1.289 started (process <REVIEWER_PID>); this takes one to three minutes
+Reviewer: claude 2.1.289; staged review, 1 units, 2 finder sessions, then verifiers; this takes several minutes
+Finder for unit u1 (correctness and safety) started (process <REVIEWER_PID>)
+Finder for unit u1 (interfaces and conventions) started (process <REVIEWER_PID>)
+Verifier 1 for app/config.py started (process <REVIEWER_PID>)
+Verifier 10 for package-lock.json started (process <REVIEWER_PID>)
+Verifier 11 for app/server.py started (process <REVIEWER_PID>)
+Verifier 2 for .github/workflows/ci.yml started (process <REVIEWER_PID>)
+Verifier 3 for Dockerfile started (process <REVIEWER_PID>)
+Verifier 4 for Dockerfile started (process <REVIEWER_PID>)
+Verifier 5 for infra/main.tf started (process <REVIEWER_PID>)
+Verifier 6 for deploy/deployment.yaml started (process <REVIEWER_PID>)
+Verifier 7 for scripts/deploy.sh started (process <REVIEWER_PID>)
+Verifier 8 for db/migrations/002_index_item_names.sql started (process <REVIEWER_PID>)
+Verifier 9 for app/search.py started (process <REVIEWER_PID>)
 Report: <DEMO>/.openqodex/reviews/<RUN_ID>/report.html
 Markdown: <DEMO>/.openqodex/reviews/<RUN_ID>/report.md

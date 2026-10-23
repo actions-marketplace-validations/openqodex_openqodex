@@ -19,6 +19,16 @@ import { finalizeReview, scanReport } from "../finalize.js";
 import { SECRET, finding, makeChange, makeConfig, makeManifest, makeScan, makeSubmission } from "../test-fixtures.js";
 import type { CompletionRecord, Config, ImpactSummary, Report } from "../types.js";
 import { renderHtml, renderJson, renderMarkdown, renderSarif, renderTerminal } from "./index.js";
+import { renderReview } from "./review.js";
+
+// Failure case: an unverified candidate looks like a low-confidence finding.
+it("renders a staged candidate's not verified reason in the receipt, terminal, markdown and html", () => {
+  const report = review();
+  report.low_confidence = [{ title: "Unchecked operation", file_path: "app/search.py", confidence: 0.8, floor: 0.7, reason: "not verified" }];
+  for (const output of [renderReview(report, { format: "terminal", color: false }), renderTerminal(report, { color: false }), renderReview(report, { format: "markdown" }), renderMarkdown(report), renderHtml({ report, display: null })]) {
+    expect(output).toContain("not verified");
+  }
+});
 
 function review(submission = makeSubmission(), config: Partial<Config> = {}): Report {
   const change = makeChange();

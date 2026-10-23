@@ -71,7 +71,7 @@ describe("the confidence floor", () => {
   it("1. without a floor, the brief is the one the laptop gets today, with 0.7 in both places", () => {
     const text = brief();
     expect(text).toBe(brief(0.7));
-    expect(text).toContain("5. Raise only real problems on lines this change added or modified, or next to a deletion, with confidence 0.7 or higher.");
+    expect(text).toContain("6. Raise findings with evidence you can point at, with confidence 0.7 or higher. Anchor each on an added or modified line or a deletion anchor.");
     expect(text).toContain("- `confidence`: 0 to 1, set honestly. Findings under 0.7, or under a cited lens's floor, are not counted.");
   });
 

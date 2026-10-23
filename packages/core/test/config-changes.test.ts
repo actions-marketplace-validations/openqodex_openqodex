@@ -43,6 +43,7 @@ const SHIPPED_KEYS = [
   "review.default_base",
   "review.include_fixtures",
   "review.instructions_files",
+  "review.stages",
   "scanners.disable",
   "scanners.custom",
   "graph.enabled",

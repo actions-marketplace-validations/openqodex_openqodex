@@ -42,6 +42,16 @@ async function freeze() {
     const scan = JSON.parse(readFileSync(join(out, "scan.json"), "utf8"));
     const report = JSON.parse(readFileSync(join(out, "report.json"), "utf8"));
     writeFileSync(join(here, "stand-ins/submission.json"), answerText(scan, report.change_id));
+    const byFile = {};
+    for (const finding of answerFor(scan, report.change_id).findings) (byFile[finding.file_path] ??= []).push(finding);
+    const expected = JSON.parse(readFileSync(join(here, "../../examples/demo-repo/expected.json"), "utf8"));
+    for (const bug of expected.bugs) {
+      const list = byFile[bug.file] ??= [];
+      if (list.some((f) => f.line_number <= bug.lines[1] && f.line_end >= bug.lines[0])) continue;
+      list.push({ severity: "major", category: "bug", confidence: 1, file_path: bug.file, line_number: bug.lines[0], line_end: bug.lines[1], title: `Planted ${bug.id} problem`, problem: "This changed line introduces an unsafe operation.", consequence: "The affected behavior can fail when this path runs.", fix: "Correct the operation before using this change.", source: null, candidate: null });
+    }
+    writeFileSync(join(here, "stand-ins/find-answers.json"), `${JSON.stringify(byFile, null, 2)}\n`);
+    console.log(`golden: finder locations frozen by file, ${Object.keys(byFile).length} files`);
     console.log(`golden: answer frozen, ${scan.candidates.length} candidates raised, change ${report.change_id}`);
   } finally {
     rmSync(prepared.work, { recursive: true, force: true });

@@ -551,7 +551,8 @@ describe("21. the commands init prints run as pasted", () => {
 });
 
 describe("19. init with no agent found", () => {
-  it("in a terminal, offers the four agents and installs into the one chosen", () => {
+  // Agent detection also sees a real system Cursor installation.
+  it.skipIf(existsSync("/Applications/Cursor.app"))("in a terminal, offers the four agents and installs into the one chosen", () => {
     const s = sandbox();
     // Space ticks the first agent, Claude Code; clack redraws that line only.
     const r = inTerminal(s, ["init"], [["Space: select", " "], ["◼ Claude Code", "\r"], ["Write these files?", "\r"]]);
@@ -564,7 +565,7 @@ describe("19. init with no agent found", () => {
     expect(existsSync(join(s.home, ".agents/skills/openqodex/SKILL.md"))).toBe(false);
   });
 
-  it("without a terminal, exits 2 with the --agent list and writes nothing", () => {
+  it.skipIf(existsSync("/Applications/Cursor.app"))("without a terminal, exits 2 with the --agent list and writes nothing", () => {
     const s = sandbox();
     const before = snapshot(s);
     const r = cli(s, ["init", "--yes"]);

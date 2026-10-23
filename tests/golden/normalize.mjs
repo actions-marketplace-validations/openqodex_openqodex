@@ -97,10 +97,20 @@ export function normalize(name, raw, context) {
   }
   if (name === "stderr.txt") {
     text = text.replace(/(Reviewer: (?:claude|codex) [\d.]+ started \(process )\d+(\))/g, "$1<REVIEWER_PID>$2");
+    // The staged review's sessions: "Finder for unit u1 (...) started (process N)" and "Verifier 2 for app/x.py started (process N)".
+    text = text.replace(/^((?:Finder for unit|Verifier) [^\n]*? started \(process )\d+(\))/gm, "$1<REVIEWER_PID>$2");
+    text = text.replace(/^Reviewers still working: \d+ sessions live, \d+ done\n/gm, "");
+    // Concurrent sessions print their lines in completion order. The lines
+    // are put back in their own slots, sorted, so the recording holds.
+    const lines = text.split("\n");
+    const slots = lines.map((line, i) => (/^(?:Finder for unit |Verifier \d+ for |(?:Finder for unit|Verifier \d+ for)[^\n]*: correction round )/.test(line) ? i : -1)).filter((i) => i >= 0);
+    const sorted = slots.map((i) => lines[i]).sort();
+    slots.forEach((i, n) => { lines[i] = sorted[n]; });
+    text = lines.join("\n");
     text = text.replace(new RegExp(String.raw`(Code graph: [^\n]*? in )${SECONDS}`, "g"), "$1<SECONDS> s");
     text = text.replace(/^Reviewer still working: \d+ s\n/gm, "");
   }
-  if (name === "brief.md") {
+  if (name === "brief.md" || name.startsWith("briefs/")) {
     text = text.replace(new RegExp(String.raw`(Built on this machine from [^\n]*? in )${SECONDS}`, "g"), "$1<SECONDS> s");
   }
   if (name === "report.md") {

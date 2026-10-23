@@ -33,6 +33,7 @@
 // tests below that guard one of its lines are named "R<n>". These run with
 // no reviewer: the cases with the real Claude Code are in
 // tests/e2e/action-review.test.ts.
+import { stagedAnswer } from "../../review/test/staged-fake.js";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -351,7 +352,7 @@ describe("the scan step, run", () => {
     const outside = tempDir("oq-rule-target-");
     writeFileSync(join(outside, "rules.md"), "OUTSIDE-RULE-CANARY\n");
     const provider = tempDir("oq-action-provider-");
-    writeFileSync(join(provider, "claude"), `#!${process.execPath}\n${readFileSync(join(here, "../../../tests/e2e/fixtures/convention-provider.cjs"), "utf8")}`);
+    writeFileSync(join(provider, "claude"), `#!${process.execPath}\n${`const stagedAnswer = ${stagedAnswer.toString()};\n${readFileSync(join(here, "../../../tests/e2e/fixtures/convention-provider.cjs"), "utf8").replace('result: JSON.stringify({ version: 2, change_id: id, summary: "Changes the page size.", findings: [], dropped: [] })', 'result: stagedAnswer(brief, JSON.stringify({ version: 2, change_id: id, summary: "Changes the page size.", findings: [], dropped: [] }), () => "")')}`}`);
     chmodSync(join(provider, "claude"), 0o755);
     const { dir, base } = pullRequest(null, "review:\n  instructions_files: [rules.md]\n", (d) => {
       writeFileSync(join(d, "db/x.sql"), "SELECT 1;\n");

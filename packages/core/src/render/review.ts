@@ -4,7 +4,7 @@
 // their order are the same in both; only the markup differs.
 import pc from "picocolors";
 import type { ModelCompletionRecord, Report, ReportFinding, ReviewerRecord } from "../types.js";
-import { candidateLocation, coverageLine, display, escapeMarkdown, firstLine, location, notOpenedLabel, orderFindings, severityBreakdown, verdictLine } from "./common.js";
+import { candidateLocation, coverageLine, display, escapeMarkdown, findingTitle, firstLine, location, lowConfidenceReason, notOpenedLabel, observationsOmittedLine, orderFindings, orderObservations, severityBreakdown, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
 
 type Line =
@@ -12,6 +12,8 @@ type Line =
   | { kind: "text"; text: string }
   | { kind: "heading"; text: string }
   | { kind: "item"; text: string }
+  | { kind: "label"; text: string }
+  | { kind: "code"; text: string }
   | { kind: "field"; label: string; text: string };
 
 export const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
@@ -53,7 +55,7 @@ export function modelReviewerLine(record: ModelCompletionRecord): string {
 }
 
 // "1. Critical security: Search query built from request input"
-const findingLabel = (f: ReportFinding, n: number) => `${n}. ${f.severity[0]?.toUpperCase()}${f.severity.slice(1)} ${f.category}: ${f.title}`;
+const findingLabel = (f: ReportFinding, n: number) => `${n}. ${findingTitle(f)}`;
 
 function findingLines(f: ReportFinding, n: number): Line[] {
   return [
@@ -66,6 +68,21 @@ function findingLines(f: ReportFinding, n: number): Line[] {
     ...f.notes.map((text): Line => ({ kind: "field", label: "Note", text })),
     ...(f.found_by ? [{ kind: "field" as const, label: "Found by", text: f.found_by.join(", ") }] : []),
   ];
+}
+
+function observationLines(report: Report): Line[] {
+  const ordered = orderObservations(report);
+  const omitted = observationsOmittedLine(report);
+  if (ordered.length === 0 && omitted === null) return [];
+  const out: Line[] = [{ kind: "heading", text: "Observations" }, { kind: "text", text: "These do not count toward the verdict." }];
+  ordered.forEach((f, i) => {
+    out.push(...findingLines(f, report.findings.length + i + 1));
+    if (f.suggested_change) {
+      out.push({ kind: "label", text: "Suggested change" }, { kind: "code", text: f.suggested_change });
+    }
+  });
+  if (omitted) out.push({ kind: "text", text: omitted });
+  return out;
 }
 
 // A dropped candidate, as one item and its source.
@@ -116,9 +133,12 @@ function lines(report: Report): Line[] {
     if (ordered.length === 0) out.push({ kind: "text", text: "No findings on the changed lines." });
   }
   ordered.forEach((f, i) => out.push(...findingLines(f, i + 1)));
+  out.push(...observationLines(report));
   if (report.outside_change.length > 0) {
+    // Numbered after the findings and the observations, so no two shown items share a number.
+    const shown = ordered.length + orderObservations(report).length;
     out.push({ kind: "heading", text: `Outside the changed lines (${report.outside_change.length}), never counted` });
-    report.outside_change.forEach((f, i) => out.push(...findingLines(f, ordered.length + i + 1)));
+    report.outside_change.forEach((f, i) => out.push(...findingLines(f, shown + i + 1)));
   }
   // Only an incomplete review has them: what the scanners found, unchecked.
   if (!complete && report.not_reviewed.length > 0) {
@@ -146,7 +166,7 @@ function lines(report: Report): Line[] {
   }
   if (report.low_confidence.length > 0) {
     out.push({ kind: "heading", text: "Below the confidence floor (not counted)" });
-    for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})` });
+    for (const l of report.low_confidence) out.push({ kind: "item", text: `${l.file_path}: ${l.title} (confidence ${l.confidence}, floor ${l.floor})${lowConfidenceReason(l)}` });
   }
   if (c) {
     out.push({ kind: "heading", text: "Coverage" });
@@ -203,6 +223,13 @@ export function renderReceipt(report: Report, opts: { html: string; md: string; 
     out.push("No findings on the changed lines.");
   }
   ordered.forEach((f, i) => out.push(display(`${findingLabel(f, i + 1)} (${location(f)})`)));
+  const observations = orderObservations(report);
+  const omitted = observationsOmittedLine(report);
+  if (observations.length > 0 || omitted) {
+    out.push("Observations (do not count toward the verdict):");
+    observations.forEach((f, i) => out.push(display(`${findingLabel(f, ordered.length + i + 1)} (${location(f)})`)));
+    if (omitted) out.push(omitted);
+  }
   if (!complete && report.not_reviewed.length > 0) {
     // One line each: the developer sees what the scanners found, unchecked.
     out.push(`${UNCHECKED} (${report.not_reviewed.length}):`);
@@ -220,13 +247,19 @@ export function renderReceipt(report: Report, opts: { html: string; md: string; 
 // the fix, any suggested change and the source. `numbers` are the receipt's
 // and must exist; they are printed in the order given.
 export function renderFindingDetails(report: Report, numbers: number[]): string {
-  const ordered = orderFindings(report.findings);
+  const ordered = [...orderFindings(report.findings), ...orderObservations(report)];
   const out: string[] = [];
+  let observations = false;
   for (const n of numbers) {
     const f = ordered[n - 1];
     if (f === undefined) continue;
+    const observation = n > report.findings.length;
+    if (observation && !observations) {
+      out.push("Observations (do not count toward the verdict):");
+      observations = true;
+    }
     out.push(display(findingLabel(f, n)));
-    const fields = f.problem !== undefined ? findingLines(f, n).slice(1) : [{ kind: "field" as const, label: "Where", text: location(f) }, { kind: "field" as const, label: "Description", text: f.description }, { kind: "field" as const, label: "Source", text: f.source ?? "the reviewer" }];
+    const fields = f.problem !== undefined || observation ? findingLines(f, n).slice(1) : [{ kind: "field" as const, label: "Where", text: location(f) }, { kind: "field" as const, label: "Description", text: f.description }, { kind: "field" as const, label: "Source", text: f.source ?? "the reviewer" }];
     for (const l of fields) if (l.kind === "field") out.push(`   ${l.label}: ${display(l.text)}`);
     if (f.suggested_change !== null && f.suggested_change.trim() !== "") {
       out.push("   Suggested change:");
@@ -245,13 +278,24 @@ export function markdownText(text: string): string {
   return escapeMarkdown(display(text));
 }
 
-export function renderReview(report: Report, opts: { format: "terminal" | "markdown"; color?: boolean }): string {
+function renderLines(lines: Line[], opts: { format: "terminal" | "markdown"; color?: boolean }): string {
   const c = pc.createColors(opts.format === "terminal" && opts.color === true);
   const out: string[] = [];
   const md = opts.format === "markdown";
-  for (const l of lines(report)) {
+  for (const l of lines) {
+    if (l.kind === "code") {
+      const code = codeLines(l.text);
+      const fence = "`".repeat((l.text.match(/`+/g) ?? []).reduce((n, run) => Math.max(n, run.length + 1), 3));
+      if (md) out.push("", [fence, ...code, fence].join("\n"), "");
+      else out.push(code.map((line) => `   ${line}`).join("\n"));
+      continue;
+    }
     // Terminal: one line, no control character. Markdown: also escaped.
     const text = md ? markdownText(l.text) : display(l.text);
+    if (l.kind === "label") {
+      out.push(md ? `- **${text}:**` : `   ${c.dim(`${text}:`)}`);
+      continue;
+    }
     if (l.kind === "field") {
       out.push(md ? `- **${l.label}:** ${text}` : `   ${c.dim(`${l.label}:`)} ${text}`);
       continue;
@@ -268,5 +312,17 @@ export function renderReview(report: Report, opts: { format: "terminal" | "markd
     else if (l.kind === "item") out.push(`${text}`);
     else out.push(text);
   }
-  return `${out.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+  return `${out.filter((line, i) => line !== "" || out[i - 1] !== "").join("\n").trim()}\n`;
+}
+
+// The legacy markdown report uses an unnumbered table for findings.
+export function renderObservations(report: Report): string {
+  const lines = observationLines(report);
+  if (lines.length === 0) return "";
+  lines.splice(1, 0, { kind: "text", text: "The numbers continue the receipt's numbering." });
+  return renderLines(lines, { format: "markdown" });
+}
+
+export function renderReview(report: Report, opts: { format: "terminal" | "markdown"; color?: boolean }): string {
+  return renderLines(lines(report), opts);
 }

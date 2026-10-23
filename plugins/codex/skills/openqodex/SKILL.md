@@ -38,7 +38,7 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 
 2. Wait for it. A review can take minutes. OpenQodex stops the reviewer after 30 minutes, or after 2 hours with `--all`. Many agents stop a command sooner. So run it in the background and wait until it exits. While the reviewer works, it prints a progress line every 15 seconds on stderr. Do not start it a second time while one runs.
 
-3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code.
+3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code. When the receipt ends with `Observations (do not count toward the verdict):` and numbered lines under it, show those lines as printed too. An observation is a style, naming, docs or test note. It is not a finding to fix unless the developer names its number.
 
 4. Ask the developer: "Fix all, or tell me which?" Do not change any code before they answer. If they already told you what to fix, for example "review and fix everything", do that without asking again.
 

@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import type { Candidate, ImpactEdge, ImpactSummary, Report, ReportFinding } from "../types.js";
 import type { Display, DisplayFile, DisplayHunk } from "./display.js";
-import { coverageLine, verdictLine } from "./common.js";
+import { coverageLine, lowConfidenceReason, observationsOmittedLine, orderObservations, verdictLine } from "./common.js";
 import { REPORT_CSS } from "./html-style.js";
 import { modelReviewerLine, product } from "./review.js";
 
@@ -270,7 +270,7 @@ function entryOf(f: DisplayFile, excerpt: boolean): Entry {
 
 const severityBadge = (severity: unknown): string => `<span class="severity ${sevClass(severity)}">${text(severity)}</span>`;
 
-function findingCard(f: ReportFinding, n: number | string): string {
+function findingCard(f: ReportFinding, n: number | string, observation = false): string {
   const sev = sevClass(f.severity);
   const source = f.source || (f.origin === "agent" ? "the reviewer" : "scanner");
   const rows: string[] = [];
@@ -282,9 +282,10 @@ function findingCard(f: ReportFinding, n: number | string): string {
   const suggested = f.suggested_change ? `<details class="suggested"><summary>Suggested change</summary><pre>${block(f.suggested_change)}</pre></details>` : "";
   const conf = typeof f.confidence === "number" ? `<span class="finding-confidence">confidence ${num(f.confidence)}</span>` : "";
   const candidate = f.candidate ? `<span class="finding-candidate">raises ${text(f.candidate)}</span>` : "";
+  const back = observation ? "observations" : `index-f${n}`;
   return `<article class="finding-card ${sev}" id="f${n}">
 <header class="finding-head">
-<a class="finding-id" href="#index-f${n}">${n}</a>
+<a class="finding-id" href="#${back}">${n}</a>
 ${severityBadge(f.severity)}
 <span class="category">${text(f.category)}</span>
 <h4 class="finding-title">${text(f.title)}</h4>
@@ -297,8 +298,8 @@ ${suggested}
 <footer class="finding-foot">
 <span class="finding-source">Source: ${text(source)}</span>
 ${conf}
-${candidate}
-<a class="finding-back" href="#index-f${n}">Back to the findings list</a>
+${candidate}${observation && f.found_by?.length ? `\n<span>Found by: ${text(f.found_by.join(", "))}</span>` : ""}
+<a class="finding-back" href="#${back}">Back to ${observation ? "observations" : "the findings list"}</a>
 </footer>
 </article>`;
 }
@@ -576,6 +577,14 @@ function findingsIndex(findings: Numbered[], complete: boolean): string {
   return `<section class="findings-index" id="findings"><h2>${title} <span class="count">(${findings.length})</span></h2><ol>${rows.join("")}</ol></section>`;
 }
 
+function observationsSection(report: Report): string {
+  const ordered = orderObservations(report);
+  const omitted = observationsOmittedLine(report);
+  if (ordered.length === 0 && omitted === null) return "";
+  const cards = ordered.map((f, i) => findingCard(f, report.findings.length + i + 1, true)).join("\n");
+  return `\n<section id="observations"><h2 class="muted">Observations</h2><p class="muted">These do not count toward the verdict.</p><div class="review-main">${cards}</div>${omitted ? `<p class="muted">${text(omitted)}</p>` : ""}</section>`;
+}
+
 function accounting(report: Report): string {
   const findings = report.findings ?? [];
   const scanners = report.scanners ?? [];
@@ -592,7 +601,7 @@ function accounting(report: Report): string {
     ["Dropped by the reviewer", num(dropped.length), dropped.length === 0 ? esc("none") : dropped.map((d) => `${text(d.candidate.id)}: ${text(d.reason)}`).join("; ")],
     // An incomplete review counts nothing: the candidates it lists are unchecked.
     [!isComplete(report) && notReviewed.length > 0 ? "Unchecked scanner candidates, not a review" : "Not reviewed, counted at scanner severity", num(notReviewed.length), notReviewed.length === 0 ? esc("none") : notReviewed.map((c) => `${text(c.id)} ${text(c.token)} at ${text(candidateLocation(c))}`).join("; ")],
-    ["Below the confidence floor", num(low.length), low.length === 0 ? esc("none") : low.map((l) => `${text(l.file_path)}: ${text(l.title)} (${num(l.confidence)}, floor ${num(l.floor)})`).join("; ")],
+    ["Below the confidence floor", num(low.length), low.length === 0 ? esc("none") : low.map((l) => `${text(l.file_path)}: ${text(l.title)} (${num(l.confidence)}, floor ${num(l.floor)})${text(lowConfidenceReason(l))}`).join("; ")],
     ["Below the severity threshold", num(report.below_threshold || 0), esc("left out of the findings, never counted")],
     ["Outside the changed lines", num(outsideChange.length), outsideChange.length > 0 ? esc("shown for information, never counted") : esc("none")],
     ["Scanner results not kept", num(notKept.reduce((n, [, k]) => n + k, 0)), notKept.length > 0 ? esc(`a result is kept only when it sits on a changed line; ${notKept.map(([name, k]) => `${name} ${k}`).join(", ")}`) : esc("none")],
@@ -811,7 +820,7 @@ ${coverage(report)}
 ${filesNav(entries, findingsByPath, filesTotal)}
 <div class="review-main">
 ${findingsIndex(findings, complete)}
-${sections}
+${sections}${observationsSection(report)}
 </div>
 </div>
 ${accounting(report)}

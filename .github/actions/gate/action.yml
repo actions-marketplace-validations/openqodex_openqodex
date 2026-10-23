@@ -3,7 +3,17 @@ description: >-
   Node 22 and the workspace, Go 1.26, Rust on macOS, the scanner cache, and
   the steps scripts/gate.sh runs, one for one. The one recipe for the Linux
   and the macOS gate jobs in ci.yml. The calling job checks the repository
-  out first.
+  out first. With full set to "false" (the fast gate an ordinary pull
+  request and its merge queue run get) the end-to-end tests, the golden run,
+  the scanner cache and the Rust install are left out; ci.yml says where
+  each gate runs.
+inputs:
+  full:
+    description: >-
+      "true" runs every step of scripts/gate.sh; "false" runs the fast gate,
+      without the end-to-end tests and the golden run.
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -21,17 +31,19 @@ runs:
         cache: false
     # cargo-deny needs Cargo, and the macOS runner image has no Rust
     # toolchain; the end-to-end tests fail in CI when any scanner is missing.
-    - if: runner.os == 'macOS'
+    - if: runner.os == 'macOS' && inputs.full == 'true'
       shell: bash
       run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
     - shell: bash
       run: pnpm install --frozen-lockfile
     # The end-to-end tests install the pinned scanners once into this folder.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      if: inputs.full == 'true'
       with:
         path: ${{ runner.temp }}/openqodex-e2e-home
         key: scanners-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/scanners/toolchain.json', 'packages/scanners/locks/**') }}
-    # The steps below mirror scripts/gate.sh one for one.
+    # The steps below mirror scripts/gate.sh one for one; the fast gate
+    # skips the two steps marked full.
     - name: Shipped instruction templates
       shell: bash
       run: node scripts/instruction-sections.mjs --check
@@ -53,6 +65,7 @@ runs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
     - name: End-to-end tests
+      if: inputs.full == 'true'
       shell: bash
       run: pnpm test:e2e
       env:
@@ -61,6 +74,7 @@ runs:
     # The review of the demo's planted change with both reviewer drivers,
     # compared file by file with tests/golden/expected.
     - name: Golden run
+      if: inputs.full == 'true'
       shell: bash
       run: pnpm golden:check
     - name: Skill and plugin manifests

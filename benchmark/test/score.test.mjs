@@ -301,14 +301,12 @@ const SQLI = finding("app/search.py", 14, "security", "SQL injection");
 const ASK = finding("app/other.py", 5, "maintainability", "Changed formatting has no covering test");
 
 describe("a rule constant changes without a version bump, and old and new scores are compared as equal", () => {
-  // One hash per rules version, added when the version is bumped and never
+  // One hash per rules version (both branch hashes for version 10), added and never
   // edited: a change to a constant, a list, the rule order or the matching
   // code changes the hash, and this test fails until RULES_VERSION is bumped
   // in lib/score.mjs and the new version's hash is added here.
   // A change of layout alone moves the hash too, and needs a bump all the same.
   const KNOWN_RULES = {
-    // W8-2: Greptile suite scoring through its board judge, denominator fixed at 50.
-    10: "e4582b7f4f7e8ed377e132c5f2db92403faeb9e9a975ff87b15eca07de0f7ef8",
     // Scanner outside advisories are information; legacy untagged findings still count.
     9: "b6578e57058519e7bc379a35538cf57ca94be81bd4a830c2ab34d310922af96f",
     3: "b40f43b5367a2a50e37ac61c4135f801da2dbb3406425127f4ab45049ab1027d",
@@ -323,6 +321,10 @@ describe("a rule constant changes without a version bump, and old and new scores
     7: "6aaf49035cb10f73a3129b8abfe6d976eece2d29f70935432d07528432d17a48",
     // A ruling on a truth item names the spec version it judged (issue 163), and a same-issue ruling may name the item it joins (issue 139).
     8: "ceffd087b47c7882e4bcdf8023aac05a165c1f7b0c270af4e81c1637b1069520",
+    // Version 10 existed independently on wave8 (Greptile) and main (observation tiers).
+    10: ["e4582b7f4f7e8ed377e132c5f2db92403faeb9e9a975ff87b15eca07de0f7ef8", "db58981fc3b76ed4693dd1dccf178df33d8df2071f16263359b4bb927f2fec3f"],
+    // Version 11 merges the two version-10 rule sets.
+    11: "2b889794bb039585e502a3221d25890da2d1e2adf015a4be4462973de502da3e",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

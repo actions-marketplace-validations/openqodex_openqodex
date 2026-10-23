@@ -1,3 +1,4 @@
+// These tests exercise single-pass scoped tool delivery.
 // The decisive scope fixture (plan §4 test 7), reviewed end to end through
 // the review core with the server's scoped parts: the change over the
 // admitted paths, the materialised snapshot, base reads through the scope
@@ -121,7 +122,7 @@ describe("a scoped server review of the decisive fixture", () => {
     vi.stubEnv("OPENQODEX_HOME", tempDir("oq-scoped-home-"));
     const f = decisiveFixture();
     const log = join(tempDir("oq-scoped-log-"), "walk.log");
-    const config = parseConfig(await walker(f.dir, log)).config;
+    const config = { ...parseConfig(await walker(f.dir, log)).config, stages: false };
     const decision = await decideIncremental({ clonePath: f.dir, mergeBaseSha: f.base, headSha: f.head });
     if (!decision.ok) throw new Error(decision.reason);
     const work = tempDir("oq-scoped-work-");
@@ -225,7 +226,7 @@ describe("a scoped server review of the decisive fixture", () => {
       }),
     };
     const result = await runReviewCore(
-      { repoRoot: h.dir, config: parseConfig("").config, scope: {}, target: h.head, noGraph: false, reviewer: "auto", web: false, timeoutMs: 120_000, runtimeVersion: "0.0.0-test" },
+      { repoRoot: h.dir, config: { ...parseConfig("").config, stages: false }, scope: {}, target: h.head, noGraph: false, reviewer: "auto", web: false, timeoutMs: 120_000, runtimeVersion: "0.0.0-test" },
       {
         drivers: [reviewer],
         snapshots: server.snapshots,

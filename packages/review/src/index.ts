@@ -32,9 +32,16 @@ export { TOOL_DEFINITIONS, TOOL_NAMES, TOOL_REPLY_BYTES, runTool } from "./tools
 export type { ToolBox, ToolOutcome } from "./tools/index.js";
 export { admitted } from "./scopes.js";
 export type { Admit } from "./scopes.js";
+export { NEIGHBOURHOOD_BLOCK_BYTES, NEIGHBOURHOOD_MAX_BYTES, NEIGHBOURHOOD_TIME_MS, buildNeighbourhood, renderNeighbourhoodBlock } from "./neighbourhood.js";
+export type { Neighbourhood, NeighbourhoodSite, NeighbourhoodSymbol } from "./neighbourhood.js";
 export { MissingObjects, materialize, materializedSnapshots, scopedBaseReader, snapshotInventory } from "./materialize.js";
 export type { Materialized, MaterializedFile, SkippedEntry } from "./materialize.js";
 export { decideIncremental, deltaChange, reviewChanges } from "./incremental.js";
 export type { IncrementalDecision, ReviewScope } from "./incremental.js";
 export { serverScope } from "./scoped.js";
 export type { ScopedParts, ServerScope } from "./scoped.js";
+
+export { GROUP_DIFF_BYTES, MAX_UNIT_DIFF_BYTES, hunkRefs, unitsOf } from "./units.js";
+export { checkEvidence, checkFindAnswer, checkVerifyAnswer } from "./evidence-check.js";
+export { FINDERS_CONCURRENCY, VERIFIERS_CONCURRENCY, runStagedReview } from "./stages.js";
+export type { StagedArgs, StagedResult, StagedSession, StagedSessionRecord } from "./stages.js";

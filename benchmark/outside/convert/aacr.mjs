@@ -77,7 +77,9 @@ export function commentOf(f) {
   const prose = [f.problem, f.consequence, f.fix].map(text);
   // A finding from before the prose fields says what it is in its description and suggested change.
   const parts = [text(f.title), ...prose, ...(prose.every((p) => p === "") ? [text(f.description), text(f.suggested_change)] : [])].filter((p) => p !== "");
-  return { path: normPath(f.file_path), start_line: start, end_line: end, content: parts.length > 0 ? parts.join("\n") : "A finding with no text." };
+  // `tier` says whether the review counted it toward the verdict ("finding")
+  // or showed it apart ("observation"); the board reads neither, our record does.
+  return { path: normPath(f.file_path), start_line: start, end_line: end, content: parts.length > 0 ? parts.join("\n") : "A finding with no text.", tier: f.tier ?? "finding" };
 }
 
 // What happened to a planned review's first attempt, as our scorer reads it.
@@ -149,7 +151,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
     files.set(file, {
       review: { comments, summary: { input_tokens: usage?.input_tokens ?? null, output_tokens: usage?.output_tokens ?? null } },
       duration_seconds: typeof first?.row?.wallMs === "number" ? first.row.wallMs / 1000 : null,
-      openqodex: { tool: toolName(job.config, job.repeat), caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: statusOf(first), findings: comments.length },
+      openqodex: { tool: toolName(job.config, job.repeat), caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: statusOf(first), findings: comments.length, observations: comments.filter((c) => c.tier === "observation").length },
     });
   }
   const folders = [...new Set(jobs.map((j) => `${j.config}\0${j.repeat}`))]
