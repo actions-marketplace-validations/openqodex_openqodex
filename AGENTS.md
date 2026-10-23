@@ -29,11 +29,11 @@ OpenQodex is open source AI code review for Claude Code and Codex. It runs befor
 
 ## Pull requests and the merge queue
 
-- A pull request runs one check: the gate on Linux. The macOS gate and the scanner-only benchmark show as skipped.
-- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue. Then it runs the full gate on that result: the gate on Linux, the gate on macOS and the scanner-only benchmark.
-- When the full gate passes, the queue merges the pull request into main. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
-- To run the full gate before the queue, for example on a scanner or installer change, add the label `full-ci` to the pull request.
-- Each push to main runs the full gate again, and the release workflow.
+- An ordinary pull request runs one check: the fast gate on Linux, which is the gate without the end-to-end tests and the golden run. The macOS gate and the scanner-only benchmark show as skipped. Run the full gate (`pnpm gate`) on your machine before you push.
+- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue, runs the fast gate on that result, and merges the pull request into main when it passes. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
+- The full gate is the gate with the end-to-end tests and the golden run, on Linux and on macOS, and the scanner-only benchmark. It runs for the "Version packages" pull request, on the pull request and in the merge queue, so the queue merges a release only on a green full gate; on a pull request with the label `full-ci`; and on each push to main. A break only the full gate catches shows on main's run and is fixed before the version pull request.
+- To run the full gate on any pull request, for example on a scanner or installer change, add the label `full-ci`.
+- Each push to main runs the full gate and the release workflow.
 
 ## Exit codes
 

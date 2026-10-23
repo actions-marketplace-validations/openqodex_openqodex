@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # The gate. Runs every check in order and stops at the first failure.
 # CI runs the same steps (.github/actions/gate, which both gate jobs in
-# .github/workflows/ci.yml use); keep the two in step.
+# .github/workflows/ci.yml use); keep the two in step. An ordinary pull
+# request and its merge queue run leave out the e2e tests and the golden
+# run; the full gate runs for the version pull request, the label full-ci
+# and main (ci.yml says where).
 # One CI job is not mirrored here and runs in CI only: bench-scan, the
 # scanner-only benchmark and its trend gate against the accepted run in
 # benchmark/index. It installs every scanner, which needs Ruby 3.3 for
