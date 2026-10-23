@@ -2,4 +2,4 @@
 "openqodex": patch
 ---
 
-The reviewer raises every defect it can show at the applicable confidence floor and sets confidence honestly.
+In a single-run review, the reviewer raises every defect it can show at the configured confidence floor and sets confidence honestly.

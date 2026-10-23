@@ -311,6 +311,7 @@ describe.each(singlePassBuilders)("$name investigation", ({ build }) => {
     expect(text).not.toContain(["A wrong finding", "is worse than a missed one"].join(" "));
     expect(text).toMatch(/Raise (?:every defect|what) you can show from the code/);
     expect(text).toMatch(/(?:set|Set) confidence honestly/);
+    expect(text).toContain("When you are not sure, read more code first.");
     expect(text).toContain('Use "Code around the change" first');
   });
 

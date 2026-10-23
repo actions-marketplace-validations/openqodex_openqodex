@@ -796,7 +796,7 @@ function answerBlock(change: Change, whole: boolean, floor: number = GLOBAL_CONF
     ...writingRules(["problem", "consequence", "fix", "reason"], ["title", "problem", "consequence", "fix"]),
     "",
     "Judgement rules:",
-    `- Raise every defect you can show from the code with confidence ${floor} or higher. Set confidence honestly. The floor removes the rest.`,
+    `- Raise every defect you can show from the code with confidence ${floor} or higher. Set confidence honestly. The floor removes the rest. When you are not sure, read more code first.`,
     "- When the change adds several parallel pieces (similar queries, sibling branches, a set of guards), compare them: the one that differs from its siblings without a reason is often the bug.",
     "- One finding per problem.",
   ].join("\n");
