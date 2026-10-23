@@ -202,10 +202,17 @@ export function scoreBrief(spec, brief) {
   return { graph: block === null ? "off" : "on", gaps, callers, failures };
 }
 
-// Review findings on the change and outside it, except scanner information.
+// Every finding the developer is shown: on the change, outside it (except
+// scanner information), and the observations of a staged review (shown
+// apart, never counted toward the verdict, judged here all the same because
+// the developer reads them). Each carries `tier`: "finding" or "observation".
 export function shownFindings(report) {
   if (!report) return [];
-  return [...(report.findings ?? []), ...(report.outside_change ?? []).filter((f) => f.origin !== "scanner")];
+  return [
+    ...(report.findings ?? []).map((f) => ({ ...f, tier: "finding" })),
+    ...(report.outside_change ?? []).filter((f) => f.origin !== "scanner").map((f) => ({ ...f, tier: "finding" })),
+    ...(report.observations ?? []).map((f) => ({ ...f, tier: "observation" })),
+  ];
 }
 
 // One saved review of one case: `report` is report.json (null when the run
@@ -221,6 +228,7 @@ export function scoreSample({ spec, report, brief, row = {}, testOnly = true }) 
     origin: f.origin,
     raised: f.candidate ?? null,
     source: f.source ?? null,
+    tier: f.tier ?? "finding",
     title: f.title,
     ...classify(f, spec, { testOnly }),
   }));
@@ -577,7 +585,14 @@ export function regressions(oldSamples, newSamples) {
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
 //     that item on that spec version.
-export const RULES_VERSION = 9;
+// Rules version 10 scores observations (version 9 made scanner outside
+// advisories information). Failure list, written before the code:
+// 44. An observation of a staged review is shown to the developer and never
+//     judged: shownFindings() lists report.observations after the findings,
+//     each marked tier "observation", so every score, board file and judge
+//     export sees it like a finding. A report without the field, or with an
+//     empty list, scores exactly as under version 8.
+export const RULES_VERSION = 10;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -1368,7 +1383,7 @@ const lackingLines = (findings) =>
 // order, each with its identity and severity. A finding without a title,
 // problem, consequence or fix is refused, never sent.
 export function martianFindings(caseId, report) {
-  const out = shownFindings(report).map((f, index) => ({ findingId: findingId(caseId, f), caseId, index, severity: f.severity ?? null, category: f.category ?? null, title: f.title, problem: f.problem, consequence: f.consequence, fix: f.fix }));
+  const out = shownFindings(report).map((f, index) => ({ findingId: findingId(caseId, f), caseId, index, severity: f.severity ?? null, category: f.category ?? null, tier: f.tier ?? "finding", title: f.title, problem: f.problem, consequence: f.consequence, fix: f.fix }));
   const lacking = lackingLines(out);
   if (lacking.length > 0) throw new Error(`these findings cannot be saved for Martian's judge, which reads title, problem, consequence and fix:\n${lacking.join("\n")}`);
   return out;

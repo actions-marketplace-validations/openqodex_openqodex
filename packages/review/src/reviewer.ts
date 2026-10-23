@@ -1,4 +1,4 @@
-// The reviewer contract, version 1 (`reviewerContract`): what reviews a
+// The reviewer contract, version 2 (`reviewerContract`): what reviews a
 // change for the brain. A reviewer is one of two kinds.
 //   agent  a coding agent a driver starts as a process (Claude Code, Codex):
 //          it reads the snapshot with its own read-only tools, and the run
@@ -17,7 +17,11 @@ import type { CorrectionRound } from "./conversation.js";
 import type { ReviewScope } from "./incremental.js";
 import type { CallRecord, ModelPurpose, ModelReviewEvidence, ReviewerRole, ToolLogEntry, UsageTotals } from "./usage.js";
 
-export const reviewerContract = 1;
+// Version 2 (2026-10-21) widened ReviewerRole with `finder:<unit>:<pass>` and
+// `verifier:<n>` and ModelPurpose with `find` and `verify`, for the staged
+// review; every record field it added is optional. A host that switches on
+// the role or the purpose must accept the new values.
+export const reviewerContract = 2;
 
 // ---------- the model reviewer ----------
 

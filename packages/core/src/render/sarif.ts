@@ -1,8 +1,8 @@
 // SARIF 2.1.0: one run per source, `openqodex` for the agent's findings and
-// one per scanner, so a code scanning view groups them by tool. Only what
-// counts toward the verdict is included: findings on changed lines and
-// candidates the agent left unreviewed.
+// one per scanner, so a code scanning view groups them by tool. Observations
+// have note level and a tier property, separate from counted results.
 import type { Candidate, Report, ReportFinding, Severity } from "../types.js";
+import { orderObservations } from "./common.js";
 
 type SarifResult = {
   ruleId: string;
@@ -121,6 +121,13 @@ export function renderSarif(report: Report): string {
     else add(scannerOf(f.source ?? "", report), fromFinding(f));
   }
   for (const c of report.not_reviewed) add(c.source, fromCandidate(c));
+  for (const f of orderObservations(report)) {
+    const result = fromFinding(f);
+    result.level = "note";
+    result.properties["openqodex.tier"] = "observation";
+    if (f.origin === "agent") agent.push(result);
+    else add(scannerOf(f.source ?? "", report), result);
+  }
 
   const versions = new Map(report.scanners.map((s) => [s.scanner as string, s.version]));
   const completion = completionOf(report);

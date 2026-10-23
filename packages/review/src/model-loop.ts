@@ -44,6 +44,7 @@ export const MAX_TOOL_CALLS_PER_REPLY = 16;
 // ---------- callModel: the boundary every model attempt crosses ----------
 
 type Called = { response: ModelResponse; callId: string } | { failure: string };
+export type ModelBudgetState = { pending: Promise<void>; refused: boolean };
 
 export type ModelCaller = {
   // One model attempt for `purpose` on the transcript so far. `onInvoke` runs
@@ -109,18 +110,24 @@ function readMessage(response: unknown): ModelResponse["message"] | string {
 // primary's, for the second reviewer), counted in the usage the budget sees.
 // `deadline`: on the `now` clock; no budget is asked and no transport is
 // called once it has passed, however quickly the calls before it resolved.
-export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[]; earlier?: readonly CallRecord[]; deadline?: number }): ModelCaller {
+export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; budget?: Budget; now: () => number; tools?: ToolDefinition[]; earlier?: readonly CallRecord[]; shared?: CallRecord[]; budgetState?: ModelBudgetState; deadline?: number }): ModelCaller {
   const { reviewer, role, budget, now } = args;
+  const budgetState = args.budgetState ?? { pending: Promise.resolve(), refused: false };
+  const keep = (record: CallRecord) => { attempts.push(record); args.shared?.push(record); };
   const late = () => args.deadline !== undefined && now() >= args.deadline;
   const tools = args.tools ?? TOOL_DEFINITIONS;
   const attempts: CallRecord[] = [];
   let n = 0;
   let stopped: string | null = null;
+  const stoppedReply = Symbol("stopped");
+  let resolveStop: (value: typeof stoppedReply) => void;
+  const stopReply = new Promise<typeof stoppedReply>((resolve) => { resolveStop = resolve; });
   let running: { record: CallRecord; started: number } | null = null;
   return {
     attempts,
     stop(reason) {
       stopped ??= reason;
+      resolveStop(stoppedReply);
       if (running !== null) {
         running.record.durationMs = now() - running.started;
         running = null;
@@ -134,32 +141,42 @@ export function callModel(args: { reviewer: ModelReviewer; role: ReviewerRole; b
       const base = { callId, reviewer: role, purpose, attempt: 1 as const, model: reviewer.model };
       // The request as it will be sent, so the budget prices what is sent.
       const request = { callId, attempt: 1 as const, purpose, messages: [...messages], tools: structuredClone(tools), maxOutputTokens: reviewer.maxOutputTokens };
-      if (budget) {
-        // A budget check that throws refuses, as a "no" does.
-        let yes = false;
-        try {
-          const requestChars = JSON.stringify(request.messages).length + JSON.stringify(request.tools).length;
-          yes = (await budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, requestChars, usageSoFar: usageTotals([...(args.earlier ?? []), ...attempts]) })) === true;
-        } catch {
-          yes = false;
-        }
-        if (stopped !== null) return { failure: stopped };
-        if (!yes) {
-          attempts.push({ ...base, inputTokens: null, outputTokens: null, outcome: "refused", durationMs: 0 });
-          // The same line the model record derives from the refused attempt.
-          return { failure: budgetRefusedLine(purpose, n) };
-        }
-      }
-      if (late()) return { failure: DEADLINE_PASSED };
-      onInvoke();
       const record: CallRecord = { ...base, inputTokens: null, outputTokens: null, outcome: "failed", durationMs: 0 };
-      attempts.push(record);
+      const earlier = budgetState.pending;
+      let release!: () => void;
+      budgetState.pending = new Promise<void>((resolve) => { release = resolve; });
+      // A stop while waiting leaves the queue; this slot opens once the holder is done.
+      const acquired = await Promise.race([earlier.then(() => true), stopReply.then(() => false)]);
+      if (!acquired) { void earlier.then(release); return { failure: stopped ?? "the review stopped" }; }
+      try {
+        if (stopped !== null) return { failure: stopped };
+        if (late()) return { failure: DEADLINE_PASSED };
+        if (budget) {
+          // Reserve the call before another session asks against shared usage.
+          let yes = false;
+          if (!budgetState.refused) try {
+            const requestChars = JSON.stringify(request.messages).length + JSON.stringify(request.tools).length;
+            yes = (await Promise.race([budget.authorize({ callId, attempt: 1, reviewer: role, purpose, model: reviewer.model, maxOutputTokens: reviewer.maxOutputTokens, requestChars, usageSoFar: usageTotals(args.shared ?? [...(args.earlier ?? []), ...attempts]) }), stopReply])) === true;
+          } catch {
+            yes = false;
+          }
+          if (stopped !== null) return { failure: stopped };
+          if (!yes) {
+            budgetState.refused = true;
+            keep({ ...record, outcome: "refused" });
+            return { failure: budgetRefusedLine(purpose, n) };
+          }
+        }
+        if (late()) return { failure: DEADLINE_PASSED };
+        onInvoke();
+        keep(record);
+      } finally { release(); }
       const started = now();
       running = { record, started };
       let response: unknown;
       try {
         // One attempt: the contract allows no retry, here or in the host.
-        response = await reviewer.complete(request);
+        response = await Promise.race([reviewer.complete(request), stopReply]);
       } catch (error) {
         if (running?.record !== record) return { failure: stopped ?? "the review stopped" };
         running = null;
@@ -217,8 +234,8 @@ function runningUsage(attempts: CallRecord[]): ReviewerUsage {
   return { turns: t.invoked, input_tokens: t.inputTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd };
 }
 
-export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number; earlier?: readonly CallRecord[]; deadline?: number }): ModelSession {
-  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now, earlier: args.earlier, ...(args.deadline !== undefined ? { deadline: args.deadline } : {}) });
+export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole; box: ToolBox; budget?: Budget; now: () => number; earlier?: readonly CallRecord[]; shared?: CallRecord[]; budgetState?: ModelBudgetState; deadline?: number }): ModelSession {
+  const caller = callModel({ reviewer: args.reviewer, role: args.role, budget: args.budget, now: args.now, earlier: args.earlier, shared: args.shared, budgetState: args.budgetState, ...(args.deadline !== undefined ? { deadline: args.deadline } : {}) });
   const log: ToolLogEntry[] = [];
   const transcript: Message[] = [freeze({ role: "system", text: MODEL_SYSTEM })];
   // Results served and not yet carried by an invoked request.
@@ -242,7 +259,7 @@ export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole
     kill: stop,
     async send(text) {
       rounds++;
-      const purpose: ModelPurpose = args.role === "second" ? "second" : rounds === 1 ? "brief" : "correction";
+      const purpose: ModelPurpose = args.role === "second" ? "second" : rounds > 1 ? "correction" : args.role.startsWith("finder:") ? "find" : args.role.startsWith("verifier:") ? "verify" : "brief";
       const fromLog = log.length;
       const fromAttempts = caller.attempts.length;
       let sent = false;
@@ -280,6 +297,7 @@ export function modelSession(args: { reviewer: ModelReviewer; role: ReviewerRole
           if (closed) return turn("", "the review stopped before the model answered");
           const entry: ToolLogEntry = {
             tool: out.tool,
+            ...(args.role.startsWith("finder:") || args.role.startsWith("verifier:") ? { session: args.role } : {}),
             path: out.path,
             inside: out.inside,
             range: out.range,

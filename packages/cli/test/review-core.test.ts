@@ -17,15 +17,17 @@
 //  4. The core writes process.env.
 //  5. The core prints to stdout or stderr instead of handing every line to
 //     the progress callback.
+//  6. rounds.json keeps concurrent arrival order after the staged run ends.
+import { stagedFake } from "../../review/test/staged-fake.js";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "@openqodex/core";
 import { DEPTH_ENV, runReviewCore } from "@openqodex/review";
 import type { ReviewerDriver, ReviewerSession, Turn } from "@openqodex/review";
 import { parseFlags } from "../src/flags.js";
-import { laptopParts } from "../src/review-run.js";
+import { laptopParts, runReview } from "../src/review-run.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
@@ -59,21 +61,21 @@ function standIn(home: string, during: During[]): ReviewerDriver {
     name: "claude",
     traced: true,
     detect: async () => ({ ok: true, version: "9.9.9", bin: "/fake/claude" }),
-    start(): ReviewerSession {
+    start({ snapshotDir }): ReviewerSession {
       let brief: string | null = null;
-      return {
+      return stagedFake({
         pid: 1,
         async send(text: string): Promise<Turn> {
           during.push({ sigint: process.listenerCount("SIGINT"), sigterm: process.listenerCount("SIGTERM"), env: { ...process.env }, checkouts: readdirSync(join(home, "checkouts")).length });
           brief ??= text;
           const id = /`change_id`: `([0-9a-f]{12})`/.exec(brief)?.[1] ?? "missing";
-          const candidates = [...new Set([...brief.matchAll(/^- (c\d+) \[/gm)].map((m) => m[1]))];
+          const candidates = [...new Set([...brief.matchAll(/^(?:- (c\d+) \[|### (c\d+) \(scanner\))/gm)].map((m) => m[1] ?? m[2]))];
           const dropped = candidates.map((c) => ({ candidate: c, reason: "the function is internal and never exposed", file_path: "db/x.sql", line_number: 1 }));
           const finalText = JSON.stringify({ version: 2, change_id: id, summary: "Adds an SQL function.", findings: [], dropped });
           return { finalText, calls: [{ tool: "Read", input: { file_path: "db/x.sql" }, ok: true, read: { path: "db/x.sql", start: 1, lines: 2 } }], usage: { turns: 1, input_tokens: 1, output_tokens: 1, cost_usd: null }, sessionId: "s", failure: null };
         },
         async close() {},
-      };
+      }, snapshotDir);
     },
   };
 }
@@ -82,15 +84,15 @@ type Run = { repo: string; home: string; during: During[]; lines: string[]; ende
 
 // The core with the laptop's parts and `driver` as the only reviewer. Every
 // line it hands over, and every stop it offers, is kept here.
-async function runCore(dir: string, driver: ReviewerDriver): Promise<{ lines: string[]; ended: string }> {
+async function runCore(dir: string, driver: ReviewerDriver, stages = false, onStop?: (stop: () => void) => void): Promise<{ lines: string[]; ended: string }> {
   const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
-  const config = structuredClone(DEFAULT_CONFIG);
+  const config = { ...structuredClone(DEFAULT_CONFIG), stages };
   const parts = laptopParts({ flags: global, scope: {}, noGraph: true, timeoutMs: 60_000, drivers: [driver] }, dir, config);
   const lines: string[] = [];
   const stops: (() => void)[] = [];
   const result = await runReviewCore(
     { repoRoot: dir, config, scope: {}, only: ["sqllint"], noGraph: true, reviewer: "auto", web: false, timeoutMs: 60_000, runtimeVersion: "0.0.0-test" },
-    { ...parts, onEvent: (e) => (e.type === "progress" || e.type === "warning" ? lines.push(e.line) : undefined), onStop: (stop) => stops.push(stop) },
+    { ...parts, onEvent: (e) => (e.type === "progress" || e.type === "warning" ? lines.push(e.line) : undefined), onStop: (stop) => { stops.push(stop); onStop?.(stop); } },
   );
   expect(stops).toHaveLength(1);
   return { lines, ended: result.ended === "reviewed" && result.completion.status === "complete" ? "reviewed" : result.ended };
@@ -154,6 +156,125 @@ describe("the review core with the laptop's parts", () => {
     const r = await review();
     expect(written).toEqual([]);
     expect(r.lines).toContainEqual(expect.stringMatching(/^Scanners: 1 ran, \d+ had nothing to check, [1-9]\d* candidates? to check$/));
-    expect(r.lines).toContain("Reviewer: claude 9.9.9 started (process 1); this takes one to three minutes");
+    expect(r.lines).toContain("Reviewer: claude 9.9.9 started (process 1); this takes several minutes");
   });
+});
+
+// Failure case: staged starts are logged as opaque roles or repeat the receipt.
+it("names each staged session and prints the staged receipt once", async () => {
+  const dir = repo();
+  const home = process.env.OPENQODEX_HOME!;
+  const r = await runCore(dir, standIn(home, []), true);
+  expect(r.lines).toContain("Reviewer: claude 9.9.9; staged review, 1 units, 2 finder sessions, then verifiers; this takes several minutes");
+  expect(r.lines).toContain("Finder for unit u1 (correctness and safety) started (process 1)");
+  expect(r.lines).toContain("Finder for unit u1 (interfaces and conventions) started (process 1)");
+  expect(r.lines).toContain("Verifier 1 for db/x.sql started (process 1)");
+  expect(r.lines.filter((line) => line.startsWith("Reviewer:"))).toHaveLength(1);
+});
+
+it("runs one single-pass reviewer for a pure rename instead of passing with zero sessions", async () => {
+  const dir = tempDir("oq-core-rename-");
+  git(dir, "init", "-q", "-b", "main");
+  writeFileSync(join(dir, "old.txt"), "unchanged contents\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "Base");
+  renameSync(join(dir, "old.txt"), join(dir, "new.txt"));
+  const during: During[] = [];
+  const base = standIn(home, during);
+  const briefs: string[] = [];
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    session.send = (text) => { briefs.push(text); return send(text); };
+    return session;
+  } };
+  const r = await runCore(dir, driver, true);
+  expect(r.ended).toBe("reviewed");
+  expect(during).toHaveLength(1);
+  expect(briefs).toHaveLength(1);
+  expect(briefs[0]).toMatch(/^# OpenQodex review brief\n/);
+  expect(r.lines.some((line) => line.includes("staged review"))).toBe(false);
+});
+
+it("kills a closing reviewer when stop arrives during its close grace period", async () => {
+  const dir = repo();
+  const base = standIn(home, []);
+  let stop!: () => void;
+  let closing!: () => void;
+  let release!: () => void;
+  let killed = 0;
+  let first = true;
+  const entered = new Promise<void>((resolve) => { closing = resolve; });
+  const gone = new Promise<void>((resolve) => { release = resolve; });
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    if (!first) return session;
+    first = false;
+    session.close = async () => { closing(); await gone; };
+    session.kill = () => { killed++; release(); };
+    return session;
+  } };
+  const running = runCore(dir, driver, true, (value) => { stop = value; }).catch((error: unknown) => error);
+  await entered;
+  stop();
+  release();
+  await running;
+  expect(killed).toBe(1);
+});
+
+it("saves ended sessions in reviewer.json before the review finishes and preserves them on the next start", async () => {
+  const dir = repo();
+  const folder = tempDir("oq-core-journal-");
+  const base = standIn(home, []);
+  let journal: { sessions?: { role: string; rounds: number; failure: string | null }[] } | null = null;
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    session.send = async (text) => {
+      if (text.startsWith("# OpenQodex review brief: verify")) journal = JSON.parse(readFileSync(join(folder, "reviewer.json"), "utf8"));
+      return send(text);
+    };
+    return session;
+  } };
+  const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
+  expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [driver], reportDir: folder })).toBe(0);
+  expect(journal).toMatchObject({ sessions: expect.arrayContaining([
+    { role: "finder:u1:local", unit: "u1", rounds: 1, failure: null, usage: expect.any(Object), examined: expect.any(Array) },
+    { role: "finder:u1:contracts", unit: "u1", rounds: 1, failure: null, usage: expect.any(Object), examined: expect.any(Array) },
+    { role: "verifier:1", rounds: 0, failure: "the session had not ended when this was written", usage: expect.any(Object) },
+  ]) });
+});
+
+it("writes rounds.json in session order after corrections arrive in reverse order", async () => {
+  const dir = repo();
+  const folder = tempDir("oq-core-rounds-");
+  const base = standIn(home, []);
+  const arrivals: string[] = [];
+  let release!: () => void;
+  const contractsCorrected = new Promise<void>((resolve) => { release = resolve; });
+  const driver: ReviewerDriver = { ...base, start(args) {
+    const session = base.start(args);
+    const send = session.send.bind(session);
+    let first = true;
+    let pass = "";
+    session.send = async (text) => {
+      pass ||= /^Pass: (local|contracts)$/m.exec(text)?.[1] ?? "";
+      if (!first && pass === "contracts") release();
+      const turn = await send(text);
+      if (first && pass) {
+        first = false;
+        if (pass === "local") await contractsCorrected;
+        arrivals.push(pass);
+        return { ...turn, finalText: JSON.stringify({ ...JSON.parse(turn.finalText), examined: [] }) };
+      }
+      first = false;
+      return turn;
+    };
+    return session;
+  } };
+  const { global } = parseFlags(["--cwd", dir, "--no-color", "--no-install", "--format", "json"], {});
+  expect(await runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "claude", timeoutMs: 60_000, drivers: [driver], reportDir: folder })).toBe(0);
+  expect(arrivals).toEqual(["contracts", "local"]);
+  const rounds = JSON.parse(readFileSync(join(folder, "rounds.json"), "utf8")) as { by: string }[];
+  expect(rounds.map((round) => round.by)).toEqual(["finder:u1:local", "finder:u1:contracts"]);
 });

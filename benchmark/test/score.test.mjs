@@ -321,6 +321,8 @@ describe("a rule constant changes without a version bump, and old and new scores
     7: "6aaf49035cb10f73a3129b8abfe6d976eece2d29f70935432d07528432d17a48",
     // A ruling on a truth item names the spec version it judged (issue 163), and a same-issue ruling may name the item it joins (issue 139).
     8: "ceffd087b47c7882e4bcdf8023aac05a165c1f7b0c270af4e81c1637b1069520",
+    // The observations of a staged review are scored like findings, each marked with its tier.
+    10: "db58981fc3b76ed4693dd1dccf178df33d8df2071f16263359b4bb927f2fec3f",
   };
 
   it("pins the hash of the rules block, constants and matching code included, to its version", () => {

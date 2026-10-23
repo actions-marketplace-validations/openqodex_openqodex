@@ -113,7 +113,7 @@ After the review ran, an incomplete review names what is missing: a changed rang
 
 ## The reviewer contract
 
-`reviewerContract` is `1`. A reviewer is one of two kinds:
+`reviewerContract` is `2`. Version 2 widened `ReviewerRole` with `finder:<unit>:<pass>` and `verifier:<n>` and `ModelPurpose` with `find` and `verify`, for the staged review; every record field it added is optional. A host that switches on the role or the purpose must accept the new values. A reviewer is one of two kinds:
 
 - `agent`: Claude Code or Codex, started by the laptop's drivers. Not used by `reviewChange`.
 - `model`: the host's model. `{ kind: "model", model, maxOutputTokens, complete(request) }`.

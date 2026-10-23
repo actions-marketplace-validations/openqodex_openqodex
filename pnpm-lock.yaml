@@ -123,6 +123,9 @@ importers:
       '@openqodex/scanners':
         specifier: workspace:*
         version: link:../scanners
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   packages/scanners:
     dependencies:

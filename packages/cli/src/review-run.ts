@@ -19,7 +19,7 @@
 // review and a missing reviewer all exit 2.
 import { join, relative, resolve } from "node:path";
 import { OpenQodexError, STATE_DIR, gateReceipt, openReportDir, phaseClock, redactSecrets, renderUnavailableHtml, resolveInstructionRef, writeLatest, writeReportFiles } from "@openqodex/core";
-import type { ChangeScope, Config, Latest, Severity } from "@openqodex/core";
+import type { ChangeScope, Config, Latest, ReviewerSessionRecord, Severity } from "@openqodex/core";
 import { DEPTH_ENV, TIMED_OUT, claudeDriver, codexDriver, cursorDriver, redactStored, reviewerOrder, runReviewCore } from "@openqodex/review";
 import type { CorrectionRound, ReviewCoreResult, ReviewDeps, ReviewerDriver } from "@openqodex/review";
 import { createToolResolver } from "@openqodex/scanners";
@@ -223,24 +223,34 @@ export async function runReview(o: ReviewOptions): Promise<number> {
   let folder: RunFolder | null = null;
   let secrets: string[] = [];
   const write = (files: Record<string, string>): void => (folder as RunFolder | null)!.write(files);
+  const writeStagedBrief = (role: string, text: string): void => {
+    const dir = join(folder!.dir, "briefs");
+    const files = { [`${role.replace(/:/g, "-")}.md`]: redact(text) };
+    if (reportWriter) reportFolderWriter(dir, repoRoot)(files);
+    else writeReportFiles(repoRoot, dir, files, PRIVATE);
+  };
   // The one redaction every output of this run goes through (redact.ts:
   // each matched secret and each line of a multi-line one).
   const redact = (text: string): string => redactSecrets(text, secrets);
-  // --report-dir: whether a reviewer started, and which, so a caller tells
+  // Every run folder records whether a reviewer started and its sessions.
+  // A caller tells
   // a review that stopped from one that never began without reading stderr.
-  const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string }): void => {
-    if (o.reportDir !== undefined) write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
+  const noteReviewer = (record: { started: boolean; reasons?: string[]; driver?: string; version?: string; sessions?: ReviewerSessionRecord[] }): void => {
+    write({ "reviewer.json": `${JSON.stringify(redactStored(record, secrets))}\n` });
   };
+  const sessions: ReviewerSessionRecord[] = [];
+  let reviewer: { driver: string; version: string } | null = null;
   // rounds.json: every correction round sent to the reviewer, already
   // redacted by the core, written when the reviewer starts and again as
   // each round goes, so a run stopped part way still holds the rounds sent.
+  // The finished staged run replaces arrival order with session order.
   // A record of the review, not the review: a write that fails is named
   // once on stderr and the review goes on.
   const rounds: CorrectionRound[] = [];
   let roundsFailed = false;
-  const writeRounds = (): void => {
+  const writeRounds = (saved = rounds): void => {
     try {
-      write({ "rounds.json": `${JSON.stringify(rounds, null, 2)}\n` });
+      write({ "rounds.json": `${JSON.stringify(saved, null, 2)}\n` });
     } catch (error) {
       if (!roundsFailed) warn(`openqodex: could not write rounds.json, so this run's correction rounds are not saved: ${redact((error as Error).message.split("\n")[0] ?? "")}`);
       roundsFailed = true;
@@ -292,6 +302,8 @@ export async function runReview(o: ReviewOptions): Promise<number> {
     // The command passes no model reviewer, so the core never ends this way here.
     if (result.ended === "model-reviewed") throw new OpenQodexError("the review core ended with a model reviewer, which the command never gives it");
     const { report, completion, change } = result;
+    if (result.rounds) writeRounds(result.rounds);
+    noteReviewer({ started: completion.reviewer !== null, driver: completion.reviewer?.driver, version: completion.reviewer?.version, sessions: completion.reviewer?.sessions });
     const shown = (folder as RunFolder | null)!.shown;
     // Every file, record and line printed from here on is drawn from `out`.
     const out = reviewOutputs({ report, display: result.display, dir, redact, version: __OPENQODEX_VERSION__ });
@@ -376,9 +388,18 @@ export async function runReview(o: ReviewOptions): Promise<number> {
               "brief.md": e.brief,
               "impact.json": `${JSON.stringify(e.impact, null, 2)}\n`,
             });
+          } else if (e.type === "staged-brief") {
+            writeStagedBrief(e.role, e.brief);
           } else if (e.type === "started") {
-            noteReviewer({ started: true, driver: e.driver, version: e.version });
+            reviewer = { driver: e.driver, version: e.version };
+            if (e.role) sessions.push({ role: e.role, rounds: 0, usage: { turns: 0, input_tokens: null, output_tokens: null, cost_usd: null }, failure: "the session had not ended when this was written" });
+            noteReviewer({ started: true, ...reviewer, sessions });
             writeRounds();
+          } else if (e.type === "session-ended") {
+            const index = sessions.findIndex((s) => s.role === e.session.role);
+            if (index < 0) sessions.push(e.session);
+            else sessions[index] = e.session;
+            noteReviewer({ started: true, ...reviewer!, sessions });
           } else if (e.type === "round") {
             rounds.push(e.round);
             writeRounds();

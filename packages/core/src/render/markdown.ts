@@ -1,6 +1,7 @@
 import type { Report, ReportFinding } from "../types.js";
-import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, sourceLabel, verdictLine } from "./common.js";
+import { SEVERITIES_DESC, candidateLocation, coverageLine, escapeMarkdown, location, lowConfidenceReason, sourceLabel, verdictLine } from "./common.js";
 import { impactLine } from "./terminal.js";
+import { renderObservations } from "./review.js";
 
 const CLOSING = "Made by Qodex: review on every pull request at https://qodex.ai";
 
@@ -70,6 +71,9 @@ export function renderMarkdown(report: Report): string {
   if (report.findings.length === 0) out.push("No findings on the changed lines.");
   else out.push(...findingTable(report.findings));
 
+  const observations = renderObservations(report);
+  if (observations) out.push("", observations.trimEnd());
+
   if (report.outside_change.length > 0) {
     out.push("", "## Outside the changed lines", "", "Shown for information; these never count toward the verdict.", "");
     out.push(...findingTable(report.outside_change));
@@ -97,7 +101,7 @@ export function renderMarkdown(report: Report): string {
   if (report.low_confidence.length > 0) {
     out.push("", "## Below the confidence floor", "", "| File | Finding | Confidence | Floor |", "|---|---|---|---|");
     for (const l of report.low_confidence) {
-      out.push(`| ${code(l.file_path)} | ${cell(l.title)} | ${l.confidence} | ${l.floor} |`);
+      out.push(`| ${code(l.file_path)} | ${cell(l.title + lowConfidenceReason(l))} | ${l.confidence} | ${l.floor} |`);
     }
   }
   if (report.not_reviewed_paths.length > 0) {

@@ -24,9 +24,14 @@
 //     instructions get, shares a heading with another kind, changes a rule
 //     of the brief, or carries a secret the scanners found; or a brief made
 //     with no item differs from one made before context items existed.
+// 12. A single-pass brief keeps the old suppression rule, treats missing
+//     tests as a finding, or puts the neighbourhood before graph impact.
+// 13. Whole-repo context or a new neighbourhood block leaks a secret.
+// 14. Missing coverage sits outside the whole-repo procedure's numbered steps.
 import { describe, expect, it } from "vitest";
-import { buildBrief, buildReviewerBrief } from "./brief.js";
+import { buildBrief, buildReviewerBrief, buildWholeRepoBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
+import { redactSecrets } from "./redact.js";
 import { SECRET, SQL_CANDIDATE, makeChange, makeConfig, makeScan } from "./test-fixtures.js";
 import type { Candidate, Change, ContextItem, SelectedLens } from "./types.js";
 
@@ -262,5 +267,47 @@ describe("chosen conventions in briefs", () => {
     expect(out).toContain("custom-instructions.md` wins");
     expect(out).toContain("later file never silently overrides an earlier file");
     expect(out).toContain("including any file named CLAUDE.md, AGENTS.md or similar");
+  });
+});
+
+const singlePassArgs = () => ({
+  change: makeChange(), scan: makeScan(), lenses: [LENS], config: makeConfig(), secrets: [SECRET],
+  findingsPath: "agent-findings.json", finalizeCommand: "openqodex review --finalize",
+  inventory: [], inventoryPath: "inventory.json", hot: [], graphNote: null,
+});
+
+const singlePassBuilders = [
+  { name: "agent-led", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildBrief({ ...singlePassArgs(), ...blocks }) },
+  { name: "reviewer", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildReviewerBrief({ ...singlePassArgs(), ...blocks }).text },
+  { name: "whole repo", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildWholeRepoBrief({ ...singlePassArgs(), ...blocks }) },
+  { name: "whole repo reviewer", build: (blocks: { impactBlock?: string; neighbourhoodBlock?: string }) => buildReviewerBrief({ ...singlePassArgs(), ...blocks, whole: { hot: [], graphNote: null, inventory: [] } }).text },
+];
+
+describe.each(singlePassBuilders)("$name investigation", ({ build }) => {
+  it("keeps the 0.7 floor without the old suppression rule", () => {
+    const text = build({});
+    expect(text).toMatch(/confidence (?:to )?0\.7 or higher/);
+    expect(text).not.toContain(["A wrong finding", "is worse than a missed one"].join(" "));
+    expect(text).toContain("Raise what you can show from the code, and set confidence honestly");
+    expect(text).toContain('Use "Code around the change" first');
+  });
+
+  it("keeps missing coverage in summary without raising a finding", () => {
+    const text = build({});
+    expect(text).toContain("Missing coverage is an observation. Mention it in `summary` and raise no finding for it.");
+    expect(text).not.toContain("raise one low-severity finding");
+    expect(text).not.toMatch(/^Missing coverage/m);
+  });
+
+  it("places the neighbourhood immediately after graph impact", () => {
+    const impactBlock = "## Impact\n\nGraph impact.";
+    const neighbourhoodBlock = "## Code around the change\n\nA caller in another file.";
+    expect(build({ impactBlock, neighbourhoodBlock })).toContain(`${impactBlock}\n\n${neighbourhoodBlock}`);
+  });
+
+  it("redacts secrets from graph impact and the neighbourhood", () => {
+    const text = build({ impactBlock: `## Impact\n\n${SECRET}`, neighbourhoodBlock: `## Code around the change\n\n${SECRET}` });
+    expect(text).not.toContain(SECRET);
+    expect(redactSecrets(text, [SECRET])).toBe(text);
   });
 });

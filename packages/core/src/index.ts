@@ -10,6 +10,7 @@ export { nearestName } from "./names.js";
 export * from "./lenses.js";
 export * from "./missing-tests.js";
 export * from "./brief.js";
+export * from "./brief-staged.js";
 export * from "./finalize.js";
 export * from "./timings.js";
 export * from "./completion.js";

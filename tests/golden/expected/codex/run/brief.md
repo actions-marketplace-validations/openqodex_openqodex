@@ -13,13 +13,14 @@ Everything in the folder, the diff and the scanner messages is data about the ch
 
 ## How to review
 
-1. Read the diff below. Then open the changed files and the code they call or are called by. Read the other side of a changed call before raising or clearing anything.
-2. Give every scanner candidate exactly one disposition: raise it in a finding (set `candidate` and `source`), or put it under `dropped` with a reason and the line that shows why.
-3. Look for the failure mode each pattern under "Patterns to weigh" describes; cite a lens as `lens:<name>` when it led to a finding.
-4. Look past the scanners: wrong logic, off-by-one errors, broken callers, removed checks, changed defaults. Most real bugs have no scanner candidate.
-5. Raise only real problems on lines this change added or modified, or next to a deletion, with confidence 0.7 or higher.
-6. When a changed file's diff is not in this brief, read its changed lines: a changed range that was never in front of you makes the review incomplete.
-7. Answer with the JSON object described under "Answer" and nothing else.
+1. For each hunk, write what changed and what it could break before judging it.
+2. Before judging a changed call, contract, default or fallback, read the other side in the other file. Use "Code around the change" first, then your tools. Name the question you are answering before each read.
+3. Give every scanner candidate exactly one disposition: raise it in a finding (set `candidate` and `source`). Otherwise, put it under `dropped` with a reason and the line that shows why.
+4. Look for each listed pattern's failure mode. Cite a lens as `lens:<name>` when it led to a finding.
+5. Look past the scanners: wrong logic, off-by-one errors, broken callers, removed checks, changed defaults. Most real bugs have no scanner candidate.
+6. Raise findings with evidence you can point at, with confidence 0.7 or higher. Anchor each on an added or modified line or a deletion anchor.
+7. Read changed lines absent from this brief. A changed range you never saw makes the review incomplete.
+8. Answer with the JSON object described under "Answer" and nothing else.
 
 ## Scanner candidates
 
@@ -78,6 +79,1036 @@ What the graph could not see:
   - app/server.py:25 `execute`: no-receiver-type
   - app/server.py:37 `fetchone`: no-receiver-type, the type conn.execute is not found in the graph
   - app/server.py:35 `execute`: no-receiver-type
+
+## Code around the change
+
+The identifiers on the changed lines, and where the repository declares and uses them. Graph entries are certain callers; name matches are unverified. Read the other side of every changed call here before judging it.
+
+### .github/workflows/ci.yml
+
+#### pull\_request: 1 snapshot files
+
+used at .github/workflows/ci.yml:4 (by name, unverified: the same name may be another thing)
+
+```
+2	
+3	on:
+4	  pull_request:
+5	
+6	permissions:
+```
+
+#### echo: 2 snapshot files
+
+used at scripts/deploy.sh:12 (by name, unverified: the same name may be another thing)
+
+```
+10	
+11	for file in $(ls $DEPLOY_DIR); do
+12	  echo "deployed: $file"
+13	done
+```
+
+#### request: 3 snapshot files
+
+used at app/server.py:3 (by name, unverified: the same name may be another thing)
+
+```
+1	import sqlite3
+2	
+3	from flask import Flask, jsonify, request
+4	
+5	from app.search import search
+```
+
+used at app/server.py:22 (by name, unverified: the same name may be another thing)
+
+```
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+23	    offset = page * PAGE_SIZE
+24	    with get_db() as conn:
+```
+
+#### run: 3 snapshot files
+
+used at .github/workflows/ci.yml:21 (by name, unverified: the same name may be another thing)
+
+```
+19	        with:
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+used at .github/workflows/ci.yml:22 (by name, unverified: the same name may be another thing)
+
+```
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+used at Dockerfile:11 (by name, unverified: the same name may be another thing)
+
+```
+9	
+10	EXPOSE 5000
+11	CMD ["python", "-m", "flask", "--app", "app.server", "run", "--host", "0.0.0.0"]
+```
+
+used at infra/main.tf:42 (by name, unverified: the same name may be another thing)
+
+```
+40	variable "subnet_id" {
+41	  type        = string
+42	  description = "The private subnet the shop API hosts run in."
+43	}
+44	
+```
+
+#### the: 7 snapshot files
+
+used at db/migrations/001\_create\_items.sql:1 (by name, unverified: the same name may be another thing)
+
+```
+1	-- The items table of the production Postgres database.
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+used at deploy/deployment.yaml:63 (by name, unverified: the same name may be another thing)
+
+```
+61	              port: 5000
+62	---
+63	# Only port 5000 of the API pods takes traffic.
+64	apiVersion: networking.k8s.io/v1
+65	kind: NetworkPolicy
+```
+
+used at infra/main.tf:14 (by name, unverified: the same name may be another thing)
+
+```
+12	variable "vpc_id" {
+13	  type        = string
+14	  description = "The VPC the shop API runs in."
+15	}
+16	
+```
+
+used at infra/main.tf:19 (by name, unverified: the same name may be another thing)
+
+```
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+21	
+```
+
+used at infra/main.tf:23 (by name, unverified: the same name may be another thing)
+
+```
+21	
+22	  ingress {
+23	    description = "SSH from the office"
+24	    from_port   = 22
+25	    to_port     = 22
+```
+
+used at infra/main.tf:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	  egress {
+32	    description = "HTTPS to the package mirrors"
+33	    from_port   = 443
+34	    to_port     = 443
+```
+
+used at infra/main.tf:42 (by name, unverified: the same name may be another thing)
+
+```
+40	variable "subnet_id" {
+41	  type        = string
+42	  description = "The private subnet the shop API hosts run in."
+43	}
+44	
+```
+
+used at package.json:5 (by name, unverified: the same name may be another thing)
+
+```
+3	  "version": "1.0.0",
+4	  "private": true,
+5	  "description": "Front-end helpers for the demo shop.",
+6	  "dependencies": {
+7	    "lodash": "4.17.15"
+```
+
+used at scripts/deploy.sh:2 (by name, unverified: the same name may be another thing)
+
+```
+1	#!/usr/bin/env bash
+2	# Copies the app to the deploy folder and lists what was deployed.
+3	set -euo pipefail
+4	
+```
+
+#### name: 9 snapshot files
+
+used at .github/workflows/ci.yml:1 (by name, unverified: the same name may be another thing)
+
+```
+1	name: ci
+2	
+3	on:
+```
+
+used at app/server.py:26 (by name, unverified: the same name may be another thing)
+
+```
+24	    with get_db() as conn:
+25	        rows = conn.execute(
+26	            "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
+27	            (PAGE_SIZE, offset),
+28	        ).fetchall()
+```
+
+used at app/server.py:36 (by name, unverified: the same name may be another thing)
+
+```
+34	    with get_db() as conn:
+35	        row = conn.execute(
+36	            "SELECT id, name, price FROM items WHERE id = ?", (item_id,)
+37	        ).fetchone()
+38	    if row is None:
+```
+
+used at db/migrations/001\_create\_items.sql:4 (by name, unverified: the same name may be another thing)
+
+```
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+4	    name text NOT NULL,
+5	    price numeric(10, 2) NOT NULL,
+6	    created_at timestamptz NOT NULL DEFAULT now()
+```
+
+used at deploy/deployment.yaml:4 (by name, unverified: the same name may be another thing)
+
+```
+2	kind: Deployment
+3	metadata:
+4	  name: shop-api
+5	  namespace: shop
+6	  labels:
+```
+
+used at deploy/deployment.yaml:35 (by name, unverified: the same name may be another thing)
+
+```
+33	                    app: shop-api
+34	      containers:
+35	        - name: api
+36	          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/shop-api:1.4.2@sha256:9b1d3c5e7f2a4b6c8d0e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c
+37	          imagePullPolicy: Always
+```
+
+used at deploy/deployment.yaml:67 (by name, unverified: the same name may be another thing)
+
+```
+65	kind: NetworkPolicy
+66	metadata:
+67	  name: shop-api
+68	  namespace: shop
+69	spec:
+```
+
+used at infra/main.tf:18 (by name, unverified: the same name may be another thing)
+
+```
+16	
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+```
+
+used at package-lock.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "lockfileVersion": 3,
+```
+
+used at package-lock.json:8 (by name, unverified: the same name may be another thing)
+
+```
+6	  "packages": {
+7	    "": {
+8	      "name": "demo-shop",
+9	      "version": "1.0.0",
+10	      "dependencies": {
+```
+
+used at package.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "private": true,
+```
+
+### app/search.py
+
+#### request: 3 snapshot files
+
+used at app/server.py:3 (by name, unverified: the same name may be another thing)
+
+```
+1	import sqlite3
+2	
+3	from flask import Flask, jsonify, request
+4	
+5	from app.search import search
+```
+
+used at app/server.py:22 (by name, unverified: the same name may be another thing)
+
+```
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+23	    offset = page * PAGE_SIZE
+24	    with get_db() as conn:
+```
+
+#### name: 9 snapshot files
+
+used at .github/workflows/ci.yml:1 (by name, unverified: the same name may be another thing)
+
+```
+1	name: ci
+2	
+3	on:
+```
+
+used at app/server.py:26 (by name, unverified: the same name may be another thing)
+
+```
+24	    with get_db() as conn:
+25	        rows = conn.execute(
+26	            "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
+27	            (PAGE_SIZE, offset),
+28	        ).fetchall()
+```
+
+used at app/server.py:36 (by name, unverified: the same name may be another thing)
+
+```
+34	    with get_db() as conn:
+35	        row = conn.execute(
+36	            "SELECT id, name, price FROM items WHERE id = ?", (item_id,)
+37	        ).fetchone()
+38	    if row is None:
+```
+
+used at db/migrations/001\_create\_items.sql:4 (by name, unverified: the same name may be another thing)
+
+```
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+4	    name text NOT NULL,
+5	    price numeric(10, 2) NOT NULL,
+6	    created_at timestamptz NOT NULL DEFAULT now()
+```
+
+used at deploy/deployment.yaml:4 (by name, unverified: the same name may be another thing)
+
+```
+2	kind: Deployment
+3	metadata:
+4	  name: shop-api
+5	  namespace: shop
+6	  labels:
+```
+
+used at deploy/deployment.yaml:35 (by name, unverified: the same name may be another thing)
+
+```
+33	                    app: shop-api
+34	      containers:
+35	        - name: api
+36	          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/shop-api:1.4.2@sha256:9b1d3c5e7f2a4b6c8d0e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c
+37	          imagePullPolicy: Always
+```
+
+used at deploy/deployment.yaml:67 (by name, unverified: the same name may be another thing)
+
+```
+65	kind: NetworkPolicy
+66	metadata:
+67	  name: shop-api
+68	  namespace: shop
+69	spec:
+```
+
+used at infra/main.tf:18 (by name, unverified: the same name may be another thing)
+
+```
+16	
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+```
+
+used at package-lock.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "lockfileVersion": 3,
+```
+
+used at package-lock.json:8 (by name, unverified: the same name may be another thing)
+
+```
+6	  "packages": {
+7	    "": {
+8	      "name": "demo-shop",
+9	      "version": "1.0.0",
+10	      "dependencies": {
+```
+
+used at package.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "private": true,
+```
+
+#### FROM: 3 snapshot files
+
+used at app/server.py:26 (by name, unverified: the same name may be another thing)
+
+```
+24	    with get_db() as conn:
+25	        rows = conn.execute(
+26	            "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
+27	            (PAGE_SIZE, offset),
+28	        ).fetchall()
+```
+
+used at app/server.py:36 (by name, unverified: the same name may be another thing)
+
+```
+34	    with get_db() as conn:
+35	        row = conn.execute(
+36	            "SELECT id, name, price FROM items WHERE id = ?", (item_id,)
+37	        ).fetchone()
+38	    if row is None:
+```
+
+#### get: 3 snapshot files
+
+used at app/server.py:20 (by name, unverified: the same name may be another thing)
+
+```
+18	
+19	
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+```
+
+used at app/server.py:22 (by name, unverified: the same name may be another thing)
+
+```
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+23	    offset = page * PAGE_SIZE
+24	    with get_db() as conn:
+```
+
+used at app/server.py:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	
+32	@app.get("/items/<int:item_id>")
+33	def get_item(item_id):
+34	    with get_db() as conn:
+```
+
+#### Row: 2 snapshot files
+
+used at app/server.py:16 (by name, unverified: the same name may be another thing)
+
+```
+14	def get_db():
+15	    conn = sqlite3.connect(DATABASE)
+16	    conn.row_factory = sqlite3.Row
+17	    return conn
+18	
+```
+
+### app/config.py
+
+#### the: 7 snapshot files
+
+used at db/migrations/001\_create\_items.sql:1 (by name, unverified: the same name may be another thing)
+
+```
+1	-- The items table of the production Postgres database.
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+used at deploy/deployment.yaml:63 (by name, unverified: the same name may be another thing)
+
+```
+61	              port: 5000
+62	---
+63	# Only port 5000 of the API pods takes traffic.
+64	apiVersion: networking.k8s.io/v1
+65	kind: NetworkPolicy
+```
+
+used at infra/main.tf:14 (by name, unverified: the same name may be another thing)
+
+```
+12	variable "vpc_id" {
+13	  type        = string
+14	  description = "The VPC the shop API runs in."
+15	}
+16	
+```
+
+used at infra/main.tf:19 (by name, unverified: the same name may be another thing)
+
+```
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+21	
+```
+
+used at infra/main.tf:23 (by name, unverified: the same name may be another thing)
+
+```
+21	
+22	  ingress {
+23	    description = "SSH from the office"
+24	    from_port   = 22
+25	    to_port     = 22
+```
+
+used at infra/main.tf:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	  egress {
+32	    description = "HTTPS to the package mirrors"
+33	    from_port   = 443
+34	    to_port     = 443
+```
+
+used at infra/main.tf:42 (by name, unverified: the same name may be another thing)
+
+```
+40	variable "subnet_id" {
+41	  type        = string
+42	  description = "The private subnet the shop API hosts run in."
+43	}
+44	
+```
+
+used at package.json:5 (by name, unverified: the same name may be another thing)
+
+```
+3	  "version": "1.0.0",
+4	  "private": true,
+5	  "description": "Front-end helpers for the demo shop.",
+6	  "dependencies": {
+7	    "lodash": "4.17.15"
+```
+
+used at scripts/deploy.sh:2 (by name, unverified: the same name may be another thing)
+
+```
+1	#!/usr/bin/env bash
+2	# Copies the app to the deploy folder and lists what was deployed.
+3	set -euo pipefail
+4	
+```
+
+### deploy/deployment.yaml
+
+#### the: 7 snapshot files
+
+used at db/migrations/001\_create\_items.sql:1 (by name, unverified: the same name may be another thing)
+
+```
+1	-- The items table of the production Postgres database.
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+used at deploy/deployment.yaml:63 (by name, unverified: the same name may be another thing)
+
+```
+61	              port: 5000
+62	---
+63	# Only port 5000 of the API pods takes traffic.
+64	apiVersion: networking.k8s.io/v1
+65	kind: NetworkPolicy
+```
+
+used at infra/main.tf:14 (by name, unverified: the same name may be another thing)
+
+```
+12	variable "vpc_id" {
+13	  type        = string
+14	  description = "The VPC the shop API runs in."
+15	}
+16	
+```
+
+used at infra/main.tf:19 (by name, unverified: the same name may be another thing)
+
+```
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+21	
+```
+
+used at infra/main.tf:23 (by name, unverified: the same name may be another thing)
+
+```
+21	
+22	  ingress {
+23	    description = "SSH from the office"
+24	    from_port   = 22
+25	    to_port     = 22
+```
+
+used at infra/main.tf:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	  egress {
+32	    description = "HTTPS to the package mirrors"
+33	    from_port   = 443
+34	    to_port     = 443
+```
+
+used at infra/main.tf:42 (by name, unverified: the same name may be another thing)
+
+```
+40	variable "subnet_id" {
+41	  type        = string
+42	  description = "The private subnet the shop API hosts run in."
+43	}
+44	
+```
+
+used at package.json:5 (by name, unverified: the same name may be another thing)
+
+```
+3	  "version": "1.0.0",
+4	  "private": true,
+5	  "description": "Front-end helpers for the demo shop.",
+6	  "dependencies": {
+7	    "lodash": "4.17.15"
+```
+
+used at scripts/deploy.sh:2 (by name, unverified: the same name may be another thing)
+
+```
+1	#!/usr/bin/env bash
+2	# Copies the app to the deploy folder and lists what was deployed.
+3	set -euo pipefail
+4	
+```
+
+### infra/main.tf
+
+#### the: 7 snapshot files
+
+used at db/migrations/001\_create\_items.sql:1 (by name, unverified: the same name may be another thing)
+
+```
+1	-- The items table of the production Postgres database.
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+used at deploy/deployment.yaml:63 (by name, unverified: the same name may be another thing)
+
+```
+61	              port: 5000
+62	---
+63	# Only port 5000 of the API pods takes traffic.
+64	apiVersion: networking.k8s.io/v1
+65	kind: NetworkPolicy
+```
+
+used at infra/main.tf:14 (by name, unverified: the same name may be another thing)
+
+```
+12	variable "vpc_id" {
+13	  type        = string
+14	  description = "The VPC the shop API runs in."
+15	}
+16	
+```
+
+used at infra/main.tf:19 (by name, unverified: the same name may be another thing)
+
+```
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+21	
+```
+
+used at infra/main.tf:23 (by name, unverified: the same name may be another thing)
+
+```
+21	
+22	  ingress {
+23	    description = "SSH from the office"
+24	    from_port   = 22
+25	    to_port     = 22
+```
+
+used at infra/main.tf:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	  egress {
+32	    description = "HTTPS to the package mirrors"
+33	    from_port   = 443
+34	    to_port     = 443
+```
+
+used at infra/main.tf:42 (by name, unverified: the same name may be another thing)
+
+```
+40	variable "subnet_id" {
+41	  type        = string
+42	  description = "The private subnet the shop API hosts run in."
+43	}
+44	
+```
+
+used at package.json:5 (by name, unverified: the same name may be another thing)
+
+```
+3	  "version": "1.0.0",
+4	  "private": true,
+5	  "description": "Front-end helpers for the demo shop.",
+6	  "dependencies": {
+7	    "lodash": "4.17.15"
+```
+
+used at scripts/deploy.sh:2 (by name, unverified: the same name may be another thing)
+
+```
+1	#!/usr/bin/env bash
+2	# Copies the app to the deploy folder and lists what was deployed.
+3	set -euo pipefail
+4	
+```
+
+### db/migrations/002\_index\_item\_names.sql
+
+#### name: 9 snapshot files
+
+used at .github/workflows/ci.yml:1 (by name, unverified: the same name may be another thing)
+
+```
+1	name: ci
+2	
+3	on:
+```
+
+used at app/server.py:26 (by name, unverified: the same name may be another thing)
+
+```
+24	    with get_db() as conn:
+25	        rows = conn.execute(
+26	            "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
+27	            (PAGE_SIZE, offset),
+28	        ).fetchall()
+```
+
+used at app/server.py:36 (by name, unverified: the same name may be another thing)
+
+```
+34	    with get_db() as conn:
+35	        row = conn.execute(
+36	            "SELECT id, name, price FROM items WHERE id = ?", (item_id,)
+37	        ).fetchone()
+38	    if row is None:
+```
+
+used at db/migrations/001\_create\_items.sql:4 (by name, unverified: the same name may be another thing)
+
+```
+2	CREATE TABLE IF NOT EXISTS items (
+3	    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+4	    name text NOT NULL,
+5	    price numeric(10, 2) NOT NULL,
+6	    created_at timestamptz NOT NULL DEFAULT now()
+```
+
+used at deploy/deployment.yaml:4 (by name, unverified: the same name may be another thing)
+
+```
+2	kind: Deployment
+3	metadata:
+4	  name: shop-api
+5	  namespace: shop
+6	  labels:
+```
+
+used at deploy/deployment.yaml:35 (by name, unverified: the same name may be another thing)
+
+```
+33	                    app: shop-api
+34	      containers:
+35	        - name: api
+36	          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/shop-api:1.4.2@sha256:9b1d3c5e7f2a4b6c8d0e1f3a5b7c9d1e3f5a7b9c1d3e5f7a9b1c3d5e7f9a1b3c
+37	          imagePullPolicy: Always
+```
+
+used at deploy/deployment.yaml:67 (by name, unverified: the same name may be another thing)
+
+```
+65	kind: NetworkPolicy
+66	metadata:
+67	  name: shop-api
+68	  namespace: shop
+69	spec:
+```
+
+used at infra/main.tf:18 (by name, unverified: the same name may be another thing)
+
+```
+16	
+17	resource "aws_security_group" "api" {
+18	  name        = "shop-api"
+19	  description = "Traffic to the shop API hosts"
+20	  vpc_id      = var.vpc_id
+```
+
+used at package-lock.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "lockfileVersion": 3,
+```
+
+used at package-lock.json:8 (by name, unverified: the same name may be another thing)
+
+```
+6	  "packages": {
+7	    "": {
+8	      "name": "demo-shop",
+9	      "version": "1.0.0",
+10	      "dependencies": {
+```
+
+used at package.json:2 (by name, unverified: the same name may be another thing)
+
+```
+1	{
+2	  "name": "demo-shop",
+3	  "version": "1.0.0",
+4	  "private": true,
+```
+
+### Dockerfile
+
+#### COPY: 1 snapshot files
+
+used at Dockerfile:8 (by name, unverified: the same name may be another thing)
+
+```
+6	ADD requirements.txt .
+7	RUN pip install -r requirements.txt
+8	COPY app ./app
+9	
+10	EXPOSE 5000
+```
+
+#### install: 2 snapshot files
+
+used at .github/workflows/ci.yml:21 (by name, unverified: the same name may be another thing)
+
+```
+19	        with:
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+#### latest: 2 snapshot files
+
+used at .github/workflows/ci.yml:11 (by name, unverified: the same name may be another thing)
+
+```
+9	jobs:
+10	  test:
+11	    runs-on: ubuntu-latest
+12	    steps:
+13	      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+```
+
+#### pip: 2 snapshot files
+
+used at .github/workflows/ci.yml:21 (by name, unverified: the same name may be another thing)
+
+```
+19	        with:
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+#### python: 2 snapshot files
+
+used at .github/workflows/ci.yml:18 (by name, unverified: the same name may be another thing)
+
+```
+16	      - name: Show the pull request
+17	        run: echo "Testing ${{ github.event.pull_request.title }}"
+18	      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+19	        with:
+20	          python-version: "3.12"
+```
+
+used at .github/workflows/ci.yml:20 (by name, unverified: the same name may be another thing)
+
+```
+18	      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+19	        with:
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+used at .github/workflows/ci.yml:22 (by name, unverified: the same name may be another thing)
+
+```
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+used at Dockerfile:11 (by name, unverified: the same name may be another thing)
+
+```
+9	
+10	EXPOSE 5000
+11	CMD ["python", "-m", "flask", "--app", "app.server", "run", "--host", "0.0.0.0"]
+```
+
+#### FROM: 3 snapshot files
+
+used at app/server.py:26 (by name, unverified: the same name may be another thing)
+
+```
+24	    with get_db() as conn:
+25	        rows = conn.execute(
+26	            "SELECT id, name, price FROM items ORDER BY id LIMIT ? OFFSET ?",
+27	            (PAGE_SIZE, offset),
+28	        ).fetchall()
+```
+
+used at app/server.py:36 (by name, unverified: the same name may be another thing)
+
+```
+34	    with get_db() as conn:
+35	        row = conn.execute(
+36	            "SELECT id, name, price FROM items WHERE id = ?", (item_id,)
+37	        ).fetchone()
+38	    if row is None:
+```
+
+#### get: 3 snapshot files
+
+used at app/server.py:20 (by name, unverified: the same name may be another thing)
+
+```
+18	
+19	
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+```
+
+used at app/server.py:22 (by name, unverified: the same name may be another thing)
+
+```
+20	@app.get("/items")
+21	def list_items():
+22	    page = max(int(request.args.get("page", "1")), 1)
+23	    offset = page * PAGE_SIZE
+24	    with get_db() as conn:
+```
+
+used at app/server.py:32 (by name, unverified: the same name may be another thing)
+
+```
+30	
+31	
+32	@app.get("/items/<int:item_id>")
+33	def get_item(item_id):
+34	    with get_db() as conn:
+```
+
+#### requirements: 3 snapshot files
+
+used at .github/workflows/ci.yml:21 (by name, unverified: the same name may be another thing)
+
+```
+19	        with:
+20	          python-version: "3.12"
+21	      - run: pip install -r requirements.txt
+22	      - run: python -m compileall app
+```
+
+used at scripts/deploy.sh:9 (by name, unverified: the same name may be another thing)
+
+```
+7	rm -rf $DEPLOY_DIR/
+8	mkdir -p "$DEPLOY_DIR"
+9	cp -R app requirements.txt "$DEPLOY_DIR/"
+10	
+11	for file in $(ls $DEPLOY_DIR); do
+```
+
+Read .openqodex-review/neighbourhood.md for the remaining 35 symbols.
+
 
 ## Patterns to weigh
 
@@ -143,7 +1174,7 @@ with bind parameters is the fix.
 
 ## Missing tests
 
-This change touched source files but no test files. If a changed function's behaviour changed (a new branch, a changed default, a different return shape, a new error path), check whether any test exercises it. When nothing does, raise one low-severity finding (minor or info, category maintainability) saying the changed behaviour has no covering test. A pure refactor, rename, move or formatting change needs no such finding.
+This change touched source files but no test files. Check whether tests cover changed branches, defaults, return shapes and error paths. Missing coverage is an observation. Mention it in `summary` and raise no finding for it. A pure refactor, rename, move or formatting change needs no such observation.
 
 ## Changed files
 
@@ -393,7 +1424,12 @@ Your final message is one JSON object in exactly this shape and nothing else: no
 Fields:
 - `change_id`: `597352237e51`, the change this brief is for.
 - `summary`: one or two short sentences on what the code does.
-- `severity` reflects impact on users or the system, not your confidence: `critical` (data loss, a security breach, a crash on a common path, broken auth), `major` (wrong behaviour under realistic conditions), `minor` (a real bug that will rarely surface), `nitpick` (style or naming), `info` (no action required).
+- `severity` reflects impact on users or the system, not your confidence:
+  - `critical`: data loss, a security breach, a crash on a common path, broken auth.
+  - `major`: wrong behaviour under realistic conditions.
+  - `minor`: a real bug that will rarely surface.
+  - `nitpick`: style or naming.
+  - `info`: no action required.
 - `category`: one of `bug`, `security`, `performance`, `maintainability`, `style`.
 - `confidence`: 0 to 1, set honestly. Findings under 0.7, or under a cited lens's floor, are not counted.
 - `file_path` and `line_number` point at the exact line of code with the problem, on a line this change added or modified or next to a deletion. `line_end` (optional) closes a range.
@@ -405,12 +1441,12 @@ Fields:
 - `dropped`: one entry per candidate you checked and rejected: its id, the reason, and the file and line that show why.
 
 Writing rules, checked by a script that sends back every broken rule:
-- At most 20 words per sentence, and at most two sentences in `problem`, `consequence`, `fix` and a dropped reason.
+- At most 20 words per sentence. Use at most two sentences in each of: `problem`, `consequence`, `fix`, `reason`.
 - Plain text on one line: no line break, no em dash.
-- Never name a scanner or a rule id in `title`, `problem`, `consequence` or `fix`; the report shows the source on its own line.
+- Never name a scanner or a rule id in `title`, `problem`, `consequence`, `fix`. The report shows the source separately.
 - Use the active voice and name the actor. Say one fact per sentence. Use the same word for the same thing every time.
 
 Judgement rules:
-- A wrong finding is worse than a missed one. When you are not sure, read more code; when you still are not sure, leave it out.
+- Raise what you can show from the code, and set confidence honestly; the floor removes the rest. When you are not sure, read more code first.
 - When the change adds several parallel pieces (similar queries, sibling branches, a set of guards), compare them: the one that differs from its siblings without a reason is often the bug.
 - One finding per problem.

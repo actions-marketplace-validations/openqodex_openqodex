@@ -102,6 +102,7 @@
 // 39. A review stopped at its cap does not say which cap it hit and which
 //     flag raises it, on the terminal or in the report; or a reviewer that
 //     never answers is not stopped at the cap it was given.
+import { stagedFake, stagedAnswer } from "../../review/test/staged-fake.js";
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -159,21 +160,23 @@ function fake(answers: Answer[], available = true): Fake {
       return available ? { ok: true as const, version: "9.9.9", bin: "/fake/claude" } : { ok: false as const, missing: "claude is not installed", fix: "install Claude Code" };
     },
     start({ snapshotDir, deadline }): ReviewerSession {
+      const sent: string[] = [];
       driver.snapshots.push(snapshotDir);
       driver.deadlines.push({ deadline, at: Date.now() });
-      return {
+      return stagedFake({
         pid: 4242,
         async send(text: string): Promise<Turn> {
           driver.sent.push(text);
-          const next = answers[driver.sent.length - 1] ?? answers[answers.length - 1]!;
+          sent.push(text);
+          const next = answers[sent.length - 1] ?? answers[answers.length - 1]!;
           // Every answer is built from the brief, the first text the session got.
-          const t = await next(driver.sent[0] ?? text, snapshotDir);
+          const t = await next(sent[0] ?? text, snapshotDir);
           return { finalText: "", calls: [], usage: { turns: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01 }, sessionId: "fake", failure: null, ...t };
         },
         async close() {
           driver.closed++;
         },
-      };
+      }, snapshotDir);
     },
   };
   return driver;
@@ -212,9 +215,11 @@ const noDisposition: Answer = (text) => ({ finalText: submission(text, { finding
 let out: string;
 let err: string;
 let home: string;
+let singleSession = false;
 beforeEach(() => {
   out = "";
   err = "";
+  singleSession = false;
   home = tempDir("oq-total-home-");
   vi.stubEnv("OPENQODEX_HOME", home);
   vi.stubEnv(DEPTH_ENV, "");
@@ -227,8 +232,14 @@ afterEach(() => {
 });
 
 function review(dir: string, driver: ReviewerDriver, extra: string[] = [], timeoutMs = 60_000): Promise<number> {
+  if (singleSession) legacyConfig(dir);
   const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json", ...extra], {});
   return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "auto", timeoutMs, drivers: [driver] });
+}
+
+function legacyConfig(dir: string): void {
+  mkdirSync(join(dir, ".openqodex"), { recursive: true });
+  writeFileSync(join(dir, ".openqodex/config.yaml"), "review:\n  stages: false\n");
 }
 
 const checkouts = () => (existsSync(join(home, "checkouts")) ? readdirSync(join(home, "checkouts")) : []);
@@ -239,7 +250,7 @@ describe("the total review run", () => {
     expect(await review(repo(), driver)).toBe(0);
     const report = JSON.parse(out) as Report;
     expect(report.completion?.status).toBe("complete");
-    expect(report.completion?.reviewer).toMatchObject({ driver: "claude", version: "9.9.9", pid: 4242 });
+    expect(report.completion?.reviewer).toMatchObject({ driver: "claude", version: "9.9.9", pid: null });
     expect(err).toContain("Reviewer");
   });
 
@@ -252,6 +263,8 @@ describe("the total review run", () => {
   });
 
   it("1, 2, 12. a candidate left with no disposition gets two correction rounds in the same session, then exits 2 incomplete", async () => {
+    // This regression checks the single-pass conversation.
+    singleSession = true;
     const driver = fake([noDisposition]);
     expect(await review(repo(), driver)).toBe(2);
     expect(driver.sent).toHaveLength(3);
@@ -263,6 +276,8 @@ describe("the total review run", () => {
   });
 
   it("a correction round that fixes the answer completes", async () => {
+    // This regression checks the single-pass conversation.
+    singleSession = true;
     const driver = fake([noDisposition, good]);
     const code = await review(repo(), driver);
     expect((JSON.parse(out) as Report).completion?.missing).toEqual([]);
@@ -277,6 +292,8 @@ describe("the total review run", () => {
   });
 
   it("4. removes the snapshot after success, after a driver failure and after a timeout", async () => {
+    // This regression checks the single-pass conversation.
+    singleSession = true;
     await review(repo(), fake([good]));
     expect(checkouts()).toEqual([]);
     const boom: Answer = () => {
@@ -577,7 +594,8 @@ describe("35. the reviewer's own saved tool output", () => {
         `#!${process.execPath}`,
         "const { mkdirSync, realpathSync, writeFileSync } = require('node:fs');",
         "const { join } = require('node:path');",
-        "const argv = process.argv.slice(2);",
+        `const stagedAnswer = ${stagedAnswer.toString()};`,
+      "const argv = process.argv.slice(2);",
         "if (argv.includes('--version')) { console.log('2.1.296 (Claude Code)'); process.exit(0); }",
         "if (argv[0] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }",
         "const snapshot = realpathSync(process.cwd());",
@@ -598,7 +616,7 @@ describe("35. the reviewer's own saved tool output", () => {
         "  for (const line of text.split('\\n').filter((l) => l !== '')) {",
         "    const e = JSON.parse(line);",
         `    if (e.type === 'assistant') for (const c of e.message.content) if (c.type === 'tool_use' && c.input.file_path) c.input.file_path = c.input.file_path.split(${JSON.stringify(session)}).join(${JSON.stringify(readSession)});`,
-        `    if (e.type === 'result') e.result = ${JSON.stringify(template)}.split('000000000000').join(id);`,
+        `    if (e.type === 'result') e.result = stagedAnswer(brief, ${JSON.stringify(template)}.split('000000000000').join(id), (file, line) => require('node:fs').readFileSync(join(snapshot, file), 'utf8').split('\\n')[line - 1]);`,
         "    process.stdout.write(JSON.stringify(e) + '\\n');",
         "  }",
         "});",
@@ -654,7 +672,11 @@ describe("what leaves the process", () => {
     const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
     const files = readdirSync(run);
     expect(files).toEqual(expect.arrayContaining(["brief.md", "scan.json", "submission.json", "trace.json", "report.md", "usage.json"]));
-    for (const name of files) expect((statSync(join(run, name)).mode & 0o777).toString(8), name).toBe("600");
+    for (const name of files) {
+      const st = statSync(join(run, name));
+      expect((st.mode & 0o777).toString(8), name).toBe(st.isDirectory() ? "700" : "600");
+      if (st.isDirectory()) for (const brief of readdirSync(join(run, name))) expect(statSync(join(run, name, brief)).mode & 0o777).toBe(0o600);
+    }
   });
   it("17. stderr never echoes the reviewer's raw answer", async () => {
     const canary = "CANARY-RAW-ANSWER-4417";
@@ -689,7 +711,7 @@ describe("21. secrets outside file contents", () => {
   };
   const runFiles = (dir: string) => {
     const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
-    return readdirSync(run).map((n) => readFileSync(join(run, n), "utf8")).join("\n");
+    return readdirSync(run, { recursive: true }).map(String).filter((n) => statSync(join(run, n)).isFile()).map((n) => readFileSync(join(run, n), "utf8")).join("\n");
   };
 
   it("a secret in a file name stops the review before the reviewer starts, and is printed nowhere", async () => {
@@ -724,13 +746,15 @@ describe("21. secrets outside file contents", () => {
     expect(await reviewWithGitleaks(dir, fake([keyed]))).toBe(2);
     const run = join(dir, ".openqodex/reviews", readdirSync(join(dir, ".openqodex/reviews"))[0]!);
     const rounds = JSON.parse(readFileSync(join(run, "rounds.json"), "utf8")) as { answer: Record<string, unknown> }[];
-    expect(rounds).toHaveLength(2);
+    expect(rounds.length).toBeGreaterThan(0);
     for (const r of rounds) expect(Object.keys(r.answer)).toContain("[redacted]");
     expect(out + err + runFiles(dir)).not.toContain(key);
   });
 });
 
 describe("22, 23, 24. ranges the brief could not carry", () => {
+  // These regressions measure the single-pass delivery or deadline.
+  beforeEach(() => { singleSession = true; });
   // A committed file, then `lines` new lines of 80 characters: too large for
   // the brief's diff, so the reviewer is not given it there.
   function bigChange(lines: number, deleteAt?: number): string {
@@ -785,6 +809,8 @@ describe("22, 23, 24. ranges the brief could not carry", () => {
 });
 
 describe("28, 29. a reviewer whose trace is not complete (Codex)", () => {
+  // These regressions measure the single-pass delivery or deadline.
+  beforeEach(() => { singleSession = true; });
   function bigChange(lines: number): string {
     const dir = repo();
     writeFileSync(join(dir, "big.txt"), "kept\n");
@@ -1101,13 +1127,18 @@ describe("the Action's review flags", () => {
     writeFileSync(join(planted, "report.md"), "# PLANTED\n");
     const folder = join(tempDir("oq-report-dir-"), "review");
     expect(await withOptions(dir, fake([good]), { reportDir: folder })).toBe(0);
-    expect(readdirSync(folder).sort()).toEqual(["brief.md", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "rounds.json", "scan.json", "submission.json", "trace.json", "usage.json"]);
+    expect(readdirSync(folder).sort()).toEqual(["brief.md", "briefs", "impact.json", "manifest.json", "report.html", "report.json", "report.md", "report.sarif", "reviewer.json", "rounds.json", "scan.json", "submission.json", "trace.json", "usage.json"]);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.completion?.status).toBe("complete");
     expect(report).toEqual(JSON.parse(out) as Report);
     expect(readFileSync(join(folder, "report.md"), "utf8")).not.toContain("PLANTED");
-    expect(JSON.parse(readFileSync(join(folder, "reviewer.json"), "utf8"))).toEqual({ started: true, driver: "claude", version: "9.9.9" });
-    for (const f of readdirSync(folder)) expect(statSync(join(folder, f)).mode & 0o777).toBe(0o600);
+    const reviewer = JSON.parse(readFileSync(join(folder, "reviewer.json"), "utf8"));
+    expect(reviewer).toMatchObject({ started: true, driver: "claude", version: "9.9.9" });
+    expect(reviewer.sessions.map((s: { role: string }) => s.role)).toEqual(["finder:u1:local", "finder:u1:contracts", "verifier:1"]);
+    for (const f of readdirSync(folder, { recursive: true })) {
+      const item = statSync(join(folder, String(f)));
+      expect(item.mode & 0o777).toBe(item.isDirectory() ? 0o700 : 0o600);
+    }
     expect(readdirSync(join(dir, ".openqodex")).sort()).toEqual(["reviews"]);
     expect(readdirSync(join(dir, ".openqodex/reviews"))).toEqual(["20260101-000000-aaaaaaaaaaaa"]);
     // No reviewer: no report, only a page that says so, and reviewer.json says none started and why.
@@ -1198,8 +1229,8 @@ describe("the Action's review flags", () => {
 });
 
 describe("36. every correction round beside the report", () => {
-  const withReportDir = (dir: string, driver: ReviewerDriver, reportDir: string): Promise<number> => {
-    const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json"], {});
+  const withReportDir = (dir: string, driver: ReviewerDriver, reportDir: string, singlePass = false): Promise<number> => {
+    const { global } = parseFlags(["--cwd", dir, "--no-color", "--format", "json", ...(singlePass ? ["--config", join(dir, ".openqodex/config.yaml")] : [])], {});
     return runReview({ flags: global, scope: {}, noGraph: true, only: "sqllint", reviewer: "auto", timeoutMs: 60_000, drivers: [driver], reportDir });
   };
 
@@ -1207,6 +1238,8 @@ describe("36. every correction round beside the report", () => {
     // A new file too large for the brief's diff, so the first correction
     // round also carries its changed lines.
     const dir = repo();
+    // This assertion records a single-pass correction with delivered ranges.
+    legacyConfig(dir);
     writeFileSync(join(dir, "big.txt"), `${Array.from({ length: 3000 }, (_, i) => `added ${String(i).padStart(6, "0")} ${"x".repeat(64)}`).join("\n")}\n`);
     const rejected = { severity: "minor", category: "style", confidence: 0.8, file_path: "README.md", line_number: 1, title: "Greeting is lower case", problem: "The greeting starts with a lower case letter.", consequence: "The readme looks careless.", fix: "Start the greeting with a capital letter.", source: null, candidate: null };
     // Answer 1 raises c1 and a finding on a file outside the change; answer 2 drops that finding.
@@ -1215,7 +1248,7 @@ describe("36. every correction round beside the report", () => {
       return { finalText: JSON.stringify({ ...first, findings: [...first.findings, rejected] }) };
     };
     const folder = join(tempDir("oq-report-dir-"), "review");
-    expect(await withReportDir(dir, fake([withRejected, good]), folder)).toBe(0);
+    expect(await withReportDir(dir, fake([withRejected, good]), folder, true)).toBe(0);
     const report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8")) as Report;
     expect(report.findings.map((f) => f.title)).toEqual(["Admin function callable by anyone"]);
     const rounds = JSON.parse(readFileSync(join(folder, "rounds.json"), "utf8")) as { by: string; round: number; errors: string[]; delivered: unknown[]; later: number; answer: { findings: { title: string; file_path: string }[] } }[];
@@ -1246,6 +1279,8 @@ describe("36. every correction round beside the report", () => {
 });
 
 describe("37, 38, 39. the review's time cap", () => {
+  // These regressions measure the single-pass delivery or deadline.
+  beforeEach(() => { singleSession = true; });
   // The line a review stopped at its cap prints and reports.
   const capLine = (cap: string) => `the reviewer timed out and was stopped at the ${cap} cap; pass --timeout <seconds> to allow more`;
   // A reviewer whose own stop at the deadline fired, as a driver reports it.
@@ -1256,8 +1291,10 @@ describe("37, 38, 39. the review's time cap", () => {
   // cap lies between the two readings returned.
   async function typed(driver: Fake, flags: string[]): Promise<{ code: number; cap: [number, number]; folder: string }> {
     const folder = join(tempDir("oq-cap-"), "review");
+    const dir = repo();
+    legacyConfig(dir);
     const before = Date.now();
-    const code = await reviewCommand(["--cwd", repo(), "--no-color", "--only", "sqllint", "--no-graph", "--report-dir", folder, ...flags], [driver]);
+    const code = await reviewCommand(["--cwd", dir, "--config", join(dir, ".openqodex/config.yaml"), "--no-color", "--only", "sqllint", "--no-graph", "--report-dir", folder, ...flags], [driver]);
     const { deadline, at } = driver.deadlines[0]!;
     return { code, cap: [deadline - at, deadline - before], folder };
   }

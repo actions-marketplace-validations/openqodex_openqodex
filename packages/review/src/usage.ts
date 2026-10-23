@@ -3,16 +3,19 @@
 // rendering built from it. Every value here comes from the brain's own
 // measurements: the requests it built, the tool calls it ran and the usage
 // each response carried. Nothing comes from what the reviewer says it did.
-import type { Coverage, TraceEntry } from "@openqodex/core";
+import type { Coverage, ReviewerSessionRecord, TraceEntry } from "@openqodex/core";
 
-// Which reviewer of the review made a call: the primary, or the second
-// reviewer a host may add (step 4).
-export type ReviewerRole = "primary" | "second";
+// Which reviewer of the review made a call: the primary, the second
+// reviewer a host may add (step 4), or, in a staged review (reviewer
+// contract 2), one finder session (`finder:<unit>:<pass>`, such as
+// `finder:u2:local`) or one verifier session (`verifier:<n>`).
+export type ReviewerRole = "primary" | "second" | `finder:${string}` | `verifier:${string}`;
 
 // Why a model call was made: for the brief (and the tool calls that answer
-// it), for a correction round (and its tool calls), or any call of the
-// second reviewer.
-export type ModelPurpose = "brief" | "correction" | "second";
+// it), for a correction round (and its tool calls), any call of the second
+// reviewer, or, in a staged review, a finder's answer (`find`) or a
+// verifier's (`verify`); their correction rounds are `correction`.
+export type ModelPurpose = "brief" | "correction" | "second" | "find" | "verify";
 
 // One model attempt, as the brain measured it. `outcome`: "ok" when the
 // reviewer returned a response, "failed" when the call threw (or was still
@@ -140,5 +143,7 @@ export type ModelReviewEvidence = {
   tools: string[];
   startedAt: string;
   endedAt: string;
+  sessions?: ReviewerSessionRecord[];
+  missing?: string[];
   durationMs: number;
 };
