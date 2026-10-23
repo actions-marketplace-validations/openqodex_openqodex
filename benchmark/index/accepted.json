@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "runId": "2026-10-13-b43b25b-aacr-claude",
-  "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
-  "scoreHash": "5d38ec361ccfeafea0a23c890a925ee32a3e68ee7066ea5c7fbe83b3db81672a",
-  "acceptedAt": "2026-10-13T15:17:48.022Z",
+  "runId": "2026-10-23-8b51d43-planted-scan-ci",
+  "commit": "8b51d43fadc5b87e7928edc38923a6d55a5d44c1",
+  "scoreHash": "dd11f8d5448b749fb389dbaddc2238b0bb05304d2139e79804129662311e6dee",
+  "acceptedAt": "2026-10-23T16:31:09.422Z",
   "acceptedBy": "Sid",
   "groups": {
     "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|laptop|claude|claude-opus-5-5|claude-graph-on|8|dev-laptop": {
@@ -11,6 +11,13 @@
       "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
       "scoreHash": "5d38ec361ccfeafea0a23c890a925ee32a3e68ee7066ea5c7fbe83b3db81672a",
       "acceptedAt": "2026-10-13T15:17:48.022Z",
+      "acceptedBy": "Sid"
+    },
+    "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|laptop|codex|gpt-6.1-sol|codex-graph-on|8|dev-laptop": {
+      "runId": "2026-10-13-b43b25b-aacr-codex",
+      "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
+      "scoreHash": "21e514ddf3f4016fb94e0e7de8614b6a9dfe93d6690875eeab10daffd2f3fe7f",
+      "acceptedAt": "2026-10-13T16:36:17.829Z",
       "acceptedBy": "Sid"
     },
     "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|server|model-gpt-6.1-sol|unknown|model-gpt-6.1-sol-graph-on|7|dev-laptop": {
@@ -49,11 +56,11 @@
       "acceptedAt": "2026-10-11T19:57:52.122Z",
       "acceptedBy": "Sid (recorded by the session on 2026-10-11 under the benchmark program he approved)"
     },
-    "aacr|dev|edf0f4863eb81a3004d9319cb4fa8cea7085466c5774b6ad51567aff642585f4|review|laptop|codex|gpt-6.1-sol|codex-graph-on|8|dev-laptop": {
-      "runId": "2026-10-13-b43b25b-aacr-codex",
-      "commit": "e5c5ccdd38cab941e36ff2afd27226568015525d",
-      "scoreHash": "21e514ddf3f4016fb94e0e7de8614b6a9dfe93d6690875eeab10daffd2f3fe7f",
-      "acceptedAt": "2026-10-13T16:36:17.829Z",
+    "planted|dev|none|scan|laptop|none|none|scan|2": {
+      "runId": "2026-10-23-8b51d43-planted-scan-ci",
+      "commit": "8b51d43fadc5b87e7928edc38923a6d55a5d44c1",
+      "scoreHash": "dd11f8d5448b749fb389dbaddc2238b0bb05304d2139e79804129662311e6dee",
+      "acceptedAt": "2026-10-23T16:31:09.422Z",
       "acceptedBy": "Sid"
     }
   }
