@@ -546,6 +546,7 @@ export async function buildGraph(args: BuildArgs): Promise<Graph> {
       unknownNames,
       valueCalls,
       model,
+      goModules,
       projectOf,
       exportChanges: exportsDiff,
       frameworks,

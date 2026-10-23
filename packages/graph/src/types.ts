@@ -303,6 +303,9 @@ export type Graph = {
   unknownNames: Map<string, number>;
   valueCalls: Map<string, number>;
   model: ProjectModel;
+  // Go module paths by folder, as the build read them: with `model`, what
+  // the index needs to give back `projectOf`.
+  goModules: [string, string][];
   projectOf(file: string): string;
   exportChanges: ImpactExportChange[]; // set when the build compared a base; every consumer, never cut
   status: GraphStatus;
