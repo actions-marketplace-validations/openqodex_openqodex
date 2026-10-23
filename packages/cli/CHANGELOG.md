@@ -1,5 +1,25 @@
 # openqodex
 
+## 0.14.0
+
+### Minor Changes
+
+- [#229](https://github.com/openqodex/openqodex/pull/229) [`80b270c`](https://github.com/openqodex/openqodex/commit/80b270cede281b669dfa832509397c554a9afe50) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Check every repository lockfile at every review and scan of a change, show outside scanner advisories without counting them, and include fixed versions.
+
+- [#232](https://github.com/openqodex/openqodex/pull/232) [`4a0a233`](https://github.com/openqodex/openqodex/commit/4a0a2339bba3987212056262107a7cb2df7980a8) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The library exports the graph's questions and its index files: `query`, `querySliced`, `OPERATIONS`, `SLICE_CHECKS`, `parseTarget`, `resolveTarget`, `prepareIndexes`, `writeIndex`, `readIndex`, `readIndexFrom`, `assemble`, `INDEX_FORMAT`, `serializeModel`, `deserializeModel`, `graphOf`, `floorReasons`, `hotSymbols` and `isTestPath`, with their types. A program builds a graph, saves the files `writeIndex` returns anywhere, reads them back with `readIndexFrom` and asks every question over the result. `writeIndex` now includes `projects.json`, so the files it returns are enough on their own.
+
+- [#230](https://github.com/openqodex/openqodex/pull/230) [`7f7b114`](https://github.com/openqodex/openqodex/commit/7f7b1142ca443b202073353478226729fd4d6bf9) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The review runs in stages. Two finder sessions read each changed file with the code around the change, a fresh verifier session checks every candidate, and only confirmed ones become findings. Style, naming, docs and test items are shown as observations, apart from the findings and outside the verdict. `review.stages: false` runs the single pass. Every file in the repository is given the code around the change, whatever its language.
+
+### Patch Changes
+
+- [#240](https://github.com/openqodex/openqodex/pull/240) [`68831b0`](https://github.com/openqodex/openqodex/commit/68831b02389146c1b1d09cc0813b769cb82a1066) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Allow explicit human rulings for benchmark judge calibration below the default 90 percent agreement bar, and expose each board's per-class agreement for the comparison page.
+
+  Mark calibrations complete when both classes have agreement after recorded judge exclusions, and reserve exit 1 for missing agreement or a missing class.
+
+- [#240](https://github.com/openqodex/openqodex/pull/240) [`0917ac6`](https://github.com/openqodex/openqodex/commit/0917ac6b9db9ee750c3350af6bb2bdf8db3acee2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - In a single-run review, the reviewer raises every defect it can show at the configured confidence floor and sets confidence honestly.
+
+- [#240](https://github.com/openqodex/openqodex/pull/240) [`0917ac6`](https://github.com/openqodex/openqodex/commit/0917ac6b9db9ee750c3350af6bb2bdf8db3acee2) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Review replaced lines for lost behavior in files ending with: `.c,.cc,.cpp,.cxx,.C,.h,.hh,.hpp,.hxx,.rs,.cs,.php`, `.ts,.tsx,.js,.jsx,.mjs,.cjs,.mts,.cts,.py,.pyi,.go,.rb`, `.java,.kt,.kts,.swift,.m,.mm,.scala,.sc,.sh,.bash,.zsh,.sql`, `.lua,.pl,.pm,.r,.R,.dart,.ex,.exs,.erl,.hrl,.hs,.clj`, `.cljs,.cljc,.vue,.svelte,.vb,.fs,.fsx,.ps1,.psm1,.groovy,.gradle,.asm`, `.s,.S,.zig,.jl,.ml,.mli,.nim,.v,.vhd,.vhdl,.f,.f90`, `.f95,.for,.cob,.cbl,.coffee,.elm,.el,.lisp,.lsp,.scm,.ss,.rkt`, `.d,.pas,.p,.raku,.tcl,.awk`.
+
 ## 0.13.0
 
 ### Minor Changes
