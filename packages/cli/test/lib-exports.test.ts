@@ -411,8 +411,8 @@ describe("a bundled program with openqodex external", () => {
     out = JSON.parse(r.stdout) as WorkerOut;
   }, 120_000);
 
-  it("loads the 48 lenses from the installed package", () => {
-    expect(out.lenses, "lenses").toEqual({ ok: true, value: 48 });
+  it("loads the 49 lenses from the installed package", () => {
+    expect(out.lenses, "lenses").toEqual({ ok: true, value: 49 });
   });
 
   it("tells the security lenses apart: each lens file marked security: true, and no other", () => {
