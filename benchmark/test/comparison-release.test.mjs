@@ -10,7 +10,7 @@
 // 8. An admitted scanner-only run loses permission to materialise test cases.
 // 9. The runner reads truth or logs access before refusing a changed build.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
@@ -139,11 +139,14 @@ it("keeps admission outside the checkout so unchanged resumes and later suites a
   expect(selectCases(f.options)).toEqual(first);
   expect(readFileSync(f.log, "utf8").trim().split("\n").map((line) => JSON.parse(line).runId)).toEqual(["test-run", "next-run", "test-run"]);
 });
-it("passes admitted held-out permission through a real scanner-only release run", () => {
+it("passes admitted held-out permission through a real scanner-only release run, and leaves no temp folder behind", () => {
   const f = fixture({ runner: true });
   const out = join(f.root, "results/scan");
-  const r = spawnSync(process.execPath, [join(f.root, "run.mjs"), "--mode", "scan", "--suite", "aacr", "--split", "test", "--release", "test-release", "--out", out, "--allow-missing-scanners"], { cwd: f.repo, encoding: "utf8", env: { ...process.env, OPENQODEX_HOME: join(f.cache, "home") }, timeout: 60_000 });
+  const temp = join(f.root, "tmp");
+  mkdirSync(temp);
+  const r = spawnSync(process.execPath, [join(f.root, "run.mjs"), "--mode", "scan", "--suite", "aacr", "--split", "test", "--release", "test-release", "--out", out, "--allow-missing-scanners"], { cwd: f.repo, encoding: "utf8", env: { ...process.env, OPENQODEX_HOME: join(f.cache, "home"), TMPDIR: temp }, timeout: 60_000 });
   expect(r.status, r.stderr).toBe(0);
+  expect(readdirSync(temp).filter((n) => n.startsWith("oq-bench-run-")), "a real suite's scan removes its case copies when it ends").toEqual([]);
   expect(read(join(out, "samples/fixture__widget-1/scan/1/sample.json"))).toMatchObject({ status: "complete" });
   expect(read(join(out, "manifest.json"))).toMatchObject({ release: "test-release", split: "test", mode: "scan" });
   expect(git(f.repo, "status", "--porcelain").trim()).toBe("");

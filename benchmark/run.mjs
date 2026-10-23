@@ -982,6 +982,9 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
     }
   }
   console.log(`Score: ${folders.map((f) => shown(join(f, "score.json"))).join(" and ")}`);
+  // As on the review path: a real suite's case copies are removed once the
+  // scan ends; a planted case's laptop repositories are kept to look at.
+  if (real) rmSync(tempRoot, { recursive: true, force: true });
   if (!o.checkIdentical) process.exit(0);
   const cmp = comparePasses(folders[0], folders[1]);
   const record = { version: 1, runId, identical: cmp.identical, cause: cmp.cause, inputs: cmp.inputs, differences: cmp.differences, passes: folders.map((f, i) => ({ folder: basename(f), elapsedMin: ends[i].elapsedMin })) };
