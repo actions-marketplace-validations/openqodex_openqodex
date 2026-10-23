@@ -70,7 +70,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { boardFolder, checkoutState, leaksIn, outsideRepo, redactor } from "../../lib/board-files.mjs";
-import { MARTIAN_BETA, MARTIAN_BOARD, MARTIAN_PROFILES, MARTIAN_STEPS, martianEvaluations, releaseGate } from "../../lib/martian-board.mjs";
+import { MARTIAN_BETA, MARTIAN_BOARD, MARTIAN_CITED, MARTIAN_PROFILES, MARTIAN_STEPS, martianEvaluations, releaseGate } from "../../lib/martian-board.mjs";
 import { endpointSecrets, loadModelEnv, modelEnvPath, probedDeployment } from "../../lib/model-env.mjs";
 import { canonicalJson } from "../../lib/suites.mjs";
 import { accessLogPath } from "../convert/martian.mjs";
@@ -116,11 +116,19 @@ function steps(model) {
   ];
 }
 
+export function calibrationSteps(model) {
+  return steps(model).map((s) => {
+    if (s.step === MARTIAN_STEPS.score) return { ...s, args: [...s.args.slice(0, -3), "--profile", MARTIAN_CITED.profile, "--beta", String(MARTIAN_CITED.beta)] };
+    if (s.stdout) return { ...s, args: [...s.args.slice(0, -1), String(MARTIAN_CITED.beta)] };
+    return s;
+  });
+}
+
 // Runs one step, each of its two streams through a filter of its own into
 // the terminal and the log (`emit`); with `stdout`, its standard output
 // (filtered) is kept apart and returned instead. Returns { code, signal,
 // text, stdout }, text being what was emitted.
-function runStep(command, args, { cwd, env, emit, secrets, keepStdout }) {
+function runStep(command, args, { cwd, env, emit, secrets, keepStdout, signal }) {
   return new Promise((done) => {
     let text = "";
     let kept = "";
@@ -131,6 +139,8 @@ function runStep(command, args, { cwd, env, emit, secrets, keepStdout }) {
     const err = redactor(secrets, sink);
     const out = redactor(secrets, keepStdout ? (t) => (kept += t) : sink);
     const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const abort = () => child.kill();
+    signal?.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (c) => out.write(c));
     child.stderr.on("data", (c) => err.write(c));
     child.on("close", (code, signal) => {
@@ -138,6 +148,7 @@ function runStep(command, args, { cwd, env, emit, secrets, keepStdout }) {
       err.end();
       done({ code, signal, text, stdout: kept });
     });
+    child.on("error", () => done({ code: 2, signal: null, text: "pipeline process could not start", stdout: "" }));
   });
 }
 
@@ -210,9 +221,9 @@ export async function main(argv = process.argv.slice(2)) {
  * returns 0, or 1 with the problems printed. main() verifies the checkout
  * first.
  */
-export async function runPipeline({ out, convert, checkout, python, state, judge, settings }) {
+export async function runPipeline({ out, convert, checkout, python, state, judge, settings, calibration = false, signal, beforeStep }) {
   const secrets = endpointSecrets(settings.baseUrl, settings.apiKey);
-  const plan = steps(judge.id);
+  const plan = calibration ? calibrationSteps(judge.id) : steps(judge.id);
   const work = join(out, "work");
   const sent = convert.tools.filter((t) => !t.held);
   const held = convert.tools.filter((t) => t.held);
@@ -243,8 +254,10 @@ export async function runPipeline({ out, convert, checkout, python, state, judge
   const problems = [];
   let dedupFallbacks = null;
   for (const s of plan) {
+    signal?.throwIfAborted();
+    await beforeStep?.({ step: s.step, work });
     say(`\n== ${s.step} ==\n`);
-    const r = await runStep(...withoutCore(python, s.args), { cwd: work, env: s.judge ? withJudge : base, emit, secrets, keepStdout: Boolean(s.stdout) });
+    const r = await runStep(...withoutCore(python, s.args), { cwd: work, env: s.judge ? withJudge : base, emit, secrets, keepStdout: Boolean(s.stdout), signal });
     if (s.stdout) writeFileSync(join(work, s.stdout), r.stdout);
     if (s.step === MARTIAN_STEPS.dedup) dedupFallbacks = Number(/Fallbacks\s*:\s*(\d+)/.exec(r.text)?.[1] ?? NaN);
     ran.push({ step: s.step, exit: r.code, signal: r.signal });
@@ -288,7 +301,7 @@ export async function runPipeline({ out, convert, checkout, python, state, judge
     commit: MARTIAN_BOARD.commit,
     checkout: { commit: state.commit, tree: state.tree },
     judge: { deployment: judge.id, boardsKey: judge.key, probed: judge.probed, servedAtProbe: judge.served ?? null },
-    beta: MARTIAN_BETA,
+    beta: calibration ? MARTIAN_CITED.beta : MARTIAN_BETA,
     python: `${version.stdout}${version.stderr}`.trim(),
     startedAt,
     endedAt: new Date().toISOString(),

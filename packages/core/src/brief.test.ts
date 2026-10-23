@@ -28,6 +28,9 @@
 //     tests as a finding, or puts the neighbourhood before graph impact.
 // 13. Whole-repo context or a new neighbourhood block leaks a secret.
 // 14. Missing coverage sits outside the whole-repo procedure's numbered steps.
+// 15. The reviewer omits shown defects or weakens impact and scope rules.
+// 16. The judgement rule substitutes the default for a configured confidence
+//     floor, including zero, while the other brief rules use that floor.
 import { describe, expect, it } from "vitest";
 import { buildBrief, buildReviewerBrief, buildWholeRepoBrief } from "./brief.js";
 import { selectLenses } from "./lenses.js";
@@ -195,6 +198,24 @@ describe("buildBrief with lenses from the shipped catalog", () => {
 
 
 describe("10. the reviewer brief's diff section", () => {
+  it.each([0, 0.5, 0.9])("does not substitute the default for confidence floor %s", (confidenceFloor) => {
+    const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [], confidenceFloor });
+    expect(text).toContain(`Raise every defect you can show from the code with confidence ${confidenceFloor} or higher.`);
+    expect(text).toContain(`Raise findings with evidence you can point at, with confidence ${confidenceFloor} or higher. Anchor each on an added or modified line or a deletion anchor.`);
+    expect(text).toContain(`Findings under ${confidenceFloor}, or under a cited lens's floor, are not counted.`);
+  });
+
+  it("does not omit shown defects at the confidence floor or weaken impact and scope rules", () => {
+    const { text } = buildReviewerBrief({ change: makeChange(), scan: makeScan(), lenses: [], config: makeConfig(), secrets: [] });
+    expect(text).toContain("Raise every defect you can show from the code with confidence 0.7 or higher.");
+    expect(text).toContain("Set confidence honestly. The floor removes the rest.");
+    expect(text).not.toContain("A wrong finding is worse than a missed one");
+    expect(text).not.toContain("leave it out");
+    expect(text).toContain("Raise findings with evidence you can point at, with confidence 0.7 or higher. Anchor each on an added or modified line or a deletion anchor.");
+    expect(text).toContain("Findings under 0.7, or under a cited lens's floor, are not counted.");
+    expect(text).toContain("`severity` reflects impact on users or the system, not your confidence");
+  });
+
   it("names the files to open with their changed lines and deletions, and says the rest is already shown", () => {
     const big = { path: "app/big.py", text: `diff --git a/app/big.py b/app/big.py\n${"+x\n".repeat(120_000)}` };
     const change = makeChange({
@@ -288,7 +309,9 @@ describe.each(singlePassBuilders)("$name investigation", ({ build }) => {
     const text = build({});
     expect(text).toMatch(/confidence (?:to )?0\.7 or higher/);
     expect(text).not.toContain(["A wrong finding", "is worse than a missed one"].join(" "));
-    expect(text).toContain("Raise what you can show from the code, and set confidence honestly");
+    expect(text).toMatch(/Raise (?:every defect|what) you can show from the code/);
+    expect(text).toMatch(/(?:set|Set) confidence honestly/);
+    expect(text).toContain("When you are not sure, read more code first.");
     expect(text).toContain('Use "Code around the change" first');
   });
 

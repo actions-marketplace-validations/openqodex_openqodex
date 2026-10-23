@@ -292,7 +292,18 @@ In the result, `scan.candidates` are the findings and `scan.scanners` has one su
 
 ## lenses
 
-A lens is a named bug pattern, one markdown file, that the review hands to the reviewer when a change matches it. The package ships 48.
+A lens is a named bug pattern, one markdown file, that the review hands to the reviewer when a change matches it. The package ships 49. The `replaced-line-drops-behavior` lens checks adjacent removed and added lines for lost effects. It triggers on files with these extensions:
+
+- `.c`, `.cc`, `.cpp`, `.cxx`, `.C`, `.h`, `.hh`, `.hpp`, `.hxx`, `.rs`, `.cs`, `.php`
+- `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, `.cts`, `.py`, `.pyi`, `.go`, `.rb`
+- `.java`, `.kt`, `.kts`, `.swift`, `.m`, `.mm`, `.scala`, `.sc`, `.sh`, `.bash`, `.zsh`, `.sql`
+- `.lua`, `.pl`, `.pm`, `.r`, `.R`, `.dart`, `.ex`, `.exs`, `.erl`, `.hrl`, `.hs`, `.clj`
+- `.cljs`, `.cljc`, `.vue`, `.svelte`, `.vb`, `.fs`, `.fsx`, `.ps1`, `.psm1`, `.groovy`, `.gradle`, `.asm`
+- `.s`, `.S`, `.zig`, `.jl`, `.ml`, `.mli`, `.nim`, `.v`, `.vhd`, `.vhdl`, `.f`, `.f90`
+- `.f95`, `.for`, `.cob`, `.cbl`, `.coffee`, `.elm`, `.el`, `.lisp`, `.lsp`, `.scm`, `.ss`, `.rkt`
+- `.d`, `.pas`, `.p`, `.raku`, `.tcl`, `.awk`
+
+The library exposes these lens helpers:
 
 - `loadLensCatalog(dir)` returns every lens as a `Lens`. `dir` is optional; without it the lenses come from the installed package.
 - `defaultLensDir()` returns the folder of the installed package's lenses.

@@ -585,14 +585,16 @@ export function regressions(oldSamples, newSamples) {
 //     that names the truth item, for a finding on a line the change added in
 //     that item's file; it scores as any same-issue ruling does, a hit on
 //     that item on that spec version.
-// Rules version 10 scores observations (version 9 made scanner outside
-// advisories information). Failure list, written before the code:
+// Rules version 9 (PR 229): scanner outside advisories are information; legacy untagged findings still count.
+// Rules version 10: wave8 adds Greptile scoring with a fixed denominator of 50; main scores observations with tiers.
+// Rules version 11 (2026-10-22): merge of the two version-10 rule sets.
+// Failure list, written before the code:
 // 44. An observation of a staged review is shown to the developer and never
 //     judged: shownFindings() lists report.observations after the findings,
 //     each marked tier "observation", so every score, board file and judge
 //     export sees it like a finding. A report without the field, or with an
-//     empty list, scores exactly as under version 8.
-export const RULES_VERSION = 10;
+//     empty list, scores exactly as under version 9.
+export const RULES_VERSION = 11;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];
@@ -618,7 +620,7 @@ export const SEVERITY_LABEL = "Each found truth item once, by the first finding 
 export const FINDER_LABEL = "Each found truth item once, judged from the review's own scan.json: a scanner found it when one of its candidates, or a finding merged into one, sits on the item's lines and is either from a scanner found_by names or names the item's words; else the reviewer found it alone. found_by is the expectation: a scanner it names is met when that scanner located the item, reasoning and graph when no scanner did.";
 
 // The kind of case a suite holds.
-const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected" };
+const ORIGINS = { planted: "planted", aacr: "real", clean: "real", martian: "injected", greptile: "injected" };
 export const originOf = (suite) => ORIGINS[suite ?? "planted"] ?? null;
 
 // Register authored suites separately from the frozen scoring rules.

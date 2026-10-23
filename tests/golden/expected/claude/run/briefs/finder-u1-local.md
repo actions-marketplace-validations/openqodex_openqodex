@@ -1331,6 +1331,55 @@ Suppress when:
   / Supabase Auth) that owns auth flows; the route is a thin
   pass-through and the provider rate-limits
 
+### replaced-line-drops-behavior
+
+A replacement drops an effect the old line had and the change does not restore it (confidence floor 0.7)
+
+For each removed line beside a replacement, name the old line's effects.
+These include conditions, calls, resource releases and error handling.
+Also check slices, initial values, retries, statuses and parser keys.
+Compare those effects with the new code.
+Include surrounding control flow and callers.
+
+Flag a dropped effect only when this change never restores it.
+Show the resulting failure from the code.
+Name the lost effect.
+Identify the input or path that needs it.
+State the consequence.
+Cite the replacement line.
+A missing effect alone does not prove a defect.
+Check whether the change intentionally removes the behavior.
+Verify that the code supports that reason.
+
+This lens triggers on replacements in files with these extensions:
+
+- `.c`, `.cc`, `.cpp`, `.cxx`, `.C`, `.h`, `.hh`, `.hpp`, `.hxx`, `.rs`, `.cs`, `.php`
+- `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, `.cts`, `.py`, `.pyi`, `.go`, `.rb`
+- `.java`, `.kt`, `.kts`, `.swift`, `.m`, `.mm`, `.scala`, `.sc`, `.sh`, `.bash`, `.zsh`, `.sql`
+- `.lua`, `.pl`, `.pm`, `.r`, `.R`, `.dart`, `.ex`, `.exs`, `.erl`, `.hrl`, `.hs`, `.clj`
+- `.cljs`, `.cljc`, `.vue`, `.svelte`, `.vb`, `.fs`, `.fsx`, `.ps1`, `.psm1`, `.groovy`, `.gradle`, `.asm`
+- `.s`, `.S`, `.zig`, `.jl`, `.ml`, `.mli`, `.nim`, `.v`, `.vhd`, `.vhdl`, `.f`, `.f90`
+- `.f95`, `.for`, `.cob`, `.cbl`, `.coffee`, `.elm`, `.el`, `.lisp`, `.lsp`, `.scm`, `.ss`, `.rkt`
+- `.d`, `.pas`, `.p`, `.raku`, `.tcl`, `.awk`
+
+Suppress when:
+- a renamed call has the same effect,
+- the old line moved elsewhere in the same change and still runs on the
+  paths that need it,
+- another condition, call or cleanup preserves the old effect,
+- the change explains why the behavior is no longer needed and the code
+  supports that explanation,
+- the edit only adds lines, or changes formatting or comments without
+  changing behavior.
+
+Example: `return ptr ? *ptr : 0;` becomes `return *ptr;`. The old line
+handled a null pointer. If callers can still pass null, check for another null guard.
+Without one, the replacement dereferences null instead of returning zero.
+Flag the lost check. If the same change guards null before this line, raise nothing.
+
+Severity follows the demonstrated consequence. Raise a bug, not a
+request for tests, a style preference, or speculative hardening.
+
 ### sql-string-concatenation
 
 SQL built via string concatenation / template-string interpolation of unsanitized input (confidence floor 0.75)
