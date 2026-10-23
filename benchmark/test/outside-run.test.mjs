@@ -80,9 +80,9 @@ beforeAll(() => {
   tarball = join(dir, JSON.parse(out)[0].filename);
 }, 120_000);
 
-// A script for the scripted model. `reply` null answers with a submission
-// that passes every check; a text is sent as every answer instead, which
-// fails its checks and makes the library ask twice more (three calls).
+// A script for the scripted model. `reply` null answers each brief's
+// protocol; a text is sent as every answer instead, which fails its checks
+// and makes each session ask twice more before its fresh-session retry.
 function script(more = {}) {
   const file = join(tempDir("oq-outside-script-"), "script.json");
   write(file, JSON.stringify({ version: 1, model: "scripted", served: "scripted-1", prices: { input: 1, cachedInput: 0, output: 1 }, summary: "Reads the change.", findings: [], dropReason: "The scripted model drops every candidate.", reply: null, ...more }));
@@ -112,9 +112,12 @@ describe("overspend", () => {
     expect(r.status, r.stderr).toBe(0);
     const sample = readJson(join(out, "samples", "flask-path-traversal", CONFIG, "1", "sample.json"));
     expect(sample.status).toBe("incomplete");
-    expect(sample.failure).toMatch(/budget refused before correction call 3/);
+    expect(sample.failure).toMatch(/budget refused before/);
     const usage = readJson(join(out, "samples", "flask-path-traversal", CONFIG, "1", "usage.json"));
-    expect(usage.calls.map((c) => c.outcome)).toEqual(["ok", "ok", "refused"]);
+    // The two finder sessions run at once, so their call order is not fixed.
+    expect(usage.calls.filter((c) => c.outcome === "ok")).toHaveLength(2);
+    expect(usage.calls.filter((c) => c.outcome === "refused").length).toBeGreaterThanOrEqual(1);
+    expect(usage.calls.every((c) => c.outcome === "ok" || c.outcome === "refused")).toBe(true);
     expect(usage.totals.costUsd).toBeCloseTo(0.4, 9);
     // The refused call reserved nothing and spent nothing: two calls were held and settled.
     const ledger = readLedger(out);
@@ -162,8 +165,10 @@ describe("burning budget on a broken setup", () => {
     // The spend of the finished samples is recorded, and it is what they cost.
     const costs = order.slice(0, 2).map((n) => readJson(join(out, "samples", n, CONFIG, "1", "sample.json")).usage.cost_usd);
     expect(costs.every((c) => c > 0)).toBe(true);
-    expect(m.ended.spentUsd).toBeCloseTo(costs[0] + costs[1], 9);
-    expect(readLedger(out).spentUsd).toBeCloseTo(costs[0] + costs[1], 9);
+    // A staged review is many calls, each recorded to nine decimals, so the
+    // two sums agree to a millionth of a dollar, not to the last decimal.
+    expect(m.ended.spentUsd).toBeCloseTo(costs[0] + costs[1], 6);
+    expect(readLedger(out).spentUsd).toBeCloseTo(costs[0] + costs[1], 6);
     // What a run on a package build records: the package, not the checkout's commit.
     expect(m.package).toMatchObject({ spec: `file:${tarball.split("/").at(-1)}`, name: "openqodex", sha256: sha256(tarball) });
     expect(m.package.version).toBe(readJson(join(repoRoot, "packages/cli/package.json")).version);
@@ -232,6 +237,20 @@ describe("a provider refusal, a served-model change, a share of incomplete revie
     expect(rules.after(incomplete("budget refused before correction call 3"), own())).toBeNull();
     expect(rules.after(incomplete("the reviewer's answer still failed 2 checks after the correction rounds"), own())).toBeNull();
     expect(reasonClass("budget refused before brief call 1")).toBe(reasonClass("budget refused before correction call 3"));
+  });
+
+  it("classes exhausted staged answers as answer checks, keeping budget and deadline precedence", () => {
+    const finder = "unit u1 was not examined by local: 1. the answer is not one JSON object; hunk h1 of app.py was not examined by the local pass";
+    const verifier = "candidates c1, k2 were not verified: 1. candidate c1: needs exactly one verdict, got 0";
+    for (const failure of [finder, verifier, "candidates c1 were not verified: the verifier exhausted its correction rounds"]) {
+      expect(reasonClass(failure)).toBe("answer-checks");
+      expect(reasonClass(`${failure}; budget refused before find call 2`)).toBe("budget");
+      expect(reasonClass(`${failure}; the reviewer timed out and was stopped`)).toBe("deadline");
+    }
+    // A staged session that ran out of time or was stopped is not an answer check.
+    expect(reasonClass("unit u1 was not examined by local: the finders' time ran out")).toBe("deadline");
+    expect(reasonClass("candidates c1 were not verified: the verifier did not finish in time")).toBe("deadline");
+    expect(reasonClass("unit u1 was not examined by local: the reviewer tried to read outside the snapshot")).not.toBe("answer-checks");
   });
 
   it("after 10 reviews, stops when more than 20% are incomplete, when the mean cost passes 1.5 times the estimate, or when the forecast passes --max-usd", () => {

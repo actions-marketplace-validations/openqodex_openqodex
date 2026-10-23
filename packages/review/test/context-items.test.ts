@@ -16,6 +16,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { ContextItem } from "@openqodex/core";
 import { reviewChange } from "../src/review-change.js";
 import type { ReviewChangeOptions } from "../src/reviewer.js";
+import { stagedAnswer } from "./staged-fake.js";
 import { fixtureModel } from "./fixture-model.js";
 import { changeRepo } from "./repos.js";
 import { removeTempDirs, tempDir } from "../../../tests/temp-dirs.mjs";
@@ -35,6 +36,18 @@ describe("context items through reviewChange", () => {
   it("1, 2. quotes each kind under its heading, leaves out and reports an item about untouched folders, and hashes every item", async () => {
     const repo = changeRepo();
     const model = fixtureModel();
+    const complete = model.complete.bind(model);
+    model.complete = async (request) => {
+      const response = await complete(request);
+      const brief = request.messages.find((m) => m.role === "user")!.text;
+      const fixed = JSON.parse(response.message.text);
+      for (const m of brief.matchAll(/^### (c\d+) \(scanner\)\n([\s\S]*?)(?=^### |^## )/gm)) {
+        const at = /^- Location: (.+):(\d+)$/m.exec(m[2]!)!;
+        fixed.dropped.push({ candidate: m[1], reason: "The function is internal and never exposed.", file_path: at[1], line_number: Number(at[2]) });
+      }
+      response.message.text = stagedAnswer(brief, JSON.stringify(fixed), () => "");
+      return response;
+    };
     const context: ContextItem[] = [
       { kind: "lesson", text: "This team keeps SQL functions private.", source: "lessons ledger" },
       { kind: "comment", text: "Why does add subtract now?", source: "pull request comment 7", scopes: ["src"] },
@@ -45,7 +58,7 @@ describe("context items through reviewChange", () => {
       { kind: "lesson", text: "This team keeps SQL functions private.", source: "lessons ledger" },
     ];
     const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, context }, model, options());
-    expect(result.status).toBe("complete");
+    expect(result.status, result.reason).toBe("complete");
     const brief = model.requests[0]!.messages.find((m) => m.role === "user")!.text;
     const lines = brief.split("\n");
     for (const [heading, quoted] of [

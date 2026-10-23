@@ -1,3 +1,4 @@
+// These tests exercise the single-pass primary and second-reviewer merge.
 // A second reviewer through reviewChange, on a real git clone, with the
 // fixture model as the only stand-in for both reviewers: it runs after the
 // primary on the same brief and tools, under the same budget, and its
@@ -25,6 +26,7 @@
 //  8. A primary whose answer never passes, then a second reviewer that
 //     completes: the candidates the second disposed of are still listed as
 //     unchecked, beside its own drops.
+import { DEFAULT_CONFIG } from "@openqodex/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { reviewChange } from "../src/review-change.js";
 import type { AuthorizeRequest, ReviewChangeOptions } from "../src/reviewer.js";
@@ -69,7 +71,7 @@ async function run(second: FixtureOptions, refuseAt?: number, big = false, first
       },
     },
   };
-  const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head }, primary, options);
+  const result = await reviewChange({ clonePath: repo.dir, mergeBaseSha: repo.base, headSha: repo.head, config: { ...DEFAULT_CONFIG, stages: false } }, primary, options);
   return { result, primary, other, asked };
 }
 

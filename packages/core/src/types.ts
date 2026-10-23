@@ -299,6 +299,10 @@ export type Config = {
   defaultBase: string | null; // the branch or ref the default scope diffs against when there is no upstream; null: the remote's default branch
   includeFixtures: boolean;
   instructionsFiles?: string[]; // repo-relative convention paths or globs chosen by the owners; default []
+  // The staged review (units per changed file, two finders per unit, a
+  // fresh verifier) when the tool starts its own reviewer; false runs one
+  // pass as before. Always one pass for --agent and --all.
+  stages: boolean;
   disabledScanners: BuiltinScanner[];
   custom: CustomScanner[];
   // the code graph in the brief; enabled by default. maxFiles caps new parses per build.
@@ -601,9 +605,104 @@ export type ReviewerRecord = {
   started_at: string;
   ended_at: string;
   duration_ms: number;
-  rounds: number; // answers asked for: the first plus the correction rounds
-  usage: ReviewerUsage;
+  rounds: number; // answers asked for: the first plus the correction rounds; in a staged review the total over every session
+  usage: ReviewerUsage; // in a staged review the total over every session
+  // A staged review only: one entry per reviewer session the tool started.
+  sessions?: ReviewerSessionRecord[];
 };
+
+// One reviewer session of a staged review, as the tool measured it. `role`
+// is the ReviewerRole the session's call ids carry (`finder:<unit>:<pass>`
+// or `verifier:<n>`); `unit` names the find unit for a finder; `examined`
+// the hunk ids the finder's accepted answer listed; `failure` one plain
+// line when the session did not complete, else null.
+export type ReviewerSessionRecord = {
+  role: string;
+  unit?: string;
+  rounds: number;
+  usage: ReviewerUsage;
+  failure: string | null;
+  examined?: string[];
+};
+
+// ---------- the staged review: units, finders and the verifier ----------
+
+// A changed hunk with the id the tool gave it (`h1`, `h2`, ...). `start` and
+// `end` are lines of the new file; a deletion's are its anchors.
+export type HunkRef = { id: string; path: string; start: number; end: number; deletion: boolean; point?: number };
+
+// A find unit: one changed file, or a group of small files whose diffs stay
+// under the unit size bound, or one slice of a large file. Every hunk of the
+// change belongs to exactly one unit.
+export type ReviewUnit = { id: string; files: string[]; hunks: HunkRef[]; diffBytes: number };
+
+// The two finder passes run on every unit, each in a fresh session.
+export type FindPass = "local" | "contracts";
+
+// One line of code a finder or the verifier cites as proof. `quote` is the
+// line's text; the tool checks it against the snapshot file within two lines
+// of `line_number`, or, with `removed: true`, against the removed lines of
+// that file's diff.
+export type EvidenceCitation = { file_path: string; line_number: number; quote: string; removed?: true };
+
+// A finder's candidate. `claim` says what is wrong in one or two sentences;
+// `confidence` is 0.5 or higher (the verifier decides what is kept).
+export type FindCandidate = {
+  severity: Severity;
+  category: Category;
+  confidence: number;
+  file_path: string;
+  line_number: number;
+  line_end?: number;
+  title: string;
+  claim: string;
+  evidence: EvidenceCitation[];
+  lens?: string | null;
+};
+
+// A finder's answer: what it examined (every hunk id of its unit), its
+// reasoning per hunk before any verdict, and its candidates.
+export type FindAnswer = {
+  version: "find-1";
+  change_id: string;
+  unit: string;
+  examined: string[];
+  analysis: { hunk: string; changed: string; could_break: string }[];
+  candidates: FindCandidate[];
+};
+
+// A candidate as the verifier sees it: a finder's (`k1`, ...) with its
+// claim, evidence and the passes that raised it, or a scanner's (`c1`, ...).
+export type VerifyCandidate =
+  | { id: string; kind: "finder"; candidate: FindCandidate; foundBy: string[] }
+  | { id: string; kind: "scanner"; candidate: Candidate };
+
+// The verifier's verdict on one candidate. `confirmed` carries the final
+// finding text and anchor; `refuted` the reason with the line that shows
+// why; `unresolved` (finder candidates only) when the code does not settle
+// it. `tier` says whether a confirmed item is a finding or an observation.
+// `duplicate_of` names another id in the batch that is the same problem.
+export type VerifyVerdict = {
+  id: string;
+  verdict: "confirmed" | "refuted" | "unresolved";
+  reason: string;
+  duplicate_of?: string | null;
+  severity: Severity;
+  // The kind of the problem as the verifier judges it from the code.
+  category: Category;
+  confidence: number;
+  file_path: string;
+  line_number: number;
+  line_end?: number;
+  title: string;
+  problem: string;
+  consequence: string;
+  fix: string;
+  suggested_change?: string | null;
+  tier: "finding" | "observation";
+};
+
+export type VerifyAnswer = { version: "verify-1"; change_id: string; verdicts: VerifyVerdict[] };
 
 // The completion record: script-owned and versioned, separate from the
 // verdict. "complete" only when the reviewer was a process the tool started,
@@ -703,6 +802,8 @@ export type ModelCompletionRecord = {
   // complete (a budget refusal is in `missing` instead).
   disagreements?: Disagreement[];
   notes?: string[];
+  // A staged review only: one entry per reviewer session the brain ran.
+  sessions?: ReviewerSessionRecord[];
   trace_complete: true;
 };
 
@@ -759,7 +860,10 @@ export type Report = {
   // changed line. Shown, never counted toward the verdict.
   outside_change: ReportFinding[];
   // review only: agent findings dropped for low confidence, with the floor
-  low_confidence: { title: string; file_path: string; confidence: number; floor: number }[];
+  low_confidence: { title: string; file_path: string; confidence: number; floor: number;
+    // staged review: why the candidate was not counted
+    reason?: string;
+  }[];
   // review only: candidates the agent neither raised nor dropped. They count
   // toward the verdict at their reviewSeverity.
   not_reviewed: Candidate[];
@@ -784,6 +888,13 @@ export type Report = {
   // not hold or a second reviewer's failure, one plain line each.
   second_dropped?: { candidate: Candidate; reason: string; cited?: { file_path: string; line_number: number } }[];
   notes?: string[];
+  // A staged review only: confirmed items the verifier tiered as
+  // observations (style, naming, docs, clarity, conventions, test coverage,
+  // and anything else that is not a defect). Shown after the findings,
+  // ranked by severity then confidence, never counted toward the verdict.
+  // `observations_omitted`: how many were cut by the cap of 12.
+  observations?: ReportFinding[];
+  observations_omitted?: number;
   // How long each phase of the run took. Absent in a review from the
   // two-step protocol and in a report written before the field existed.
   timings?: RunTimings;

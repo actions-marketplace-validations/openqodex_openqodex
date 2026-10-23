@@ -30,6 +30,7 @@
 //     state of the work tree.
 //  7. The agent hook lets `git push origin unreviewed:main` pass on the
 //     review of the current work.
+import { stagedFake } from "../../review/test/staged-fake.js";
 import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -53,8 +54,8 @@ const driver: ReviewerDriver = {
   name: "claude",
   traced: true,
   detect: async () => ({ ok: true, version: "9.9.9", bin: "/fake/claude" }),
-  start(): ReviewerSession {
-    return {
+  start({ snapshotDir }): ReviewerSession {
+    return stagedFake({
       pid: 1,
       async send(text: string): Promise<Turn> {
         const id = /`change_id`: `([0-9a-f]{12})`/.exec(text)?.[1] ?? "missing";
@@ -62,7 +63,7 @@ const driver: ReviewerDriver = {
         return { finalText, calls: [{ tool: "Read", input: { file_path: "README.md" }, ok: true, read: { path: "README.md", start: 1, lines: 1 } }], usage: { turns: 1, input_tokens: 1, output_tokens: 1, cost_usd: null }, sessionId: "f", failure: null };
       },
       async close() {},
-    };
+    }, snapshotDir);
   },
 };
 

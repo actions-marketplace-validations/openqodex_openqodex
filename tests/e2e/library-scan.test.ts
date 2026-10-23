@@ -26,13 +26,16 @@ import type { ModelReviewer, ReviewResult } from "../../packages/cli/dist/lib.js
 import { demo, generatedSecret, git, readJson, run, toolsHome } from "./support.js";
 import type { Result } from "./support.js";
 import { adoptTempDir, removeTempDirs, tempDir } from "../temp-dirs.mjs";
+import { stagedAnswer } from "../../packages/review/test/staged-fake.js";
 
 afterAll(removeTempDirs);
 
 const PHASES = ["change_ms", "scan_ms", "graph_ms", "brief_ms", "reviewer_ms", "finalize_ms", "total_ms"];
 
 // The model provider stand-in: every answer drops each candidate the brief
-// names, for the change id the brief gives.
+// names, for the change id the brief gives. The staged briefs (find and
+// verify) get the same answer in their own shape: every hunk examined, no
+// candidate of its own, every scanner candidate refuted.
 const model: ModelReviewer = {
   kind: "model",
   model: "fixture-model",
@@ -40,9 +43,9 @@ const model: ModelReviewer = {
   async complete(request) {
     const brief = request.messages.find((m) => m.role === "user")?.text ?? "";
     const changeId = /`change_id`: `([0-9a-f]{12})`/.exec(brief)?.[1] ?? "missing";
-    const dropped = [...brief.matchAll(/^- (c\d+) \[[^\]]+\] ([^:\s]+):(\d+) /gm)].map((m) => ({ candidate: m[1], reason: "Planted in the demo on purpose.", file_path: m[2], line_number: Number(m[3]) }));
+    const dropped = [...brief.matchAll(/^- (c\d+) \[[^\]]+\] ([^:\s]+):(\d+) /gm), ...brief.matchAll(/^### (c\d+) \(scanner\)\n[\s\S]*?^- Location: ([^:\s]+):(\d+)/gm)].map((m) => ({ candidate: m[1], reason: "Planted in the demo on purpose.", file_path: m[2], line_number: Number(m[3]) }));
     const answer = { version: 2, change_id: changeId, summary: "Reviewed the demo change.", findings: [], dropped };
-    return { message: { text: JSON.stringify(answer), toolCalls: [] }, usage: { model: "fixture-model", inputTokens: 1000, outputTokens: 100, costUsd: null } };
+    return { message: { text: stagedAnswer(brief, JSON.stringify(answer), () => ""), toolCalls: [] }, usage: { model: "fixture-model", inputTokens: 1000, outputTokens: 100, costUsd: null } };
   },
 };
 

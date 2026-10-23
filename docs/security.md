@@ -88,6 +88,8 @@ OpenQodex sends no telemetry. See `telemetry`.
 
 `openqodex review` starts Claude Code (`claude -p`) or Codex (`codex exec`) as its reviewer. Cursor is not used as a reviewer: with the version tested, it cannot be limited to reading. `docs/internal-reviewer-drivers.md` in the repository records the tests.
 
+With `review.stages` on (the default), `openqodex review` starts several reviewer processes in turn, not one. Each is a fresh process of the same agent on the same login. A finder process reads one changed file, or a small group of them, and names candidate defects. A verifier process checks the candidates of one file and confirms or refutes each one. Every process has the tools, the snapshot and the boundary described for the single reviewer below, and the same checks run on every tool call. The run folder's `reviewer.json` lists every process with its role, its tokens and how it ended. Nothing more is sent anywhere: each process sends its brief and what it reads to the model your login uses, as one reviewer does.
+
 ### Claude Code
 
 Claude Code sends the review brief and the files the reviewer reads to the model your Claude Code login uses, as any Claude Code session does. The reviewer:

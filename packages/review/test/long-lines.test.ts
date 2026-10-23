@@ -1,3 +1,4 @@
+// Single-pass delivery is the subject of these tests.
 // Ways this could fail, written before the replacement:
 // 1. A 4,000-character line is omitted or a chunk is missing but coverage completes.
 // 2. Splitting a removed line before redaction leaks a secret across chunks.
@@ -38,8 +39,8 @@ function review(opts: { before?: string; after: string; secret?: string; correct
     writeFileSync(join(dir, "key.txt"), `STRIPE_KEY = "${opts.secret}"\n`);
   }
   let source = readFileSync(resolve("tests/golden/stand-ins/codex.cjs"), "utf8");
-  source = source.replace('const answer = readFileSync(join(folder, "submission.json"), "utf8").trim();', 'let input = ""; process.stdin.on("data", (part) => { input += part; });');
-  source = source.replace('process.stdin.on("end", () => {', `process.stdin.on("end", () => {
+  source = source.replace('const frozen = JSON.parse(readFileSync(join(folder, "submission.json"), "utf8"));', 'const frozen = { findings: [] };');
+  source = source.replace('const answer = answerForPrompt(prompt);', `const input = prompt;
     const briefPath = join(folder, "first-input");
     if (!existsSync(briefPath)) writeFileSync(briefPath, input);
     const brief = readFileSync(briefPath, "utf8");
@@ -48,10 +49,8 @@ function review(opts: { before?: string; after: string; secret?: string; correct
     const dropped = [...brief.matchAll(/^- (c\\d+) \\[[^\\]]+\\] ([^:]+):(\\d+) /gm)].map((m) => ({ candidate: m[1], reason: "The key is a test fixture.", file_path: m[2], line_number: Number(m[3]) }));
     const findings = ${opts.finding ? 'JSON.parse(readFileSync(join(folder, "finding.json"), "utf8"))' : '[]'};
     const answer = JSON.stringify({ version: 2, change_id: /\x60change_id\x60: \x60([0-9a-f]{12})\x60/.exec(brief)?.[1], summary: "Adds generated text.", findings, dropped });`);
-  if (opts.finding) {
-    mkdirSync(join(dir, ".openqodex"));
-    writeFileSync(join(dir, ".openqodex/config.yaml"), "review:\n  block_on_severity: critical\n");
-  }
+  mkdirSync(join(dir, ".openqodex"));
+  writeFileSync(join(dir, ".openqodex/config.yaml"), `review:\n  stages: false\n${opts.finding ? "  block_on_severity: critical\n" : ""}`);
   if (opts.finding) writeFileSync(join(provider, "finding.json"), JSON.stringify([{
     severity: "critical", category: "bug", confidence: 0.9, file_path: "app/server.py", line_number: 6,
     title: "Invalid generated value", problem: "The generated value exceeds the parser limit.",

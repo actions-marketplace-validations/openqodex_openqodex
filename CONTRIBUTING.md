@@ -25,7 +25,7 @@ node packages/cli/dist/bin.js review
 pnpm gate
 ```
 
-The gate builds, typechecks, lints and runs the unit and end-to-end tests. It then validates the skill and the plugin manifests and scans for private material. It stops at the first failure. CI runs the same steps with Node 22: on Linux for a pull request, and on Linux and macOS in the merge queue and on main. Run it before you push.
+The gate builds, typechecks, lints and runs the unit and end-to-end tests. It then validates the skill and the plugin manifests and scans for private material. It stops at the first failure. CI runs the same steps with Node 22, on Linux and macOS, where the full gate runs (see CI and the merge queue). An ordinary pull request's run leaves out the end-to-end tests and the golden run, so run the gate before you push.
 
 The end-to-end tests run the real CLI on the demo repository with the real scanners. The first run downloads them.
 
@@ -96,11 +96,11 @@ Signed-off-by: Your Name <you@example.com>
 
 ## CI and the merge queue
 
-- A pull request runs one check: the gate on Linux. The macOS gate and the scanner-only benchmark show as skipped.
-- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue. Then it runs the full gate on that result: the gate on Linux, the gate on macOS and the scanner-only benchmark.
-- When the full gate passes, the queue merges the pull request into main. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
-- To run the full gate before the queue, for example on a scanner or installer change, a maintainer adds the label `full-ci` to the pull request.
-- Each push to main runs the full gate again, and the release workflow.
+- An ordinary pull request runs one check: the fast gate on Linux, which is the gate without the end-to-end tests and the golden run. The macOS gate and the scanner-only benchmark show as skipped.
+- When the pull request is ready, a maintainer adds it to the merge queue. The queue merges it with main and with every pull request ahead of it in the queue, runs the fast gate on that result, and merges the pull request into main when it passes. When it fails, the queue removes the pull request and main does not change. Fix the branch and add it to the queue again.
+- The full gate is the gate with the end-to-end tests and the golden run, on Linux and on macOS, and the scanner-only benchmark. It runs for the "Version packages" pull request, on the pull request and in the merge queue, so the queue merges a release only on a green full gate; on a pull request with the label `full-ci`; and on each push to main. A break only the full gate catches shows on main's run and is fixed before the version pull request. The version pull request's own run waits for a maintainer's approval click, because a bot pushes its branch; the queue run needs no click.
+- To run the full gate on any pull request, for example on a scanner or installer change, a maintainer adds the label `full-ci`.
+- Each push to main runs the full gate and the release workflow.
 
 ## Adding a built-in scanner
 

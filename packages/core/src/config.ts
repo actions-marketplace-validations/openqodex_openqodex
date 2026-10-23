@@ -38,6 +38,7 @@ export const DEFAULT_CONFIG: Config = {
   defaultBase: null,
   includeFixtures: false,
   instructionsFiles: [],
+  stages: true,
   disabledScanners: [],
   custom: [],
   graph: { enabled: true, budgetMs: 10_000, maxFiles: 4000, maxFileBytes: 512 * 1024, maxCacheMb: 512, maxHeapMb: 1536 },
@@ -83,6 +84,11 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
     description: "Keep scanner findings in test fixtures, mocks and snapshots.",
   },
   { key: "review.instructions_files", default: "[]", description: "Repo-relative convention paths or globs the owners chose for the reviewer. Empty reads none." },
+  {
+    key: "review.stages",
+    default: "true",
+    description: "The staged review when openqodex starts its own reviewer: two finder sessions per changed file, then a fresh verifier per batch of candidates. false runs one pass. --agent and --all always run one pass.",
+  },
   { key: "scanners.disable", default: "[]", description: "Built-in scanners to switch off, by name." },
   {
     key: "scanners.custom",
@@ -297,6 +303,7 @@ function schemas(strict: boolean) {
       default_base: z.string().trim().min(1, "expected a branch or ref").nullish(),
       include_fixtures: z.boolean().optional(),
       instructions_files: strings.optional(),
+      stages: z.boolean().optional(),
       ...hostedOnly(HOSTED_ONLY_REVIEW_KEYS),
     }).optional(),
     scanners: obj({
@@ -553,6 +560,7 @@ export function parseConfig(source: string, file: string = CONFIG_FILE, opts: Pa
       defaultBase: yaml.review?.default_base ?? null,
       includeFixtures: yaml.review?.include_fixtures ?? false,
       instructionsFiles: yaml.review?.instructions_files ?? [],
+      stages: yaml.review?.stages ?? DEFAULT_CONFIG.stages,
       disabledScanners: disabled,
       custom,
       graph: {

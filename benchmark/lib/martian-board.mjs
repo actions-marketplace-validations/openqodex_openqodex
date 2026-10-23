@@ -63,15 +63,18 @@
 //    and the npm registry, asked again at its fixed address, gives that
 //    version the same integrity. The registry serves no sha256 of a
 //    tarball, only its sha512 integrity (and a sha1), so the integrity is
-//    what ties the record to the published build. A local build is never a
-//    release run.
+//    what ties the record to the published build. An accepted comparison
+//    also admits its pinned clean local build, explicitly labelled local.
 import { readFileSync } from "node:fs";
 import { PACKAGE_NAME } from "./package.mjs";
+import { benchRoot } from "./cases.mjs";
+import { comparisonRelease } from "./comparison.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const MARTIAN_BOARD = Object.freeze({ repo: BOARDS.boards.martian.repo, commit: BOARDS.boards.martian.commit, source: BOARDS.boards.martian.source });
 // score_profiles' own default F-beta.
 export const MARTIAN_BETA = 2;
+export const MARTIAN_CITED = Object.freeze({ profile: "core", metric: "F1", beta: 1, publishedJudge: "anthropic_claude-opus-4-5-20251101" });
 export const MARTIAN_PROFILES = ["strict", "core", "all"];
 export const MARTIAN_STEPS = Object.freeze({ extract: "step2_extract_comments", dedup: "step2_5_dedup_candidates", judge: "step3_judge_comments", score: "score_profiles" });
 // Step 2 extracts a review only when its joined text has this many characters.
@@ -96,11 +99,12 @@ export async function npmRegistryAnswer(version) {
  * a thrown refusal ("refused: ..."). `registry(version)` answers as the npm
  * registry does (npmRegistryAnswer).
  */
-export async function releaseGate(manifest, { registry = npmRegistryAnswer } = {}) {
+export async function releaseGate(manifest, { registry = npmRegistryAnswer, root = benchRoot } = {}) {
   if (manifest?.smoke === true) throw new Error("refused: the run is a smoke run, which checks the runner and is never a measurement; nothing of it goes to a board, and it never reads a held-out case");
   const release = manifest?.release;
   if (typeof release !== "string" || release.trim() === "") throw new Error("refused: the run is not a release run (its manifest names no release). Every Martian case is held out, and only a release run's samples are converted, the one way their golden comments are read");
   const p = manifest.package ?? null;
+  if (p?.spec === "local") return comparisonRelease(manifest, { root });
   const named = p === null ? "no package record" : p.spec === "local" ? `the local build${p.commit ? ` at ${String(p.commit).slice(0, 12)}` : ""}` : `${p.spec ?? "an unnamed package"} (${p.name ?? "no name"}@${p.version ?? "no version"})`;
   if (p === null || p.spec !== `npm:${release}` || p.name !== PACKAGE_NAME || p.version !== release) throw new Error(`refused: the run names the release ${release}, but it reviewed ${named}, not ${PACKAGE_NAME}@${release} from npm (run.mjs --package npm:${release}); a release run reviews the published package of its release, and a local build is never one`);
   if (!/^[0-9a-f]{64}$/.test(String(p.sha256)) || !String(p.integrity).startsWith("sha512-") || p.registryIntegrity !== p.integrity) throw new Error(`refused: the run's package record of ${PACKAGE_NAME}@${release} does not hold a tarball sha256 and a sha512 integrity that equals the one the registry gave when it was fetched`);
@@ -121,6 +125,7 @@ export async function releaseGate(manifest, { registry = npmRegistryAnswer } = {
 export function boardConfigOf(config) {
   const m = /^(.+)-graph-(on|off)$/.exec(String(config));
   if (!m) throw new Error(`${config}: not a review configuration (<reviewer>-graph-<on|off>), so the board has no name for it`);
+  if (m[1] === "control" && m[2] === "off") return "control";
   if (m[2] !== "on") throw new Error(`${config}: the board scores OpenQodex as it ships, with the code graph built; a configuration with the graph off has no tool name there`);
   if (m[1] === "claude") return "cli-claude";
   if (m[1] === "codex") return "cli-codex";
@@ -129,7 +134,7 @@ export function boardConfigOf(config) {
 }
 
 /** The tool name a configuration and repeat go by on the board. */
-export const martianToolName = (config, repeat) => `openqodex-${boardConfigOf(config)}-r${repeat}`;
+export const martianToolName = (config, repeat) => boardConfigOf(config) === "control" ? `claude-code-control-r${repeat}` : `openqodex-${boardConfigOf(config)}-r${repeat}`;
 
 const flat = (s) => (typeof s === "string" ? s.replace(/`{3,}/g, "`").replace(/\s+/g, " ").trim() : "");
 

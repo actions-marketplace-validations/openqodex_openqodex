@@ -16,7 +16,7 @@ OpenQodex reviews your code change before you push it. Your change is the commit
 
 First, OpenQodex runs the scanners that fit the files you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. A finding is one problem at one place in the code, with a severity. OpenQodex keeps the scanner findings on the lines you changed. It drops findings in test fixtures and in rules you switched off. Every supported lockfile in the repository is checked against osv.dev at every review and scan of a change. Advisories outside the changed lines are shown, never counted, and kept out of the reviewer's brief. Each advisory names its fixed versions, or says no fixed version is published.
 
-Then OpenQodex starts a reviewer: a separate Claude Code or Codex process on your own login. By default, the agent that wrote the code does not review it. The reviewer must raise or drop each scanner finding, with a reason. Scripts check that it answered every scanner finding. They also check that it was given every changed line. Then you choose which findings your agent fixes.
+Then OpenQodex starts reviewers: separate Claude Code or Codex processes on your own login. By default, the agent that wrote the code does not review it. Finder sessions read each part of the change, with the code that calls it, and propose candidates with a quoted line as evidence. A script checks every quote against the code. Verifier sessions then judge each candidate and each scanner finding against the code, and must confirm or refute every one with a reason. Scripts check that every scanner finding was answered and that every changed line was given to a reviewer. Style and naming notes are shown as observations and do not block. Then you choose which findings your agent fixes.
 
 ## Where it runs
 
@@ -51,7 +51,7 @@ After the install, say to your agent: "review my change with openqodex". In your
 For agents, the same install with no question:
 
 ```
-npx -y openqodex@0.13.0 init --yes --agent <host>
+npx -y openqodex@0.14.0 init --yes --agent <host>
 ```
 
 `<host>` is `claude-code`, `codex`, `cursor` or `cline`. In its default sandbox mode, Codex gives commands no network. From Codex, run this line in your own terminal. The [quickstart](https://github.com/openqodex/openqodex/blob/main/docs/quickstart.md) has a prompt to paste into your agent.
@@ -96,6 +96,7 @@ OpenQodex itself collects no usage data. The built-in scanners, as OpenQodex run
 | Claude Code (claude-graph-on) | claude-opus-5-5 | Planted bugs, dev split | 129/153 (84.3%) | 142/146 (97.3%) to 146/146 (100.0%) | 6/6 (100.0%) | $0.0870 |
 | Codex (codex-graph-on) | gpt-6.1-sol | Planted bugs, dev split | 115/153 (75.2%) | 125/146 (85.6%) to 146/146 (100.0%) | 6/6 (100.0%) | not measured |
 | Scanner only (scan) | no model | Planted bugs, dev split | 32/51 (62.7%) | 35/45 (77.8%) to 40/45 (88.9%) | 1/2 (50.0%) | not measured |
+| Scanner only (scan) | no model | Planted bugs, dev split | 32/51 (62.7%) | 35/40 (87.5%) to 40/40 (100.0%) | 2/2 (100.0%) | not measured |
 
 AACR-Bench is a set of real pull requests. Its own evaluator gives the board numbers below.
 

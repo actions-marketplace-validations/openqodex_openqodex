@@ -5,16 +5,21 @@ import {
   candidateLocation,
   coverageLine,
   display,
+  findingTitle,
   firstLine,
   location,
+  lowConfidenceReason,
+  observationsOmittedLine,
+  orderObservations,
   sourceLabel,
   verdictLine,
 } from "./common.js";
 
 // Every value that came from a scanner or the agent goes through `display`
 // before the renderer adds its own colour codes.
-function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>): string[] {
-  const lines = [`  ${c.bold(display(location(f)))}  ${display(f.title)}`];
+function findingLines(f: ReportFinding, c: ReturnType<typeof pc.createColors>, observation = false): string[] {
+  const title = observation ? findingTitle(f) : f.title;
+  const lines = [`  ${c.bold(display(location(f)))}  ${display(title)}`];
   const desc = display(firstLine(f.description));
   if (desc) lines.push(`    ${desc}`);
   // A finding from the agent's own reading has no source to name.
@@ -63,6 +68,14 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
     for (const f of group) out.push(...findingLines(f, c));
   }
 
+  const observations = orderObservations(report);
+  const omitted = observationsOmittedLine(report);
+  if (observations.length > 0 || omitted) {
+    out.push("", "Observations (do not count toward the verdict):");
+    for (const f of observations) out.push(...findingLines(f, c, true));
+    if (omitted) out.push(omitted);
+  }
+
   if (report.outside_change.length > 0) {
     out.push("", "Outside the changed lines (not counted)");
     for (const f of report.outside_change) out.push(...findingLines(f, c));
@@ -83,7 +96,7 @@ export function renderTerminal(report: Report, opts: { color: boolean }): string
   if (report.low_confidence.length > 0) {
     out.push("", "Below the confidence floor (not counted)");
     for (const l of report.low_confidence) {
-      out.push(`  ${display(l.file_path)}  ${display(l.title)} (confidence ${l.confidence}, floor ${l.floor})`);
+      out.push(`  ${display(l.file_path)}  ${display(l.title)} (confidence ${l.confidence}, floor ${l.floor})${lowConfidenceReason(l)}`);
     }
   }
   if (report.not_reviewed_paths.length > 0) {

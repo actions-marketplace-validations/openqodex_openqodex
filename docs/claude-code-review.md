@@ -4,7 +4,7 @@ OpenQodex gives you code review in Claude Code before you push. You ask for a re
 
 ## What you get
 
-OpenQodex is open source AI code review. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. Then OpenQodex starts its own reviewer: a separate Claude Code process, on your own login, that reads a frozen copy of the change. The reviewer checks every scanner finding and is given every changed line. Scripts check its answer, and OpenQodex prints one report.
+OpenQodex is open source AI code review. One command, `openqodex review`, works out your change: the commits not yet pushed plus everything uncommitted. It runs the scanners that fit the changed files and keeps only findings on the lines you changed. A scanner is a program that checks code without a model, such as gitleaks or semgrep. Then OpenQodex starts its own reviewer: a separate Claude Code process, on your own login, that reads a frozen copy of the change. The review runs in stages: two finder processes read each changed file with the code around the change, and a fresh verifier process checks every candidate they raise. Only a confirmed defect becomes a finding. A style, naming, docs or test item is shown as an observation, apart from the findings and outside the verdict. Every scanner finding is checked too, and every changed line is given to a finder. Scripts check each answer, and OpenQodex prints one report.
 
 ## Install
 

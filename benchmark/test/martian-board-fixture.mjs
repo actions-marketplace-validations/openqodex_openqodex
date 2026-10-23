@@ -130,6 +130,10 @@ export async function savedRun(ctx, { plan, configs = [MODEL], repeat = 1, setti
     runJob: async (job) => {
       const saved = plan[`${job.config}/${job.repeat}`]?.[job.case] ?? report();
       if (saved === "unstarted") return;
+      if (saved.reviewer === "control") {
+        write(join(attemptDir(out, job, 1), "sample.json"), JSON.stringify({ ...job, attempt: 1, ...saved }));
+        return;
+      }
       const result = { code: 0, signal: null, wallMs: 90_000 };
       const attempt = (n, rep) => {
         const dir = attemptDir(out, job, n);

@@ -8,7 +8,8 @@ import { analyseSample, scannerReport } from "../lib/scanners.mjs";
 it("scores agent outside findings and ignores scanner outside advisories", () => {
   const counted = { origin: "scanner", title: "changed candidate" };
   const agent = { origin: "agent", title: "outside review finding" };
-  expect(shownFindings({ findings: [counted], outside_change: [agent, { origin: "scanner", title: "old advisory" }] })).toEqual([counted, agent]);
+  // Each shown finding carries its tier (rules version 10); scanner information outside the change is not shown.
+  expect(shownFindings({ findings: [counted], outside_change: [agent, { origin: "scanner", title: "old advisory" }] })).toEqual([{ ...counted, tier: "finding" }, { ...agent, tier: "finding" }]);
 });
 
 // Failure cases: a harm index drops scanner information instead of the

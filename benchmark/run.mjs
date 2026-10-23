@@ -7,7 +7,7 @@
 //   node benchmark/run.mjs --max-usd <n> --max-minutes <n>
 //                          [--max-tokens <n>] [--max-reviews <n>] [--allow-over]
 //                          [--repeat 3] [--cases a,b] [--graph off,on]
-//                          [--reviewers claude[,codex]] [--concurrency 1]
+//                          [--reviewers claude[,codex]|control] [--concurrency 1]
 //                          [--timeout 900] [--out <folder>] [--resume]
 //                          [--add-repeats <n>] [--change <RC-id>]
 //                          [--model <id>] [--web off|on] [--dry-run]
@@ -22,7 +22,8 @@
 //                          [--check-identical] [--scanner-config <file>]
 //                          [--allow-missing-scanners] [--timeout 120]
 //                          [--out <folder>] [--dry-run] [--draft]
-//   either mode also takes --suite planted|conventions|aacr|clean [--split dev]
+//   either mode also takes --suite planted|conventions|aacr|clean|martian|greptile [--split dev]
+//                          [--release <comparison> --split test --package local]
 //                          [--subset <name>|all] [--cases <suite>/<name>,...]
 //                          [--package local|npm:<version>|file:<path.tgz>]
 //   a review run also takes --smoke
@@ -57,7 +58,7 @@
 // request cases); for a real suite (aacr, clean), without --cases, every usable
 // case on the development side of its split file runs, or the subset that
 // --subset names there (dev-smoke, dev-laptop). The test split is held out
-// and refused: no held-out case runs before a release (lib/suites.mjs
+// and refused outside an accepted comparison release (lib/suites.mjs
 // selectCases). The manifest records suite, split, splitHash and subset.
 // A real suite's development cases run in scan mode and with laptop or
 // model reviewers, scored against the same saved truth.
@@ -298,10 +299,11 @@ import { externalOf, toolchainOf } from "./lib/external.mjs";
 import { haltRules, rateLimitRetry, smokeCap } from "./lib/halts.mjs";
 import { comparePasses } from "./lib/identical.mjs";
 import { heldOutAccessPath } from "./lib/index.mjs";
+import { controlCaseData, controlEnv, controlSample, probeControl } from "./lib/claude-control.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
-import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopReviewArgs, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, saveSampleRow, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
+import { attemptDir, bundleHash, CLAUDE_MODEL_FROM, claudeRunModels, executeRun, failureOf, jobState, laptopInvocation, planJobs, preflightRefusals, provenanceProblems, resumeProblems, runManifest, saveSampleRow, sampleRecord, savedSampleRows, scannerPreflight, scanSampleRecord } from "./lib/runner.mjs";
 import { SCAN_CONFIG, SCAN_RULES_VERSION } from "./lib/scan-score.mjs";
 import { createModelReviewer, isModelReviewer, makeWorkRoot, recordServed, resolveModelReviewer, SCRIPTED, serverAttempt } from "./lib/server-review.mjs";
 import { DEFAULT_SCRIPT } from "./lib/scripted-model.mjs";
@@ -348,6 +350,7 @@ function parseArgs(argv) {
       return v;
     };
     if (a === "--mode") o.mode = next();
+    else if (a === "--release") o.release = next();
     else if (a === "--suite") o.suite = next();
     else if (a === "--split") o.split = next();
     else if (a === "--subset") o.subset = next();
@@ -394,6 +397,8 @@ function parseArgs(argv) {
   // Model reviewers are the server path; Claude Code and Codex the laptop path.
   const models = o.reviewers.filter(isModelReviewer);
   const server = !scan && models.length > 0;
+  o.control = !scan && o.reviewers.includes("control");
+  if (o.control && o.reviewers.length !== 1) throw new Error("the control reviewer runs on its own: use --reviewers control");
   o.path = server ? "server" : "laptop";
   const real = (o.cases ?? []).filter(isRealRef);
   o.realRefs = real.length > 0 ? real : null;
@@ -414,6 +419,7 @@ function parseArgs(argv) {
   if (!o.real && o.subset !== null) throw new Error(`--subset ${o.subset}: the planted suite has no subsets`);
   if (o.materialiseOnly) return materialiseArgs(o, given, real);
   if (o.smoke && o.split === "test") throw new Error("--smoke runs development cases only: the test split is held out, and no held-out case runs before a release");
+  if (o.split === "test" && !o.release) throw new Error(`the ${o.suite} test split is held out: no held-out case runs before a release; use --release with an accepted comparison`);
   if (o.smoke && o.addRepeats !== null) throw new Error("--add-repeats grows a run into a measurement, and a smoke run is never one: it stays at most 5 reviews per configuration");
   o.split ??= "dev";
   // --subset all is the whole split, which a run with no subset names.
@@ -423,7 +429,9 @@ function parseArgs(argv) {
   o.repeat ??= scan || o.smoke ? 1 : 3;
   o.timeout ??= scan ? 120 : o.real ? 1800 : 900;
   // The server profile always builds the code graph.
-  o.graph ??= server ? ["on"] : ["off", "on"];
+  o.graph ??= o.control ? ["off"] : server ? ["on"] : ["off", "on"];
+  if (o.control && (o.graph.some((g) => g !== "off") || o.web !== "off")) throw new Error("the control reviewer uses no OpenQodex graph or web tools: use --graph off --web off");
+  if (o.release && (o.smoke || o.draft || o.package !== "local" || o.split !== "test" || !o.real)) throw new Error("--release requires a comparison's local build and a real suite's test split, without --smoke or --draft");
   // Model reviews wait on the endpoint, not this machine, so two run at once.
   o.concurrency ??= server ? 2 : 1;
   const wrong = (scan ? REVIEW_ONLY : SCAN_ONLY).filter((f) => given.has(f));
@@ -448,7 +456,7 @@ function parseArgs(argv) {
   if (!Number.isInteger(o.concurrency) || o.concurrency < 1) throw new Error("--concurrency takes a whole number from 1");
   if (!Number.isInteger(o.timeout) || o.timeout < 60) throw new Error("--timeout takes whole seconds, at least 60");
   if (o.graph.some((g) => g !== "off" && g !== "on")) throw new Error("--graph takes off, on or off,on");
-  if (o.reviewers.some((r) => r !== "claude" && r !== "codex" && !isModelReviewer(r))) throw new Error("--reviewers takes claude, codex or both, or model reviewers (model:<deployment>, model:scripted)");
+  if (o.reviewers.some((r) => r !== "claude" && r !== "codex" && r !== "control" && !isModelReviewer(r))) throw new Error("--reviewers takes claude, codex, control, or model reviewers (model:<deployment>, model:scripted)");
   if (o.web !== "on" && o.web !== "off") throw new Error("--web takes on or off");
   if (o.model !== null && o.reviewers.includes("codex")) {
     throw new Error("--model cannot be used with Codex: the Codex reviewer runs with --ignore-user-config and takes no model setting; run without --model, and the run records the model Codex names in its own output");
@@ -502,7 +510,7 @@ function modelChecks(o, given, models) {
 // now from the pinned files, saved as the run's spec copy with the accepted
 // comments only (failure 30, lib/suites.mjs specCopy). Exits 2 on a
 // refusal, leaving no temp folder.
-function realCases(o) {
+function realCases(o, { build, packageRecord, out } = {}) {
   const tempRoot = mkdtempSync(join(tmpdir(), "oq-bench-run-"));
   const refuse = (lines) => {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -512,7 +520,7 @@ function realCases(o) {
   };
   let picked = [];
   try {
-    picked = selectCases({ suite: o.suite, split: o.split, subset: o.subset, refs: o.realRefs });
+    picked = selectCases({ suite: o.suite, split: o.split, subset: o.subset, refs: o.realRefs, release: o.release ?? null, build, packageRecord, runId: out ? basename(out) : null, by: gitUserName() });
   } catch (error) {
     refuse(error.message.split("\n"));
   }
@@ -607,6 +615,21 @@ function packageBuild(pkg) {
   };
 }
 
+// Development cases are validated first. A comparison release needs its
+// build validated before selecting held-out cases or reading their truth.
+async function prepareRunBuild(o, date) {
+  let pkg = null;
+  try { pkg = await preparePackage(o.package); }
+  catch (error) { throw new Error(`--package ${o.package}: ${error.message}`); }
+  if (pkg) o.cli = pkg.cli;
+  const controlBuild = o.control && !o.release ? { problems: [], build: { commit: git(repoRoot, "rev-parse", "HEAD").trim(), short: git(repoRoot, "rev-parse", "--short=7", "HEAD").trim(), bundleHash: null, cliVersion: null, dirty: git(repoRoot, "status", "--porcelain").trim() !== "" } } : null;
+  const { problems, build } = controlBuild ?? (pkg ? packageBuild(pkg) : buildInfo(o.cli));
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  const packageRecord = pkg ? (({ files, ...rest }) => ({ ...rest, fileCount: Object.keys(files).length }))(pkg.record) : { spec: "local", commit: build.commit, dirty: build.dirty };
+  const out = o.out ?? join(benchRoot, "results", o.mode === "scan" ? `${date}-${build.short}-${o.suite}-scan-laptop` : o.control ? `${date}-${build.short}-control` : o.path === "server" ? `${date}-${build.short}-${o.suite}-review-server` : `${date}-${build.short}`);
+  return { pkg, build, packageRecord, out };
+}
+
 // The board a real suite's cases come from, at the commit boards.json pins (failure 35).
 function boardOf(name) {
   const b = JSON.parse(readFileSync(join(benchRoot, "outside", "boards.json"), "utf8")).boards?.[name];
@@ -641,10 +664,12 @@ function filesUnder(dir) {
 
 const children = new Set();
 
-function runCli(cli, args, env, cwd, timeoutMs, graceMs = 120_000) {
+function runCli(cli, args, env, cwd, timeoutMs, graceMs = 120_000, invocation = null) {
   return new Promise((done) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const child = spawn(invocation?.command ?? process.execPath, invocation?.args ?? [cli, ...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+    child.stdin.on("error", () => {});
+    child.stdin.end(invocation?.input ?? "");
     children.add(child);
     let stdout = "";
     let stderr = "";
@@ -771,9 +796,7 @@ function firstAttempts(folder, jobs) {
 
 // A scanner-only run: the preflight, the overlay's trust step, one pass (or
 // two with --check-identical), each scored, and the comparison.
-async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt }) {
-  const date = startedAt.slice(0, 10);
-  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-${o.suite}-scan-laptop`);
+async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt, out }) {
   const runId = basename(out);
   const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
@@ -829,6 +852,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
   const settings = {
     runId,
     mode: "scan",
+    ...(o.release ? { release: o.release, buildLabel: `local build ${build.commit}` } : {}),
     path: "laptop",
     suite: o.suite,
     split: o.split,
@@ -880,7 +904,7 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
       // Every case is built at the one path the overlay's approval names, and
       // moved aside after its scan; a pull request case in the laptop shape,
       // from the clone cache (lib/suites.mjs materialise).
-      const { dir: repo } = real ? materialise(real.byName[job.case].case, repoPath, { shape: "laptop" }) : buildCase(job.case, repoPath, snap);
+      const { dir: repo } = real ? materialise(real.byName[job.case].case, repoPath, { shape: "laptop", heldOut: real.byName[job.case].case.split === "test" }) : buildCase(job.case, repoPath, snap);
       const args = ["scan", "--cwd", repo, "--report-dir", reportDir, "--no-color", "--no-install", ...(overlay ? ["--config", overlay.file] : [])];
       const startedAt = new Date().toISOString();
       let result;
@@ -958,6 +982,9 @@ async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, 
     }
   }
   console.log(`Score: ${folders.map((f) => shown(join(f, "score.json"))).join(" and ")}`);
+  // As on the review path: a real suite's case copies are removed once the
+  // scan ends; a planted case's laptop repositories are kept to look at.
+  if (real) rmSync(tempRoot, { recursive: true, force: true });
   if (!o.checkIdentical) process.exit(0);
   const cmp = comparePasses(folders[0], folders[1]);
   const record = { version: 1, runId, identical: cmp.identical, cause: cmp.cause, inputs: cmp.inputs, differences: cmp.differences, passes: folders.map((f, i) => ({ folder: basename(f), elapsedMin: ends[i].elapsedMin })) };
@@ -1046,9 +1073,14 @@ async function main() {
     console.error(`--out must start with ${date}, the UTC date this run starts, not ${outDate}`);
     process.exit(2);
   }
+  let prepared = null;
+  if (o.release) {
+    try { prepared = await prepareRunBuild(o, date); }
+    catch (error) { console.error(error.message); process.exit(2); }
+  }
   // Planted cases come from a copy checked against the lock; pull request
   // cases from their suite, with their truth read now.
-  const real = o.real ? realCases(o) : null;
+  const real = o.real ? realCases(o, prepared ?? {}) : null;
   const { cases, snap, hashes, tempRoot } = real
     ? { cases: Object.keys(real.byName), snap: null, hashes: Object.fromEntries(Object.entries(real.byName).map(([n, x]) => [n, x.case.hash])), tempRoot: real.tempRoot }
     : lockedCases(o);
@@ -1065,31 +1097,17 @@ async function main() {
     console.error(`--smoke runs at most ${SMOKE_MAX_REVIEWS} reviews per configuration, and this plan has ${o.cases.length} cases x ${o.repeat} repeats; name at most ${SMOKE_MAX_REVIEWS} cases with --cases (or --subset), once each`);
     leave(2);
   }
-  // The build under test: this checkout's, or a package build (failure 31).
-  let pkg = null;
-  try {
-    pkg = await preparePackage(o.package);
-  } catch (error) {
-    console.error(`--package ${o.package}: ${error.message}`);
-    leave(2);
-  }
-  if (pkg) o.cli = pkg.cli;
-  const { problems, build } = pkg ? packageBuild(pkg) : buildInfo(o.cli);
-  if (problems.length > 0) {
-    for (const p of problems) console.error(p);
-    leave(2);
-  }
-  // The manifest names the package and how many files it unpacked; the cache's record holds each file's sha256.
-  const packageRecord = pkg ? (({ files, ...rest }) => ({ ...rest, fileCount: Object.keys(files).length }))(pkg.record) : { spec: "local", commit: build.commit, dirty: build.dirty };
+  try { prepared ??= await prepareRunBuild(o, date); }
+  catch (error) { console.error(error.message); leave(2); }
+  const { pkg, build, packageRecord, out } = prepared;
   if (pkg) console.log(`Package ${pkg.record.name} ${pkg.record.version} (${pkg.record.spec}, sha256 ${pkg.record.sha256.slice(0, 12)})`);
   const board = real ? boardOf(SUITES[suite].board) : null;
-  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt });
-  const out = o.out ?? join(benchRoot, "results", server ? `${date}-${build.short}-${suite}-review-server` : `${date}-${build.short}`);
+  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt, out });
   // The repository a review of the case reads, in the shape its path needs:
   // laptop, the change uncommitted; server, the base and the change as two
   // commits (lib/suites.mjs).
   const buildRepo = (name, into, shape) => {
-    if (real) return materialise(real.byName[name].case, into, { shape });
+    if (real) return materialise(real.byName[name].case, into, { shape, heldOut: real.byName[name].case.split === "test" });
     return materialise({ name, materialise: { kind: "folders" } }, into, { shape, casesDir: snap });
   };
   // The spec each case is scored against: a planted case's own, or a pull
@@ -1129,7 +1147,7 @@ async function main() {
   // A review is done once any of its attempts is saved; one whose first attempt never saved runs again in its next attempt folder.
   const todo = jobs.filter((j) => !jobState(out, j).done);
   console.log(`Benchmark: ${o.cases.length} cases x ${configs.length} configurations (${configs.map((c) => c.id).join(", ")}) x ${o.repeat} repeats = ${jobs.length} reviews; ${todo.length} to run, ${o.concurrency} at a time.`);
-  console.log(`Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
+  console.log(o.control ? `Claude Code native control. Results: ${shown(out)}` : `Build ${build.short}${build.dirty ? ", built from a tree the commit does not hold (dirty)" : ""}, openqodex ${build.cliVersion}. Results: ${shown(out)}`);
   const caseIds = o.cases.map((c) => idOf[c]);
   console.log(`Cases: ${caseIds.join(", ")}`);
   if (o.draft) console.log("A draft run: its cases need not match the lock, and it is never accepted.");
@@ -1177,8 +1195,8 @@ async function main() {
   // repository (failure 18).
   let preflight;
   try {
-    const repos = o.cases.map((c) => ({ case: c, dir: buildRepo(c, join(tempRoot, "preflight", c, "repo"), server ? "server" : "laptop").dir }));
-    preflight = scannerPreflight({ cli: o.cli, repos, env: doctorEnv });
+    const repos = o.control ? [] : o.cases.map((c) => ({ case: c, dir: buildRepo(c, join(tempRoot, "preflight", c, "repo"), server ? "server" : "laptop").dir }));
+    preflight = o.control ? { complete: true, missing: [] } : scannerPreflight({ cli: o.cli, repos, env: doctorEnv });
   } catch (error) {
     console.error(`The scanner preflight failed: ${error.message}`);
     leave(2);
@@ -1186,7 +1204,8 @@ async function main() {
   // Only a planted case's laptop copy is kept: a pull request case's
   // checkout can be large, and the clone cache rebuilds it in seconds.
   if (server || real) rmSync(join(tempRoot, "preflight"), { recursive: true, force: true });
-  if (preflight.complete) console.log(`Scanners: every scanner the cases call for is installed${server ? ` in ${hideHome(installRoot)}` : ""}.`);
+  if (o.control) console.log("Native control: no scanner preflight.");
+  else if (preflight.complete) console.log(`Scanners: every scanner the cases call for is installed${server ? ` in ${hideHome(installRoot)}` : ""}.`);
   else {
     console.log(`Scanners missing: ${preflight.missing.map((m) => `${m.scanner} for ${m.case} (${m.state})`).join(", ")}.`);
     if (o.allowMissingScanners) console.log("--allow-missing-scanners: the run records scannersComplete false and is never accepted.");
@@ -1207,7 +1226,7 @@ async function main() {
   // recorded in each sample (failure 26).
   const reviewers = Object.fromEntries(Object.entries(models).map(([name, m]) => [name, m.record]));
   for (const name of server ? [] : o.reviewers) {
-    const p = await probeReviewer(name, { env });
+    const p = await (name === "control" ? probeControl({ env }) : probeReviewer(name, { env }));
     if (!p.ok) {
       console.error(`The ${name} reviewer cannot run: ${p.text}`);
       leave(2);
@@ -1217,13 +1236,15 @@ async function main() {
       console.error(`Asked for the model ${o.model}, but Claude Code answered with ${JSON.stringify(p.model)}; nothing runs.`);
       leave(2);
     }
-    reviewers[name] = { name, version: p.version, model: name === "claude" ? null : p.model, ...(name === "claude" ? { requestedModel: o.model } : {}), modelFrom: name === "claude" ? CLAUDE_MODEL_FROM : "the model line of the header Codex prints" };
+    const claude = name === "claude" || name === "control";
+    reviewers[name] = { name, version: p.version, model: claude ? null : p.model, ...(claude ? { requestedModel: o.model } : {}), modelFrom: claude ? CLAUDE_MODEL_FROM : "the model line of the header Codex prints" };
     console.log(`Reviewer ${name} ${p.version}, model ${JSON.stringify(p.model)}`);
   }
 
   const settings = {
     runId: basename(out),
     mode: "review",
+    ...(o.release ? { release: o.release, buildLabel: `local build ${build.commit}` } : {}),
     suite,
     split: o.split,
     splitHash: real?.splitHash ?? null,
@@ -1239,6 +1260,7 @@ async function main() {
     reviewers,
     review: server
       ? { web: "off", timeoutSeconds: o.timeout, profile: "server", installRoot: hideHome(installRoot), flags: "reviewChange in the server profile: a workDir per review, the budget from the run's ledger, scanners preinstalled, tools { web: false, shell: false }" }
+      : o.control ? { web: "off", timeoutSeconds: o.timeout, native: true, command: laptopInvocation({ job: { reviewer: "control" }, maxUsd: o.maxUsd }) }
       : { web: o.web, timeoutSeconds: o.timeout, reportDir: true, flags: "review --report-dir <sample>/report --reviewer <name> --reviewer-web <on|off> --timeout <s> [--no-graph]" },
     cases: o.cases,
     // The frozen ids (planted/<name>@<hash8>) that scores and the index key by.
@@ -1393,28 +1415,35 @@ async function main() {
     const { dir: repo, base } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
-    const args = laptopReviewArgs({ repo, reportDir, job, web: o.web, timeout: o.timeout, instructionsRef: AUTHORED_SUITES[suite]?.conventions ? base : undefined, configPath: AUTHORED_SUITES[suite]?.conventions ? join(repo, ".openqodex/config.yaml") : undefined });
+    const caseData = o.control ? controlCaseData(repo, readJson(specFile(job.case))) : undefined;
+    const invocation = laptopInvocation({ cli: o.cli, repo, reportDir, job, web: o.web, timeout: o.timeout, maxUsd: Math.max(0, o.maxUsd - budget.summary().spentUsd) / o.concurrency, caseData, instructionsRef: AUTHORED_SUITES[suite]?.conventions ? base : undefined, configPath: AUTHORED_SUITES[suite]?.conventions ? join(repo, ".openqodex/config.yaml") : undefined });
     const startedAt = new Date().toISOString();
     let result;
     try {
-      result = await runCli(o.cli, args, env, repo, o.timeout * 1000);
+      result = await runCli(o.cli, [], o.control ? controlEnv(env) : env, repo, o.timeout * 1000, o.control ? 0 : 120_000, invocation);
     } finally {
       if (real) rmSync(caseDir, { recursive: true, force: true });
     }
     const replacements = [[reportDir, "<sample>/report"], [repo, "<repo>"], [tempRoot, "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
-    writeFileSync(join(dir, "receipt.txt"), sanitize(result.stdout, replacements));
+    result.stdout = sanitize(result.stdout, replacements);
+    writeFileSync(join(dir, "receipt.txt"), result.stdout);
     writeFileSync(join(dir, "stderr.txt"), sanitize(result.stderr, replacements));
     const report = readJson(join(reportDir, "report.json"));
     const who = readJson(join(reportDir, "reviewer.json"));
     const stoppedHere = stop;
     const failure = stoppedHere !== null && !report ? { cause: `stopped by the run: ${stoppedHere}`, infra: false, unavailable: false } : failureOf(result, report);
-    const rec = sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere, usageRecord: readJson(join(reportDir, "usage.json")) });
+    const rec = o.control ? controlSample({ job, attempt: k, result, command: invocation, version: reviewers.control.version, startedAt, stopped: stoppedHere }) : sampleRecord({ job, attempt: k, result, report, who, startedAt, failure, stopped: stoppedHere, usageRecord: readJson(join(reportDir, "usage.json")) });
+    if (o.control) {
+      writeFileSync(join(dir, "native-output.json"), result.stdout);
+      writeFileSync(join(dir, "usage.json"), `${JSON.stringify({ modelUsage: readJson(join(dir, "native-output.json"))?.modelUsage ?? {}, usage: rec.usage }, null, 2)}\n`);
+    }
     saveSampleRow(out, attemptDir(out, job, k), rec);
     const tokens = Number.isInteger(rec.usage?.input_tokens) && Number.isInteger(rec.usage?.output_tokens) ? rec.usage.input_tokens + rec.usage.output_tokens : null;
     budget.recordReview({ jobId: job.jobId, usd: typeof rec.usage?.cost_usd === "number" ? rec.usage.cost_usd : null, tokens, wallMs: rec.wallMs });
     const cost = rec.usage?.cost_usd;
     console.log(`  ${job.case} ${job.config} #${job.repeat}${k > 1 ? ` attempt ${k}` : ""}: ${rec.status}, ${rec.findings ?? "no"} findings, ${(rec.wallMs / 1000).toFixed(0)} s${typeof cost === "number" ? `, $${cost.toFixed(2)}` : ""}${rec.failure ? ` (${rec.failure.slice(0, 160)})` : ""}`);
     checkSaved(dir);
+    if (o.control) return rec.status === "complete" ? null : { cause: rec.failure || result.stderr || `Claude Code exited ${result.code}`, infra: true, unavailable: false };
     return failure;
   };
 
@@ -1441,6 +1470,7 @@ async function main() {
       if (!first?.infra) return;
       // A limit or a login wall in the failure itself stops the run at once, without a probe.
       if (BLOCKED.test(first.cause)) return halt(`${job.case} ${job.config}: ${first.cause}`, "reviewer-blocked");
+      if (o.control) return halt(`${job.case} ${job.config}: ${first.cause}`, "control-failed");
       const p = await probeReviewer(job.reviewer, { env });
       if (!p.ok) return halt(`${job.case} ${job.config}: the reviewer failed (${first.cause}) and the probe says: ${p.text}${p.blocked ? " (a limit or login wall)" : ""}`, "reviewer-blocked");
       const cappedRetry = cap?.take(job.config, { retry: true });
@@ -1475,9 +1505,10 @@ async function main() {
       // The models the provider named as answering, per configuration, over every saved attempt.
       finish: () => {
         if (server) return { servedModels: servedByConfig(out) };
-        if (!reviewers.claude) return {};
-        const observed = claudeRunModels(savedSampleRows(out), o.model);
-        const actual = { ...reviewers, claude: { ...reviewers.claude, model: observed.model, models: observed.models } };
+        const name = o.control ? "control" : "claude";
+        if (!reviewers[name]) return {};
+        const observed = claudeRunModels(savedSampleRows(out), o.model, name);
+        const actual = { ...reviewers, [name]: { ...reviewers[name], model: observed.model, models: observed.models } };
         return { reviewers: actual, reviewer: o.reviewers.length === 1 ? actual[o.reviewers[0]] : null, modelRefusal: observed.why };
       },
       budget,
