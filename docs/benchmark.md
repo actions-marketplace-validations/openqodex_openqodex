@@ -18,6 +18,8 @@ An A/A twin uses the parent's run id with `-aa` appended. The script pairs it on
 
 Each case is a small git repository with a base commit and an uncommitted change, the same shape a developer has before a push. The change carries planted bugs, each with a file, a line range, a kind (`bug`, `security`, `performance`, `maintainability` or `style`), a severity and the scanner or the reasoning expected to find it. The benchmark runs the real built CLI on each case, with the real reviewer, with the code graph off and on, three times each.
 
+The benchmark scores the review, not the dependency list. Outside entries count only when their `origin` is `agent`; scanner advisories outside the changed lines are information. The scorers, board converters, judge, queue, drops and causes use this rule.
+
 From the saved reports it counts (score format 3):
 
 - The population: every review the run planned, scored by its first attempt. A review that failed or never started misses every bug of its case and adds no finding. A retry is reported apart, with its cost, and never replaces the first attempt.

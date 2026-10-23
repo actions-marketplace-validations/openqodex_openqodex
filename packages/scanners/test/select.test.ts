@@ -469,3 +469,13 @@ describe("the reason lines", () => {
     expect(lines.find((l) => l.startsWith("shellcheck:"))).toContain("shell scripts");
   });
 });
+
+// Failure cases: lost union paths or changed selection for a non-tree adapter.
+it("selects the union for the tree adapter and leaves every other adapter identical", () => {
+  const dir = repo({ "src/app.js": "export const x = 1;", "package-lock.json": "{}", "other/yarn.lock": "" });
+  const args = { repoDir: dir, paths: ["src/app.js", "package-lock.json"], config: config() };
+  const before = selectScanners(args);
+  const after = selectScanners({ ...args, inventory: ["other/yarn.lock", "package-lock.json"] });
+  expect(after.find((c) => c.scanner === "osv-scanner")).toMatchObject({ paths: ["package-lock.json", "other/yarn.lock"], reason: expect.stringContaining("lockfiles in the repository") });
+  expect(JSON.stringify(after.filter((c) => c.scanner !== "osv-scanner"))).toBe(JSON.stringify(before.filter((c) => c.scanner !== "osv-scanner")));
+});

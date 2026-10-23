@@ -202,15 +202,15 @@ export function scoreBrief(spec, brief) {
   return { graph: block === null ? "off" : "on", gaps, callers, failures };
 }
 
-// Every finding the developer is shown: on the change, outside it, and the
-// observations of a staged review (shown apart, never counted toward the
-// verdict, judged here all the same because the developer reads them).
-// Each carries `tier`: "finding" or "observation".
+// Every finding the developer is shown: on the change, outside it (except
+// scanner information), and the observations of a staged review (shown
+// apart, never counted toward the verdict, judged here all the same because
+// the developer reads them). Each carries `tier`: "finding" or "observation".
 export function shownFindings(report) {
   if (!report) return [];
   return [
     ...(report.findings ?? []).map((f) => ({ ...f, tier: "finding" })),
-    ...(report.outside_change ?? []).map((f) => ({ ...f, tier: "finding" })),
+    ...(report.outside_change ?? []).filter((f) => f.origin !== "scanner").map((f) => ({ ...f, tier: "finding" })),
     ...(report.observations ?? []).map((f) => ({ ...f, tier: "observation" })),
   ];
 }

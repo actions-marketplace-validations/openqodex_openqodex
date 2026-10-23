@@ -129,3 +129,14 @@ describe("runInChunks", () => {
     expect(merged).toEqual(files);
   });
 });
+
+// Failure case: a failed tree chunk erases the findings of completed chunks.
+it("keeps completed chunks when a tree chunk times out", async () => {
+  const files = ["a".repeat(ARG_BUDGET_BYTES), "b"];
+  const partial: string[] = [];
+  await expect(runInChunks("tree", files, 60_000, async (chunk) => {
+    if (chunk[0] === "b") throw new Error("tree timed out");
+    return ["advisory"];
+  }, partial)).rejects.toThrow("tree timed out");
+  expect(partial).toEqual(["advisory"]);
+});

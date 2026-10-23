@@ -65,6 +65,7 @@ function findingLines(f: ReportFinding, n: number): Line[] {
     { kind: "field", label: "Why it matters", text: f.consequence ?? "" },
     { kind: "field", label: "Fix", text: f.fix ?? "" },
     { kind: "field", label: "Source", text: f.source ?? "the reviewer" },
+    ...f.notes.map((text): Line => ({ kind: "field", label: "Note", text })),
     ...(f.found_by ? [{ kind: "field" as const, label: "Found by", text: f.found_by.join(", ") }] : []),
   ];
 }
@@ -90,6 +91,7 @@ function droppedLines(d: Report["dropped"][number]): Line[] {
   return [
     { kind: "item", text: `${d.candidate.id} at ${candidateLocation(d.candidate)}: ${d.reason}${cited}` },
     { kind: "field", label: "Source", text: d.candidate.token },
+    ...(d.candidate.fixedIn?.length ? [{ kind: "field" as const, label: "Note", text: `Scanner: fixed in ${d.candidate.fixedIn.join(", ")}` }] : []),
   ];
 }
 
@@ -132,6 +134,12 @@ function lines(report: Report): Line[] {
   }
   ordered.forEach((f, i) => out.push(...findingLines(f, i + 1)));
   out.push(...observationLines(report));
+  if (report.outside_change.length > 0) {
+    // Numbered after the findings and the observations, so no two shown items share a number.
+    const shown = ordered.length + orderObservations(report).length;
+    out.push({ kind: "heading", text: `Outside the changed lines (${report.outside_change.length}), never counted` });
+    report.outside_change.forEach((f, i) => out.push(...findingLines(f, shown + i + 1)));
+  }
   // Only an incomplete review has them: what the scanners found, unchecked.
   if (!complete && report.not_reviewed.length > 0) {
     out.push({ kind: "heading", text: `${UNCHECKED} (${report.not_reviewed.length})` });

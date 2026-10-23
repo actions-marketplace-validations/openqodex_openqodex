@@ -78,7 +78,7 @@
 //    check: the draw is seeded and depends on nothing but the seed and the
 //    order of the drops.
 import { isFixturePath } from "../../packages/scanners/dist/index.js";
-import { normPath } from "./score.mjs";
+import { normPath, shownFindings } from "./score.mjs";
 
 export const DROPS_VERSION = 1;
 export const DROP_CLASSES = Object.freeze(["config-owned", "fixture", "test", "duplicate", "out-of-change", "low-value", "rule-fp"]);
@@ -168,7 +168,7 @@ export function projectFrameworks(scan) {
 export function raisedSpans(report, scan) {
   const byId = new Map((scan?.candidates ?? []).map((c) => [c.id, c]));
   const out = [];
-  for (const f of [...(report?.findings ?? []), ...(report?.outside_change ?? [])]) {
+  for (const f of shownFindings(report)) {
     if (typeof f.candidate !== "string" || f.candidate === "") continue;
     const c = byId.get(f.candidate);
     const file = normPath(c ? c.filePath : f.file_path);

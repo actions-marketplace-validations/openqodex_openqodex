@@ -243,6 +243,11 @@ export function render(r, { specsFrom }) {
     for (const f of r.filterLosses) out.push(`- ${f.token} on ${f.caseId} ${f.truth}, removed at ${f.stage}, in ${f.sample}`);
   }
 
+  if (r.shown.length > 0) {
+    out.push("", "Shown outside the changed lines, never counted as a filter loss:");
+    for (const f of r.shown) out.push(`- ${f.token} on ${f.caseId} ${f.truth}, shown, in ${f.sample}`);
+  }
+
   out.push("", "## Rules, by kept candidates", "");
   out.push(`Default-off bar: at least ${RULE_OFF.minKept} kept, at least ${Math.round(RULE_OFF.dropShare * 100)}% dropped, from at least ${RULE_OFF.minRepos} repositories (cases, on planted suites), and no truth item found. Planted evidence alone is provisional.`, "");
   out.push(table(["Rule", "Kept", "Merged", "Raised", "Dropped", "Dropped by class", "Found", "Unique", "Repos", "Default-off bar"], r.rules.map((x) => [x.token, String(x.kept), String(x.merged), String(x.raised), String(x.dropped), classes(x.dropsByClass), String(x.found), String(x.unique), String(x.repos), x.defaultOff ? "meets it" : ""])));
