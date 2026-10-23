@@ -3,6 +3,7 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { git } from "./cases.mjs";
 import { claudeEnv } from "./reviewers.mjs";
 
 const exec = promisify(execFile);
@@ -10,6 +11,10 @@ export const CONTROL_PROMPT = "/code-review medium";
 export const CONTROL_MODEL_FROM = "the usage record Claude Code returned for this review";
 const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 const gate = fileURLToPath(new URL("./control-gate.mjs", import.meta.url));
+
+export function controlCaseData(repo, spec) {
+  return { ...spec, paths: (git(repo, "diff", "--name-only", "-z") + git(repo, "ls-files", "--others", "--exclude-standard", "-z")).split("\0").filter(Boolean) };
+}
 
 export function controlInput(caseData) {
   if (caseData === undefined) return CONTROL_PROMPT;
@@ -49,7 +54,9 @@ export function controlVersion(stdout) {
 // as the existing Claude reviewer, and never save auth status output.
 export async function probeControl({ env = process.env } = {}) {
   const e = controlEnv(env);
-  const { stdout } = await exec("claude", ["--version"], { env: e, timeout: 20_000 });
+  let stdout;
+  try { ({ stdout } = await exec("claude", ["--version"], { env: e, timeout: 20_000 })); }
+  catch (error) { return { ok: false, blocked: false, version: null, model: null, text: `claude --version failed: ${String(error.message).split("\n")[0]}` }; }
   const supported = controlVersion(stdout);
   if (!supported.ok) return supported;
   const { version } = supported;
@@ -66,6 +73,10 @@ export function controlSample({ job, attempt, result, command, version, startedA
   let native = null;
   try { native = JSON.parse(result.stdout); } catch { /* Keep malformed output whole in the sample. */ }
   const models = Object.keys(native?.modelUsage ?? {}).sort();
+  const each = Object.values(native?.modelUsage ?? {});
+  const sum = (key) => each.reduce((n, m) => n + (typeof m[key] === "number" && Number.isFinite(m[key]) ? m[key] : 0), 0);
+  const inputTokens = each.length > 0 ? sum("inputTokens") + sum("cacheReadInputTokens") + sum("cacheCreationInputTokens") : native?.usage?.input_tokens == null ? null : native.usage.input_tokens + (native.usage.cache_read_input_tokens ?? 0) + (native.usage.cache_creation_input_tokens ?? 0);
+  const outputTokens = each.length > 0 ? sum("outputTokens") : native?.usage?.output_tokens ?? null;
   const body = typeof native?.result === "string" ? native.result : result.stdout;
   const complete = result.code === 0 && native?.is_error === false && typeof native.result === "string" && stopped === null;
   return {
@@ -77,7 +88,7 @@ export function controlSample({ job, attempt, result, command, version, startedA
     command, reviewerUsed: { name: "claude", version },
     model: models.length === 1 ? models[0] : models.length > 1 ? models : null, models,
     modelFrom: CONTROL_MODEL_FROM, modelStatus: models.length === 1 ? "known" : models.length > 1 ? "mixed" : "none",
-    usage: { turns: native?.num_turns ?? null, input_tokens: native?.usage?.input_tokens ?? null, output_tokens: native?.usage?.output_tokens ?? null, cost_usd: native?.total_cost_usd ?? null },
+    usage: { turns: native?.num_turns ?? null, input_tokens: inputTokens, output_tokens: outputTokens, cost_usd: native?.total_cost_usd ?? null },
     nativeBody: body,
   };
 }

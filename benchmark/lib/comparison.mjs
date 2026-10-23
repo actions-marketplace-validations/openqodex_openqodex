@@ -143,6 +143,7 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     const ruling = rulings.get(name);
     if (ruling) need(equal(ruling.agreement, judgeAgreement), `calibration ruling ${name} agreement differs from its calibration record`);
     validateCalibration(calibration, { build: record.build, board: calibrationBoard, agreementRuling: ruling?.agreement });
+    need(!calibrationBoards.has(name), `duplicate calibration board ${name}`);
     calibrationBoards.add(name);
     boards[name].judgeAgreement = judgeAgreement;
   }

@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { leaksIn } from "./board-files.mjs";
 import { endpointSecrets } from "./model-env.mjs";
 
+const UPSTREAM_TIMEOUT_MS = 120_000;
+
 // Find top-level members without reserializing their values. Commas inside
 // strings, arrays and nested objects do not split a member. JSON.parse
 // validates the body first; slices retain numbers, escapes and whitespace.
@@ -112,6 +114,7 @@ export async function startRelay(settings, { trackUsage = false, onFailure, cach
       response.on("end", () => resolve({ status, body: Buffer.concat(chunks).toString("utf8") }));
     });
     upstream.on("error", () => reject(new Error("connection drop")));
+    upstream.setTimeout(UPSTREAM_TIMEOUT_MS, () => upstream.destroy());
     upstream.end(body);
   });
   const stop = (message) => { failed = true; onFailure?.(message); };
@@ -131,7 +134,11 @@ export async function startRelay(settings, { trackUsage = false, onFailure, cach
       const name = `${id}.${randomBytes(8).toString("hex")}.json`;
       const path = join(invalidDir, name);
       if (cachedFile) renameSync(cachedFile, path);
-      else writeFileSync(path, `${JSON.stringify({ requestHash: id, responseHash: digest(text), body: text, stage: spec.stage, source })}\n`, { mode: 0o600 });
+      else {
+        const temporary = join(cacheDir, `${name}.tmp`);
+        writeFileSync(temporary, `${JSON.stringify({ requestHash: id, responseHash: digest(text), body: text, stage: spec.stage, source })}\n`, { mode: 0o600 });
+        renameSync(temporary, path);
+      }
       accountUsage(text, `invalid:${name}`);
       stats.invalidAnswers++;
     };

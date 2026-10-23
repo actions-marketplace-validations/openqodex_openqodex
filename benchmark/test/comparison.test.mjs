@@ -20,6 +20,7 @@
 // 19. A ruling names someone missing from people.json, or no person at all.
 // 20. A ruling names a board without a calibration record.
 // 21. Page data loses per-class agreement or requires a ruling above the bar.
+// 22. Two calibration files for one board overwrite its agreement.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -183,6 +184,13 @@ describe("frozen comparisons", () => {
     const f = fixture(); calibrationFixture(f);
     f.record.calibrations[0].build.tree = "d".repeat(40);
     expect(() => validateComparison(f.record, f.options)).toThrow(/calibration.*build/);
+  });
+  it("refuses two calibration files for the same board", () => {
+    const f = fixture(); const calibration = calibrationFixture(f);
+    const file = "index/calibration/duplicate-board.json";
+    write(join(f.root, file), calibration);
+    f.record.calibrations.push({ ...structuredClone(f.record.calibrations[0]), file });
+    expect(() => validateComparison(f.record, f.options)).toThrow("duplicate calibration board aacr");
   });
   it("refuses a calibration file from another build even with its correct hash", () => {
     const f = fixture(); const calibration = calibrationFixture(f);

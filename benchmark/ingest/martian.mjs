@@ -405,10 +405,8 @@ async function main(args) {
   if (args.includes("--verify-published")) {
     if (args.some((a) => !["--verify-published", "--offline"].includes(a))) throw new Error(usage);
     const verified = await verifyPublishedMartian({ offline: args.includes("--offline") });
-    const path = join(benchRoot, REPORT);
-    const marker = "Published Martian verification (W8-2)";
-    const old = readFileSync(path, "utf8").split(marker)[0].trimEnd();
-    writeFileSync(path, `${old}\n\n${verified.report}`);
+    const path = join(benchRoot, "suites/martian/verification-report.txt");
+    writeFileSync(path, verified.report);
     process.stdout.write(verified.report);
     return verified.differences.length ? 1 : 0;
   }

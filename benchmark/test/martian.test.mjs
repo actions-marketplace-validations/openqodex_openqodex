@@ -16,8 +16,11 @@
 // published in full, as unverified, with a person's reading of that very
 // file noted; official totals missing a field of their shape, and a match
 // across two pull requests, are refused.
+// A plain ingest must preserve the report saved by --verify-published.
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,9 +29,14 @@ import { benchRoot } from "../lib/cases.mjs";
 import { LICENCE_READINGS, cacheRoot, saveCommitAnswer, savePullAnswer, saveRepoAnswer } from "../lib/licence.mjs";
 import { martianFindings, martianGolden, readMartianEvaluation } from "../lib/score.mjs";
 import { listCases, martianTruth, materialise, rawPath, readCase, truthOf } from "../lib/suites.mjs";
-import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
-
-afterAll(removeTempDirs);
+// These tests use synchronous subprocesses, so cleanup needs no process scan.
+const tempDirs = [];
+const tempDir = (prefix) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  tempDirs.push(dir);
+  return dir;
+};
+afterAll(() => { for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true }); });
 
 // Round 1 and 2 failure list: greptile-failures.md, items 11 and 12.
 const cache = cacheRoot();
@@ -229,6 +237,36 @@ describe("the Martian ingest", () => {
       expect(readFileSync(join(second.root, file), "utf8")).toBe(text);
       for (const row of Object.values(GOLDEN).flat()) for (const g of row.comments) expect(text).not.toContain(g.comment);
     }
+  });
+
+  it("preserves the published verification report through a plain ingest", async () => {
+    const path = "offline/golden_comments/alpha.json";
+    const rows = Array.from({ length: 50 }, (_, i) => ({ pr_title: `Change ${i}`, url: `https://github.com/alpha/app/pull/${101 + i}`, comments: Array.from({ length: i < 23 ? 4 : 3 }, (_, j) => ({ comment: `Bug ${i}.${j}`, severity: "High", category: "bug" })) }));
+    const ctx = setup({ [path]: rows });
+    const { root, cases, report } = await ingestInto(ctx);
+    for (const dir of ["ingest", "lib"]) {
+      mkdirSync(join(root, dir));
+      for (const file of readdirSync(join(benchRoot, dir)).filter((f) => f.endsWith(".mjs"))) cpSync(join(benchRoot, dir, file), join(root, dir, file));
+    }
+    mkdirSync(join(root, "outside"));
+    writeFileSync(join(root, "outside/boards.json"), encode(ctx.boards));
+    const published = encode(Object.fromEntries(rows.map(({ comments, ...row }) => [row.url, { ...row, golden_source_file: "alpha.json", golden_comments: comments }])));
+    const sourcePath = "offline/results/benchmark_data.json";
+    mkdirSync(dirname(join(ctx.cache, "raw/martian", sourcePath)), { recursive: true });
+    writeFileSync(join(ctx.cache, "raw/martian", sourcePath), published);
+    writeFileSync(join(root, "suites/martian/verification-source.json"), encode({ path: sourcePath, url: raw(sourcePath), revision: COMMIT, readDate: "2026-10-14", sha256: sha256(published) }));
+    mkdirSync(join(root, "index/proof"), { recursive: true });
+    writeFileSync(join(root, "index/proof/martian.json"), encode({ cases: cases.cases.map((c) => ({ name: c.name, caseId: c.id, baseSha: c.baseSha, headSha: c.headSha, mergeBaseSha: c.baseSha, ok: true, ancestorOfHead: true, trees: { mergeBase: c.baseSha, builtBase: c.baseSha, head: c.headSha, builtHead: c.headSha } })) }));
+    const run = (...args) => spawnSync(process.execPath, [join(root, "ingest/martian.mjs"), ...args, "--offline"], { env: { ...process.env, OPENQODEX_BENCH_CACHE: ctx.cache }, encoding: "utf8" });
+    const verified = run("--verify-published");
+    expect(verified.status, verified.stderr).toBe(0);
+    const verificationPath = join(root, "suites/martian/verification-report.txt");
+    const verification = readFileSync(verificationPath);
+    expect(verification.toString()).toBe(verified.stdout);
+    const plain = run();
+    expect(plain.status, plain.stderr).toBe(0);
+    expect(readFileSync(verificationPath)).toEqual(verification);
+    expect(readFileSync(join(root, "suites/martian/ingest-report.txt"), "utf8")).toBe(report);
   });
 });
 

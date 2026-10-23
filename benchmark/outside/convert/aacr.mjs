@@ -132,6 +132,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
     instances.set(name, { instanceId, caseId: spec.id, case: name, references: bugs.length, left: bugs.filter((b) => b.side === "left").length });
   }
   const files = new Map();
+  const commentCounts = new Map();
   const withoutLine = [];
   const failures = [];
   // Board-only rule: use the scorer's test-request predicate without changing our score.
@@ -141,6 +142,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
     const shown = forBoard(first?.report ?? null);
     const native = nativeReviewBody(first?.row);
     const comments = native !== null ? native.trim() ? [{ path: null, start_line: null, end_line: null, content: native }] : [] : shown.map(commentOf);
+    commentCounts.set(job, comments.length);
     if (native !== null && first.row.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: first.row.failure ?? null });
     comments.forEach((c, index) => {
       if (c.start_line === null) withoutLine.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, index });
@@ -160,7 +162,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
       const mine = jobs.filter((j) => j.config === config && j.repeat === repeat);
       const statuses = {};
       for (const j of mine) statuses[statusOf(j.first)] = (statuses[statusOf(j.first)] ?? 0) + 1;
-      return { config, repeat, tool: toolName(config, repeat), dir: `${config}/r${repeat}`, files: mine.length, comments: mine.reduce((n, j) => n + forBoard(j.first?.report ?? null).length, 0), leftOutTestGaps: mine.reduce((n, j) => n + shownFindings(j.first?.report ?? null).length - forBoard(j.first?.report ?? null).length, 0), statuses };
+      return { config, repeat, tool: toolName(config, repeat), dir: `${config}/r${repeat}`, files: mine.length, comments: mine.reduce((n, j) => n + commentCounts.get(j), 0), leftOutTestGaps: mine.reduce((n, j) => n + shownFindings(j.first?.report ?? null).length - forBoard(j.first?.report ?? null).length, 0), statuses };
     })
     .sort((a, b) => (a.config < b.config ? -1 : a.config > b.config ? 1 : a.repeat - b.repeat));
   const all = [...instances.values()];

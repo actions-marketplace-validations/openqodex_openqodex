@@ -219,6 +219,16 @@ async function savedRun({ names = SMOKE, plan = PLAN, specs = {}, suite = "aacr"
   return out;
 }
 
+// Failure: a native comment is written but omitted from its folder's total.
+it("counts the native review comment in the AACR folder total", async () => {
+  const name = SMOKE[0];
+  const nativeBody = "The native review found an incorrect task index.";
+  const out = await savedRun({ names: [name], configs: ["control-graph-off"], repeat: 1, plan: { "control-graph-off/1": { [name]: { reviewer: "control", status: "complete", nativeBody, failure: null } } } });
+  const { out: board, record } = convertRun(out);
+  expect(readJson(join(board, "control-graph-off/r1", `${instanceIdOf(caseOf(name))}.json`)).review.comments).toEqual([{ path: null, start_line: null, end_line: null, content: nativeBody }]);
+  expect(record.folders[0]).toMatchObject({ files: 1, comments: 1, statuses: { complete: 1 } });
+});
+
 it("converts failed native reviews to empty AACR files and records their failures", async () => {
   const name = SMOKE[0];
   const failure = "Review failed while reading src/core/task.ts:10.";

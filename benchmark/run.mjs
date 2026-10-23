@@ -299,7 +299,7 @@ import { externalOf, toolchainOf } from "./lib/external.mjs";
 import { haltRules, rateLimitRetry, smokeCap } from "./lib/halts.mjs";
 import { comparePasses } from "./lib/identical.mjs";
 import { heldOutAccessPath } from "./lib/index.mjs";
-import { controlEnv, controlSample, probeControl } from "./lib/claude-control.mjs";
+import { controlCaseData, controlEnv, controlSample, probeControl } from "./lib/claude-control.mjs";
 import { materialiseOnly } from "./lib/materialise-only.mjs";
 import { parsePackageSpec, preparePackage } from "./lib/package.mjs";
 import { probeReviewer, BLOCKED } from "./lib/reviewers.mjs";
@@ -626,7 +626,7 @@ async function prepareRunBuild(o, date) {
   const { problems, build } = controlBuild ?? (pkg ? packageBuild(pkg) : buildInfo(o.cli));
   if (problems.length > 0) throw new Error(problems.join("\n"));
   const packageRecord = pkg ? (({ files, ...rest }) => ({ ...rest, fileCount: Object.keys(files).length }))(pkg.record) : { spec: "local", commit: build.commit, dirty: build.dirty };
-  const out = o.out ?? join(benchRoot, "results", o.control ? `${date}-${build.short}-control` : o.path === "server" ? `${date}-${build.short}-${o.suite}-review-server` : `${date}-${build.short}`);
+  const out = o.out ?? join(benchRoot, "results", o.mode === "scan" ? `${date}-${build.short}-${o.suite}-scan-laptop` : o.control ? `${date}-${build.short}-control` : o.path === "server" ? `${date}-${build.short}-${o.suite}-review-server` : `${date}-${build.short}`);
   return { pkg, build, packageRecord, out };
 }
 
@@ -796,9 +796,7 @@ function firstAttempts(folder, jobs) {
 
 // A scanner-only run: the preflight, the overlay's trust step, one pass (or
 // two with --check-identical), each scored, and the comparison.
-async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt }) {
-  const date = startedAt.slice(0, 10);
-  const out = o.out ?? join(benchRoot, "results", `${date}-${build.short}-${o.suite}-scan-laptop`);
+async function scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt, out }) {
   const runId = basename(out);
   const folders = o.checkIdentical ? [out, `${out}-pass2`] : [out];
   const shown = (p) => (p.startsWith(process.cwd()) ? relative(process.cwd(), p) || "." : p);
@@ -1101,7 +1099,7 @@ async function main() {
   const { pkg, build, packageRecord, out } = prepared;
   if (pkg) console.log(`Package ${pkg.record.name} ${pkg.record.version} (${pkg.record.spec}, sha256 ${pkg.record.sha256.slice(0, 12)})`);
   const board = real ? boardOf(SUITES[suite].board) : null;
-  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt });
+  if (o.mode === "scan") return scanMain(o, { cases, snap, hashes, tempRoot, build, leave, real, packageRecord, board, startedAt, out });
   // The repository a review of the case reads, in the shape its path needs:
   // laptop, the change uncommitted; server, the base and the change as two
   // commits (lib/suites.mjs).
@@ -1414,7 +1412,7 @@ async function main() {
     const { dir: repo, base } = buildRepo(job.case, join(caseDir, "repo"), "laptop");
     const reportDir = join(dir, "report");
     mkdirSync(dir, { recursive: true });
-    const caseData = o.control ? { ...readJson(specFile(job.case)), paths: git(repo, "diff", "--name-only", "-z").split("\0").filter(Boolean) } : undefined;
+    const caseData = o.control ? controlCaseData(repo, readJson(specFile(job.case))) : undefined;
     const invocation = laptopInvocation({ cli: o.cli, repo, reportDir, job, web: o.web, timeout: o.timeout, maxUsd: Math.max(0, o.maxUsd - budget.summary().spentUsd) / o.concurrency, caseData, instructionsRef: AUTHORED_SUITES[suite]?.conventions ? base : undefined, configPath: AUTHORED_SUITES[suite]?.conventions ? join(repo, ".openqodex/config.yaml") : undefined });
     const startedAt = new Date().toISOString();
     let result;
@@ -1424,7 +1422,8 @@ async function main() {
       if (real) rmSync(caseDir, { recursive: true, force: true });
     }
     const replacements = [[reportDir, "<sample>/report"], [repo, "<repo>"], [tempRoot, "<temp>"], [out, "<results>"], [process.env.HOME, "~"]];
-    writeFileSync(join(dir, "receipt.txt"), sanitize(result.stdout, replacements));
+    result.stdout = sanitize(result.stdout, replacements);
+    writeFileSync(join(dir, "receipt.txt"), result.stdout);
     writeFileSync(join(dir, "stderr.txt"), sanitize(result.stderr, replacements));
     const report = readJson(join(reportDir, "report.json"));
     const who = readJson(join(reportDir, "reviewer.json"));

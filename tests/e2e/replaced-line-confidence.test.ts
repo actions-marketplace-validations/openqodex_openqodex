@@ -19,7 +19,7 @@ describe("replacement lens and honest confidence in a CLI review", () => {
     // Parentheses preserve the value, so this replacement loses no effect.
     writeFileSync(file, readFileSync(file, "utf8").replace("PAGE_SIZE = 20", "PAGE_SIZE = (20)"));
     const args = ["review", "--base", "HEAD", "--skip", "semgrep,osv-scanner", "--no-graph", "--offline", "--no-install", "--no-color"];
-    const prepared = run("replacement-confidence-prepare", dir, [...args, "--agent"]);
+    const prepared = run("replacement-confidence-prepare", dir, [...args, "--agent"], { env: { OPENQODEX_REVIEW_DEPTH: "" } });
     expect(prepared.status, prepared.stderr).toBe(0);
     const change = readBrief(dir);
     expect(change.candidates).toEqual([]);
@@ -27,11 +27,11 @@ describe("replacement lens and honest confidence in a CLI review", () => {
     // Replay an empty answer through the model provider used by the e2e suite.
     const provider = tempDir("oq-e2e-replacement-provider-");
     writeFileSync(join(provider, "claude.cjs"), readFileSync(join(root, "tests/golden/stand-ins/claude.cjs"), "utf8"));
-    writeFileSync(join(provider, "claude"), `#!${process.execPath}\nimport "./claude.cjs";\n`);
+    writeFileSync(join(provider, "claude"), `#!${process.execPath}\nrequire("./claude.cjs");\n`);
     chmodSync(join(provider, "claude"), 0o755);
     writeFileSync(join(provider, "submission.json"), JSON.stringify({ version: 2, change_id: change.changeId, summary: "Preserves the page size.", findings: [], dropped: [] }));
     const result = run("replacement-confidence-review", dir, [...args, "--reviewer", "claude", "--reviewer-web", "off"], {
-      env: { PATH: [provider, dirname(process.execPath), process.env.PATH].join(delimiter), CLAUDECODE: undefined },
+      env: { PATH: [provider, dirname(process.execPath), process.env.PATH].join(delimiter), CLAUDECODE: undefined, OPENQODEX_REVIEW_DEPTH: "" },
     });
     expect(result.status, result.stderr).toBe(0);
     const out = reportDir(dir);

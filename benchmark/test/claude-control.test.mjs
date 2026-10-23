@@ -12,12 +12,17 @@
 // 10. Repository config enables an external diff, signature verification or pager.
 // 11. Status refreshes index metadata because optional locks remain enabled.
 // 12. A version older than 2.1.295 accepts a hook that fails open.
+// 13. Per-model or cache tokens are omitted from the control's usage totals.
+// 14. Added, untracked files are omitted from the control's case paths.
+// 15. A missing Claude binary rejects the probe instead of refusing the run.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { CONTROL_PROMPT, controlEnv, controlSample, nativeReviewBody } from "../lib/claude-control.mjs";
+import { CONTROL_PROMPT, controlCaseData, controlEnv, controlSample, nativeReviewBody, probeControl } from "../lib/claude-control.mjs";
+import { buildCase, git } from "../lib/cases.mjs";
 import { claudeRunModels, laptopInvocation, planJobs } from "../lib/runner.mjs";
 
 const job = { jobId: "planted/test@abcdef01/control-graph-off/1", caseId: "planted/test@abcdef01", case: "test", config: "control-graph-off", reviewer: "control", graph: false, repeat: 1 };
@@ -105,6 +110,20 @@ it("delivers a case title with a shell operator and quote unchanged through stdi
   expect(result.stdout.startsWith(`${CONTROL_PROMPT}\n`)).toBe(true);
   expect(JSON.parse(result.stdout.slice(result.stdout.indexOf("\n") + 1))).toEqual(caseData);
 });
+it("includes added untracked files in the control's case paths", () => {
+  const root = mkdtempSync(join(tmpdir(), "oq-control-paths-"));
+  try {
+    const { dir, spec } = buildCase("ts-removed-export", join(root, "repo"));
+    const added = "added file.ts";
+    writeFileSync(join(dir, added), "export const added = true;\n");
+    const paths = [...git(dir, "diff", "--name-only", "-z").split("\0").filter(Boolean), added];
+    const call = laptopInvocation({ job, maxUsd: 0.8, caseData: controlCaseData(dir, spec) });
+    expect(JSON.parse(call.input.slice(call.input.indexOf("\n") + 1)).paths).toEqual(paths);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+it("refuses a missing Claude binary without rejecting the control probe", async () => {
+  await expect(probeControl({ env: { PATH: "/nonexistent-openqodex-control-bin" } })).resolves.toMatchObject({ ok: false, blocked: false, version: null, model: null, text: expect.stringContaining("claude --version failed:") });
+});
 it("keeps the native body whole without a brief or engine output", () => {
   const s = sample();
   expect(s.nativeBody).toBe(body);
@@ -114,6 +133,12 @@ it("keeps the native body whole without a brief or engine output", () => {
 });
 it("records command, version, served model, time and cost from native usage", () => {
   expect(sample()).toMatchObject({ command: invocation, reviewerUsed: { name: "claude", version: "2.1.296" }, model: "served-model", models: ["served-model"], modelStatus: "known", started_at: "2026-10-14T00:00:00Z", wallMs: 1234, usage: { input_tokens: 42, output_tokens: 7, cost_usd: 0.12 }, status: "complete" });
+});
+it.each([
+  ["two models", { ...answer, modelUsage: { first: { inputTokens: 42, cacheReadInputTokens: 100, cacheCreationInputTokens: 25, outputTokens: 7 }, second: { inputTokens: 8, cacheReadInputTokens: 20, cacheCreationInputTokens: 5, outputTokens: 3 } } }, { input_tokens: 200, output_tokens: 10 }],
+  ["usage only", { ...answer, modelUsage: undefined, usage: { ...answer.usage, cache_read_input_tokens: 100, cache_creation_input_tokens: 25 } }, { input_tokens: 167, output_tokens: 7 }],
+])("counts all input, cache and output tokens from %s", (_label, native, expected) => {
+  expect(sample(native).usage).toMatchObject(expected);
 });
 it("records missing and mixed usage without inventing a served model", () => {
   expect(sample({ ...answer, modelUsage: {} })).toMatchObject({ model: null, modelStatus: "none" });

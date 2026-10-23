@@ -33,7 +33,7 @@ async function commentsAt(url) {
   const match = /^https:\/\/github.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(url);
   if (!match) throw new Error("invalid public review fork URL");
   const endpoint = `repos/${match[1]}/pulls/${match[2]}/comments?per_page=100`;
-  const { stdout } = await run("gh", ["api", "--paginate", "--slurp", endpoint], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+  const { stdout } = await run("gh", ["api", "--paginate", "--slurp", endpoint], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
   const pages = JSON.parse(stdout);
   if (!Array.isArray(pages) || !pages.every(Array.isArray)) throw new Error(`${url}: invalid comments response`);
   const comments = pages.flat().filter((c) => c.user?.login === "greptile-apps[bot]").map((c) => c.body);
