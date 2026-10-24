@@ -112,7 +112,7 @@ export function greptileInput(folder, truthSet, { root = benchRoot, cache = cach
         if (!sets || Object.keys(sets).sort().join(",") !== Object.keys(c.truthSets).sort().join(",")) throw new Error(`${c.id}: both truth sets must match the frozen suite`);
         for (const [name, pin] of Object.entries(c.truthSets)) {
           const set = sets[name];
-          if (set?.kind !== pin.kind || truthHashOf(set?.source) !== truthHashOf(pin.source) || !Array.isArray(set?.items) || set.items.length !== pin.items || truthHashOf(set.items) !== pin.hash || ["hash", "file", "sha256"].some((field) => Object.hasOwn(set, field) && set[field] !== pin[field])) throw new Error(`${c.id}: ${name} truth differs from the frozen suite`);
+          if (Object.keys(set ?? {}).sort().join(",") !== "items,kind,source" || set.kind !== pin.kind || truthHashOf(set.source) !== truthHashOf(pin.source) || !Array.isArray(set.items) || set.items.length !== pin.items || truthHashOf(set.items) !== pin.hash) throw new Error(`${c.id}: ${name} truth differs from the frozen suite`);
         }
         const identity = Object.fromEntries(Object.entries(sets).map(([name, set]) => [name, { kind: set.kind, source: set.source, items: set.items }]));
         if (truthHashOf(identity) !== c.truthHash) throw new Error(`${c.id}: truth sets differ from their frozen hash`);

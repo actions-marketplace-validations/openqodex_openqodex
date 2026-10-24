@@ -270,6 +270,70 @@ it("Greptile refuses a verdict that marks a not-run case caught", () => {
   expect(() => greptileBlock(folder)).toThrow(/not-run|empty case/);
 });
 
+it("Greptile reads back the saved input when one tool plans both cases and another plans one", () => {
+  const folder = greptileRun({ caseCount: 2 });
+  const ctx = boardOptions.get(folder);
+  const cases = readSuite("greptile", ctx).file.cases;
+  const { jobs: allJobs } = planJobs({ cases: cases.map((c) => c.name), caseIds: Object.fromEntries(cases.map((c) => [c.name, c.id])), reviewers: ["claude"], graph: ["on"], repeat: 2 });
+  const jobs = allJobs.filter((j) => j.repeat === 1 || j.caseId === cases[0].id);
+  const manifest = read(join(folder, "manifest.json"));
+  manifest.jobs = jobs;
+  manifest.caseHashes = Object.fromEntries(cases.map((c) => [c.name, c.hash]));
+  write(join(folder, "manifest.json"), manifest);
+  for (const entry of cases) {
+    const c = readCase(entry.id, ctx);
+    write(join(folder, "cases", `${c.name}.json`), specCopy(c, truthOf(c, ctx)));
+  }
+  const rep = report({ findings: [finding()] });
+  for (const job of jobs) {
+    const dir = attemptDir(folder, job, 1);
+    write(join(dir, "sample.json"), sampleRecord({ job, attempt: 1, result: { code: 0, wallMs: 1 }, report: rep, startedAt: "2026-10-24T00:00:00Z" }));
+    write(join(dir, "report/report.json"), rep);
+  }
+  const input = greptileInput(folder, "greptile", ctx);
+  write(boardPath(folder, "greptile", "input.json"), input);
+  const evaluation = read(boardPath(folder, "greptile", "eval.json"));
+  evaluation.manifestSha256 = input.manifestSha256;
+  const expected = {};
+  for (const t of input.tools) {
+    const mine = input.cases.filter((c) => c.tool === t.tool);
+    const caught = mine.filter((c) => c.status === "complete").length;
+    const labels = mine.map((c) => ({ id: c.id, label: c.status === "not-run" ? "missed" : "caught", reason: c.status === "not-run" ? "not-run" : "judge" }));
+    evaluation.perTool[t.tool] = { config: t.config, boardConfig: t.boardConfig, caught, missed: 2 - caught, of: 2, planned: caught, notRun: 2 - caught, rate: caught / 2 };
+    write(boardPath(folder, "greptile", `${t.tool}/verdicts.json`), labels);
+    expected[t.tool] = { ...evaluation.perTool[t.tool], labels };
+  }
+  write(boardPath(folder, "greptile", "eval.json"), evaluation);
+  const copies = input.cases.filter((c) => c.caseId === cases[1].id);
+  expect(copies.map((c) => c.status)).toEqual(["complete", "not-run"]);
+  expect(Object.keys(copies[0].truthSets.greptile).sort()).toEqual(["file", "hash", "items", "kind", "sha256", "source"]);
+  expect(Object.keys(copies[1].truthSets.greptile).sort()).toEqual(["items", "kind", "source"]);
+  expect(greptileBlock(folder).perTool).toEqual(expected);
+  expect(read(boardPath(folder, "greptile", "input.json"))).toEqual(input);
+});
+
+it("Greptile refuses an added key in not-run truth in one line", () => {
+  const folder = greptileRun({ caseCount: 2 });
+  const path = boardPath(folder, "greptile", "input.json");
+  const input = read(path);
+  const c = input.cases.find((c) => c.status === "not-run");
+  c.truthSets.greptile.unexpected = true;
+  write(path, input);
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], JSON.parse(process.argv[2]), {}, ["greptile"], JSON.parse(process.argv[3]));', folder, JSON.stringify(read(join(folder, "manifest.json")).jobs), JSON.stringify(boardOptions.get(folder))], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  expect(result.stderr.trim().split("\n")).toHaveLength(1);
+  expect(result.stderr).toBe(`outside.greptile is null: ${c.caseId}: greptile truth differs from the frozen suite\n`);
+});
+
+it("Greptile fixture truth uses the corrected title instead of the case name", () => {
+  const ctx = boardSuiteFixture("greptile");
+  const cases = readSuite("greptile", ctx).file.cases;
+  expect(cases.map((c) => c.correctedTitle)).toEqual(readSuite("greptile").file.cases.map((c) => c.correctedTitle));
+  expect(cases.every((c) => c.correctedTitle !== c.name)).toBe(true);
+  const c = readCase(cases[0].id, ctx);
+  expect(truthOf(c, ctx).sets.augment.items[0].text).toBe(`Fixture defect in ${c.name}.`);
+});
+
 it("the Greptile readback reads no pinned truth", () => {
   const folder = greptileRun({ caseCount: 2 });
   const saved = greptileBlock(folder);

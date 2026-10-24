@@ -17,7 +17,7 @@ export function boardSuiteFixture(name, root = tempDir("oq-board-suite-"), count
     write(join(cache, "raw", name, path), bytes);
     return { file: path, sha256: sha256(bytes) };
   };
-  const rows = suite.cases.map((e) => ({ pr_title: e.name, url: e.prUrl, comments: [{ comment: `Fixture defect in ${e.name}.`, severity: "High", category: "bug" }] }));
+  const rows = suite.cases.map((e) => ({ pr_title: name === "greptile" ? e.correctedTitle : e.name, url: e.prUrl, comments: [{ comment: `Fixture defect in ${e.name}.`, severity: "High", category: "bug" }] }));
   const corrected = pin("fixture/golden.json", json(rows));
   let original;
   if (name === "greptile") {
@@ -32,7 +32,6 @@ export function boardSuiteFixture(name, root = tempDir("oq-board-suite-"), count
     if (name === "greptile") {
       const sources = Object.fromEntries(["greptile", "augment"].map((set) => [set, { url: `https://example.test/fixture/${set}`, revision: "fixture", readDate: "2026-10-24" }]));
       const truth = greptileTruth({ bugDescription: `Original fixture defect in ${e.name}.`, severity: "High", filePath: "src/a.ts" }, rows[i], sources);
-      e.correctedTitle = e.name;
       e.truthSets = Object.fromEntries(Object.entries(truth.sets).map(([set, value]) => [set, { kind: value.kind, source: value.source, items: value.items.length, hash: truthHashOf(value.items), ...(set === "greptile" ? original : corrected) }]));
       e.truthHash = truthHashOf(truth.sets);
     } else {
