@@ -112,9 +112,10 @@ async function cli(folder, args = [], model = null, { root = null, record = null
 
 test("a case the run never reviewed is counted missed, not dropped", async () => {
   const folder = savedRun();
+  const fixture = recordFixture();
   const model = await provider();
   try {
-    const result = await cli(folder, ["--max-usd", "1"], model);
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
     expect(result.code, result.stderr).toBe(0);
     const input = read(boardPath(folder, "input.json"));
     expect(input.suite).toEqual({ name: "greptile", cases: cases.map((c) => c.id) });
@@ -136,6 +137,7 @@ test("a case the run never reviewed is counted missed, not dropped", async () =>
 });
 
 test("an incomplete review sends what the developer was shown, as Martian does", async () => {
+  const fixture = recordFixture();
   const f = finding();
   const observation = finding({ title: "An observation", line_number: null });
   const folder = savedRun({ reports: [report([f], "incomplete", { observations: [observation] }), report()] });
@@ -144,7 +146,7 @@ test("an incomplete review sends what the developer was shown, as Martian does",
   const retry = attemptDir(folder, { case: cases[0].name, config, repeat: 1 }, 2);
   write(join(retry, "sample.json"), { case: cases[0].name, config, repeat: 1, attempt: 2 });
   write(join(retry, "report/report.json"), report([finding({ title: "Retry must not replace first" })]));
-  const result = await cli(folder, ["--dry-run"]);
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code, result.stderr).toBe(0);
   const first = read(boardPath(folder, "input.json")).cases[0];
   expect(first.status).toBe("incomplete");
@@ -156,14 +158,15 @@ test("an incomplete review sends what the developer was shown, as Martian does",
 });
 
 test("a control review becomes one comment and a finding without a fix sentence holds its tool name, not just the finding", async () => {
+  const fixture = recordFixture();
   const body = "Native review.\n```json\n[{\"summary\":\"The loop overruns\"}]\n```";
   const native = savedRun({ reviewers: ["control"], native: body });
-  expect((await cli(native, ["--dry-run"])).code).toBe(0);
+  expect((await cli(native, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release })).code).toBe(0);
   expect(read(boardPath(native, "input.json")).cases[0]).toMatchObject({ tool: "claude-code-control-r1", comments: [body] });
   const folder = savedRun({ reports: [report([finding({ fix: " " })]), report([finding()])] });
   const model = await provider();
   try {
-    const result = await cli(folder, ["--max-usd", "1"], model);
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain(`Held, not sent: ${tool}`);
     expect(model.seen).toHaveLength(0);
@@ -181,7 +184,7 @@ test("the judge is sent the golden texts of the record's profile", async () => {
   fixture.record.boards.greptile.profile = "augment";
   const model = await provider();
   try {
-    const result = await cli(folder, [], model, fixture);
+    const result = await cli(folder, [], model, { ...fixture, release: fixture.record.release });
     expect(result.code, result.stderr).toBe(0);
     expect(model.seen).toHaveLength(1);
     const sent = JSON.parse(model.seen[0].messages.find((m) => m.role === "user").content);
@@ -195,7 +198,7 @@ it("an unknown record truth profile refuses in one line before any model call", 
   const folder = tempDir("oq-greptile-truth-refusal-");
   const fixture = recordFixture();
   fixture.record.boards.greptile.profile = "unknown";
-  const result = await cli(folder, [], null, fixture);
+  const result = await cli(folder, [], null, { ...fixture, release: fixture.record.release });
   expect(result.code).toBe(2);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
   expect(result.stderr).toMatch(/profile unknown.*greptile or augment/);
@@ -204,9 +207,10 @@ it("an unknown record truth profile refuses in one line before any model call", 
 
 test("a case with no comment is missed without a model call", async () => {
   const folder = savedRun({ planned: cases.slice(0, 4), reports: [report([finding()]), null, "unstarted", report()] });
+  const fixture = recordFixture();
   const model = await provider();
   try {
-    const result = await cli(folder, ["--max-usd", "1"], model);
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
     expect(result.code, result.stderr).toBe(0);
     expect(model.seen).toHaveLength(1);
     expect(read(boardPath(folder, `${tool}/verdicts.json`)).slice(1, 4)).toEqual(cases.slice(1, 4).map((c, i) => ({ id: c.id, label: "missed", reason: ["failed", "unstarted", "empty"][i] })));
@@ -215,8 +219,9 @@ test("a case with no comment is missed without a model call", async () => {
 
 test("a priced run requires a cap and refuses a forecast above it before contacting a provider", async () => {
   const folder = savedRun();
+  const fixture = recordFixture();
   for (const [args, why] of [[[], /--max-usd.*required/], [["--max-usd", "0"], /forecast.*exceeds/]]) {
-    const result = await cli(folder, args);
+    const result = await cli(folder, args, null, { root: fixture.root, release: fixture.record.release });
     expect(result.code).toBe(2);
     expect(result.stderr).toMatch(why);
     expect(existsSync(boardPath(folder, "eval.json"))).toBe(false);
@@ -225,10 +230,11 @@ test("a priced run requires a cap and refuses a forecast above it before contact
 
 test("a dry run refuses a folder that holds a judged evaluation", async () => {
   const folder = savedRun();
+  const fixture = recordFixture();
   write(boardPath(folder, "input.json"), { saved: "input" });
   write(boardPath(folder, "eval.json"), { saved: true });
   for (const args of [["--dry-run"], ["--dry-run", "--force"]]) {
-    const refused = await cli(folder, args);
+    const refused = await cli(folder, args, null, { root: fixture.root, release: fixture.record.release });
     expect(refused.code).toBe(2);
     expect(refused.stderr.trim().split("\n")).toHaveLength(1);
     expect(refused.stderr).toMatch(/dry run|priced run/);
@@ -237,12 +243,13 @@ test("a dry run refuses a folder that holds a judged evaluation", async () => {
     expect(readdirSync(join(folder, "outside"))).toEqual(["greptile"]);
   }
 
-  const refused = await cli(savedRun(), ["--dry-run", "--force"]);
+  const refused = await cli(savedRun(), ["--dry-run", "--force"], null, { root: fixture.root, release: fixture.record.release });
   expect(refused.code).toBe(2);
   expect(refused.stderr).toMatch(/--force.*priced run/);
 });
 
 test("a forced priced run moves the old evaluation aside after the checks pass and a refused forced run leaves it in place", async () => {
+  const fixture = recordFixture();
   const refusals = [
     { args: [], why: /--max-usd.*required/ },
     { args: ["--max-usd", "0"], why: /forecast.*exceeds/ },
@@ -262,7 +269,7 @@ test("a forced priced run moves the old evaluation aside after the checks pass a
     write(boardPath(folder, `${tool}/verdicts.json`), [{ saved: "verdict" }]);
     if (manifest) write(join(folder, "manifest.json"), { ...read(join(folder, "manifest.json")), ...manifest });
     if (change) change(folder);
-    const result = await cli(folder, [...args, "--force"]);
+    const result = await cli(folder, [...args, "--force"], null, { root: fixture.root, release: fixture.record.release });
     expect(result.code, result.stderr).toBe(2);
     expect(result.stderr.trim().split("\n")).toHaveLength(1);
     expect(result.stderr).toMatch(why);
@@ -277,7 +284,7 @@ test("a forced priced run moves the old evaluation aside after the checks pass a
   write(boardPath(folder, "eval.json"), { saved: true });
   write(boardPath(folder, `${tool}/verdicts.json`), [{ id: cases[0].id, label: "caught" }]);
   write(boardPath(folder, "obsolete/nested.json"), { stale: true });
-  const result = await cli(folder, ["--max-usd", "0", "--force"]);
+  const result = await cli(folder, ["--max-usd", "0", "--force"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code, result.stderr).toBe(0);
   const superseded = readdirSync(join(folder, "outside")).filter((name) => name !== "greptile");
   expect(superseded).toHaveLength(1);
@@ -294,14 +301,16 @@ test("a forced priced run moves the old evaluation aside after the checks pass a
 
 test("an entirely empty run records no served model or relay counts", async () => {
   const folder = savedRun({ reports: [report(), report()] });
-  const result = await cli(folder, ["--max-usd", "0"]);
+  const fixture = recordFixture();
+  const result = await cli(folder, ["--max-usd", "0"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code, result.stderr).toBe(0);
   expect(read(boardPath(folder, "eval.json"))).toMatchObject({ judgeModel: null, relay: null, perTool: { [tool]: { caught: 0, missed: cases.length } } });
 });
 
 test("a finding without a path sends only its body even when it has a line", async () => {
   const folder = savedRun({ reports: [report([finding({ file_path: null }), finding({ file_path: "", line_number: null }), finding({ line_number: null })]), report()] });
-  const result = await cli(folder, ["--dry-run"]);
+  const fixture = recordFixture();
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code, result.stderr).toBe(0);
   const body = "Index read past the end. The loop reads one element past the array. It throws at run time. Fix: Stop the loop one element earlier.";
   expect(read(boardPath(folder, "input.json")).cases[0].comments).toEqual([body, body, `src/a.ts: ${body}`]);
@@ -317,13 +326,15 @@ test("the forecast charges each judged case once even when it has several commen
 });
 
 it("the script requires a release name instead of selecting a comparison itself", async () => {
-  const result = await cli(tempDir("oq-greptile-no-release-"), ["--dry-run"], null, { release: null });
+  const fixture = recordFixture();
+  const result = await cli(tempDir("oq-greptile-no-release-"), ["--dry-run"], null, { root: fixture.root, release: null });
   expect(result.code).toBe(2);
   expect(result.stderr).toMatch(/--release.*required/);
 });
 
 it("the script rejects the removed truth-set flag", async () => {
-  const result = await cli(tempDir("oq-greptile-old-flag-"), ["--truth-set", "augment"]);
+  const fixture = recordFixture();
+  const result = await cli(tempDir("oq-greptile-old-flag-"), ["--truth-set", "augment"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code).toBe(2);
   expect(result.stderr).toMatch(/unknown.*--truth-set/);
 });
@@ -339,10 +350,11 @@ it("the Martian converter refuses a planned case outside the frozen suite", asyn
 
 test("the Greptile converter refuses a planned case outside the frozen suite in one line", async () => {
   const folder = savedRun();
+  const fixture = recordFixture();
   const manifest = read(join(folder, "manifest.json"));
   manifest.jobs[0].caseId = "greptile/not-in-suite@12345678";
   write(join(folder, "manifest.json"), manifest);
-  const result = await cli(folder, ["--dry-run"]);
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code).toBe(2);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
   expect(result.stderr).toMatch(/not converted for Greptile's board:.*not-in-suite.*not in.*suite/);
@@ -350,10 +362,11 @@ test("the Greptile converter refuses a planned case outside the frozen suite in 
 
 test("a changed planned case hash refuses conversion before writing input", async () => {
   const folder = savedRun();
+  const fixture = recordFixture();
   const manifest = read(join(folder, "manifest.json"));
   manifest.caseHashes[cases[0].name] = "0".repeat(64);
   write(join(folder, "manifest.json"), manifest);
-  const result = await cli(folder, ["--dry-run"]);
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
   expect(result.code).toBe(2);
   expect(result.stderr).toMatch(/case hash.*suite/);
   expect(existsSync(boardPath(folder, "input.json"))).toBe(false);
