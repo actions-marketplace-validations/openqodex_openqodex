@@ -27,7 +27,7 @@
 //    benchmark_data.json, and Martian's own pipeline at the pinned commit
 //    judges it with errors_count 0 (when its checkout is in the cache).
 // Also, as for AACR-Bench (PR 155): a held-out access goes unlogged; a case
-// whose licence nobody verified is converted for a board; a failed or
+// whose licence nobody verified reaches a board submission; a failed or
 // never-started review vanishes from Martian's denominators; two
 // configurations go by one tool name; result files leave the run through a
 // symbolic link; a modified evaluator runs as the pinned one; the bench
@@ -235,17 +235,29 @@ describe("a finding without a title, problem, consequence or fix is dropped", ()
   });
 });
 
-describe("a case whose licence nobody verified, or a sample outside Martian, is converted for the board", () => {
-  it("refuses a run holding a case whose licence class is unverified, naming it, and writes and logs nothing", async () => {
+describe("an unverified licence reaches a board submission, or a sample outside Martian is converted", () => {
+  it("an unverified-licence case converts for the local judge and is still refused at submission", async () => {
     const ctx = await suite(GOLDEN, { "oq-fixture/ledger": "NOASSERTION" });
     const out = await savedRun(ctx, { plan: fixturePlan() });
     const opts = convertOpts(ctx);
-    const why = await refusal(() => convertRun(out, opts));
-    expect(why).toMatch(/oq-fixture__ledger-7/);
-    expect(why).not.toMatch(/oq-fixture__shop-11/);
-    expect(why).toMatch(/never converted for a board/);
-    expect(existsSync(join(out, "outside"))).toBe(false);
-    expect(existsSync(opts.accessLog)).toBe(false);
+    const { record, data } = await convertRun(out, opts);
+    const name = "oq-fixture__ledger-7";
+    const url = "https://github.com/oq-fixture/ledger/pull/7";
+    expect(record.cases).toHaveLength(3);
+    expect(record.cases.find((c) => c.case === name)).toMatchObject({ licence: "unverified" });
+    expect(readJson(join(out, "outside/martian/convert.json")).cases).toEqual(record.cases);
+    expect(data[url].golden_comments).toEqual(GOLDEN.find((r) => r.url === url).comments);
+    expect(data[url].reviews).toHaveLength(1);
+    expect(data[url].reviews[0].review_comments.length).toBeGreaterThan(0);
+    expect(existsSync(opts.accessLog)).toBe(true);
+
+    const submission = join(out, "submission");
+    const result = spawnSync(process.execPath, [join(benchRoot, "outside/submit/martian.mjs"), out, "--out", submission], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stderr).toMatch(/unverified licence/);
+    expect(result.stderr).toContain(name);
+    expect(result.stderr).not.toContain("oq-fixture__shop-11");
+    expect(existsSync(submission)).toBe(false);
   });
 
   it("refuses a run of another suite and a sample folder of a case the run did not plan", async () => {
