@@ -368,6 +368,7 @@ describe("one finding extracted into two issues, or matched to two golden commen
     // That candidate was a false positive before this added match. Keep
     // the official totals consistent with the matches the reader checks.
     const totals = structuredClone(evaluation.totals);
+    evaluation.candidates.find((c) => c.candidateId === "https://github.com/alpha/app/pull/1#3").officialFp = false;
     for (const profile of ["strict", "core", "all"]) {
       const t = totals[profile];
       t.fp = 1;

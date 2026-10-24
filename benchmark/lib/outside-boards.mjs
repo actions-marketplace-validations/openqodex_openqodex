@@ -45,7 +45,8 @@ export function outsideProblems(outside) {
         if (Array.isArray(t?.held) && t.held.length > 0) need(t.caught === null && t.missed === null && t.rate === null, "held tools have null counts and rate");
         else need(count(t?.caught) && count(t?.missed) && t.caught + t.missed === t.of && ratio(t.rate) && Array.isArray(t.labels) && t.labels.length === t.of, "each tool needs caught, missed, rate and per-case labels");
       } else if (name === "martian") {
-        need(object(t?.official?.core) && ["tp", "fp", "fn"].every((k) => count(t.official.core[k])) && ratio(t.official.core.f1) && object(t.ours) && Array.isArray(t.matches) && Array.isArray(t.candidates), "each tool needs official core totals, ours, candidates and matches");
+        if (typeof t?.held === "string" && t.held.trim() !== "") need(t.official === null && t.ours === null && Array.isArray(t.matches) && Array.isArray(t.candidates), "held tools have null official totals and ours, and lists of candidates and matches");
+        else need(object(t?.official?.core) && ["tp", "fp", "fn"].every((k) => count(t.official.core[k])) && ratio(t.official.core.f1) && object(t.ours) && Array.isArray(t.matches) && Array.isArray(t.candidates), "each tool needs official core totals, ours, candidates and matches");
         need(Array.isArray(t?.empty), "each tool must list the cases sent empty");
       } else need(Array.isArray(t?.rounds) && object(t?.ours) && typeof t?.judged === "boolean", "each tool needs rounds, ours and judged");
     }

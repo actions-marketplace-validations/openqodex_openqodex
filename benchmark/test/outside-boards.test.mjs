@@ -1,23 +1,24 @@
 // Each test names the saved-output failure it guards. No judge is called.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { benchRoot } from "../lib/cases.mjs";
 import { boardReview } from "../lib/board-reviews.mjs";
 import { entryProblems, hashFolder, sha256 } from "../lib/index.mjs";
-import { BOARDS } from "../lib/outside-boards.mjs";
+import { BOARDS, outsideProblems } from "../lib/outside-boards.mjs";
 import { readGreptileOutside } from "../lib/greptile-board.mjs";
-import { martianEvaluations, readMartianOutside } from "../lib/martian-board.mjs";
-import { martianFindings, martianGolden, readMartianEvaluation } from "../lib/score.mjs";
+import { boardConfigOf, boardToolName, martianEvaluations, readMartianOutside } from "../lib/martian-board.mjs";
+import { planJobs } from "../lib/runner.mjs";
+import { martianFindings, martianGolden, nativeFindingId, readMartianEvaluation } from "../lib/score.mjs";
 import { martianTruth, readCase, readSuite, specCopy, truthOf } from "../lib/suites.mjs";
 import { extractAsset } from "../fetch-run.mjs";
-import { packageRun, publishRun } from "../publish-run.mjs";
+import { ALLOWED, packageRun, publishRun } from "../publish-run.mjs";
 import { convertRun } from "../outside/convert/martian.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
-import { CLAUDE, FIXTURES, MODEL, convertOpts, fixturePlan, fixtureReport, savedRun, suite } from "./martian-board-fixture.mjs";
+import { CLAUDE, FIXTURES, MODEL, convertOpts, finding, fixturePlan, fixtureReport, report, savedRun, suite } from "./martian-board-fixture.mjs";
 
 afterAll(removeTempDirs);
 const read = (path) => JSON.parse(readFileSync(path, "utf8"));
@@ -28,6 +29,7 @@ const tool = "openqodex-cli-claude-r1";
 const boardPath = (folder, board, path) => join(folder, "outside", board, path);
 const readBlock = (folder, board) => { const run = loadRun(folder); return BOARDS[board](folder, scoreRun(run).jobs, run.specs); };
 const options = () => ({ runs: tempDir("oq-outside-index-"), out: tempDir("oq-outside-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(benchRoot, "test/fixtures/no-model.env") }, dryRun: true, writeIndex: true });
+const greptileBlock = (folder) => readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {});
 
 async function martianRun({ native = null, empty = false } = {}) {
   const ctx = await suite();
@@ -42,7 +44,7 @@ async function martianRun({ native = null, empty = false } = {}) {
   for (const [name, id] of ctx.ids) write(join(folder, "cases", `${name}.json`), specCopy(readCase(id, { root: ctx.root }), truthOf(readCase(id, { root: ctx.root }), { cache: ctx.cache })));
   const { data } = await convertRun(folder, convertOpts(ctx));
   const r = (file) => JSON.parse(readFileSync(join(FIXTURES, "recorded", file), "utf8").replaceAll("openqodex-library-r1", name));
-  const evaluations = empty ? Object.fromEntries(Object.entries(data).map(([url, e]) => [url, { [name]: { total_candidates: 0, total_golden: e.golden_comments.length, errors_count: 0, true_positives: [] } }])) : r("evaluations.json");
+  const evaluations = empty ? Object.fromEntries(Object.entries(data).map(([url, e]) => [url, { [name]: { total_candidates: 0, total_golden: e.golden_comments.length, errors_count: 0, true_positives: [], false_positives: [] } }])) : r("evaluations.json");
   const totals = r("totals.json");
   if (empty) for (const profile of ["strict", "core", "all"]) totals.profiles[profile][name] = { precision: 0, recall: 0, f1: 0, fbeta: 0, tp: 0, fp: 0, fn: profile === "strict" ? 4 : 5, prs: 3 };
   const result = martianEvaluations({ data, candidates: empty ? {} : r("candidates.json"), dedup: empty ? {} : r("dedup_groups.json"), evaluations, totals, judge: { model: judgeModel, served: judgeModel }, model: judgeModel });
@@ -61,7 +63,9 @@ function greptileRun({ held = false, comments = true } = {}) {
   const folder = tempDir("oq-outside-greptile-");
   const suite = readSuite("greptile");
   const ids = suite.file.cases.map((c) => c.id);
-  const manifest = { suite: "greptile", splitHash: suite.splitHash };
+  const first = suite.file.cases[0];
+  const { jobs } = planJobs({ cases: [first.name], caseIds: { [first.name]: first.id }, reviewers: ["claude"], graph: ["on"], repeat: 1 });
+  const manifest = { suite: "greptile", splitHash: suite.splitHash, jobs };
   write(join(folder, "manifest.json"), manifest);
   const manifestSha256 = sha256(readFileSync(join(folder, "manifest.json")));
   const hold = held ? [{ case: suite.file.cases[0].name, index: 0, lacking: ["fix"] }] : [];
@@ -74,6 +78,124 @@ function greptileRun({ held = false, comments = true } = {}) {
   if (!held) write(boardPath(folder, "greptile", `${tool}/verdicts.json`), ids.map((id, i) => ({ id, label: i === 0 && comments ? "caught" : "missed", reason: i === 0 ? comments ? "judge" : "empty" : "not-run" })));
   return folder;
 }
+
+it("AACR board files cannot change a previously published package list", async () => {
+  const { folder } = await martianRun();
+  const opts = options();
+  const before = await packageRun(folder, opts);
+  const paths = ["outside/aacr/convert.json", "outside/aacr/eval.json"];
+  for (const path of paths) write(join(folder, path), { version: 1 });
+  const metrics = join(benchRoot, "test/fixtures/aacr-board/metrics");
+  for (const file of readdirSync(metrics)) {
+    const [, config, repeat] = /^(.*)-r(\d+)\.json$/.exec(file);
+    const path = `outside/aacr/${config}/r${repeat}/metrics_ocr_fixture.json`;
+    paths.push(path);
+    write(join(folder, path), read(join(metrics, file)));
+  }
+  const after = await packageRun(folder, opts);
+  expect(after.files).toBe(before.files);
+  expect(after.listHash).toBe(before.listHash);
+  expect(after.sha256).toBe(before.sha256);
+  for (const path of paths) expect(ALLOWED.some((pattern) => pattern.test(path)), path).toBe(false);
+});
+
+it("a superseded Martian match is neither a winning match nor an official false positive", () => {
+  const saved = read(join(benchRoot, "test/fixtures/martian/superseded-match.json"));
+  const caseId = "martian/grafana__grafana-94942@aaaaaaaa";
+  const findings = martianFindings(caseId, report({ findings: saved.candidates.map((c) => finding({ title: c.text })) }));
+  const data = { [saved.url]: { golden_comments: saved.golden, openqodex: { caseId }, reviews: [{ tool: saved.tool, review_comments: saved.candidates.map((c) => ({ body: c.text })), openqodex: { findingIds: findings.map((f) => f.findingId) } }] } };
+  const counts = { tp: saved.evaluation.tp, fp: saved.evaluation.fp, fn: saved.evaluation.fn, prs: 1, precision: 0.5, recall: 0.5, f1: 0.5, fbeta: 0.5 };
+  const totals = { beta: 2, profiles: Object.fromEntries(["strict", "core", "all"].map((p) => [p, { [saved.tool]: counts }])) };
+  const result = martianEvaluations({ data, candidates: { [saved.url]: { [saved.tool]: saved.candidates } }, dedup: { [saved.url]: { [saved.tool]: saved.dedup } }, evaluations: { [saved.url]: { [saved.tool]: saved.evaluation } }, totals, judge: { model: judgeModel }, model: judgeModel });
+  expect(result.problems).toEqual([]);
+  expect(result.tools[0].problems).toEqual([]);
+  const evaluation = result.tools[0].evaluation;
+  expect(evaluation.candidates.map((c) => c.officialFp)).toEqual([false, false, true]);
+  expect(evaluation.matches.map((m) => m.candidateId)).toEqual([`${saved.url}#1`]);
+  const golden = martianGolden(caseId, martianTruth({ comments: saved.golden }));
+  expect(readMartianEvaluation(evaluation, { findings, golden }).official.core).toMatchObject({ tp: 1, fp: 1, fn: 1, f1: 0.5 });
+});
+
+it("Martian refuses a winning candidate flagged as an official false positive", async () => {
+  const { folder, evaluation } = await martianRun();
+  evaluation.candidates.find((c) => c.candidateId === evaluation.matches[0].candidateId).officialFp = true;
+  write(boardPath(folder, "martian", `${tool}/evaluation.json`), evaluation);
+  expect(() => readBlock(folder, "martian")).toThrow(/official false positive.*(match|sibling)/);
+});
+
+it("Martian refuses a winning candidate's dedup sibling flagged as an official false positive", async () => {
+  const { folder, evaluation } = await martianRun();
+  const winners = new Set(evaluation.matches.map((m) => m.candidateId));
+  const sibling = evaluation.candidates.find((c) => !winners.has(c.candidateId) && evaluation.candidates.some((w) => winners.has(w.candidateId) && w.prUrl === c.prUrl && w.dedupGroup === c.dedupGroup));
+  expect(sibling).toBeDefined();
+  sibling.officialFp = true;
+  write(boardPath(folder, "martian", `${tool}/evaluation.json`), evaluation);
+  expect(() => readBlock(folder, "martian")).toThrow(/official false positive.*(match|sibling)/);
+});
+
+it("Martian refuses a candidate missing its official false positive verdict", async () => {
+  const { folder, evaluation } = await martianRun();
+  delete evaluation.candidates[0].officialFp;
+  write(boardPath(folder, "martian", `${tool}/evaluation.json`), evaluation);
+  expect(() => readBlock(folder, "martian")).toThrow(/candidate.*official.*verdict/);
+});
+
+it("a held Martian tool preserves the judged tool's numbers in the same block", async () => {
+  const ctx = await suite();
+  const plan = fixturePlan();
+  plan[`${CLAUDE}/1`] = { "oq-fixture__shop-12": report({ findings: [finding({ fix: " " })] }) };
+  const folder = await savedRun(ctx, { plan, configs: [MODEL, CLAUDE] });
+  const { record, data } = await convertRun(folder, convertOpts(ctx));
+  const r = (file) => read(join(FIXTURES, "recorded", file));
+  const judged = martianEvaluations({ data, candidates: r("candidates.json"), dedup: r("dedup_groups.json"), evaluations: r("evaluations.json"), totals: r("totals.json"), judge: { model: judgeModel }, model: judgeModel });
+  expect(judged.tools[0].problems).toEqual([]);
+  const evaluation = judged.tools[0].evaluation;
+  write(boardPath(folder, "martian", "openqodex-library-r1/evaluation.json"), evaluation);
+  const held = record.tools.find((t) => t.held);
+  write(boardPath(folder, "martian", "eval.json"), { version: 1, board: "martian", repo: pins.boards.martian.repo, commit: pins.boards.martian.commit, judge: { deployment: judgeModel }, tools: [{ tool: "openqodex-library-r1", evaluation: "openqodex-library-r1/evaluation.json", core: evaluation.totals.core, problems: [] }, { tool: held.tool, evaluation: null, core: null, problems: [`held by the converter: ${held.why}`] }], problems: [] });
+  const block = readMartianOutside(folder, read(join(folder, "manifest.json")).jobs, {});
+  expect(Object.keys(block.perTool).sort()).toEqual([tool, "openqodex-library-r1"]);
+  expect(block.perTool[tool]).toMatchObject({ config: CLAUDE, boardConfig: "cli-claude", repeat: 1, held: held.why, official: null });
+  expect(block.perTool["openqodex-library-r1"].official.core).toEqual(evaluation.totals.core);
+  expect(outsideProblems({ martian: block })).toEqual([]);
+});
+
+const martianRead = (folder) => spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], [], {}, ["martian"]);', folder], { encoding: "utf8" });
+
+it("a Martian run without board output names the conversion command in one line", () => {
+  const folder = tempDir("oq-outside-missing-");
+  const result = martianRead(folder);
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe(`outside.martian is null: ${boardPath(folder, "martian", "")} holds no convert.json; convert the run first (benchmark/outside/boards/martian.sh <run>)\n`);
+});
+
+it("a converted Martian run without an evaluation names the judging command in one line", async () => {
+  const ctx = await suite();
+  const folder = await savedRun(ctx, { plan: fixturePlan() });
+  await convertRun(folder, convertOpts(ctx));
+  const result = martianRead(folder);
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe(`outside.martian is null: ${boardPath(folder, "martian", "")} holds no eval.json; judge the run first (benchmark/outside/boards/martian.sh <run>)\n`);
+});
+
+it("Greptile refuses board tools when the run planned no jobs", () => {
+  expect(() => readGreptileOutside(greptileRun(), [], {})).toThrow(/tools differ from the run's planned jobs/);
+});
+
+it("native Martian sources follow the caller's eligibility predicate without assuming control names", () => {
+  const config = "caller-owned-config";
+  const toolName = "caller-owned-tool";
+  const caseId = "martian/native@aaaaaaaa";
+  const text = "The loop reads past the array.";
+  const findingId = nativeFindingId(caseId, config, 2, text);
+  const findings = [{ findingId, caseId, config, repeat: 2, index: 0, severity: null, source: "native", text }];
+  const golden = [{ goldenId: `${caseId}#g1`, caseId, rawCategory: "bug" }];
+  const totals = { precision: 1, recall: 1, f1: 1, fbeta: 1, tp: 1, fp: 0, fn: 0, prs: 1 };
+  const evaluation = { version: 1, toolName, judge: { model: judgeModel }, totals: { beta: 2, strict: totals, core: totals, all: totals }, candidates: [{ candidateId: "candidate", extractedText: text, officialFp: false, sourceFindingIds: [findingId], extraction: {}, dedupGroup: 0 }], matches: [{ candidateId: "candidate", goldenId: golden[0].goldenId, verdict: "match" }] };
+  const isNative = (f) => f.config === config && f.repeat === 2 && evaluation.toolName === toolName;
+  expect(readMartianEvaluation(evaluation, { findings, golden, isNative }).ours.findings).toEqual({ sent: 1, matched: 1 });
+  expect(() => readMartianEvaluation(evaluation, { findings, golden, isNative: () => false })).toThrow(/without what it reads/);
+});
 
 it("a martian block edited by hand in score.json refuses the publish", async () => {
   const { folder } = await martianRun();
@@ -119,13 +241,13 @@ it("a board block without its evidence hash or tool identity is invalid", async 
 
 it("a greptile eval.json whose summary differs from its verdicts is refused", () => {
   const folder = greptileRun();
-  const block = readGreptileOutside(folder, [], {});
+  const block = greptileBlock(folder);
   expect(block.perTool[tool]).toMatchObject({ caught: 1, rate: 1 / readSuite("greptile").file.cases.length });
   const file = boardPath(folder, "greptile", "eval.json");
   const evaluation = read(file);
   evaluation.perTool[tool].caught++;
   write(file, evaluation);
-  expect(() => readGreptileOutside(folder, [], {})).toThrow(/summary.*verdicts/);
+  expect(() => greptileBlock(folder)).toThrow(/summary.*verdicts/);
 });
 
 it("board output of another run (manifest hash) is refused", async () => {
@@ -143,11 +265,12 @@ it("a control evaluation reads through the native source without four sentences"
   const review = boardReview({ caseId, config, repeat: 1, first: { row: { reviewer: "control", status: "complete", nativeBody: body }, report: null } });
   const findings = [{ findingId: review.findingIds[0], caseId, config, repeat: 1, index: 0, severity: null, source: "native", text: body }];
   const totals = { precision: 1, recall: 1, f1: 1, fbeta: 1, tp: 1, fp: 0, fn: 0, prs: 1 };
-  const evaluation = { version: 1, toolName: "claude-code-control-r1", judge: { model: judgeModel }, totals: { beta: 2, strict: totals, core: totals, all: totals }, candidates: [{ candidateId: "candidate", prUrl: "fixture", extractedText: body, sourceFindingIds: review.findingIds, extraction: {}, dedupGroup: 0 }], matches: [{ candidateId: "candidate", goldenId: `${caseId}#g1`, verdict: "match" }] };
+  const evaluation = { version: 1, toolName: "claude-code-control-r1", judge: { model: judgeModel }, totals: { beta: 2, strict: totals, core: totals, all: totals }, candidates: [{ candidateId: "candidate", prUrl: "fixture", extractedText: body, officialFp: false, sourceFindingIds: review.findingIds, extraction: {}, dedupGroup: 0 }], matches: [{ candidateId: "candidate", goldenId: `${caseId}#g1`, verdict: "match" }] };
   const golden = [{ goldenId: `${caseId}#g1`, caseId, rawCategory: "bug" }];
-  expect(readMartianEvaluation(evaluation, { findings, golden }).ours.golden).toEqual({ found: 1, of: 1 });
-  expect(() => readMartianEvaluation(evaluation, { findings: [{ ...findings[0], text: "Another body" }], golden })).toThrow(/native.*(id|source)/);
-  expect(() => readMartianEvaluation(evaluation, { findings: [findings[0], findings[0]], golden })).toThrow(/one native source/);
+  const isNative = (f) => boardConfigOf(f.config) === "control" && boardToolName(f.config, f.repeat) === evaluation.toolName;
+  expect(readMartianEvaluation(evaluation, { findings, golden, isNative }).ours.golden).toEqual({ found: 1, of: 1 });
+  expect(() => readMartianEvaluation(evaluation, { findings: [{ ...findings[0], text: "Another body" }], golden, isNative })).toThrow(/native.*(id|source)/);
+  expect(() => readMartianEvaluation(evaluation, { findings: [findings[0], findings[0]], golden, isNative })).toThrow(/one native source/);
   expect(() => readMartianEvaluation({ ...evaluation, toolName: tool }, { findings, golden })).toThrow(/without what it reads/);
   const { folder } = await martianRun({ native: body });
   expect(readBlock(folder, "martian").perTool["claude-code-control-r1"].ours.findings).toEqual({ sent: 3, matched: 3 });
@@ -211,10 +334,10 @@ it("the publisher still inspects packaged board input for private paths", async 
 
 it("Greptile labels remain readable after packaging without the source run", async () => {
   const folder = greptileRun();
-  const block = readGreptileOutside(folder, [], {});
+  const block = greptileBlock(folder);
   const asset = await packageRun(folder, options());
   const back = extractAsset(asset.tarPath, asset, tempDir("oq-outside-back-"), asset.runId);
-  expect(readGreptileOutside(back, [], {})).toEqual(block);
+  expect(greptileBlock(back)).toEqual(block);
   expect(block.evidenceHash).toBe(hashFolder(back, ["outside/greptile/input.json", "outside/greptile/eval.json", `outside/greptile/${tool}/verdicts.json`]).listHash);
 });
 
@@ -232,12 +355,12 @@ it("Martian refuses a conversion commit or evaluation judge that differs from it
 });
 
 it("a held Greptile tool keeps its hold without a verdict file", () => {
-  const held = readGreptileOutside(greptileRun({ held: true }), [], {}).perTool[tool];
+  const held = greptileBlock(greptileRun({ held: true })).perTool[tool];
   expect(held).toMatchObject({ caught: null, missed: null, rate: null, held: [{ lacking: ["fix"] }] });
 });
 
 it("an empty Greptile tool needs no judge model", () => {
-  const empty = readGreptileOutside(greptileRun({ comments: false }), [], {}).perTool[tool];
+  const empty = greptileBlock(greptileRun({ comments: false })).perTool[tool];
   expect(empty).toMatchObject({ caught: 0, rate: 0 });
 });
 
@@ -245,7 +368,7 @@ it("a Greptile tool with comments cannot lose its judge model", () => {
   const folder = greptileRun();
   const file = boardPath(folder, "greptile", "eval.json");
   write(file, { ...read(file), judgeModel: null });
-  expect(() => readGreptileOutside(folder, [], {})).toThrow(/judge model/);
+  expect(() => greptileBlock(folder)).toThrow(/judge model/);
 });
 
 it("Greptile refuses a shortened suite and changed board pins", () => {
@@ -257,7 +380,7 @@ it("Greptile refuses a shortened suite and changed board pins", () => {
     else if (field === "of") edited.perTool[tool].of--;
     else edited[field] = "wrong";
     write(file, edited);
-    expect(() => readGreptileOutside(folder, [], {}), field).toThrow();
+    expect(() => greptileBlock(folder), field).toThrow();
   }
 });
 

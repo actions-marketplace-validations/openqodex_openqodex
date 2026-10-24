@@ -87,6 +87,8 @@ function recordFixture() {
   write(join(root, ref.file), calibration);
   ref.sha256 = hash(readFileSync(join(root, ref.file)));
   record.calibrations = [ref];
+  // The fixture signs its own copy, so the live record's signature state never decides these tests.
+  record.acceptance = { person: read(join(root, "review-queue/people.json")).people[0], date: "2026-10-24", hash: "" };
   record.acceptance.hash = comparisonHash(record);
   write(join(root, "index/comparisons", `${record.release}.json`), record);
   return { root, record, calibration };

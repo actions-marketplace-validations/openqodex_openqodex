@@ -34,7 +34,7 @@ export function readGreptileOutside(folder, jobs, specs) {
   const names = input.tools.map((t) => t.tool);
   need(new Set(names).size === names.length && names.every((name) => /^[a-z0-9-]+$/.test(name)), "input repeats or misnames a tool");
   need(canonical(Object.keys(evaluation.perTool ?? {}).sort()) === canonical([...names].sort()), "summary tools differ from the input");
-  if (jobs.length > 0) need(canonical([...new Set(jobs.map((j) => boardToolName(j.config, j.repeat)))].sort()) === canonical([...names].sort()), "tools differ from the run's planned jobs");
+  need(canonical([...new Set(jobs.map((j) => boardToolName(j.config, j.repeat)))].sort()) === canonical([...names].sort()), "tools differ from the run's planned jobs");
   need(input.cases.every((c) => names.includes(c.tool) && Array.isArray(c.comments)), "a case names an unknown tool or has no comment list");
   const judged = input.cases.some((c) => !input.tools.find((t) => t.tool === c.tool).held?.length && c.comments.length > 0);
   need(evaluation.judgeModel === model || (evaluation.judgeModel === null && !judged), "judge model differs from the board pin or is missing for comments that needed judging");

@@ -83,8 +83,6 @@ export const ALLOWED = [
   /^samples\/[^/]+\/[^/]+\/[^/]+\/(sample\.json|stderr\.txt|receipt\.txt|usage\.json|dispositions\.json|completion\.json|transcript\.jsonl|progress\.jsonl)$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/(report|scan|trace|submission|reviewer|manifest|rounds)\.json$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/brief\.md$/,
-  /^outside\/aacr\/(convert|eval)\.json$/,
-  /^outside\/aacr\/[^/]+\/r\d+\/metrics_ocr_[^/]+\.json$/,
   /^outside\/greptile\/(input|eval)\.json$/,
   /^outside\/greptile\/[^/]+\/verdicts\.json$/,
   /^outside\/martian\/(convert|eval|benchmark_data)\.json$/,

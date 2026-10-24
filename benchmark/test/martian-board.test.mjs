@@ -127,7 +127,7 @@ it("attributes every extracted native candidate to one stable review source id",
     expect(again.data[url].reviews[0].openqodex.findingIds).toEqual(review.openqodex.findingIds);
     candidates[url] = { [tool]: body.split(". ").map((text) => ({ text })) };
     dedup[url] = { [tool]: [[0], [1]] };
-    evaluations[url] = { [tool]: { total_candidates: 2, total_golden: entry.golden_comments.length, errors_count: 0, true_positives: [] } };
+    evaluations[url] = { [tool]: { total_candidates: 2, total_golden: entry.golden_comments.length, errors_count: 0, true_positives: [], false_positives: candidates[url][tool].map((c) => ({ candidate: c.text })) } };
   }
   const totals = { beta: 1, profiles: Object.fromEntries(["all", "core", "strict"].map((profile) => [profile, { [tool]: { tp: 0, fp: 6, fn: 5, prs: 3 } }])) };
   const result = martianEvaluations({ data, candidates, dedup, evaluations, totals, judge: { model: "fixture", served: "fixture" }, model: "fixture" });

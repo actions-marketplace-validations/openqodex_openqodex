@@ -1428,7 +1428,7 @@ function totalsProblems(totals) {
 // for this tool name (martianFindings, in report order), `golden` the golden
 // comments of the cases it covers (martianGolden). Returns { toolName,
 // board, judge, official, candidates, matches } as given, and `ours`.
-export function readMartianEvaluation(evaluation, { findings, golden }) {
+export function readMartianEvaluation(evaluation, { findings, golden, isNative = () => false }) {
   const e = evaluation;
   const shape = [];
   if (!e || typeof e !== "object") throw new Error("the evaluation is not an object");
@@ -1440,10 +1440,10 @@ export function readMartianEvaluation(evaluation, { findings, golden }) {
   shape.push(...totalsProblems(e.totals));
   if (shape.length > 0) throw new Error(`the evaluation is not in Martian's shape (PLAN-benchmark 4.5): ${shape.join("; ")}`);
 
-  const native = findings.filter((f) => /^claude-code-control-r\d+$/.test(e.toolName) && f.source === "native");
+  const native = findings.filter((f) => f.source === "native" && isNative(f));
   if (new Set(native.map((f) => f.caseId)).size !== native.length) throw new Error("a control review must have one native source per case");
   for (const f of native) {
-    if (f.config !== "control-graph-off" || e.toolName !== `claude-code-control-r${f.repeat}` || typeof f.text !== "string" || !f.text.trim() || f.findingId !== nativeFindingId(f.caseId, f.config, f.repeat, f.text)) throw new Error(`the native source id of ${f.caseId} does not match its body or tool`);
+    if (typeof f.text !== "string" || !f.text.trim() || f.findingId !== nativeFindingId(f.caseId, f.config, f.repeat, f.text)) throw new Error(`the native source id of ${f.caseId} does not match its body or tool`);
   }
   const lacking = lackingLines(findings.filter((f) => !native.includes(f)));
   if (lacking.length > 0) throw new Error(`the evaluation of ${e.toolName} is not scored: these findings were saved for Martian's judge without what it reads:\n${lacking.join("\n")}`);
@@ -1462,6 +1462,7 @@ export function readMartianEvaluation(evaluation, { findings, golden }) {
     }
     if (byCandidate.has(id)) problems.push(`candidate ${id} is listed twice`);
     if (typeof c.extractedText !== "string" || !c.extractedText.trim()) problems.push(`candidate ${id} has no saved text`);
+    if (typeof c.officialFp !== "boolean") problems.push(`candidate ${id} has no official false positive verdict`);
     if (!Array.isArray(c.sourceFindingIds) || c.sourceFindingIds.length === 0) problems.push(`candidate ${id} names no source finding`);
     for (const f of Array.isArray(c.sourceFindingIds) ? c.sourceFindingIds : []) if (!byFinding.has(f)) problems.push(`candidate ${id} names finding ${String(f).slice(0, 12)}, which the run did not send`);
     if (!c.extraction || typeof c.extraction !== "object") problems.push(`candidate ${id} has no extraction provenance`);
@@ -1498,14 +1499,19 @@ export function readMartianEvaluation(evaluation, { findings, golden }) {
   // golden categories in TP/FN, and every FP, even a match outside core.
   // offline/code_review_benchmark/step3_judge_comments.py:304-331,357-358
   // keys candidates by text within a PR and spares matched dedup siblings.
+  // A superseded winner also stays matched, so FP verdicts come from
+  // Martian's saved false_positives, not just the final winning matches.
   const coreCategories = new Set(["bug", "security", "concurrency", "data", "api", "perf", "test_gap", "doc_defect"]);
   const coreGolden = golden.filter((g) => coreCategories.has(g.rawCategory));
   const tp = coreGolden.filter((g) => behind.has(g.goldenId)).length;
   const fn = coreGolden.length - tp;
   const foundCandidates = new Set(e.matches.filter((m) => m.verdict === "match").map((m) => m.candidateId));
   const sameCase = (a, b) => caseOfCandidate(a)[0] === caseOfCandidate(b)[0];
-  const unmatched = e.candidates.filter((c) => !e.candidates.some((m) => foundCandidates.has(m.candidateId) && sameCase(c, m) && (m.extractedText === c.extractedText || (m.dedupGroup !== null && m.dedupGroup !== undefined && m.dedupGroup === c.dedupGroup))));
-  const fp = new Set(unmatched.map((c) => JSON.stringify([caseOfCandidate(c)[0], c.extractedText]))).size;
+  const falsePositives = e.candidates.filter((c) => c.officialFp);
+  for (const c of falsePositives) {
+    if (e.candidates.some((m) => foundCandidates.has(m.candidateId) && sameCase(c, m) && (m.extractedText === c.extractedText || (m.dedupGroup !== null && m.dedupGroup !== undefined && m.dedupGroup === c.dedupGroup)))) throw new Error(`candidate ${c.candidateId} is an official false positive but is a winning match or its dedup sibling`);
+  }
+  const fp = new Set(falsePositives.map((c) => JSON.stringify([caseOfCandidate(c)[0], c.extractedText]))).size;
   const precision = tp + fp === 0 ? 0 : tp / (tp + fp);
   const recall = tp + fn === 0 ? 0 : tp / (tp + fn);
   const f1 = precision + recall === 0 ? 0 : 2 * precision * recall / (precision + recall);
