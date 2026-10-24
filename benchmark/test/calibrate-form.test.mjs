@@ -42,7 +42,7 @@ it("a form variant writes under its own name and never replaces the plain record
   expect(JSON.parse(readFileSync(afterVariants.output, "utf8"))).toEqual({ status: "complete" });
 });
 
-it.each(["plain", "flat", "joined"])("%s calibration sends the expected comment form to the judge", async (name) => {
+it.each(["plain", "flat", "joined"])("casesInForm gives the judge the %s comment form", async (name) => {
   const form = name === "plain" ? undefined : name;
   const comments = Object.freeze(["  First issue\n\n````js\nawait task()\n```  ", "Second\tissue\r\nwith impact."]);
   const expected = {
