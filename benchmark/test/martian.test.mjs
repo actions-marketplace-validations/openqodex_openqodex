@@ -365,7 +365,17 @@ describe("one finding extracted into two issues, or matched to two golden commen
   it("counts a golden comment once when two candidates of two findings match it, judged by the first finding in report order", () => {
     const { evaluation, findings, golden } = fixtureInputs();
     // The third finding of alpha/app#1 (minor) also matched g1, and a match line is repeated.
-    const more = { ...evaluation, matches: [...evaluation.matches, { candidateId: "https://github.com/alpha/app/pull/1#3", goldenId: "martian/alpha__app-1@0a1b2c3d#g1", verdict: "match", confidence: 0.7 }, evaluation.matches[0]] };
+    // That candidate was a false positive before this added match. Keep
+    // the official totals consistent with the matches the reader checks.
+    const totals = structuredClone(evaluation.totals);
+    for (const profile of ["strict", "core", "all"]) {
+      const t = totals[profile];
+      t.fp = 1;
+      t.precision = t.tp / (t.tp + t.fp);
+      t.f1 = 2 * t.precision / (t.precision + 1);
+      t.fbeta = 5 * t.precision / (4 * t.precision + 1);
+    }
+    const more = { ...evaluation, totals, matches: [...evaluation.matches, { candidateId: "https://github.com/alpha/app/pull/1#3", goldenId: "martian/alpha__app-1@0a1b2c3d#g1", verdict: "match", confidence: 0.7 }, evaluation.matches[0]] };
     const read = readMartianEvaluation(more, { findings, golden });
     expect(read.matches).toEqual(more.matches);
     expect(read.ours.golden).toEqual({ found: 5, of: 5 });

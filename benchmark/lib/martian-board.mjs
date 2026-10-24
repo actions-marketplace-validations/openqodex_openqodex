@@ -66,9 +66,14 @@
 //    what ties the record to the published build. An accepted comparison
 //    also admits its pinned clean local build, explicitly labelled local.
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PACKAGE_NAME } from "./package.mjs";
 import { benchRoot } from "./cases.mjs";
 import { comparisonRelease } from "./comparison.mjs";
+import { boardReview, readAttempts } from "./board-reviews.mjs";
+import { hashFolder, sha256 } from "./index.mjs";
+import { canonical, martianFindings, martianGolden, population, readMartianEvaluation } from "./score.mjs";
+import { martianTruth } from "./suites.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const MARTIAN_BOARD = Object.freeze({ repo: BOARDS.boards.martian.repo, commit: BOARDS.boards.martian.commit, source: BOARDS.boards.martian.source });
@@ -256,4 +261,61 @@ export function martianEvaluations({ data, candidates, dedup, evaluations, total
     tools.push({ tool, evaluation, problems });
   }
   return { tools, problems: typeof totals?.beta === "number" ? [] : ["score_profiles gave no beta"] };
+}
+
+/** The published evaluation files suffice; nothing under work/ is read. */
+export function readMartianOutside(folder, jobs, specs) {
+  const paths = [];
+  const read = (path) => { paths.push(`outside/martian/${path}`); return JSON.parse(readFileSync(join(folder, "outside/martian", path), "utf8")); };
+  const convert = read("convert.json");
+  const manifestBytes = readFileSync(join(folder, "manifest.json"));
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const need = (ok, why) => { if (!ok) throw new Error(`Martian ${why}`); };
+  need(convert.manifestSha256 === sha256(manifestBytes), "manifest sha256 differs from this run's manifest hash");
+  const pin = BOARDS.boards.martian;
+  const model = BOARDS.deployments[pin.judge.deployment].id;
+  need(convert.version === 1 && convert.board === "martian" && convert.repo === pin.repo && convert.commit === pin.commit, "conversion board pins differ from boards.json");
+  need(manifest.suite === "martian" && convert.splitHash === manifest.splitHash, "suite or split hash differs from this run");
+  const evaluated = read("eval.json");
+  need(evaluated.version === 1 && evaluated.board === "martian" && evaluated.repo === pin.repo && evaluated.commit === pin.commit && evaluated.judge?.deployment === model, "evaluation board commit or judge differs from boards.json");
+  need(Array.isArray(evaluated.problems) && evaluated.problems.length === 0, `evaluation has problems: ${evaluated.problems?.join("; ") ?? "no problem list"}`);
+  const data = read("benchmark_data.json");
+  const entries = Object.values(data);
+  need(Array.isArray(convert.cases) && entries.length === convert.cases.length && entries.every((e) => convert.cases.some((c) => c.caseId === e.openqodex?.caseId)), "benchmark_data cases differ from convert.json");
+  const golden = entries.flatMap((e) => martianGolden(e.openqodex.caseId, martianTruth({ comments: e.golden_comments })));
+  const planned = population(manifest, readAttempts(folder));
+  need(planned.problems.length === 0, planned.problems.join("; "));
+  const reviews = planned.jobs.map(boardReview);
+  const expected = [...new Set(jobs.map((j) => boardToolName(j.config, j.repeat)))].sort();
+  need(Array.isArray(convert.tools) && convert.tools.length > 0 && new Set(convert.tools.map((t) => t.tool)).size === convert.tools.length, "conversion needs one row per tool");
+  need(canonical(convert.tools.map((t) => t.tool).sort()) === canonical(expected), "converted tools differ from the run's planned jobs");
+  need(canonical((evaluated.tools ?? []).map((t) => t.tool).sort()) === canonical(expected), "evaluated tools differ from the conversion");
+  const perTool = {};
+  for (const t of convert.tools) {
+    need(t.tool === boardToolName(t.config, t.repeat) && t.boardConfig === boardConfigOf(t.config), `${t.tool}: config or boardConfig differs from its tool name`);
+    need(!t.held, `${t.tool}: held by the converter: ${t.why}`);
+    const mine = reviews.filter((r) => r.config === t.config && r.repeat === t.repeat);
+    const findings = mine.flatMap((r) => r.native === null ? martianFindings(r.caseId, r.first?.report ?? null) : r.findingIds.map((findingId) => ({ findingId, caseId: r.caseId, config: r.config, repeat: r.repeat, index: 0, severity: null, source: "native", text: r.native })));
+    const record = evaluated.tools.find((row) => row.tool === t.tool);
+    const empty = [];
+    for (const e of entries) {
+      const review = (e.reviews ?? []).find((r) => r.tool === t.tool);
+      need(review && Array.isArray(review.review_comments), `${t.tool}: a suite case has no converted review`);
+      const caseId = e.openqodex.caseId;
+      if (specs[e.openqodex.case]?.truthCount?.items !== undefined) need(specs[e.openqodex.case].truthCount.items === e.golden_comments.length, `${caseId}: golden comment count differs from the saved case`);
+      if (review.review_comments.length === 0) {
+        const notRun = (convert.notRun ?? []).some((r) => r.tool === t.tool && r.caseId === caseId);
+        const failed = (convert.failures ?? []).find((r) => r.config === t.config && r.repeat === t.repeat && r.caseId === caseId);
+        const reason = notRun ? "not-run" : review.openqodex.status === "complete" || review.openqodex.status === "incomplete" ? "empty" : review.openqodex.status;
+        empty.push({ caseId, reason, ...(failed ? { failure: failed.failure } : {}) });
+      }
+    }
+    need(record?.evaluation === `${t.tool}/evaluation.json` && record.problems?.length === 0, `${t.tool}: evaluation is missing or has problems`);
+    const evaluation = read(`${t.tool}/evaluation.json`);
+    need(evaluation.toolName === t.tool && evaluation.config === t.config && evaluation.repeat === t.repeat && evaluation.board?.repo === pin.repo && evaluation.board?.commit === pin.commit && evaluation.judge?.model === model, `${t.tool}: evaluation tool or board pins differ`);
+    const result = readMartianEvaluation(evaluation, { findings, golden });
+    need(canonical(record.core) === canonical(result.official.core), `${t.tool}: eval.json core summary differs from its evaluation`);
+    perTool[t.tool] = { config: t.config, boardConfig: t.boardConfig, repeat: t.repeat, official: result.official, ours: result.ours, candidates: result.candidates, matches: result.matches, empty };
+  }
+  return { board: { repo: pin.repo, commit: pin.commit }, judge: evaluated.judge, profile: "core", perTool, evidenceHash: hashFolder(folder, paths).listHash };
 }

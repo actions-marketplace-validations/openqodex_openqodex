@@ -57,7 +57,7 @@
 // 7. An asset is uploaded twice under one name: an existing asset of that
 //    name refuses the upload.
 // 8. Board numbers edited by hand in score.json reach the index: the board
-//    block is computed again from <run>/outside/aacr, and a block that
+//    blocks are computed again through the board registry, and a block that
 //    differs refuses the publish.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -68,7 +68,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
 import { RELEASE, REPOSITORY, assetUrl, boardHash, buildEntry, byBytes, entryProblems, fileList, hashReviewedFolder, listHash, readEntry, runsRoot, reviewedBytes, sha256, writeEntry } from "./lib/index.mjs";
-import { readAacrOutside } from "./lib/aacr-board.mjs";
+import { BOARDS, readOutside } from "./lib/outside-boards.mjs";
 import { readDecisions } from "./lib/rulings.mjs";
 import { canonical } from "./lib/score.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
@@ -83,6 +83,12 @@ export const ALLOWED = [
   /^samples\/[^/]+\/[^/]+\/[^/]+\/(sample\.json|stderr\.txt|receipt\.txt|usage\.json|dispositions\.json|completion\.json|transcript\.jsonl|progress\.jsonl)$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/(report|scan|trace|submission|reviewer|manifest|rounds)\.json$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/brief\.md$/,
+  /^outside\/aacr\/(convert|eval)\.json$/,
+  /^outside\/aacr\/[^/]+\/r\d+\/metrics_ocr_[^/]+\.json$/,
+  /^outside\/greptile\/(input|eval)\.json$/,
+  /^outside\/greptile\/[^/]+\/verdicts\.json$/,
+  /^outside\/martian\/(convert|eval|benchmark_data)\.json$/,
+  /^outside\/martian\/(?!work\/)[^/]+\/evaluation\.json$/,
 ];
 const FIXED_MTIME = 1767225600; // 2026-01-01T00:00:00Z, the time every packaged file carries
 
@@ -405,19 +411,16 @@ function citedScore(folder, recipe) {
 }
 
 // Why the board numbers a score carries are not the ones the run's board
-// output gives, as score.mjs --outside aacr computes them (failure 8); null when they are.
+// output gives, as score.mjs --outside computes them (failure 8); null when they are.
 function boardRefusal(folder, runId, outside) {
   if (outside === undefined) return null;
+  const names = Object.keys(outside);
+  if (names.some((name) => !Object.hasOwn(BOARDS, name))) return `refused: ${runId} names a board outside the registry`;
   const d = readDecisions(decisionsPath);
   const run = loadRun(folder);
   const { jobs } = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
-  let aacr = null;
-  try {
-    aacr = readAacrOutside(folder, jobs, run.specs);
-  } catch {
-    // score.mjs saves a board block it cannot read as null.
-  }
-  return canonical(outside) === canonical({ aacr }) ? null : `refused: ${runId}'s board numbers in score.json are not the ones its board output gives; run node benchmark/score.mjs ${folder} --outside aacr again`;
+  const recomputed = readOutside(folder, jobs, run.specs, names);
+  return canonical(outside) === canonical(recomputed) ? null : `refused: ${runId}'s board numbers in score.json are not the ones its board output gives; run node benchmark/score.mjs ${folder} --outside ${names.join(",")} again`;
 }
 
 // Records an accepted entry's board numbers in the accepted pointer, in

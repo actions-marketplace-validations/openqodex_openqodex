@@ -7,10 +7,11 @@ import { join } from "node:path";
 import { benchRoot } from "./cases.mjs";
 import { nativeReviewBody } from "./claude-control.mjs";
 import { boardConfigOf, boardToolName, martianBody } from "./martian-board.mjs";
-import { attemptOf, findingId, judgeFieldsMissing, normPath, population, shownFindings } from "./score.mjs";
+import { attemptOf, findingId, judgeFieldsMissing, nativeFindingId, normPath, population, shownFindings } from "./score.mjs";
 import { readCase, readSuite, realCaseId } from "./suites.mjs";
 
 export { boardToolName, martianBody, martianToolName } from "./martian-board.mjs";
+export { nativeFindingId } from "./score.mjs";
 
 const readJsonOr = (path) => existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
 const dirs = (path) => existsSync(path) ? readdirSync(path, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
@@ -49,7 +50,7 @@ export function boardReview(job) {
   const status = job.notRun ? "not-run" : statusOf(first);
   const native = nativeReviewBody(first?.row);
   const shown = shownFindings(first?.report ?? null);
-  const findingIds = native !== null ? native.trim() ? [createHash("sha256").update(JSON.stringify({ caseId: job.caseId, config: job.config, repeat: job.repeat, attempt: 1, nativeBody: native })).digest("hex")] : [] : shown.map((f) => findingId(job.caseId, f));
+  const findingIds = native !== null ? native.trim() ? [nativeFindingId(job.caseId, job.config, job.repeat, native)] : [] : shown.map((f) => findingId(job.caseId, f));
   const comments = native !== null ? native.trim() ? [{ path: null, line: null, body: native, created_at: first.row.started_at ?? null }] : [] : shown.map((f) => ({ path: normPath(f.file_path) || null, line: Number.isInteger(f.line_number) ? f.line_number : null, body: martianBody(f), created_at: first?.row?.started_at ?? null, tier: f.tier ?? "finding" }));
   return { ...job, status, shown, native, findingIds, comments };
 }
