@@ -40,7 +40,7 @@ function savedRun({ planned = cases.slice(0, 2), reviewers = ["model:scripted"],
   const folder = tempDir("oq-greptile-board-");
   const { jobs, configs } = planJobs({ cases: planned.map((c) => c.name), caseIds: Object.fromEntries(planned.map((c) => [c.name, c.id])), reviewers, graph: native === null ? ["on"] : ["off"], repeat: 1 });
   const pins = Object.values(fixtureReviewers).filter((r) => reviewers.includes(r.reviewer));
-  const settings = { build: { ...fixtureBuild, cliVersion: fixtureBuild.version }, reviewers: Object.fromEntries(pins.map((r) => [r.reviewer, { model: r.model, version: r.version, settings: { effort: r.effort, maxOutputTokens: r.maxOutputTokens } }])), runId: "greptile-board-test", mode: "review", suite: "greptile", split: "dev", splitHash: suite.splitHash, cases: planned.map((c) => c.name), caseIds: planned.map((c) => c.id), caseHashes: Object.fromEntries(planned.map((c) => [c.name, c.hash])), configs, repeat: 1 };
+  const settings = { path: pins[0].path, web: pins[0].web, build: { ...fixtureBuild, cliVersion: fixtureBuild.version }, reviewers: Object.fromEntries(pins.map((r) => [r.reviewer, { model: r.model, version: r.version, settings: { effort: r.effort, maxOutputTokens: r.maxOutputTokens } }])), runId: "greptile-board-test", mode: "review", suite: "greptile", split: "dev", splitHash: suite.splitHash, cases: planned.map((c) => c.name), caseIds: planned.map((c) => c.id), caseHashes: Object.fromEntries(planned.map((c) => [c.name, c.hash])), configs, repeat: 1 };
   write(join(folder, "manifest.json"), runManifest({ startedAt: "2026-10-24T00:00:00Z", settings, jobs }));
   for (const c of planned) write(join(folder, "cases", `${c.name}.json`), specCopy(c, truthOf(c, { cache })));
   for (const job of jobs) {
@@ -273,6 +273,23 @@ test("a max-usd above the record cap is refused before any relay call", async ()
     expect(result.stderr.trim().split("\n")).toHaveLength(1);
     expect(result.stderr).toMatch(/--max-usd.*record cap/);
     expect(model.calls).toHaveLength(0);
+  } finally { await model.close(); }
+});
+
+for (const field of ["path", "web", "graph"]) test(`a run whose ${field} setting differs from the pin is refused before any relay call`, async () => {
+  const folder = savedRun(); const fixture = recordFixture();
+  const pin = fixture.record.reviewers.library;
+  pin[field] = field === "path" ? "laptop" : pin[field] === "on" ? "off" : "on";
+  fixture.record.acceptance.hash = comparisonHash(fixture.record);
+  write(join(fixture.root, "index/comparisons", `${fixture.record.release}.json`), fixture.record);
+  const model = await provider();
+  try {
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
+    expect(result.code).toBe(2);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toContain(field);
+    expect(model.calls).toHaveLength(0);
+    expect(existsSync(boardPath(folder, "eval.json"))).toBe(false);
   } finally { await model.close(); }
 });
 

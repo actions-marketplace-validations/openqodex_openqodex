@@ -457,6 +457,13 @@ describe("per-review models at accept", () => {
   });
 });
 
+it("the AACR fixture preserves the reader's counts and reports no line-count mismatch", () => {
+  const block = aacrOutside(CONFIG).aacr;
+  expect(block.problems).toEqual([]);
+  expect(block.folders[0]).toMatchObject({ ours: { matches: 2, generated: 5, expected: 4 }, lineEqual: true, judged: false });
+  expect(block.byConfig[CONFIG].mean).toEqual({ line: { matches: 2, generated: 5, expected: 4, precision: 0.4, recall: 0.5, f1: expect.closeTo(4 / 9) }, semantic: null });
+});
+
 it("refuses acceptance of a stale board copy in one line naming the run", async () => {
   const { root, index } = await indexWith({ before: () => true, after: () => true });
   const scoreFile = join(root, NEWER.runId, "score.json");
@@ -464,7 +471,7 @@ it("refuses acceptance of a stale board copy in one line naming the run", async 
   score.outside = aacrOutside(CONFIG);
   write(scoreFile, `${JSON.stringify(score, null, 2)}\n`);
   const entry = readEntryAt(index, NEWER.runId);
-  entry.outside = aacrOutside(CONFIG, { line: { precision: 0.3, recall: 0.5 }, semantic: null });
+  entry.outside = aacrOutside(CONFIG, { generated: 10, expected: 6, matched: 3 });
   putEntry(index, entry);
   const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
   expect(result.status).toBe(2);

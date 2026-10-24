@@ -32,7 +32,7 @@ const readBlock = (folder, board) => { const run = loadRun(folder); return BOARD
 const options = (folder) => ({ boardOptions: boardOptions.get(folder), runs: tempDir("oq-outside-index-"), out: tempDir("oq-outside-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(benchRoot, "test/fixtures/no-model.env") }, dryRun: true, writeIndex: true });
 const greptileBlock = (folder) => readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {});
 
-async function martianRun({ native = null, empty = false } = {}) {
+async function martianRun({ native = null, empty = false, accessLog } = {}) {
   const ctx = await suite();
   const selected = empty ? { ...ctx, ids: new Map([...ctx.ids].slice(0, 2)) } : ctx;
   const config = native === null ? CLAUDE : "control-graph-off";
@@ -44,7 +44,7 @@ async function martianRun({ native = null, empty = false } = {}) {
   renameSync(saved, folder);
   boardOptions.set(folder, { root: ctx.root, cache: ctx.cache });
   for (const [name, id] of ctx.ids) write(join(folder, "cases", `${name}.json`), specCopy(readCase(id, { root: ctx.root }), truthOf(readCase(id, { root: ctx.root }), { cache: ctx.cache })));
-  const { data } = await convertRun(folder, convertOpts(ctx));
+  const { data } = await convertRun(folder, convertOpts(ctx, accessLog ? { accessLog } : {}));
   const r = (file) => JSON.parse(readFileSync(join(FIXTURES, "recorded", file), "utf8").replaceAll("openqodex-library-r1", name));
   const evaluations = empty ? Object.fromEntries(Object.entries(data).map(([url, e]) => [url, { [name]: { total_candidates: 0, total_golden: e.golden_comments.length, errors_count: 0, true_positives: [], false_positives: [] } }])) : r("evaluations.json");
   const totals = r("totals.json");
@@ -247,7 +247,7 @@ it("a board block without its evidence hash or tool identity is invalid", async 
   expect(entryProblems(edited).join("\n")).toContain("evidenceHash");
 });
 
-it("a Greptile input whose not-run case carries a comment is refused in one line", () => {
+it("an input.json that differs from its first-attempt rebuild is refused", () => {
   const folder = greptileRun();
   const file = boardPath(folder, "greptile", "input.json");
   const input = read(file);
@@ -256,7 +256,7 @@ it("a Greptile input whose not-run case carries a comment is refused in one line
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], JSON.parse(process.argv[2]), {}, ["greptile"]);', folder, JSON.stringify(read(join(folder, "manifest.json")).jobs)], { encoding: "utf8" });
   expect(result.status).toBe(0);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  expect(result.stderr).toMatch(/input.json.*(first attempt|rebuild)/);
+  expect(result.stderr).toMatch(/^outside\.greptile is null: Greptile input\.json differs from the run's first attempt rebuild\n$/);
 });
 
 it("Greptile refuses a verdict that marks a not-run case caught", () => {
@@ -264,6 +264,26 @@ it("Greptile refuses a verdict that marks a not-run case caught", () => {
   const file = boardPath(folder, "greptile", `${tool}/verdicts.json`);
   const verdicts = read(file); verdicts[1].label = "caught"; write(file, verdicts);
   expect(() => greptileBlock(folder)).toThrow(/not-run|empty case/);
+});
+
+it("Martian readback uses frozen hashes without reading pinned truth or logging held-out access", async () => {
+  const accessLog = join(tempDir("oq-martian-readback-access-"), "heldout-access.jsonl");
+  const { folder } = await martianRun({ accessLog });
+  const logged = readFileSync(accessLog, "utf8");
+  expect(logged.trim().split("\n")).toHaveLength(1);
+  const cache = tempDir("oq-martian-readback-no-truth-");
+  const before = process.env.OPENQODEX_BENCH_ACCESS_LOG;
+  process.env.OPENQODEX_BENCH_ACCESS_LOG = accessLog;
+  try {
+    const run = loadRun(folder);
+    const block = readMartianOutside(folder, scoreRun(run).jobs, run.specs, { ...boardOptions.get(folder), cache });
+    expect(block).toEqual(read(join(folder, "score.json")).outside.martian);
+    expect(readdirSync(cache)).toEqual([]);
+    expect(readFileSync(accessLog, "utf8")).toBe(logged);
+  } finally {
+    if (before === undefined) delete process.env.OPENQODEX_BENCH_ACCESS_LOG;
+    else process.env.OPENQODEX_BENCH_ACCESS_LOG = before;
+  }
 });
 
 it("Martian refuses a changed golden comment in one line naming its case", async () => {
@@ -274,7 +294,7 @@ it("Martian refuses a changed golden comment in one line naming its case", async
   const result = martianRead(folder);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
   expect(result.stderr).toContain(entry.openqodex.caseId);
-  expect(result.stderr).toMatch(/benchmark_data.json.*conversion/);
+  expect(result.stderr).toMatch(/golden comments.*frozen truth hash/);
 });
 
 it("Martian refuses an added review comment in benchmark_data.json", async () => {

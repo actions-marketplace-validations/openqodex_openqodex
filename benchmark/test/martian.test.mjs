@@ -243,14 +243,15 @@ describe("the Martian ingest", () => {
     const path = "offline/golden_comments/alpha.json";
     const rows = Array.from({ length: 50 }, (_, i) => ({ pr_title: `Change ${i}`, url: `https://github.com/alpha/app/pull/${101 + i}`, comments: Array.from({ length: i < 23 ? 4 : 3 }, (_, j) => ({ comment: `Bug ${i}.${j}`, severity: "High", category: "bug" })) }));
     const ctx = setup({ [path]: rows });
-    const { root, cases, report } = await ingestInto(ctx);
+    const parent = tempDir("oq-martian-verification-");
+    const { root, cases, report } = await ingestInto(ctx, join(parent, "benchmark"));
     for (const dir of ["ingest", "lib"]) {
       mkdirSync(join(root, dir));
       for (const file of readdirSync(join(benchRoot, dir)).filter((f) => f.endsWith(".mjs"))) cpSync(join(benchRoot, dir, file), join(root, dir, file));
     }
     for (const file of ["score.mjs", "legacy"]) cpSync(join(benchRoot, file), join(root, file), { recursive: true });
-    mkdirSync(join(root, "../packages"), { recursive: true });
-    symlinkSync(join(benchRoot, "../packages/scanners"), join(root, "../packages/scanners"));
+    mkdirSync(join(parent, "packages"));
+    symlinkSync(join(benchRoot, "../packages/scanners"), join(parent, "packages/scanners"));
     mkdirSync(join(root, "outside"));
     writeFileSync(join(root, "outside/boards.json"), encode(ctx.boards));
     const published = encode(Object.fromEntries(rows.map(({ comments, ...row }) => [row.url, { ...row, golden_source_file: "alpha.json", golden_comments: comments }])));

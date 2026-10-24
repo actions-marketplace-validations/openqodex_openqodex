@@ -179,6 +179,10 @@ export function validateRunManifest(manifest, record) {
     need(saved.model === pin.model, `reviewer ${name} model differs from the comparison pin`);
     need(pin.version === undefined || saved.version === pin.version, `reviewer ${name} version differs from the comparison pin`);
     for (const field of ["effort", "maxOutputTokens"]) need((saved.settings?.[field] ?? null) === pin[field], `reviewer ${name} ${field} differs from the comparison pin`);
+    need(manifest.path === pin.path, `path differs from reviewer ${name}'s comparison pin`);
+    need(manifest.web === undefined || manifest.web === pin.web, `web setting differs from reviewer ${name}'s comparison pin`);
+    const config = `${name.replace(/:/g, "-")}-graph-${pin.graph}`;
+    need(Array.isArray(manifest.configs) && manifest.configs.length > 0 && manifest.configs.every((c) => (typeof c === "string" ? c : c?.id) === config), `configs differ from reviewer ${name}'s graph setting in the comparison pin`);
   }
 }
 

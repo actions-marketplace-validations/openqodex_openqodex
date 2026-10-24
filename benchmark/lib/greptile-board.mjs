@@ -38,7 +38,6 @@ export function readGreptileOutside(folder, jobs, _specs, options = {}) {
   need(canonical([...new Set(jobs.map((j) => boardToolName(j.config, j.repeat)))].sort()) === canonical([...names].sort()), "tools differ from the run's planned jobs");
   need(input.cases.every((c) => names.includes(c.tool) && Array.isArray(c.comments)), "a case names an unknown tool or has no comment list");
   need(canonical(input) === canonical(greptileInput(folder, input.truthSet, options)), "input.json differs from the run's first attempt rebuild");
-  need(input.cases.every((c) => c.status !== "not-run" || c.comments.length === 0), "a not-run case carries comments");
   const judged = input.cases.some((c) => !input.tools.find((t) => t.tool === c.tool).held?.length && c.comments.length > 0);
   need(evaluation.judgeModel === model || (evaluation.judgeModel === null && !judged), "judge model differs from the board pin or is missing for comments that needed judging");
   const perTool = {};

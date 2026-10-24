@@ -37,7 +37,7 @@ import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, wri
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, caseHash, git } from "../lib/cases.mjs";
-import { comparisonHash, freezeComparison, validateComparison, validateOutsideRows } from "../lib/comparison.mjs";
+import { comparisonHash, freezeComparison, validateComparison, validateOutsideRows, validateRunManifest } from "../lib/comparison.mjs";
 import { entryProblems, hashFolder, hashReviewedFolder, sha256 } from "../lib/index.mjs";
 import { toolName } from "../lib/aacr-board.mjs";
 import { boardConfigOf, boardToolName } from "../lib/martian-board.mjs";
@@ -52,6 +52,29 @@ afterAll(removeTempDirs);
 const read = (file) => JSON.parse(readFileSync(file, "utf8"));
 const write = (file, value) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); };
 const reviewers = { library: { path: "server", reviewer: "model:gpt-6.1-sol", model: "gpt-6.1-sol", graph: "on", web: "off", effort: "high", maxOutputTokens: 32000 } };
+
+for (const field of ["path", "web", "graph"]) it(`manifest preflight refuses a ${field} mismatch with the reviewer pin`, () => {
+  const pin = reviewers.library;
+  const build = { commit: "a".repeat(40), tree: "b".repeat(40), bundleHash: "c".repeat(64), version: "0.14.0" };
+  const manifest = { path: pin.path, web: pin.web, configs: [`model-gpt-6.1-sol-graph-${pin.graph}`], build, reviewers: { [pin.reviewer]: { model: pin.model, settings: { effort: pin.effort, maxOutputTokens: pin.maxOutputTokens } } } };
+  if (field === "graph") manifest.configs = ["model-gpt-6.1-sol-graph-off"];
+  else manifest[field] = field === "path" ? "laptop" : "on";
+  expect(() => validateRunManifest(manifest, { reviewers, build })).toThrow(new RegExp(field));
+});
+
+it("manifest preflight refuses a config naming a different reviewer", () => {
+  const pin = reviewers.library;
+  const build = { commit: "a".repeat(40), tree: "b".repeat(40), bundleHash: "c".repeat(64), version: "0.14.0" };
+  const manifest = { path: pin.path, configs: [{ id: "model-gpt-6.1-sol-graph-on" }, { id: "claude-graph-on" }], build, reviewers: { [pin.reviewer]: { model: pin.model, settings: { effort: pin.effort, maxOutputTokens: pin.maxOutputTokens } } } };
+  expect(() => validateRunManifest(manifest, { reviewers, build })).toThrow(/config/);
+});
+
+it("manifest preflight accepts object configs when web was not recorded", () => {
+  const pin = reviewers.library;
+  const build = { commit: "a".repeat(40), tree: "b".repeat(40), bundleHash: "c".repeat(64), version: "0.14.0" };
+  const manifest = { path: pin.path, configs: [{ id: "model-gpt-6.1-sol-graph-on" }], build, reviewers: { [pin.reviewer]: { model: pin.model, settings: { effort: pin.effort, maxOutputTokens: pin.maxOutputTokens } } } };
+  expect(() => validateRunManifest(manifest, { reviewers, build })).not.toThrow();
+});
 function fixture(suite = "aacr", cli = false) {
   const root = join(realpathSync(tempDir("oq-comparison-")), "benchmark");
   for (const file of new Set(["outside/boards.json", "suites/aacr/cases.json", "splits/aacr-v1.json", `suites/${suite}/cases.json`, `splits/${suite}-v1.json`, "review-queue/people.json"])) {

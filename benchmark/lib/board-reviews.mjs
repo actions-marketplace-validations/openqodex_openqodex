@@ -133,6 +133,7 @@ export function greptileInput(folder, truthSet, { root = benchRoot, cache = cach
 
 /** Fresh Martian data, from pinned truth and the saved first attempts. */
 export function martianConversion(run, { cache = cacheRoot() } = {}) {
+  const converted = martianReviewConversion(run);
   const cases = new Map(run.cases.map((c) => [c.id, c]));
   // Each pull request's golden comments, from the pinned file, checked against the frozen truth.
   const data = {};
@@ -140,10 +141,16 @@ export function martianConversion(run, { cache = cacheRoot() } = {}) {
   for (const c of [...cases.values()].sort((a, b) => byName(a.name, b.name))) {
     const truth = truthOf(c, { cache });
     const row = readPinned(cache, "martian", { path: c.source.dataset.file, sha256: c.source.dataset.sha256 }).find((r) => r.url === c.source.prUrl);
-    data[c.source.prUrl] = { pr_title: row.pr_title ?? null, original_url: row.original_url ?? null, source_repo: basename(c.source.dataset.file, ".json"), golden_comments: row.comments, golden_source_file: basename(c.source.dataset.file), openqodex: { caseId: c.id, case: c.name }, reviews: [] };
+    data[c.source.prUrl] = { pr_title: row.pr_title ?? null, original_url: row.original_url ?? null, source_repo: basename(c.source.dataset.file, ".json"), golden_comments: row.comments, golden_source_file: basename(c.source.dataset.file), openqodex: { caseId: c.id, case: c.name }, reviews: converted.data[c.source.prUrl].reviews };
     caseRows.push({ caseId: c.id, case: c.name, goldenUrl: c.source.prUrl, golden: truth.items.length, licence: c.source.licence.class });
   }
+  return { ...converted, data, caseRows };
+}
 
+/** Fresh Martian reviews from first attempts, without reading truth. */
+export function martianReviewConversion(run) {
+  const cases = new Map(run.cases.map((c) => [c.id, c]));
+  const data = Object.fromEntries(run.cases.map((c) => [c.source.prUrl, { reviews: [] }]));
   // Every suite case has a review, including cases the run did not plan.
   const jobs = [...run.reviews].sort((a, b) => byName(a.tool, b.tool) || byName(a.case, b.case));
   const held = run.held.map((h) => ({ tool: h.tool, caseId: h.caseId, case: h.case, goldenUrl: cases.get(h.caseId).source.prUrl, index: h.index, findingId: h.findingId, lacking: h.lacking }));
@@ -163,5 +170,5 @@ export function martianConversion(run, { cache = cacheRoot() } = {}) {
     const why = lack.length === 0 ? null : `${lack.length} finding${lack.length === 1 ? " lacks" : "s lack"} what Martian's judge reads (${lack.map((h) => `${h.case} index ${h.index}: ${h.lacking.join(", ")}`).join("; ")}); none of this tool name's reviews is sent, since judging it without one of its pull requests would shrink Martian's denominators`;
     return { tool, config, boardConfig, repeat, reviews: mine.length, findings: mine.reduce((n, j) => n + j.shown.length, 0), statuses, held: lack.length > 0, why };
   });
-  return { data, caseRows, jobs, held, failures, toolRows };
+  return { data, jobs, held, failures, toolRows };
 }

@@ -70,10 +70,10 @@ import { join } from "node:path";
 import { PACKAGE_NAME } from "./package.mjs";
 import { benchRoot } from "./cases.mjs";
 import { comparisonRelease } from "./comparison.mjs";
-import { boardReview, martianConversion, readAttempts, readBoardReviews } from "./board-reviews.mjs";
+import { boardReview, martianReviewConversion, readAttempts, readBoardReviews } from "./board-reviews.mjs";
 import { hashFolder, sha256 } from "./index.mjs";
 import { canonical, martianFindings, martianGolden, population, readMartianEvaluation } from "./score.mjs";
-import { martianTruth } from "./suites.mjs";
+import { martianTruth, truthHashOf } from "./suites.mjs";
 
 const BOARDS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 export const MARTIAN_BOARD = Object.freeze({ repo: BOARDS.boards.martian.repo, commit: BOARDS.boards.martian.commit, source: BOARDS.boards.martian.source });
@@ -264,7 +264,7 @@ export function martianEvaluations({ data, candidates, dedup, evaluations, total
   return { tools, problems: typeof totals?.beta === "number" ? [] : ["score_profiles gave no beta"] };
 }
 
-/** Check published inputs against pinned truth and saved reviews; never read work/. */
+/** Check saved reviews and frozen truth hashes; never read pinned truth or work/. */
 export function readMartianOutside(folder, jobs, specs, options = {}) {
   const out = join(folder, "outside", "martian");
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; convert the run first (benchmark/outside/boards/martian.sh <run>)`);
@@ -286,9 +286,13 @@ export function readMartianOutside(folder, jobs, specs, options = {}) {
   const data = read("benchmark_data.json");
   const entries = Object.values(data);
   need(Array.isArray(convert.cases) && entries.length === convert.cases.length && entries.every((e) => convert.cases.some((c) => c.caseId === e.openqodex?.caseId)), "benchmark_data cases differ from convert.json");
-  const fresh = martianConversion(readBoardReviews(folder, options), options).data;
+  const run = readBoardReviews(folder, options);
+  const cases = new Map(run.cases.map((c) => [c.source.prUrl, c]));
+  const fresh = martianReviewConversion(run).data;
   for (const url of new Set([...Object.keys(data), ...Object.keys(fresh)])) {
-    need(canonical(data[url]) === canonical(fresh[url]), `${fresh[url]?.openqodex.caseId ?? data[url]?.openqodex?.caseId}: benchmark_data.json differs from a fresh conversion of this run`);
+    const c = cases.get(url);
+    need(c && canonical(data[url]?.reviews) === canonical(fresh[url]?.reviews) && canonical(data[url]?.openqodex) === canonical({ caseId: c.id, case: c.name }), `${c?.id ?? data[url]?.openqodex?.caseId}: benchmark_data.json differs from a fresh conversion of this run`);
+    need(Array.isArray(data[url].golden_comments) && truthHashOf(martianTruth({ comments: data[url].golden_comments }).items) === c.truthHash, `${c.id}: golden comments differ from the frozen truth hash`);
   }
   const golden = entries.flatMap((e) => martianGolden(e.openqodex.caseId, martianTruth({ comments: e.golden_comments })));
   const planned = population(manifest, readAttempts(folder));

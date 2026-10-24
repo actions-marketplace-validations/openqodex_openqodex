@@ -483,7 +483,8 @@ It prints each tool's case counts and spend forecast without calling a model.
 The release names the comparison record.
 The unit cost is the pinned Greptile calibration's cost divided by its number of cases.
 The forecast is that unit cost times the number of judged cases.
-A forecast above the cap refuses to start.
+A forecast above `--max-usd` refuses to start.
+`--max-usd` above the record's `capUsd` refuses before any judge call.
 A case with no comment is missed by script with its reason.
 Cases the run never planned have reason `not-run` and truth from the pinned bench cache.
 Structured comments include the finding's path, line when present and paragraph.
@@ -493,6 +494,7 @@ The script writes `<run>/outside/greptile/<tool>/verdicts.json` in suite order.
 It writes `<run>/outside/greptile/eval.json` with the pins, relay counts and totals.
 A dry run refuses a folder holding `eval.json` in one line.
 Rewriting `input.json` would disagree with the saved verdicts.
+The reader rebuilds `input.json` from first attempts and refuses a difference.
 A saved `eval.json` requires `--force` for a priced rerun.
 `--force` is accepted only on a priced run.
 The new output first goes to `<run>/outside/greptile.pending-<UTC timestamp>/`.
@@ -527,6 +529,9 @@ node benchmark/ingest/martian.mjs --verify-published [--offline]
 benchmark/outside/boards/martian.sh --prepare
 benchmark/outside/boards/martian.sh <run> [--dry-run]
 ```
+
+The Martian reader refuses a `benchmark_data.json` whose reviews differ from a fresh conversion.
+The Martian judge checks the run against the record before it reads model settings.
 
 - `--prepare` fetches Martian's repository at the pinned commit into the bench cache (`$OPENQODEX_BENCH_CACHE/upstream/code-review-benchmark@<commit>`). It builds the venv beside the checkout (`code-review-benchmark@<commit>.venv`) with uv, Python 3.11 and their lock file, so the checkout holds only the pinned tree. The script refuses the cache, the checkout or the venv when its real path lies inside this repository, a link under the cache included.
 - The converter (`benchmark/outside/convert/martian.mjs`) runs first. It converts only a release run. A release run's manifest names its `release`, and it reviewed either the published package of that release (`run.mjs --package npm:<release>`) or the clean local build an accepted frozen comparison pins, as described above. For an npm release, the converter asks the npm registry, at its fixed address, for that version's integrity again, and refuses a mismatch. Every Martian case is held out. Each conversion appends a line to `benchmark/index/heldout-access.jsonl` before it reads any golden comment. `convert.json` records that line and the sha256 of the manifest it converted. The converter refuses a smoke run, a case with an excluded licence class, an OpenQodex configuration with the graph off, and two configurations that would share a tool name. Unverified-licence cases convert for local judging, and `convert.json` preserves each case's licence class; board submissions still refuse them. The native control goes by `claude-code-control-r<repeat>` and carries no OpenQodex graph setting.
