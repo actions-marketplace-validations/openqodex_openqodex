@@ -21,10 +21,14 @@ const write = (file, value) => { mkdirSync(join(file, ".."), { recursive: true }
 
 // Match the private flat helper in martian-board.mjs.
 const flat = (s) => (typeof s === "string" ? s.replace(/`{3,}/g, "`").replace(/\s+/g, " ").trim() : "");
-export function commentsInForm(comments, form) {
+function commentsInForm(comments, form) {
   if (form === "flat") return comments.map(flat);
   if (form === "joined") return comments.length ? [comments.join("\n\n")] : [];
   return comments;
+}
+
+export function casesInForm(inputs, form) {
+  return form ? inputs.cases.map((c) => ({ ...c, comments: commentsInForm(c.comments, form) })) : inputs.cases;
 }
 
 export function calibrationPaths(name, startedAt, { form, root = benchRoot } = {}) {
@@ -66,7 +70,6 @@ function pythonForPipeline() {
 
 export async function main(argv = process.argv.slice(2)) {
   const usage = "usage: node benchmark/outside/calibrate.mjs --board greptile|martian [--form flat|joined]";
-  if (argv.includes("--help")) { console.log(usage); return 0; }
   if (![2, 4].includes(argv.length) || argv[0] !== "--board" || !["greptile", "martian"].includes(argv[1]) || (argv.length === 4 && (argv[2] !== "--form" || !["flat", "joined"].includes(argv[3])))) throw new Error(usage);
   const name = argv[1]; const form = argv[3]; const startedAt = new Date().toISOString();
   if (form && name !== "greptile") throw new Error("--form is only supported for --board greptile");
@@ -83,8 +86,7 @@ export async function main(argv = process.argv.slice(2)) {
     relay = await relayClient(name === "martian" ? { cacheDir: join(run, "verdicts", hash(JSON.stringify({ board, sources: inputs.sources }))) } : {});
     let verdicts; let published; let classes; let score = null; let judgeFailures = null;
     if (name === "greptile") {
-      const cases = form ? inputs.cases.map((c) => ({ ...c, comments: commentsInForm(c.comments, form) })) : inputs.cases;
-      verdicts = await judgeGreptile(cases, { truthSet: "greptile", complete: (request) => relay.complete(GREPTILE_PROMPT, request) });
+      verdicts = await judgeGreptile(casesInForm(inputs, form), { truthSet: "greptile", complete: (request) => relay.complete(GREPTILE_PROMPT, request) });
       write(join(run, "blind-verdicts.json"), verdicts);
       published = inputs.published(); classes = ["caught", "missed"];
     } else {
@@ -123,7 +125,7 @@ export async function main(argv = process.argv.slice(2)) {
     return exitCode;
   } catch (error) {
     const counters = relay ? await relay.counts().catch(() => null) : null;
-    write(join(run, "failure.json"), { board: name, startedAt, build, error: error.message, relay: counters });
+    writeCalibration(join(run, "failure.json"), { board: name, startedAt, build, error: error.message, relay: counters }, form);
     throw error;
   } finally { if (relay) await relay.close(); }
 }
