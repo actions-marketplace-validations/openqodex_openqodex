@@ -102,7 +102,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
   if (existsSync(out)) throw new Error(`${out} exists already: the run was converted before (and maybe judged). Move that folder to the Trash to convert it again.`);
 
   // Everything that refuses the run, before anything is read of the truth.
-  const run = readBoardReviews(folder, { root });
+  const run = readBoardReviews(folder, { root, heading: `${folder} is not converted for Martian's board:` });
   const cases = new Map(run.cases.map((c) => [c.id, c]));
   const problems = [];
   for (const c of cases.values()) {

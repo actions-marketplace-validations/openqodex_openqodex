@@ -3,11 +3,14 @@
 // ignored, empty reviews sent to the model, and an unbounded priced run.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { benchRoot } from "../lib/cases.mjs";
 import { cacheRoot } from "../lib/licence.mjs";
+import { comparisonHash } from "../lib/comparison.mjs";
+import { hash } from "../lib/calibration.mjs";
 import { attemptDir, planJobs, runManifest, sampleRecord } from "../lib/runner.mjs";
 import { rawPath, readCase, readSuite, specCopy, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
@@ -66,9 +69,37 @@ async function provider() {
   return { seen, envFile, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
-async function cli(folder, args = [], model = null) {
+function recordFixture() {
+  const root = tempDir("oq-greptile-record-");
+  for (const file of ["outside/boards.json", "suites/greptile/cases.json", "splits/greptile-v1.json", "review-queue/people.json"]) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    cpSync(join(benchRoot, file), join(root, file));
+  }
+  const record = read(join(benchRoot, "index/comparisons/compare-2026-10.json"));
+  record.release = "fixture-release";
+  record.boards = { greptile: record.boards.greptile };
+  record.suites = { greptile: record.suites.greptile };
+  record.calibrationRulings = record.calibrationRulings.filter((r) => r.board === "greptile");
+  const ref = record.calibrations.find((c) => read(join(benchRoot, c.file)).board.name === "greptile");
+  const calibration = read(join(benchRoot, ref.file));
+  calibration.costUsd = 0.5;
+  ref.file = "index/calibration/fixture-calibration.json";
+  write(join(root, ref.file), calibration);
+  ref.sha256 = hash(readFileSync(join(root, ref.file)));
+  record.calibrations = [ref];
+  record.acceptance.hash = comparisonHash(record);
+  write(join(root, "index/comparisons", `${record.release}.json`), record);
+  return { root, record, calibration };
+}
+
+async function cli(folder, args = [], model = null, { root = null, record = null, release = "compare-2026-10" } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [join(benchRoot, "outside/boards/greptile-run.mjs"), folder, ...args], { env: { ...process.env, ...(model ? { OPENQODEX_BENCH_MODEL_ENV: model.envFile } : { OPENQODEX_BENCH_MODEL_ENV: join(folder, "must-not-read-model.env") }) } });
+    const script = join(benchRoot, "outside/boards/greptile-run.mjs");
+    const argv = [folder, ...(release === null ? [] : ["--release", release]), ...args];
+    const module = JSON.stringify(pathToFileURL(script).href);
+    const call = record ? `judgeRun(${JSON.stringify({ folder, dryRun: false, force: false, maxUsd: 1 })}, ${JSON.stringify(record)}, { root: ${JSON.stringify(root)} })` : `main(${JSON.stringify(argv)}, { root: ${JSON.stringify(root)} })`;
+    const invocation = record || root ? ["--input-type=module", "--eval", `import { ${record ? "judgeRun" : "main"} } from ${module}; ${call}.catch((e) => { console.error(e.message.replaceAll("\\n", " ")); process.exitCode = 2; });`] : [script, ...argv];
+    const child = spawn(process.execPath, invocation, { env: { ...process.env, ...(model ? { OPENQODEX_BENCH_MODEL_ENV: model.envFile } : { OPENQODEX_BENCH_MODEL_ENV: join(folder, "must-not-read-model.env") }) } });
     let stdout = ""; let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -134,18 +165,38 @@ test("a control review becomes one comment and a finding without a fix sentence 
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain(`Held, not sent: ${tool}`);
     expect(model.seen).toHaveLength(0);
-    expect(read(boardPath(folder, "eval.json")).perTool).toEqual({});
+    const evaluation = read(boardPath(folder, "eval.json"));
+    expect(evaluation.perTool[tool]).toEqual({ config: "model-scripted-graph-on", boardConfig: "library", held: [{ case: cases[0].name, index: 0, lacking: ["fix"] }], caught: null, missed: null, of: cases.length, planned: 2, notRun: cases.length - 2, rate: null });
+    expect(evaluation).toMatchObject({ judgeModel: null, relay: null });
+    expect(read(boardPath(folder, "input.json")).tools).toContainEqual({ tool, config: "model-scripted-graph-on", boardConfig: "library", held: [{ case: cases[0].name, index: 0, lacking: ["fix"] }] });
     expect(existsSync(boardPath(folder, `${tool}/verdicts.json`))).toBe(false);
   } finally { await model.close(); }
 });
 
-it("the script refuses a truth set other than the record's profile", async () => {
+test("the judge is sent the golden texts of the record's profile", async () => {
+  const folder = savedRun();
+  const fixture = recordFixture();
+  fixture.record.boards.greptile.profile = "augment";
+  const model = await provider();
+  try {
+    const result = await cli(folder, [], model, fixture);
+    expect(result.code, result.stderr).toBe(0);
+    expect(model.seen).toHaveLength(1);
+    const sent = JSON.parse(model.seen[0].messages.find((m) => m.role === "user").content);
+    expect(sent.golden).toEqual(truthOf(cases[0], { cache }).sets.augment.items.map((g) => g.text));
+    expect(sent.golden).not.toEqual(truthOf(cases[0], { cache }).sets.greptile.items.map((g) => g.text));
+    expect(read(boardPath(folder, "eval.json")).truthSet).toBe("augment");
+  } finally { await model.close(); }
+});
+
+it("an unknown record truth profile refuses in one line before any model call", async () => {
   const folder = tempDir("oq-greptile-truth-refusal-");
-  write(join(folder, "manifest.json"), { suite: "greptile" });
-  const result = await cli(folder, ["--dry-run", "--truth-set", "augment"]);
+  const fixture = recordFixture();
+  fixture.record.boards.greptile.profile = "unknown";
+  const result = await cli(folder, [], null, fixture);
   expect(result.code).toBe(2);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  expect(result.stderr).toMatch(/truth set augment.*profile greptile/);
+  expect(result.stderr).toMatch(/profile unknown.*greptile or augment/);
   expect(existsSync(boardPath(folder, "input.json"))).toBe(false);
 });
 
@@ -178,6 +229,66 @@ test("a saved Greptile evaluation refuses overwrite unless force is given", asyn
   expect(refused.stderr.trim().split("\n")).toHaveLength(1);
   expect(refused.stderr).toMatch(/eval.json.*--force/);
   expect((await cli(folder, ["--dry-run", "--force"])).code).toBe(0);
+  expect(existsSync(boardPath(folder, "eval.json"))).toBe(false);
+});
+
+test("a forced rerun removes stale verdicts when its tool is now held", async () => {
+  const folder = savedRun({ reports: [report([finding({ fix: " " })]), report()] });
+  write(boardPath(folder, `${tool}/verdicts.json`), [{ id: cases[0].id, label: "caught" }]);
+  write(boardPath(folder, "obsolete/nested.json"), { stale: true });
+  const result = await cli(folder, ["--max-usd", "1", "--force"]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(existsSync(boardPath(folder, `${tool}/verdicts.json`))).toBe(false);
+  expect(existsSync(boardPath(folder, "obsolete"))).toBe(false);
+  expect(read(boardPath(folder, "eval.json")).perTool[tool].caught).toBeNull();
+});
+
+test("an entirely empty run records no served model or relay counts", async () => {
+  const folder = savedRun({ reports: [report(), report()] });
+  const result = await cli(folder, ["--max-usd", "0"]);
+  expect(result.code, result.stderr).toBe(0);
+  expect(read(boardPath(folder, "eval.json"))).toMatchObject({ judgeModel: null, relay: null, perTool: { [tool]: { caught: 0, missed: cases.length } } });
+});
+
+test("a finding without a path sends only its body even when it has a line", async () => {
+  const folder = savedRun({ reports: [report([finding({ file_path: null }), finding({ file_path: "", line_number: null }), finding({ line_number: null })]), report()] });
+  const result = await cli(folder, ["--dry-run"]);
+  expect(result.code, result.stderr).toBe(0);
+  const body = "Index read past the end. The loop reads one element past the array. It throws at run time. Fix: Stop the loop one element earlier.";
+  expect(read(boardPath(folder, "input.json")).cases[0].comments).toEqual([body, body, `src/a.ts: ${body}`]);
+});
+
+test("the forecast charges each judged case once even when it has several comments", async () => {
+  const folder = savedRun({ reports: [report([finding(), finding({ line_number: 20 })]), report([finding()])] });
+  const fixture = recordFixture();
+  const unit = fixture.calibration.costUsd / fixture.calibration.counts.total;
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
+  expect(result.code, result.stderr).toBe(0);
+  expect(result.stdout).toContain(`Forecast: USD ${(2 * unit).toFixed(6)} for 2 judged cases at USD ${unit.toFixed(8)} per case from calibration.`);
+});
+
+it("the script requires a release name instead of selecting a comparison itself", async () => {
+  const result = await cli(tempDir("oq-greptile-no-release-"), ["--dry-run"], null, { release: null });
+  expect(result.code).toBe(2);
+  expect(result.stderr).toMatch(/--release.*required/);
+});
+
+it("the script rejects the removed truth-set flag", async () => {
+  const result = await cli(tempDir("oq-greptile-old-flag-"), ["--truth-set", "augment"]);
+  expect(result.code).toBe(2);
+  expect(result.stderr).toMatch(/unknown.*--truth-set/);
+});
+
+it("a calibration whose bytes differ from the release reference refuses in one line", async () => {
+  const fixture = recordFixture();
+  const file = join(fixture.root, fixture.record.calibrations[0].file);
+  writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  const folder = tempDir("oq-greptile-calibration-refusal-");
+  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
+  expect(result.code).toBe(2);
+  expect(result.stderr.trim().split("\n")).toHaveLength(1);
+  expect(result.stderr).toMatch(/fixture-calibration.json.*hash/);
+  expect(existsSync(boardPath(folder, "input.json"))).toBe(false);
 });
 
 it("the Martian converter refuses a planned case outside the frozen suite", async () => {
@@ -197,7 +308,7 @@ test("the Greptile converter refuses a planned case outside the frozen suite in 
   const result = await cli(folder, ["--dry-run"]);
   expect(result.code).toBe(2);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  expect(result.stderr).toMatch(/not-in-suite.*not in.*suite/);
+  expect(result.stderr).toMatch(/not converted for Greptile's board:.*not-in-suite.*not in.*suite/);
 });
 
 test("a changed planned case hash refuses conversion before writing input", async () => {

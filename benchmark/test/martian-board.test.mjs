@@ -66,6 +66,17 @@ afterAll(removeTempDirs);
 const WRAPPER = join(benchRoot, "outside", "boards", "martian.sh");
 const JUDGE = join(benchRoot, "outside", "boards", "martian-judge.mjs");
 const RECORD = process.env.MARTIAN_BOARD_RECORD === "1";
+const FIXTURE_AT = "2026-10-24T00:00:00.000Z";
+
+// The runner records the wall clock at completion. Fix it before conversion
+// so the manifest hash in the byte baseline is reproducible.
+function freezeFixtureEnd(folder) {
+  const file = join(folder, "manifest.json");
+  const manifest = readJson(file);
+  manifest.ended.at = FIXTURE_AT;
+  manifest.ended.elapsedMin = 0;
+  write(file, `${JSON.stringify(manifest, null, 2)}\n`);
+}
 
 const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map((p) => join(dir, String(p))).filter((p) => statSync(p).isFile()) : []);
 const refusal = async (fn) => {
@@ -287,6 +298,23 @@ describe("an unverified licence reaches a board submission, or a sample outside 
     expect(await refusal(() => convertRun(out, convertOpts(ctx)))).toMatch(/flask-path-traversal/);
     expect(existsSync(join(out, "outside"))).toBe(false);
   });
+
+  it("collects every planned case and hash problem under Martian's conversion heading", async () => {
+    const ctx = await suite();
+    const plan = fixturePlan();
+    plan[`${MODEL}/1`][[...ctx.ids.keys()][0]] = "unstarted";
+    const out = await savedRun(ctx, { plan });
+    const manifest = readJson(join(out, "manifest.json"));
+    manifest.jobs[0].caseId = "martian/not-in-suite@12345678";
+    const changed = manifest.jobs[1];
+    manifest.caseHashes[readCase(changed.caseId, { root: ctx.root }).name] = "0".repeat(64);
+    write(join(out, "manifest.json"), JSON.stringify(manifest));
+    const opts = convertOpts(ctx);
+    const why = await refusal(() => convertRun(out, opts));
+    expect(why).toBe(`${out} is not converted for Martian's board:\nmartian/not-in-suite@12345678: not in the frozen martian suite\n${changed.caseId}: the run's case hash differs from the frozen suite`);
+    expect(existsSync(join(out, "outside"))).toBe(false);
+    expect(existsSync(opts.accessLog)).toBe(false);
+  });
 });
 
 describe("a failed or never-started review vanishes from Martian's denominators, or two configurations go by one tool name", () => {
@@ -352,13 +380,15 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
     expect(body).not.toMatch(/\n|```/);
   });
 
-  it("the Martian converter's fixture output is byte-identical after the shared module", async () => {
+  it("the Martian converter's fixture data stays byte-identical and convert.json freezes its shape from this commit on", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    await convertRun(out, convertOpts(ctx));
+    freezeFixtureEnd(out);
+    await convertRun(out, convertOpts(ctx, { now: () => FIXTURE_AT }));
     const written = readFileSync(join(out, "outside", "martian", "benchmark_data.json"), "utf8");
     // This committed output predates the shared run reader. Never re-record it here.
     expect(written).toBe(readFileSync(join(FIXTURES, "benchmark_data.json"), "utf8"));
+    expect(readFileSync(join(out, "outside/martian/convert.json"), "utf8")).toBe(readFileSync(join(FIXTURES, "convert.json"), "utf8"));
     const data = JSON.parse(written);
     expect(data["https://github.com/oq-fixture/shop/pull/11"].reviews[0].review_comments[0]).toEqual({
       path: "src/checkout.ts",
@@ -369,6 +399,18 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
     });
     // A finding outside the change is sent too.
     expect(data["https://github.com/oq-fixture/ledger/pull/7"].reviews[0].review_comments).toHaveLength(1);
+  });
+
+  it("convert.json freezes notRun, statuses with not-run, suite-count reviews and access caseCount from this commit on", async () => {
+    const ctx = await suite();
+    const partial = { ...ctx, ids: new Map([...ctx.ids].slice(0, 2)) };
+    const out = await savedRun(partial, { plan: fixturePlan() });
+    freezeFixtureEnd(out);
+    const { record } = await convertRun(out, convertOpts(ctx, { now: () => FIXTURE_AT }));
+    expect(readFileSync(join(out, "outside/martian/convert.json"), "utf8")).toBe(readFileSync(join(FIXTURES, "convert-not-run.json"), "utf8"));
+    expect(record.notRun).toEqual([{ tool: "openqodex-library-r1", caseId: [...ctx.ids.values()][2] }]);
+    expect(record.tools[0]).toMatchObject({ reviews: ctx.ids.size, statuses: { "not-run": 1 } });
+    expect(record.access.caseCount).toBe(ctx.ids.size);
   });
 });
 

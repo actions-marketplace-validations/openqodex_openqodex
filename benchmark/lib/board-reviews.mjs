@@ -58,7 +58,7 @@ export function boardReview(job) {
  * A run's suite cases and one review per suite case per tool name. No truth
  * is read here, so Martian can log its held-out access before reading it.
  */
-export function readBoardReviews(folder, { root = benchRoot } = {}) {
+export function readBoardReviews(folder, { root = benchRoot, heading = `${folder} is not converted for the board:` } = {}) {
   const manifestBytes = readFileSync(join(folder, "manifest.json"));
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   const suite = readSuite(manifest.suite, { root });
@@ -69,10 +69,10 @@ export function readBoardReviews(folder, { root = benchRoot } = {}) {
   const problems = [...pop.problems];
   if (pop.jobs.length === 0) problems.push("the run plans no review");
   for (const j of pop.jobs) {
-    if (!byId.has(j.caseId)) throw new Error(`${j.caseId}: not in the frozen ${manifest.suite} suite`);
-    if (manifest.caseHashes?.[j.case] !== byId.get(j.caseId).hash) throw new Error(`${j.caseId}: the run's case hash differs from the frozen suite`);
+    if (!byId.has(j.caseId)) problems.push(`${j.caseId}: not in the frozen ${manifest.suite} suite`);
+    else if (manifest.caseHashes?.[j.case] !== byId.get(j.caseId).hash) problems.push(`${j.caseId}: the run's case hash differs from the frozen suite`);
   }
-  for (const c of cases) if (manifest.caseHashes?.[c.name] !== undefined && manifest.caseHashes[c.name] !== c.hash) throw new Error(`${c.id}: the run's case hash differs from the frozen suite`);
+  for (const c of cases) if (manifest.caseHashes?.[c.name] !== undefined && manifest.caseHashes[c.name] !== c.hash) problems.push(`${c.id}: the run's case hash differs from the frozen suite`);
   const planned = new Set(pop.jobs.map((j) => j.case));
   for (const a of attempts) if (!planned.has(a.case)) problems.push(`samples/${a.case}/${a.config}: a sample of ${a.case}, which the run did not plan`);
   for (const a of pop.unplanned) if (planned.has(a.case)) problems.push(`samples/${a.case}/${a.config}/${a.repeat}: a review the run did not plan`);
@@ -85,7 +85,7 @@ export function readBoardReviews(folder, { root = benchRoot } = {}) {
       else tools.set(tool, { tool, config: j.config, repeat: j.repeat, boardConfig: boardConfigOf(j.config) });
     } catch (error) { problems.push(error.message); }
   }
-  if (problems.length > 0) throw new Error([...new Set(problems)].join("; "));
+  if (problems.length > 0) throw new Error(`${heading}\n${[...new Set(problems)].join("\n")}`);
   const toolRows = [...tools.values()].sort((a, b) => byName(a.tool, b.tool));
   const reviews = [];
   for (const t of toolRows) {
