@@ -21,29 +21,43 @@
 // 20. A ruling names a board without a calibration record.
 // 21. Page data loses per-class agreement or requires a ruling above the bar.
 // 22. Two calibration files for one board overwrite its agreement.
+// 23. A partial run silently drops cases from the frozen suite.
+// 24. Board output changes the reviewed-run hash or a null board attaches.
+// 25. Missing tools, incomplete board accounting or edited evidence attaches.
+// 26. A control is pinned to the product build instead of its version and model.
+// 27. Attachment keeps acceptance, overwrites a duplicate or writes on refusal.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { benchRoot, caseHash } from "../lib/cases.mjs";
-import { comparisonHash, freezeComparison, validateComparison, validateOutsideRows } from "../lib/comparison.mjs";
-import { hashFolder, sha256 } from "../lib/index.mjs";
+import { buildFingerprint, comparisonHash, freezeComparison, validateComparison, validateOutsideRows } from "../lib/comparison.mjs";
+import { entryProblems, hashFolder, hashReviewedFolder, sha256 } from "../lib/index.mjs";
+import { toolName } from "../lib/aacr-board.mjs";
+import { boardConfigOf, boardToolName } from "../lib/martian-board.mjs";
+import { BOARDS } from "../lib/outside-boards.mjs";
+import { caseSetHash } from "../lib/score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
 afterAll(removeTempDirs);
 const read = (file) => JSON.parse(readFileSync(file, "utf8"));
 const write = (file, value) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); };
 const reviewers = { library: { path: "server", reviewer: "model:gpt-6.1-sol", model: "gpt-6.1-sol", graph: "on", web: "off", effort: "high", maxOutputTokens: 32000 } };
-function fixture() {
-  const root = join(tempDir("oq-comparison-"), "benchmark");
-  for (const file of ["outside/boards.json", "suites/aacr/cases.json", "splits/aacr-v1.json", "review-queue/people.json"]) {
+function fixture(suite = "aacr", cli = false) {
+  const root = join(realpathSync(tempDir("oq-comparison-")), "benchmark");
+  for (const file of new Set(["outside/boards.json", "suites/aacr/cases.json", "splits/aacr-v1.json", `suites/${suite}/cases.json`, `splits/${suite}-v1.json`, "review-queue/people.json"])) {
     mkdirSync(dirname(join(root, file)), { recursive: true });
     cpSync(join(benchRoot, file), join(root, file));
   }
-  const build = { commit: "a".repeat(40), tree: "b".repeat(40), bundleHash: "c".repeat(64), version: "0.12.0" };
+  const build = cli ? buildFingerprint() : { commit: "a".repeat(40), tree: "b".repeat(40), bundleHash: "c".repeat(64), version: "0.12.0" };
+  if (cli) {
+    cpSync(join(benchRoot, "lib"), join(root, "lib"), { recursive: true });
+    mkdirSync(join(root, "../packages"), { recursive: true });
+    symlinkSync(join(benchRoot, "../packages/cli"), join(root, "../packages/cli"));
+  }
   write(join(root, ".build/provenance.json"), { ...build, cliVersion: build.version });
   const options = { root, build };
-  const record = freezeComparison({ release: "compare-2026-10", suites: ["aacr"], boards: ["aacr"], reviewers, capUsd: 100 }, options);
+  const record = freezeComparison({ release: "compare-2026-10", suites: [suite], boards: [suite], reviewers: structuredClone(reviewers), capUsd: 100 }, options);
   return { root, build, options, record };
 }
 const sign = (record) => { record.acceptance = { person: "Sid", date: "2026-10-14", hash: "" }; record.acceptance.hash = comparisonHash(record); return record; };
@@ -65,24 +79,160 @@ function ruledCalibrationFixture() {
   f.record.calibrationRulings = [{ board: "greptile", decidedBy: "Sid", decidedOn: "2026-10-22", agreement: { caught: 85.37, missed: 88.89 } }];
   return f;
 }
-function runFixture(f, tree = true, list = "private") {
+function runFixture(f, tree = true, list = "private", reviewer = "library") {
   const entry = read(join(benchRoot, "index/runs/2026-10-12-b43b25b-aacr-gpt61.json"));
+  const suite = Object.keys(f.record.suites)[0];
+  const ids = Object.entries(f.record.suites[suite].caseHashes).map(([name, h]) => `${suite}/${name}@${h.slice(0, 8)}`);
+  const settings = f.record.reviewers[reviewer];
+  const config = `${settings.reviewer.replace(/:/g, "-")}-graph-${settings.graph}`;
+  entry.suite = suite; entry.splitHash = f.record.suites[suite].splitHash;
+  entry.caseIds = ids; entry.caseSetHash = caseSetHash(ids);
+  entry.perCase = {}; entry.perBug = {}; entry.intervals = { ...entry.intervals, cluster: "case", groups: null };
+  entry.scores = { [config]: Object.values(entry.scores)[0] }; entry.configs = [config];
+  entry.path = settings.path; entry.web = settings.web;
+  entry.reviewers = { [settings.reviewer]: { model: settings.model, version: settings.version ?? "fixture" } };
+  entry.repeat = 1;
   entry.build = { ...entry.build, ...f.build, short: f.build.commit.slice(0, 7), cliVersion: f.build.version };
   if (!tree) delete entry.build.tree;
   const folder = join(f.root, "results", entry.runId);
-  const manifest = { build: { ...f.build }, reviewers: { "model:gpt-6.1-sol": { ...entry.reviewers["model:gpt-6.1-sol"], settings: { effort: "high", maxOutputTokens: 32000 } } } };
+  const manifest = { suite, splitHash: entry.splitHash, build: { ...f.build }, reviewers: { [settings.reviewer]: { ...entry.reviewers[settings.reviewer], settings: { effort: settings.effort, maxOutputTokens: settings.maxOutputTokens } } } };
+  const saveEntry = () => {
+    entry.caseSetHash = caseSetHash(entry.caseIds);
+    if (list === "private") entry.privateListHash = hashReviewedFolder(folder).listHash;
+    else entry.asset.listHash = hashReviewedFolder(folder).listHash;
+    write(join(f.root, "index/runs", `${entry.runId}.json`), entry);
+    f.record.runs = [{ runId: entry.runId, sha256: sha256(readFileSync(join(f.root, "index/runs", `${entry.runId}.json`))), reviewer, casesNotRun: ids.filter((id) => !entry.caseIds.includes(id)) }];
+  };
   const save = () => {
     write(join(folder, "manifest.json"), manifest);
-    if (list === "private") entry.privateListHash = hashFolder(folder).listHash;
-    else entry.asset.listHash = hashFolder(folder).listHash;
-    write(join(f.root, "index/runs", `${entry.runId}.json`), entry);
-    f.record.runs = [{ runId: entry.runId, sha256: sha256(readFileSync(join(f.root, "index/runs", `${entry.runId}.json`))), reviewer: "library" }];
+    const out = join(folder, "outside", suite);
+    const tool = suite === "aacr" ? toolName(config, 1) : boardToolName(config, 1);
+    if (suite === "aacr") {
+      const dir = `${config}/r1`;
+      write(join(out, "convert.json"), { reader: "ocr", references: {}, withoutLine: [], folders: [{ config, repeat: 1, tool, dir, files: entry.caseIds.length }] });
+      write(join(out, "eval.json"), { folders: [{ config, repeat: 1, mode: "llm", judgeErrors: 0, metrics: ["metrics_ocr_fixture.json"] }] });
+      write(join(out, dir, "metrics_ocr_fixture.json"), { summary: { evaluated_instances: entry.caseIds.length, missing_instances: 0, expected_notes: 0, generated_notes: 0, matched_line_notes: 0, matched_semantic_notes: 0 } });
+      entry.outside = { aacr: BOARDS.aacr(folder, [], {}) };
+    } else if (suite === "greptile") {
+      const pin = read(join(f.root, "outside/boards.json"));
+      const board = pin.boards.greptile;
+      const judgeModel = pin.deployments[board.judge.deployment].id;
+      const manifestSha256 = sha256(readFileSync(join(folder, "manifest.json")));
+      const cases = ids.map((id) => ({ id, caseId: id, config, boardConfig: boardConfigOf(config), tool, comments: [], status: entry.caseIds.includes(id) ? "complete" : "not-run" }));
+      write(join(out, "input.json"), { truthSet: "greptile", manifestSha256, splitHash: entry.splitHash, suite: { name: suite, cases: ids }, tools: [{ tool, config, boardConfig: boardConfigOf(config) }], cases });
+      write(join(out, "eval.json"), { version: 1, board: { name: suite, repository: board.repo, commit: board.commit, judgeModel, promptHash: board.judge.prompt.sha256 }, truthSet: "greptile", judgeModel: null, promptHash: board.judge.prompt.sha256, manifestSha256, splitHash: entry.splitHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), caught: 0, missed: ids.length, of: ids.length, planned: entry.caseIds.length, notRun: ids.length - entry.caseIds.length, rate: 0 } } });
+      write(join(out, tool, "verdicts.json"), cases.map((c) => ({ id: c.id, label: "missed", reason: c.status === "not-run" ? "not-run" : "empty" })));
+      entry.outside = { greptile: BOARDS.greptile(folder, [], {}) };
+    } else {
+      const paths = ["convert.json", "eval.json", "benchmark_data.json", `${tool}/evaluation.json`];
+      for (const path of paths) write(join(out, path), path === "convert.json" ? { cases: ids.map((caseId) => ({ caseId })) } : {});
+      entry.outside = { martian: { board: {}, evidenceHash: hashFolder(folder, paths.map((p) => `outside/martian/${p}`)).listHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), official: { core: { tp: 0, fp: 0, fn: 0, f1: 0 } }, ours: {}, candidates: [], matches: [], empty: ids.filter((id) => !entry.caseIds.includes(id)).map((caseId) => ({ caseId, reason: "not-run" })) } } } };
+    }
+    write(join(folder, "score.json"), { outside: entry.outside });
+    saveEntry();
   };
   save();
-  return { entry, manifest, folder, save };
+  return { entry, manifest, folder, save, saveEntry };
 }
 
 describe("frozen comparisons", () => {
+  const attach = (f, runId, reviewer = "library") => spawnSync(process.execPath, [join(f.root, "lib/comparison.mjs"), "--attach", join(f.root, "comparison.json"), runId, reviewer], { encoding: "utf8" });
+  it("attaching a run of another build is refused", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    run.entry.build.commit = "d".repeat(40); run.entry.build.short = "ddddddd";
+    run.manifest.build.commit = run.entry.build.commit; run.save();
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const before = readFileSync(join(f.root, "comparison.json"), "utf8");
+    const result = attach(f, run.entry.runId);
+    expect(result.status).toBe(1); expect(result.stderr).toContain("build differs from the comparison build");
+    expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
+  });
+  it("a run that covers 49 of 50 cases is refused unless it names the case it did not run", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    const missing = run.entry.caseIds.at(-1);
+    run.entry.caseIds = run.entry.caseIds.slice(0, -1); run.save();
+    expect(run.entry.caseIds).toHaveLength(49);
+    for (const casesNotRun of [undefined, [], [missing, missing], [run.entry.caseIds[0]], ["greptile/unknown@aaaaaaaa"]]) {
+      f.record.runs[0].casesNotRun = casesNotRun;
+      expect(() => validateComparison(f.record, f.options)).toThrow(/casesNotRun/);
+    }
+    f.record.runs[0].casesNotRun = [missing];
+    expect(validateComparison(f.record, f.options).accepted).toBe(false);
+  });
+  it("a judged run (with outside/) attaches", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    expect(validateComparison(f.record, f.options).accepted).toBe(false);
+    run.entry.caseIds = run.entry.caseIds.slice(0, -1); run.save();
+    const casesNotRun = f.record.runs[0].casesNotRun;
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const result = attach(f, run.entry.runId);
+    expect(result.status, result.stderr).toBe(0);
+    const attached = read(join(f.root, "comparison.json"));
+    expect(attached.runs).toEqual([{ runId: run.entry.runId, sha256: sha256(readFileSync(join(f.root, "index/runs", `${run.entry.runId}.json`))), reviewer: "library", casesNotRun }]);
+    expect(attached.acceptance).toEqual({ person: "", date: "", hash: "" });
+    expect(validateComparison(attached, f.options).accepted).toBe(false);
+    const before = readFileSync(join(f.root, "comparison.json"), "utf8");
+    const duplicate = attach(f, run.entry.runId);
+    expect(duplicate.status).toBe(1); expect(duplicate.stderr).toContain(`duplicate run ${run.entry.runId}`);
+    expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
+  });
+  it("a run with a null board block does not attach", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    run.entry.outside.greptile = null; run.saveEntry();
+    expect(entryProblems(run.entry)).toEqual([]);
+    expect(() => validateComparison(f.record, f.options)).toThrow(/non-null outside.greptile/);
+    f.record.runs = []; write(join(f.root, "comparison.json"), f.record);
+    const before = readFileSync(join(f.root, "comparison.json"), "utf8");
+    const result = attach(f, run.entry.runId);
+    expect(result.status).toBe(1); expect(result.stderr).toContain("non-null outside.greptile");
+    expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
+  });
+  it("a verdict edited after attachment fails validation", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    sign(f.record); expect(validateComparison(f.record, f.options).accepted).toBe(true);
+    const path = join(run.folder, "outside/greptile/openqodex-library-r1/verdicts.json");
+    const verdicts = read(path); verdicts[0].label = "caught"; write(path, verdicts);
+    expect(hashReviewedFolder(run.folder).listHash).toBe(run.entry.privateListHash);
+    expect(() => validateComparison(f.record, f.options)).toThrow(/evidence hash/);
+  });
+  it("a control run attaches on its Claude Code version and model, and a control run on another Claude Code version is refused", () => {
+    const f = fixture("greptile");
+    f.record.reviewers.control = { path: "laptop", reviewer: "control", model: "claude-opus-5-5", version: "2.1.310", graph: "off", web: "off", effort: null, maxOutputTokens: null };
+    const run = runFixture(f, true, "private", "control");
+    run.entry.build = { ...run.entry.build, commit: "d".repeat(40), short: "ddddddd", bundleHash: null, cliVersion: null };
+    run.manifest.build = { ...run.manifest.build, commit: run.entry.build.commit, bundleHash: null }; run.save();
+    expect(validateComparison(f.record, f.options).accepted).toBe(false);
+    run.entry.reviewers.control.version = "2.1.296"; run.save();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/reviewer settings/);
+    run.entry.reviewers.control.version = "2.1.310"; run.save();
+    delete f.record.reviewers.control.version;
+    expect(() => validateComparison(f.record, f.options)).toThrow(/control.*version/);
+    f.record.reviewers.control.version = "2.1.310";
+    run.entry.reviewers.control.model = "another-model"; run.save();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/reviewer settings/);
+  });
+  it("a board block missing a planned tool does not attach", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    run.entry.repeat = 2; run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/tool.*r2/);
+  });
+  it("a Greptile block that counts fewer cases than the frozen suite does not attach", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    const t = run.entry.outside.greptile.perTool["openqodex-library-r1"];
+    t.planned--; t.of--; t.missed--; t.labels.pop(); run.saveEntry();
+    expect(entryProblems(run.entry)).toEqual([]);
+    expect(() => validateComparison(f.record, f.options)).toThrow(/case accounting/);
+  });
+  it("a Martian block that drops a suite case does not attach", () => {
+    const f = fixture("martian"); const run = runFixture(f);
+    run.entry.caseIds = run.entry.caseIds.slice(0, -1); run.save();
+    expect(validateComparison(f.record, f.options).accepted).toBe(false);
+    const path = join(run.folder, "outside/martian/convert.json");
+    const convert = read(path); convert.cases.pop(); write(path, convert);
+    run.entry.outside.martian.evidenceHash = hashFolder(run.folder, ["convert.json", "eval.json", "benchmark_data.json", "openqodex-library-r1/evaluation.json"].map((p) => `outside/martian/${p}`)).listHash;
+    run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/case accounting/);
+  });
   it("refuses edited planted case bytes even when the lock was not updated", () => {
     const { root, options } = fixture();
     const name = "clean-python-feature";

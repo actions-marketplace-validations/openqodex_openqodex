@@ -2,11 +2,13 @@
 // Failure cases are listed in test/comparison.test.mjs before this code.
 // This module reads local fingerprints only. It never runs a reviewer or
 // accepts a comparison on someone's behalf.
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { benchRoot, caseHash, git, readLock } from "./cases.mjs";
-import { entryProblems, hashFolder, sha256 } from "./index.mjs";
+import { entryProblems, hashFolder, hashReviewedFolder, sha256 } from "./index.mjs";
+import { toolName } from "./aacr-board.mjs";
+import { boardConfigOf, boardToolName } from "./martian-board.mjs";
 import { bundleHash } from "./runner.mjs";
 import { isPersonName, readPeople } from "./rulings.mjs";
 import { canonicalJson, entryHash, readSuite, SUITES } from "./suites.mjs";
@@ -96,6 +98,41 @@ function reference(root, file, kind) {
   return path;
 }
 const buildProblems = (b) => object(b) && HEX40.test(b.commit ?? "") && HEX40.test(b.tree ?? "") && HEX64.test(b.bundleHash ?? "") && text(b.version);
+const suiteCaseIds = (name, suite) => Object.entries(suite.caseHashes).map(([c, h]) => `${name}/${c}@${h.slice(0, 8)}`);
+const sameIds = (a, b) => Array.isArray(a) && equal([...a].sort(), [...b].sort());
+
+// These are the files the board readers hash, rather than every work file
+// a board pipeline happened to leave behind.
+function validateRunBoard(entry, folder, ids, casesNotRun) {
+  const name = SUITES[entry.suite]?.board;
+  if (!name) return;
+  const block = entry.outside?.[name];
+  const at = `run ${entry.runId} outside.${name}`;
+  need(object(block), `run ${entry.runId} needs a non-null outside.${name} block`);
+  const tools = name === "aacr" ? Object.fromEntries(block.folders.map((t) => [t.tool, t])) : block.perTool;
+  const paths = name === "greptile" ? ["input.json", "eval.json", ...Object.entries(tools).filter(([, t]) => !t.held?.length).map(([tool]) => `${tool}/verdicts.json`)]
+    : name === "martian" ? ["convert.json", "eval.json", "benchmark_data.json", ...Object.keys(tools).map((tool) => `${tool}/evaluation.json`)]
+      : ["convert.json", ...(existsSync(join(folder, "outside/aacr/eval.json")) ? ["eval.json"] : []), ...block.folders.flatMap((t) => t.metrics.map((file) => `${t.config}/r${t.repeat}/${file}`))];
+  const evidence = paths.map((path) => `outside/${name}/${path}`);
+  for (const path of evidence) reference(folder, path, `${at} evidence`);
+  need(hashFolder(folder, evidence).listHash === block.evidenceHash, `${at} evidence hash differs from its board files`);
+  const convert = name === "greptile" ? null : json(join(folder, "outside", name, "convert.json"));
+  for (const config of entry.configs) for (let repeat = 1; repeat <= entry.repeat; repeat++) {
+    const tool = name === "aacr" ? toolName(config, repeat) : boardToolName(config, repeat);
+    const t = tools[tool];
+    need(t && t.config === config && t.boardConfig === (name === "aacr" ? config : boardConfigOf(config)), `${at} is missing tool ${tool} or its configuration`);
+    let accounted;
+    if (name === "greptile") accounted = t.of === ids.length && t.planned === entry.caseIds.length && t.notRun === casesNotRun.length && t.planned + t.notRun === ids.length;
+    else if (name === "martian") {
+      const notRun = t.empty.filter((c) => c.reason === "not-run").map((c) => c.caseId);
+      accounted = sameIds(convert.cases?.map((c) => c.caseId), ids) && sameIds(notRun, casesNotRun) && entry.caseIds.length + notRun.length === ids.length;
+    } else {
+      const converted = convert.folders?.find((f) => f.tool === tool);
+      accounted = casesNotRun.length === 0 && converted?.files === ids.length && t.rounds.length > 0 && t.rounds.every((r) => r.evaluated === ids.length && r.missing === 0);
+    }
+    need(accounted, `${at} tool ${tool} has incomplete case accounting for the frozen suite`);
+  }
+}
 
 // Refuse stale or incomplete fingerprints even while the record is unsigned.
 // Empty acceptance is valid metadata, and always returns accepted: false.
@@ -160,17 +197,21 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     need(e.runId === r.runId && entryProblems(e).length === 0, `run ${r.runId} has an invalid index entry`);
     const suite = record.suites[e.suite];
     need(suite && e.splitHash === suite.splitHash && Array.isArray(e.caseIds) && e.caseIds.length > 0 && e.caseIds.every((id) => Object.entries(suite.caseHashes).some(([name, h]) => id === `${e.suite}/${name}@${h.slice(0, 8)}`)), `run ${r.runId} differs from the comparison suite`);
+    const ids = suiteCaseIds(e.suite, suite);
+    need(Array.isArray(r.casesNotRun) && sameIds([...e.caseIds, ...r.casesNotRun], ids), `run ${r.runId} caseIds and casesNotRun must account for every frozen suite case exactly once`);
     const folder = reference(root, `results/${r.runId}`, "run folder");
-    const { listHash } = hashFolder(folder);
+    const { listHash } = hashReviewedFolder(folder);
     need(listHash === e.asset.listHash || listHash === e.privateListHash, `run ${r.runId} folder differs from its asset or private list hash`);
     const manifest = json(reference(root, `results/${r.runId}/manifest.json`, "run manifest"));
     need(manifest.build?.commit === e.build.commit && manifest.build?.bundleHash === e.build.bundleHash, `run ${r.runId} build differs from its manifest`);
     const tree = e.build?.tree ?? manifest.build?.tree;
-    need(equal({ commit: e.build.commit, tree, bundleHash: e.build.bundleHash, version: e.build.cliVersion }, record.build), `run ${r.runId} build differs from the comparison build`);
     const reviewer = record.reviewers[r.reviewer];
+    if (reviewer?.reviewer === "control") need(text(reviewer.version), `run ${r.runId} control reviewer must pin its Claude Code version`);
+    else need(equal({ commit: e.build.commit, tree, bundleHash: e.build.bundleHash, version: e.build.cliVersion }, record.build), `run ${r.runId} build differs from the comparison build`);
     need(reviewer && e.path === reviewer.path && e.web === reviewer.web && e.reviewers?.[reviewer.reviewer]?.model === reviewer.model && (reviewer.version === undefined || e.reviewers[reviewer.reviewer].version === reviewer.version) && e.configs.every((c) => c === `${reviewer.reviewer.replace(/:/g, "-")}-graph-${reviewer.graph}`), `run ${r.runId} differs from its reviewer settings`);
     const settings = manifest.reviewers?.[reviewer.reviewer]?.settings;
     need((settings?.effort ?? null) === reviewer.effort && (settings?.maxOutputTokens ?? null) === reviewer.maxOutputTokens, `run ${r.runId} differs from its reviewer settings`);
+    validateRunBoard(e, folder, ids, r.casesNotRun);
   }
   const a = record.acceptance;
   need(object(a) && ["person", "date", "hash"].every((f) => typeof a[f] === "string"), "comparison acceptance must give person, date and hash");
@@ -238,8 +279,23 @@ export function validateOutsideRows(data, { root = benchRoot } = {}) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [flag, file, ...extra] = process.argv.slice(2);
-    need(file && extra.length === 0 && ["--outside-rows", "--comparison"].includes(flag), "usage: node benchmark/lib/comparison.mjs --outside-rows <file> | --comparison <file>");
-    const result = flag === "--outside-rows" ? validateOutsideRows(json(file)) : validateComparison(json(file));
+    need(file && ((extra.length === 0 && ["--outside-rows", "--comparison"].includes(flag)) || (flag === "--attach" && extra.length === 2)), "usage: node benchmark/lib/comparison.mjs --outside-rows <file> | --comparison <file> | --attach <record> <runId> <reviewer>");
+    const record = json(file);
+    let result;
+    if (flag === "--attach") {
+      const [runId, reviewer] = extra;
+      need(Array.isArray(record.runs), "comparison runs must be an array");
+      need(!record.runs.some((r) => r.runId === runId), `duplicate run ${runId}`);
+      need(/^\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]+$/.test(runId), "run must pin runId and sha256");
+      const path = reference(benchRoot, `index/runs/${runId}.json`, "run");
+      const entry = json(path);
+      need(record.suites?.[entry.suite], `run ${runId} differs from the comparison suite`);
+      const casesNotRun = suiteCaseIds(entry.suite, record.suites[entry.suite]).filter((id) => !entry.caseIds?.includes(id));
+      record.acceptance = { person: "", date: "", hash: "" };
+      record.runs.push({ runId, sha256: sha256(readFileSync(path)), reviewer, casesNotRun });
+      result = validateComparison(record, { build: buildFingerprint() });
+      writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+    } else result = flag === "--outside-rows" ? validateOutsideRows(record) : validateComparison(record);
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     console.error(error.message);
