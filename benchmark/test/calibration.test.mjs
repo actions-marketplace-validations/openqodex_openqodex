@@ -58,6 +58,12 @@ describe("board calibration", () => {
     const r = record(); r.build = { ...build, tree: "e".repeat(40) };
     expect(() => validateCalibration(r, { build, board })).toThrow(/build/);
   });
+  it("a form calibration cited in a comparison is refused", () => {
+    expect(validateCalibration(record(), { build, board })).toMatchObject({ board });
+    for (const form of ["flat", "joined", null, undefined]) {
+      expect(() => validateCalibration({ ...record(), form }, { build, board })).toThrow(/form calibration/);
+    }
+  });
   it("refuses judge failures without recorded exclusions even when the remaining labels agree", () => {
     const r = { ...record(), judgeFailures: { items: 1, labels: 2, byClass: { positive: 1, negative: 1 } } };
     expect(() => validateCalibration(r, { build, board })).toThrow(/exclu/);
