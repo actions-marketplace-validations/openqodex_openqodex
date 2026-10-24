@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { benchRoot } from "./cases.mjs";
 import { cacheRoot } from "./licence.mjs";
 import { checkedBytes, hash } from "./calibration.mjs";
-import { canonicalJson, greptileTruth, truthHashOf } from "./suites.mjs";
+import { canonicalJson, greptileTruth, readSuite, truthHashOf } from "./suites.mjs";
 import { GREPTILE_REPOS, greptileRows } from "./greptile.mjs";
 
 const json = (file) => JSON.parse(readFileSync(file, "utf8"));
@@ -46,8 +46,7 @@ export async function greptileInputs() {
   const originals = greptileRows(asset.toString("utf8"));
   const corrected = new Map();
   for (const pin of sources.corrected.files) corrected.set(pin.path, JSON.parse(await publicSource("greptile", pin)));
-  const suite = json(join(benchRoot, "suites/greptile/cases.json"));
-  if (suite.cases.length !== 50) throw new Error("Greptile requires all 50 cases");
+  const suite = readSuite("greptile").file;
   const cases = []; const reviewSources = [];
   for (const c of suite.cases) {
     const original = originals.find((r) => r.prUrl === c.prUrl);

@@ -94,7 +94,7 @@ export function convertRun(folder, { excludeTestGaps = BOARDS.boards.aacr.exclud
   const manifest = existsSync(join(folder, "manifest.json")) ? readJson(join(folder, "manifest.json")) : null;
   if (!manifest) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
   const suite = manifest.suite ?? "planted";
-  if (suite === "greptile") throw new Error("Greptile uses benchmark/outside/boards/greptile-judge.mjs (W8-3), with caught or missed per case against the chosen truth set");
+  if (suite === "greptile") throw new Error("Greptile uses benchmark/outside/boards/greptile-run.mjs, with caught or missed per case against the chosen truth set");
   if (suite !== "aacr") throw new Error(`${folder}: the run is of suite ${suite}, not aacr; only an AACR-Bench run is converted for its board`);
   if (manifest.mode === "scan") throw new Error(`${folder}: a scanner-only run shows the developer no finding, so it has nothing to convert for the board`);
   const out = boardFolder(folder);

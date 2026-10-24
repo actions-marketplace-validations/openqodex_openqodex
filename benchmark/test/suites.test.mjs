@@ -82,6 +82,6 @@ it.each(["aacr", "martian"])("the %s converter refuses Greptile with one line na
   expect(result.status).toBe(2);
   expect(result.stdout).toBe("");
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  expect(result.stderr).toMatch(/Greptile.*benchmark\/outside\/boards\/greptile-judge\.mjs.*W8-3/);
+  expect(result.stderr).toMatch(/Greptile.*benchmark\/outside\/boards\/greptile-run\.mjs/);
   expect(existsSync(join(folder, "outside"))).toBe(false);
 });

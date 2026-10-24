@@ -134,7 +134,8 @@ export function boardConfigOf(config) {
 }
 
 /** The tool name a configuration and repeat go by on the board. */
-export const martianToolName = (config, repeat) => boardConfigOf(config) === "control" ? `claude-code-control-r${repeat}` : `openqodex-${boardConfigOf(config)}-r${repeat}`;
+export const boardToolName = (config, repeat) => boardConfigOf(config) === "control" ? `claude-code-control-r${repeat}` : `openqodex-${boardConfigOf(config)}-r${repeat}`;
+export const martianToolName = boardToolName;
 
 const flat = (s) => (typeof s === "string" ? s.replace(/`{3,}/g, "`").replace(/\s+/g, " ").trim() : "");
 

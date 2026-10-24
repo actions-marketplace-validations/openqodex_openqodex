@@ -334,12 +334,12 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
     expect(body).not.toMatch(/\n|```/);
   });
 
-  it("converts the three saved reviews to the saved benchmark_data.json, byte for byte", async () => {
+  it("the Martian converter's fixture output is byte-identical after the shared module", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
     await convertRun(out, convertOpts(ctx));
     const written = readFileSync(join(out, "outside", "martian", "benchmark_data.json"), "utf8");
-    if (RECORD) write(join(FIXTURES, "benchmark_data.json"), written);
+    // This committed output predates the shared run reader. Never re-record it here.
     expect(written).toBe(readFileSync(join(FIXTURES, "benchmark_data.json"), "utf8"));
     const data = JSON.parse(written);
     expect(data["https://github.com/oq-fixture/shop/pull/11"].reviews[0].review_comments[0]).toEqual({
