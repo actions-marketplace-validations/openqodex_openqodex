@@ -382,8 +382,8 @@
     }
   },
   "build": {
-    "commit": "68ef6b851181518e8b3372b04d67da86fb333de7",
-    "tree": "56f8c5a969174f293b7de747fa8ab365858c8c00",
+    "commit": "7578af42903ca9e40022f2a74acecb008e52b1e1",
+    "tree": "e924127145426f07de772634b7d2efc717a430f0",
     "bundleHash": "9df434488643323e61fecd63392ec4ac29860f3de12b853c6620312f19696c56",
     "version": "0.14.0"
   },
@@ -416,15 +416,24 @@
       "web": "off",
       "effort": null,
       "maxOutputTokens": null
+    },
+    "control": {
+      "path": "laptop",
+      "reviewer": "control",
+      "model": "claude-opus-5-5",
+      "graph": "off",
+      "web": "off",
+      "effort": null,
+      "maxOutputTokens": null
     }
   },
   "calibrations": [
     {
       "file": "index/calibration/greptile-2026-10-23.json",
-      "sha256": "4fcc0c998e8ec069957b95061e047e7e9c6aeba3b61673d47f88449ef281a962",
+      "sha256": "963b6a979aa75752433cdeae1d5ba59ea36ca4f8170b3a856eff9048fd9be477",
       "build": {
-        "commit": "68ef6b851181518e8b3372b04d67da86fb333de7",
-        "tree": "56f8c5a969174f293b7de747fa8ab365858c8c00",
+        "commit": "7578af42903ca9e40022f2a74acecb008e52b1e1",
+        "tree": "e924127145426f07de772634b7d2efc717a430f0",
         "bundleHash": "9df434488643323e61fecd63392ec4ac29860f3de12b853c6620312f19696c56",
         "version": "0.14.0"
       },
@@ -435,10 +444,10 @@
     },
     {
       "file": "index/calibration/martian-2026-10-23.json",
-      "sha256": "99f9f10ba7a2953049fbf9072dcbd1a7eee1fcae0173124ea7111bf235af0acb",
+      "sha256": "ecc002fa2feacb88f6ea2c4279185cd67f1524ac66d133ef1e3f26e3c1203404",
       "build": {
-        "commit": "68ef6b851181518e8b3372b04d67da86fb333de7",
-        "tree": "56f8c5a969174f293b7de747fa8ab365858c8c00",
+        "commit": "7578af42903ca9e40022f2a74acecb008e52b1e1",
+        "tree": "e924127145426f07de772634b7d2efc717a430f0",
         "bundleHash": "9df434488643323e61fecd63392ec4ac29860f3de12b853c6620312f19696c56",
         "version": "0.14.0"
       },
@@ -463,7 +472,7 @@
   "runs": [],
   "acceptance": {
     "person": "Sid",
-    "date": "2026-10-23",
-    "hash": "40ba1694b21aaac2e323ee1c43009efa6abdd8fd5ff9e03b8a3f59b5e46d5801"
+    "date": "2026-10-24",
+    "hash": "d2f0e56f2beee0b42239c61c62d26cc0819d10b58eeb295caf8154525962de7a"
   }
 }
