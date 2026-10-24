@@ -3,12 +3,13 @@
 // Failure cases are in test/greptile-run.test.mjs and martian-board.test.mjs.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { cacheRoot } from "./licence.mjs";
 import { benchRoot } from "./cases.mjs";
 import { nativeReviewBody } from "./claude-control.mjs";
 import { boardConfigOf, boardToolName, martianBody } from "./martian-board.mjs";
 import { attemptOf, findingId, judgeFieldsMissing, nativeFindingId, normPath, population, shownFindings } from "./score.mjs";
-import { readCase, readSuite, realCaseId } from "./suites.mjs";
+import { readCase, readPinned, readSuite, realCaseId, realSpecProblems, truthOf } from "./suites.mjs";
 
 export { boardToolName, martianBody, martianToolName } from "./martian-board.mjs";
 export { nativeFindingId } from "./score.mjs";
@@ -95,4 +96,72 @@ export function readBoardReviews(folder, { root = benchRoot, heading = `${folder
   }
   const held = reviews.flatMap(heldFindings);
   return { manifest, manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"), suite: { name: manifest.suite, cases: cases.map((c) => c.id) }, cases, reviews, tools: toolRows.map((t) => ({ ...t, held: held.some((h) => h.tool === t.tool) })), held };
+}
+
+/** The exact input shared by the Greptile judge and its evidence reader. */
+export function greptileInput(folder, truthSet, { root = benchRoot, cache = cacheRoot() } = {}) {
+  const run = readBoardReviews(folder, { root });
+  const savedTruth = new Map();
+  const cachedTruth = new Map();
+  const byId = new Map(run.cases.map((c) => [c.id, c]));
+  const truthSets = (review) => {
+    const c = byId.get(review.caseId);
+    if (review.status === "not-run") {
+      if (!cachedTruth.has(c.id)) cachedTruth.set(c.id, truthOf(c, { cache }).sets);
+      return cachedTruth.get(c.id);
+    }
+    if (!savedTruth.has(c.id)) {
+      const spec = readJsonOr(join(folder, "cases", `${c.name}.json`));
+      if (spec?.id !== c.id || spec.hash !== c.hash) throw new Error(`${c.id}: saved case differs from the frozen suite`);
+      const problems = realSpecProblems(spec, c.name, { suite: "greptile", root });
+      if (problems.length > 0) throw new Error(problems.join("; "));
+      savedTruth.set(c.id, spec.truthSets);
+    }
+    return savedTruth.get(c.id);
+  };
+  return {
+    truthSet, manifestSha256: run.manifestSha256, splitHash: run.manifest.splitHash, suite: run.suite,
+    tools: run.tools.map((t) => ({ tool: t.tool, config: t.config, boardConfig: t.boardConfig, held: run.held.filter((h) => h.tool === t.tool).map(({ case: name, index, lacking }) => ({ case: name, index, lacking })) })),
+    cases: run.reviews.map((r) => ({
+      id: r.caseId, caseId: r.caseId, tool: r.tool, config: r.config,
+      boardConfig: run.tools.find((t) => t.tool === r.tool).boardConfig,
+      comments: r.comments.map((c) => r.native !== null || c.path === null ? c.body : `${c.path}${c.line === null ? "" : `:${c.line}`}: ${c.body}`),
+      status: r.status, truthSets: truthSets(r),
+    })),
+  };
+}
+
+/** Fresh Martian data, from pinned truth and the saved first attempts. */
+export function martianConversion(run, { cache = cacheRoot() } = {}) {
+  const cases = new Map(run.cases.map((c) => [c.id, c]));
+  // Each pull request's golden comments, from the pinned file, checked against the frozen truth.
+  const data = {};
+  const caseRows = [];
+  for (const c of [...cases.values()].sort((a, b) => byName(a.name, b.name))) {
+    const truth = truthOf(c, { cache });
+    const row = readPinned(cache, "martian", { path: c.source.dataset.file, sha256: c.source.dataset.sha256 }).find((r) => r.url === c.source.prUrl);
+    data[c.source.prUrl] = { pr_title: row.pr_title ?? null, original_url: row.original_url ?? null, source_repo: basename(c.source.dataset.file, ".json"), golden_comments: row.comments, golden_source_file: basename(c.source.dataset.file), openqodex: { caseId: c.id, case: c.name }, reviews: [] };
+    caseRows.push({ caseId: c.id, case: c.name, goldenUrl: c.source.prUrl, golden: truth.items.length, licence: c.source.licence.class });
+  }
+
+  // Every suite case has a review, including cases the run did not plan.
+  const jobs = [...run.reviews].sort((a, b) => byName(a.tool, b.tool) || byName(a.case, b.case));
+  const held = run.held.map((h) => ({ tool: h.tool, caseId: h.caseId, case: h.case, goldenUrl: cases.get(h.caseId).source.prUrl, index: h.index, findingId: h.findingId, lacking: h.lacking }));
+  const failures = [];
+  const heldTools = new Set(held.map((h) => h.tool));
+  for (const job of jobs) {
+    const url = cases.get(job.caseId).source.prUrl;
+    if (job.native !== null && job.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: job.first.row.failure ?? null });
+    if (!heldTools.has(job.tool)) data[url].reviews.push({ tool: job.tool, repo_name: null, pr_url: url, review_comments: job.comments, openqodex: { caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: job.status, findingIds: job.findingIds } });
+  }
+
+  const toolRows = run.tools.map(({ tool, config, boardConfig, repeat }) => {
+    const mine = jobs.filter((j) => j.tool === tool);
+    const statuses = {};
+    for (const j of mine) statuses[j.status] = (statuses[j.status] ?? 0) + 1;
+    const lack = held.filter((h) => h.tool === tool);
+    const why = lack.length === 0 ? null : `${lack.length} finding${lack.length === 1 ? " lacks" : "s lack"} what Martian's judge reads (${lack.map((h) => `${h.case} index ${h.index}: ${h.lacking.join(", ")}`).join("; ")}); none of this tool name's reviews is sent, since judging it without one of its pull requests would shrink Martian's denominators`;
+    return { tool, config, boardConfig, repeat, reviews: mine.length, findings: mine.reduce((n, j) => n + j.shown.length, 0), statuses, held: lack.length > 0, why };
+  });
+  return { data, caseRows, jobs, held, failures, toolRows };
 }

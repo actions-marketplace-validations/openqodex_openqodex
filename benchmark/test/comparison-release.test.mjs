@@ -98,11 +98,11 @@ function attachRun(f, suffix) {
   entry.perCase = {}; entry.perBug = {}; entry.intervals = { ...entry.intervals, cluster: "case", groups: null };
   entry.configs = [config]; entry.repeat = 1;
   const folder = join(f.root, "results", entry.runId);
-  write(join(folder, "manifest.json"), { build: f.build, reviewers: { [reviewer.reviewer]: { settings: { effort: reviewer.effort, maxOutputTokens: reviewer.maxOutputTokens } } } });
+  write(join(folder, "manifest.json"), { build: f.build, reviewers: { [reviewer.reviewer]: { ...entry.reviewers[reviewer.reviewer], settings: { effort: reviewer.effort, maxOutputTokens: reviewer.maxOutputTokens } } } });
   const out = join(folder, "outside/aacr");
   const tool = toolName(config, 1);
   const dir = `${config}/r1`;
-  write(join(out, "convert.json"), { reader: "ocr", references: {}, withoutLine: [], folders: [{ config, repeat: 1, tool, dir, files: entry.caseIds.length }] });
+  write(join(out, "convert.json"), { reader: "ocr", lineK: null, references: {}, withoutLine: [], folders: [{ config, repeat: 1, tool, dir, files: entry.caseIds.length }] });
   write(join(out, "eval.json"), { judge: { deployment: f.record.boards.aacr.judgeModel }, folders: [{ config, repeat: 1, mode: "llm", judgeErrors: 0, metrics: ["metrics_ocr_fixture.json"] }] });
   write(join(out, dir, "metrics_ocr_fixture.json"), { summary: { evaluated_instances: entry.caseIds.length, missing_instances: 0, expected_notes: 0, generated_notes: 0, matched_line_notes: 0, matched_semantic_notes: 0 } });
   entry.outside = { aacr: BOARDS.aacr(folder, [], {}) };

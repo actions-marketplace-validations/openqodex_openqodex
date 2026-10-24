@@ -1,7 +1,8 @@
-// Read saved Greptile labels, never a model. The input fixes the suite and
-// the empty-review reasons; verdicts, rather than the summary, fix the rate.
+// Read saved Greptile labels, never a model. Rebuild input from first attempts.
+// Verdicts, rather than the summary, fix the rate. Empty reviews must miss.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { greptileInput } from "./board-reviews.mjs";
 import { hashFolder, sha256 } from "./index.mjs";
 import { boardConfigOf, boardToolName } from "./martian-board.mjs";
 import { canonical, value } from "./score.mjs";
@@ -9,7 +10,7 @@ import { readSuite } from "./suites.mjs";
 
 const PINS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 
-export function readGreptileOutside(folder, jobs, _specs) {
+export function readGreptileOutside(folder, jobs, _specs, options = {}) {
   const out = join(folder, "outside", "greptile");
   if (!existsSync(join(out, "eval.json"))) throw new Error(`${out} holds no eval.json; judge the run first (benchmark/outside/boards/greptile-run.mjs)`);
   const paths = [];
@@ -27,7 +28,7 @@ export function readGreptileOutside(folder, jobs, _specs) {
   need(evaluation.promptHash === board.promptHash, "prompt hash differs from the board pin");
   need(manifest.suite === "greptile" && input.splitHash === manifest.splitHash && evaluation.splitHash === manifest.splitHash, "suite or split hash differs from this run");
   need(["greptile", "augment"].includes(input.truthSet) && input.truthSet === evaluation.truthSet, "truth set differs from the saved input");
-  const suite = readSuite("greptile");
+  const suite = readSuite("greptile", options);
   const ids = suite.file.cases.map((c) => c.id);
   need(input.suite?.name === "greptile" && canonical(input.suite.cases) === canonical(ids), "input does not cover the frozen suite");
   need(Array.isArray(input.tools) && input.tools.length > 0 && Array.isArray(input.cases), "input needs tools and cases");
@@ -36,6 +37,8 @@ export function readGreptileOutside(folder, jobs, _specs) {
   need(canonical(Object.keys(evaluation.perTool ?? {}).sort()) === canonical([...names].sort()), "summary tools differ from the input");
   need(canonical([...new Set(jobs.map((j) => boardToolName(j.config, j.repeat)))].sort()) === canonical([...names].sort()), "tools differ from the run's planned jobs");
   need(input.cases.every((c) => names.includes(c.tool) && Array.isArray(c.comments)), "a case names an unknown tool or has no comment list");
+  need(canonical(input) === canonical(greptileInput(folder, input.truthSet, options)), "input.json differs from the run's first attempt rebuild");
+  need(input.cases.every((c) => c.status !== "not-run" || c.comments.length === 0), "a not-run case carries comments");
   const judged = input.cases.some((c) => !input.tools.find((t) => t.tool === c.tool).held?.length && c.comments.length > 0);
   need(evaluation.judgeModel === model || (evaluation.judgeModel === null && !judged), "judge model differs from the board pin or is missing for comments that needed judging");
   const perTool = {};

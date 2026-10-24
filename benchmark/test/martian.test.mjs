@@ -19,7 +19,7 @@
 // A plain ingest must preserve the report saved by --verify-published.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -248,6 +248,9 @@ describe("the Martian ingest", () => {
       mkdirSync(join(root, dir));
       for (const file of readdirSync(join(benchRoot, dir)).filter((f) => f.endsWith(".mjs"))) cpSync(join(benchRoot, dir, file), join(root, dir, file));
     }
+    for (const file of ["score.mjs", "legacy"]) cpSync(join(benchRoot, file), join(root, file), { recursive: true });
+    mkdirSync(join(root, "../packages"), { recursive: true });
+    symlinkSync(join(benchRoot, "../packages/scanners"), join(root, "../packages/scanners"));
     mkdirSync(join(root, "outside"));
     writeFileSync(join(root, "outside/boards.json"), encode(ctx.boards));
     const published = encode(Object.fromEntries(rows.map(({ comments, ...row }) => [row.url, { ...row, golden_source_file: "alpha.json", golden_comments: comments }])));

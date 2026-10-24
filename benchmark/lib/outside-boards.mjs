@@ -6,11 +6,11 @@ import { readGreptileOutside } from "./greptile-board.mjs";
 
 export const BOARDS = { aacr: readAacrOutside, martian: readMartianOutside, greptile: readGreptileOutside };
 
-export function readOutside(folder, jobs, specs, names) {
+export function readOutside(folder, jobs, specs, names, options = {}) {
   const outside = {};
   for (const name of names) {
     if (!Object.hasOwn(BOARDS, name)) throw new Error(`outside.${name} is not in the board registry`);
-    try { outside[name] = BOARDS[name](folder, jobs, specs); }
+    try { outside[name] = BOARDS[name](folder, jobs, specs, options); }
     catch (error) {
       outside[name] = null;
       console.error(`outside.${name} is null: ${String(error.message).split("\n")[0]}`);

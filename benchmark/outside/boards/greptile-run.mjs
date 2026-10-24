@@ -6,12 +6,11 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFil
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boardFolder } from "../../lib/board-files.mjs";
-import { readBoardReviews } from "../../lib/board-reviews.mjs";
+import { greptileInput, readBoardReviews } from "../../lib/board-reviews.mjs";
 import { benchRoot } from "../../lib/cases.mjs";
 import { relayClient } from "../../lib/calibration-relay.mjs";
-import { validateComparison } from "../../lib/comparison.mjs";
+import { validateComparison, validateRunManifest } from "../../lib/comparison.mjs";
 import { value } from "../../lib/score.mjs";
-import { realSpecProblems, truthOf } from "../../lib/suites.mjs";
 import { GREPTILE_PROMPT, GREPTILE_PROMPT_HASH, judgeGreptile } from "./greptile-judge.mjs";
 
 const read = (file) => JSON.parse(readFileSync(file, "utf8"));
@@ -20,7 +19,7 @@ const write = (file, data) => { mkdirSync(join(file, ".."), { recursive: true })
 function options(argv) {
   const [folder, ...args] = argv;
   const opts = { folder, release: null, dryRun: false, force: false, maxUsd: null };
-  if (!folder || folder.startsWith("--")) throw new Error("usage: greptile-run.mjs <run> --release <name> [--dry-run (refuses a folder holding eval.json)] [--max-usd <n>] [--force (priced runs only; after all checks, moves old outside/greptile/ to outside/greptile.superseded-<UTC timestamp>/; nothing is deleted)]");
+  if (!folder || folder.startsWith("--")) throw new Error("usage: greptile-run.mjs <run> --release <name> [--dry-run (refuses a folder holding eval.json)] [--max-usd <n>] [--force (priced runs only; after judging succeeds, moves old outside/greptile/ to outside/greptile.superseded-<UTC timestamp>/; nothing is deleted)]");
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === "--dry-run") opts.dryRun = true;
@@ -71,34 +70,9 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
   if (manifest.mode === "scan") throw new Error("a scanner-only run shows no review for the board to judge");
   const run = readBoardReviews(folder, { root, heading: `${folder} is not converted for Greptile's board:` });
   if (run.manifest.splitHash !== record.suites.greptile.splitHash) throw new Error("the run's split hash differs from the accepted Greptile suite");
-  const savedTruth = new Map();
-  const cachedTruth = new Map();
-  const byId = new Map(run.cases.map((c) => [c.id, c]));
-  const truthSets = (review) => {
-    const c = byId.get(review.caseId);
-    if (review.status === "not-run") {
-      if (!cachedTruth.has(c.id)) cachedTruth.set(c.id, truthOf(c).sets);
-      return cachedTruth.get(c.id);
-    }
-    if (!savedTruth.has(c.id)) {
-      const spec = read(join(folder, "cases", `${c.name}.json`));
-      if (spec.id !== c.id || spec.hash !== c.hash) throw new Error(`${c.id}: saved case differs from the frozen suite`);
-      const problems = realSpecProblems(spec, c.name, { suite: "greptile", root });
-      if (problems.length > 0) throw new Error(problems.join("; "));
-      savedTruth.set(c.id, spec.truthSets);
-    }
-    return savedTruth.get(c.id);
-  };
-  const input = {
-    truthSet, manifestSha256: run.manifestSha256, splitHash: run.manifest.splitHash, suite: run.suite,
-    tools: run.tools.map((t) => ({ tool: t.tool, config: t.config, boardConfig: t.boardConfig, held: run.held.filter((h) => h.tool === t.tool).map(({ case: name, index, lacking }) => ({ case: name, index, lacking })) })),
-    cases: run.reviews.map((r) => ({
-      id: r.caseId, caseId: r.caseId, tool: r.tool, config: r.config,
-      boardConfig: run.tools.find((t) => t.tool === r.tool).boardConfig,
-      comments: r.comments.map((c) => r.native !== null || c.path === null ? c.body : `${c.path}${c.line === null ? "" : `:${c.line}`}: ${c.body}`),
-      status: r.status, truthSets: truthSets(r),
-    })),
-  };
+  validateRunManifest(manifest, record);
+  if (opts.maxUsd !== null && opts.maxUsd > record.capUsd) throw new Error(`--max-usd ${opts.maxUsd} exceeds the record cap ${record.capUsd}`);
+  const input = greptileInput(folder, truthSet, { root });
   const held = new Set(run.tools.filter((t) => t.held).map((t) => t.tool));
   for (const t of run.tools) {
     const mine = input.cases.filter((c) => c.tool === t.tool);
@@ -114,12 +88,11 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
   if (opts.dryRun) { write(join(out, "input.json"), input); return 0; }
   if (opts.maxUsd === null) throw new Error("--max-usd is required for a priced run");
   if (forecast > opts.maxUsd) throw new Error(`forecast USD ${forecast.toFixed(6)} exceeds --max-usd ${opts.maxUsd}`);
-  if (opts.force && existsSync(out)) {
-    const superseded = boardFolder(folder, `greptile.superseded-${new Date().toISOString().replaceAll(":", "-")}`);
-    if (existsSync(superseded)) throw new Error(`${superseded} exists already; the old evaluation stays in place`);
-    renameSync(out, superseded);
-  }
-  write(join(out, "input.json"), input);
+  const stamp = new Date().toISOString().replaceAll(":", "-");
+  const pending = boardFolder(folder, `greptile.pending-${stamp}`);
+  const superseded = boardFolder(folder, `greptile.superseded-${stamp}`);
+  if (existsSync(pending) || existsSync(superseded)) throw new Error("the pending or superseded folder exists already; the old evaluation stays in place");
+  write(join(pending, "input.json"), input);
 
   let relay;
   try {
@@ -144,15 +117,17 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
       const verdicts = mine.map((c) => labels.get(c.id) ?? { id: c.id, label: "missed", reason: ["not-run", "failed", "unstarted"].includes(c.status) ? c.status : "empty" });
       const caught = verdicts.filter((v) => v.label === "caught").length;
       perTool[t.tool] = { config: t.config, boardConfig: t.boardConfig, caught, missed: of - caught, of, planned: of - notRun, notRun, rate: value({ hit: caught, of }) };
-      write(join(out, t.tool, "verdicts.json"), verdicts);
+      write(join(pending, t.tool, "verdicts.json"), verdicts);
     }
     const counts = relay ? await relay.counts() : null;
-    write(join(out, "eval.json"), {
+    write(join(pending, "eval.json"), {
       version: 1, board: { name: pin.name, repository: pin.repository, commit: pin.commit, judgeModel: pin.judgeModel, promptHash: pin.promptHash },
       truthSet, judgeModel: relay?.model ?? null, promptHash: GREPTILE_PROMPT_HASH,
       manifestSha256: run.manifestSha256, splitHash: run.manifest.splitHash, relay: counts, perTool,
     });
   } finally { if (relay) await relay.close(); }
+  if (existsSync(out)) renameSync(out, superseded);
+  renameSync(pending, out);
   return 0;
 }
 

@@ -9,6 +9,7 @@ import { benchRoot, caseHash, git, readLock } from "./cases.mjs";
 import { entryProblems, hashFolder, hashReviewedFolder, sha256 } from "./index.mjs";
 import { toolName } from "./aacr-board.mjs";
 import { boardConfigOf, boardToolName } from "./martian-board.mjs";
+import { boardRefusal } from "./board-readback.mjs";
 import { bundleHash } from "./runner.mjs";
 import { isPersonName, readPeople } from "./rulings.mjs";
 import { canonicalJson, entryHash, readSuite, SUITES } from "./suites.mjs";
@@ -115,7 +116,7 @@ const sameIds = (a, b) => Array.isArray(a) && equal([...a].sort(), [...b].sort()
 
 // These are the files the board readers hash, rather than every work file
 // a board pipeline happened to leave behind.
-function validateRunBoard(entry, folder, ids, casesNotRun, pin) {
+function validateRunBoard(entry, folder, ids, casesNotRun, pin, options) {
   const name = SUITES[entry.suite]?.board;
   if (!name) return;
   const block = entry.outside?.[name];
@@ -157,6 +158,27 @@ function validateRunBoard(entry, folder, ids, casesNotRun, pin) {
       accounted = casesNotRun.length === 0 && converted?.files === ids.length && t.rounds.length > 0 && t.rounds.every((r) => r.evaluated === ids.length && r.missing === 0);
     }
     need(accounted, `${at} tool ${tool} has incomplete case accounting for the frozen suite`);
+  }
+  const refusal = boardRefusal(folder, entry.runId, { [name]: block }, options);
+  need(refusal === null, refusal);
+}
+
+// Both judges check compatibility before forecasting or contacting a provider.
+export function validateRunManifest(manifest, record) {
+  const need = (ok, why) => { if (!ok) throw new Error(`the run's ${why}`); };
+  const names = Object.keys(manifest.reviewers ?? {});
+  need(names.length > 0, "reviewers are missing");
+  for (const name of names) {
+    const pin = Object.values(record.reviewers).find((r) => r.reviewer === name);
+    need(pin, `reviewer ${name} has no comparison pin`);
+    if (name !== "control") {
+      const b = manifest.build;
+      need(equal(b && { commit: b.commit, tree: b.tree, bundleHash: b.bundleHash, version: b.cliVersion ?? b.version }, record.build), "build differs from the comparison build");
+    } else need(text(pin.version), "control reviewer must pin its Claude Code version");
+    const saved = manifest.reviewers[name];
+    need(saved.model === pin.model, `reviewer ${name} model differs from the comparison pin`);
+    need(pin.version === undefined || saved.version === pin.version, `reviewer ${name} version differs from the comparison pin`);
+    for (const field of ["effort", "maxOutputTokens"]) need((saved.settings?.[field] ?? null) === pin[field], `reviewer ${name} ${field} differs from the comparison pin`);
   }
 }
 
@@ -235,9 +257,13 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     if (reviewer?.reviewer === "control") need(text(reviewer.version), `run ${r.runId} control reviewer must pin its Claude Code version`);
     else need(equal({ commit: e.build.commit, tree, bundleHash: e.build.bundleHash, version: e.build.cliVersion }, record.build), `run ${r.runId} build differs from the comparison build`);
     need(reviewer && e.path === reviewer.path && e.web === reviewer.web && e.reviewers?.[reviewer.reviewer]?.model === reviewer.model && (reviewer.version === undefined || e.reviewers[reviewer.reviewer].version === reviewer.version) && e.configs.every((c) => c === `${reviewer.reviewer.replace(/:/g, "-")}-graph-${reviewer.graph}`), `run ${r.runId} differs from its reviewer settings`);
+    for (const [name, entryReviewer] of Object.entries(e.reviewers)) {
+      const saved = manifest.reviewers?.[name];
+      need(saved && saved.version === entryReviewer.version && saved.model === entryReviewer.model, `run ${r.runId} reviewer ${name} differs from its manifest`);
+    }
     const settings = manifest.reviewers?.[reviewer.reviewer]?.settings;
     need((settings?.effort ?? null) === reviewer.effort && (settings?.maxOutputTokens ?? null) === reviewer.maxOutputTokens, `run ${r.runId} differs from its reviewer settings`);
-    validateRunBoard(e, folder, ids, r.casesNotRun, record.boards[SUITES[e.suite]?.board]);
+    validateRunBoard(e, folder, ids, r.casesNotRun, record.boards[SUITES[e.suite]?.board], { root });
   }
   const a = record.acceptance;
   need(object(a) && ["person", "date", "hash"].every((f) => typeof a[f] === "string"), "comparison acceptance must give person, date and hash");

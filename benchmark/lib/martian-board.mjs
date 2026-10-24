@@ -70,7 +70,7 @@ import { join } from "node:path";
 import { PACKAGE_NAME } from "./package.mjs";
 import { benchRoot } from "./cases.mjs";
 import { comparisonRelease } from "./comparison.mjs";
-import { boardReview, readAttempts } from "./board-reviews.mjs";
+import { boardReview, martianConversion, readAttempts, readBoardReviews } from "./board-reviews.mjs";
 import { hashFolder, sha256 } from "./index.mjs";
 import { canonical, martianFindings, martianGolden, population, readMartianEvaluation } from "./score.mjs";
 import { martianTruth } from "./suites.mjs";
@@ -264,8 +264,8 @@ export function martianEvaluations({ data, candidates, dedup, evaluations, total
   return { tools, problems: typeof totals?.beta === "number" ? [] : ["score_profiles gave no beta"] };
 }
 
-/** The published evaluation files suffice; nothing under work/ is read. */
-export function readMartianOutside(folder, jobs, specs) {
+/** Check published inputs against pinned truth and saved reviews; never read work/. */
+export function readMartianOutside(folder, jobs, specs, options = {}) {
   const out = join(folder, "outside", "martian");
   if (!existsSync(join(out, "convert.json"))) throw new Error(`${out} holds no convert.json; convert the run first (benchmark/outside/boards/martian.sh <run>)`);
   const paths = [];
@@ -286,6 +286,10 @@ export function readMartianOutside(folder, jobs, specs) {
   const data = read("benchmark_data.json");
   const entries = Object.values(data);
   need(Array.isArray(convert.cases) && entries.length === convert.cases.length && entries.every((e) => convert.cases.some((c) => c.caseId === e.openqodex?.caseId)), "benchmark_data cases differ from convert.json");
+  const fresh = martianConversion(readBoardReviews(folder, options), options).data;
+  for (const url of new Set([...Object.keys(data), ...Object.keys(fresh)])) {
+    need(canonical(data[url]) === canonical(fresh[url]), `${fresh[url]?.openqodex.caseId ?? data[url]?.openqodex?.caseId}: benchmark_data.json differs from a fresh conversion of this run`);
+  }
   const golden = entries.flatMap((e) => martianGolden(e.openqodex.caseId, martianTruth({ comments: e.golden_comments })));
   const planned = population(manifest, readAttempts(folder));
   need(planned.problems.length === 0, planned.problems.join("; "));

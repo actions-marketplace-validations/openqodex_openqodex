@@ -69,13 +69,11 @@ import { createHash } from "node:crypto";
 import { benchCache, boardFolder, outsideRepo } from "../../lib/board-files.mjs";
 import { benchRoot, repoRoot } from "../../lib/cases.mjs";
 import { heldOutAccessPath } from "../../lib/index.mjs";
-import { readBoardReviews } from "../../lib/board-reviews.mjs";
+import { martianConversion, readBoardReviews } from "../../lib/board-reviews.mjs";
 import * as licence from "../../lib/licence.mjs";
 import { MARTIAN_BOARD, npmRegistryAnswer, REGISTRY, releaseGate } from "../../lib/martian-board.mjs";
-import { readPinned, truthOf } from "../../lib/suites.mjs";
 
 const firstLine = (error) => String(error?.message ?? error).split("\n")[0];
-const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Converts the release run in `folder`: writes <folder>/outside/martian/
@@ -121,35 +119,7 @@ export async function convertRun(folder, { root = benchRoot, cache = licence.cac
     throw new Error(`the held-out access log ${accessLog} cannot be written (${firstLine(error)}), so no Martian case is read`);
   }
 
-  // Each pull request's golden comments, from the pinned file, checked against the frozen truth.
-  const data = {};
-  const caseRows = [];
-  for (const c of [...cases.values()].sort((a, b) => byName(a.name, b.name))) {
-    const truth = truthOf(c, { cache });
-    const row = readPinned(cache, "martian", { path: c.source.dataset.file, sha256: c.source.dataset.sha256 }).find((r) => r.url === c.source.prUrl);
-    data[c.source.prUrl] = { pr_title: row.pr_title ?? null, original_url: row.original_url ?? null, source_repo: basename(c.source.dataset.file, ".json"), golden_comments: row.comments, golden_source_file: basename(c.source.dataset.file), openqodex: { caseId: c.id, case: c.name }, reviews: [] };
-    caseRows.push({ caseId: c.id, case: c.name, goldenUrl: c.source.prUrl, golden: truth.items.length, licence: c.source.licence.class });
-  }
-
-  // Every suite case has a review, including cases the run did not plan.
-  const jobs = [...run.reviews].sort((a, b) => byName(a.tool, b.tool) || byName(a.case, b.case));
-  const held = run.held.map((h) => ({ tool: h.tool, caseId: h.caseId, case: h.case, goldenUrl: cases.get(h.caseId).source.prUrl, index: h.index, findingId: h.findingId, lacking: h.lacking }));
-  const failures = [];
-  const heldTools = new Set(held.map((h) => h.tool));
-  for (const job of jobs) {
-    const url = cases.get(job.caseId).source.prUrl;
-    if (job.native !== null && job.status === "failed") failures.push({ caseId: job.caseId, config: job.config, repeat: job.repeat, failure: job.first.row.failure ?? null });
-    if (!heldTools.has(job.tool)) data[url].reviews.push({ tool: job.tool, repo_name: null, pr_url: url, review_comments: job.comments, openqodex: { caseId: job.caseId, case: job.case, config: job.config, repeat: job.repeat, attempt: 1, status: job.status, findingIds: job.findingIds } });
-  }
-
-  const toolRows = run.tools.map(({ tool, config, boardConfig, repeat }) => {
-    const mine = jobs.filter((j) => j.tool === tool);
-    const statuses = {};
-    for (const j of mine) statuses[j.status] = (statuses[j.status] ?? 0) + 1;
-    const lack = held.filter((h) => h.tool === tool);
-    const why = lack.length === 0 ? null : `${lack.length} finding${lack.length === 1 ? " lacks" : "s lack"} what Martian's judge reads (${lack.map((h) => `${h.case} index ${h.index}: ${h.lacking.join(", ")}`).join("; ")}); none of this tool name's reviews is sent, since judging it without one of its pull requests would shrink Martian's denominators`;
-    return { tool, config, boardConfig, repeat, reviews: mine.length, findings: mine.reduce((n, j) => n + j.shown.length, 0), statuses, held: lack.length > 0, why };
-  });
+  const { data, caseRows, jobs, held, failures, toolRows } = martianConversion(run, { cache });
   const dataset = [...cases.values()][0].source.dataset;
   const record = {
     version: 1,

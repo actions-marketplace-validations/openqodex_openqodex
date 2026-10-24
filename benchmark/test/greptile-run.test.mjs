@@ -15,6 +15,7 @@ import { attemptDir, planJobs, runManifest, sampleRecord } from "../lib/runner.m
 import { rawPath, readCase, readSuite, specCopy, truthOf } from "../lib/suites.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 import { convertOpts, finding, fixturePlan, savedRun as martianRun, suite as martianSuite } from "./martian-board-fixture.mjs";
+import { main as judgeMartian } from "../outside/boards/martian-judge.mjs";
 import { convertRun } from "../outside/convert/martian.mjs";
 
 afterAll(removeTempDirs);
@@ -27,13 +28,19 @@ const test = (name, fn) => it.skipIf(!hasTruth)(name + needsTruth, fn);
 const read = (path) => JSON.parse(readFileSync(path, "utf8"));
 const write = (path, value) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`); };
 const tool = "openqodex-library-r1";
+const fixtureBuild = read(join(benchRoot, "index/comparisons/compare-2026-10.json")).build;
+const fixtureReviewers = {
+  library: { path: "server", reviewer: "model:scripted", model: "scripted", version: "fixture", graph: "on", web: "off", effort: "high", maxOutputTokens: 32000 },
+  control: { path: "laptop", reviewer: "control", model: "claude-opus-5-5", version: "fixture", graph: "off", web: "off", effort: null, maxOutputTokens: null },
+};
 const boardPath = (folder, file) => join(folder, "outside/greptile", file);
 const report = (findings = [], status = "complete", extra = {}) => ({ completion: { status }, findings, outside_change: [], ...extra });
 
 function savedRun({ planned = cases.slice(0, 2), reviewers = ["model:scripted"], reports = [report([finding()]), report()], native = null } = {}) {
   const folder = tempDir("oq-greptile-board-");
   const { jobs, configs } = planJobs({ cases: planned.map((c) => c.name), caseIds: Object.fromEntries(planned.map((c) => [c.name, c.id])), reviewers, graph: native === null ? ["on"] : ["off"], repeat: 1 });
-  const settings = { runId: "greptile-board-test", mode: "review", suite: "greptile", split: "dev", splitHash: suite.splitHash, cases: planned.map((c) => c.name), caseIds: planned.map((c) => c.id), caseHashes: Object.fromEntries(planned.map((c) => [c.name, c.hash])), configs, repeat: 1 };
+  const pins = Object.values(fixtureReviewers).filter((r) => reviewers.includes(r.reviewer));
+  const settings = { build: { ...fixtureBuild, cliVersion: fixtureBuild.version }, reviewers: Object.fromEntries(pins.map((r) => [r.reviewer, { model: r.model, version: r.version, settings: { effort: r.effort, maxOutputTokens: r.maxOutputTokens } }])), runId: "greptile-board-test", mode: "review", suite: "greptile", split: "dev", splitHash: suite.splitHash, cases: planned.map((c) => c.name), caseIds: planned.map((c) => c.id), caseHashes: Object.fromEntries(planned.map((c) => [c.name, c.hash])), configs, repeat: 1 };
   write(join(folder, "manifest.json"), runManifest({ startedAt: "2026-10-24T00:00:00Z", settings, jobs }));
   for (const c of planned) write(join(folder, "cases", `${c.name}.json`), specCopy(c, truthOf(c, { cache })));
   for (const job of jobs) {
@@ -50,15 +57,18 @@ function savedRun({ planned = cases.slice(0, 2), reviewers = ["model:scripted"],
 
 // A scripted model provider is the only stand-in. The CLI starts its real
 // uncached relay, whose connection probe is counted apart from judge calls.
-async function provider() {
+async function provider({ fail = false } = {}) {
   const seen = [];
+  const calls = [];
   const server = createServer((req, res) => {
     let text = "";
     req.on("data", (chunk) => { text += chunk; });
     req.on("end", () => {
       const request = JSON.parse(text);
+      calls.push(request);
       const probe = request.messages?.at(-1)?.content === "Reply yes.";
       if (!probe) seen.push(request);
+      if (!probe && fail) { res.writeHead(400); res.end("scripted provider failure"); return; }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ model: "gpt-5.2", choices: [{ message: { content: probe ? "yes" : JSON.stringify({ match: true, reasoning: "Scripted match." }) }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
     });
@@ -66,7 +76,7 @@ async function provider() {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const envFile = join(tempDir("oq-greptile-provider-"), "model.env");
   writeFileSync(envFile, `AZURE_OPENAI_BASE_URL=http://127.0.0.1:${server.address().port}/v1\nAZURE_OPENAI_KEY=scripted-provider-key\n`);
-  return { seen, envFile, close: () => new Promise((resolve) => server.close(resolve)) };
+  return { seen, calls, envFile, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
 function recordFixture() {
@@ -77,6 +87,8 @@ function recordFixture() {
   }
   const record = read(join(benchRoot, "index/comparisons/compare-2026-10.json"));
   record.release = "fixture-release";
+  record.reviewers = structuredClone(fixtureReviewers);
+  record.runs = [];
   record.boards = { greptile: record.boards.greptile };
   record.suites = { greptile: record.suites.greptile };
   record.calibrationRulings = record.calibrationRulings.filter((r) => r.board === "greptile");
@@ -226,6 +238,77 @@ test("a priced run requires a cap and refuses a forecast above it before contact
     expect(result.stderr).toMatch(why);
     expect(existsSync(boardPath(folder, "eval.json"))).toBe(false);
   }
+});
+
+it("Martian refuses another comparison build before reading model settings or calling its pipeline", async () => {
+  const fixture = recordFixture();
+  const folder = tempDir("oq-martian-preflight-");
+  const manifest = { release: fixture.record.release, package: { spec: "local" }, build: { ...fixtureBuild, commit: "d".repeat(40) }, reviewers: { "model:scripted": { model: "scripted", version: "fixture", settings: { effort: "high", maxOutputTokens: 32000 } } } };
+  write(join(folder, "manifest.json"), manifest);
+  write(join(folder, "outside/martian/convert.json"), { commit: read(join(benchRoot, "outside/boards.json")).boards.martian.commit, manifestSha256: hash(readFileSync(join(folder, "manifest.json"))) });
+  await expect(judgeMartian([folder, "--checkout", folder, "--python", join(folder, "must-not-start")], { root: fixture.root })).rejects.toThrow(/build.*comparison/);
+});
+
+test("a run of another build is refused before any relay call", async () => {
+  const folder = savedRun();
+  const fixture = recordFixture();
+  const manifest = read(join(folder, "manifest.json"));
+  manifest.build.commit = "d".repeat(40); write(join(folder, "manifest.json"), manifest);
+  const model = await provider();
+  try {
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
+    expect(result.code).toBe(2);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toMatch(/build.*comparison/);
+    expect(model.calls).toHaveLength(0);
+  } finally { await model.close(); }
+});
+
+test("a max-usd above the record cap is refused before any relay call", async () => {
+  const folder = savedRun(); const fixture = recordFixture();
+  const model = await provider();
+  try {
+    const result = await cli(folder, ["--max-usd", String(fixture.record.capUsd + 1)], model, { root: fixture.root, release: fixture.record.release });
+    expect(result.code).toBe(2);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toMatch(/--max-usd.*record cap/);
+    expect(model.calls).toHaveLength(0);
+  } finally { await model.close(); }
+});
+
+for (const field of ["model", "version", "effort", "maxOutputTokens"]) test(`a run with another reviewer ${field} is refused before any relay call`, async () => {
+  const folder = savedRun(); const fixture = recordFixture();
+  const manifest = read(join(folder, "manifest.json"));
+  const reviewer = manifest.reviewers["model:scripted"];
+  if (["effort", "maxOutputTokens"].includes(field)) reviewer.settings[field] = field === "effort" ? "low" : 1;
+  else reviewer[field] = "another-value";
+  write(join(folder, "manifest.json"), manifest);
+  const model = await provider();
+  try {
+    const result = await cli(folder, ["--max-usd", "1"], model, { root: fixture.root, release: fixture.record.release });
+    expect(result.code).toBe(2);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toContain(field);
+    expect(model.calls).toHaveLength(0);
+  } finally { await model.close(); }
+});
+
+test("a failed priced forced run leaves the old evaluation active and keeps pending output", async () => {
+  const folder = savedRun(); const fixture = recordFixture();
+  write(boardPath(folder, "input.json"), { saved: "input" });
+  write(boardPath(folder, "eval.json"), { saved: true });
+  const model = await provider({ fail: true });
+  try {
+    const result = await cli(folder, ["--max-usd", "1", "--force"], model, { root: fixture.root, release: fixture.record.release });
+    expect(result.code).toBe(2);
+    expect(model.seen.length).toBeGreaterThan(0);
+    expect(read(boardPath(folder, "eval.json"))).toEqual({ saved: true });
+    expect(read(boardPath(folder, "input.json"))).toEqual({ saved: "input" });
+    const pending = readdirSync(join(folder, "outside")).filter((name) => name.startsWith("greptile.pending-"));
+    expect(pending).toHaveLength(1);
+    expect(existsSync(join(folder, "outside", pending[0], "input.json"))).toBe(true);
+    expect(readdirSync(join(folder, "outside")).some((name) => name.startsWith("greptile.superseded-"))).toBe(false);
+  } finally { await model.close(); }
 });
 
 test("a dry run refuses a folder that holds a judged evaluation", async () => {

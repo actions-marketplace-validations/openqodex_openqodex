@@ -45,6 +45,7 @@ import { executeRun, planJobs, runManifest, sampleRecord } from "../lib/runner.m
 import { RULES_VERSION } from "../lib/score.mjs";
 import { publishRun } from "../publish-run.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
+import { aacrOutside } from "./outside-fixture.mjs";
 import { compareConfig } from "../trend.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 
@@ -460,10 +461,10 @@ it("refuses acceptance of a stale board copy in one line naming the run", async 
   const { root, index } = await indexWith({ before: () => true, after: () => true });
   const scoreFile = join(root, NEWER.runId, "score.json");
   const score = JSON.parse(readFileSync(scoreFile, "utf8"));
-  score.outside = { aacr: { fresh: true } };
+  score.outside = aacrOutside(CONFIG);
   write(scoreFile, `${JSON.stringify(score, null, 2)}\n`);
   const entry = readEntryAt(index, NEWER.runId);
-  entry.outside = { aacr: { stale: true } };
+  entry.outside = aacrOutside(CONFIG, { line: { precision: 0.3, recall: 0.5 }, semantic: null });
   putEntry(index, entry);
   const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", index, "--results", root]);
   expect(result.status).toBe(2);
@@ -474,7 +475,7 @@ it("refuses acceptance of a stale board copy in one line naming the run", async 
 it("refuses to accept a board-scored entry from a copy fetched from its asset", async () => {
   const { index, published } = await indexWith({ before: () => true, after: () => true });
   const entry = readEntryAt(index, NEWER.runId);
-  entry.outside = { aacr: { byConfig: { [CONFIG]: { mean: { line: { precision: 0.4, recall: 0.5 }, semantic: null } } } } };
+  entry.outside = aacrOutside(CONFIG);
   putEntry(index, entry);
   const fetched = tempDir("oq-bench-fetched-");
   extractAsset(published.next.asset.tarPath, entry.asset, fetched, NEWER.runId);
@@ -486,7 +487,7 @@ it("refuses to accept a board-scored entry from a copy fetched from its asset", 
 
 it("records the board numbers' hash at accept, and refuses the index once they are edited", async () => {
   const { root, index } = await indexWith({ before: () => true, after: () => true });
-  const outside = { aacr: { byConfig: { [CONFIG]: { mean: { line: { precision: 0.4, recall: 0.5 }, semantic: null } } } } };
+  const outside = aacrOutside(CONFIG);
   const scoreFile = join(root, NEWER.runId, "score.json");
   write(scoreFile, `${JSON.stringify({ ...JSON.parse(readFileSync(scoreFile, "utf8")), outside }, null, 2)}\n`);
   putEntry(index, { ...readEntryAt(index, NEWER.runId), outside });

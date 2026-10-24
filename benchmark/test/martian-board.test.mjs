@@ -198,10 +198,12 @@ describe("a conversion made outside the gate, or of another manifest, is judged"
     const home = tempDir("oq-martian-board-gate-");
     const root = join(home, "runner/benchmark");
     // Keep the checkout outside the runner's repository, even under a local TMPDIR.
-    for (const file of ["lib", "outside/boards.json", "outside/boards/martian-judge.mjs", "outside/boards/aacr-judge.mjs", "outside/convert/martian.mjs"]) {
+    for (const file of ["lib", "score.mjs", "legacy", "outside/boards.json", "outside/boards/martian-judge.mjs", "outside/boards/aacr-judge.mjs", "outside/convert/martian.mjs"]) {
       mkdirSync(dirname(join(root, file)), { recursive: true });
       cpSync(join(benchRoot, file), join(root, file), { recursive: true });
     }
+    mkdirSync(join(root, "../packages"), { recursive: true });
+    symlinkSync(join(benchRoot, "../packages/scanners"), join(root, "../packages/scanners"));
     writeFileSync(join(home, "azure.env"), "AZURE_OPENAI_BASE_URL=https://judge.example.test/v1\nAZURE_OPENAI_KEY=fake-key\n");
     return spawnSync(process.execPath, [join(root, "outside/boards/martian-judge.mjs"), out, "--dry-run", "--checkout", join(home, "offline"), "--python", join(home, "venv", "bin", "python")], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(home, "azure.env"), OPENQODEX_BENCH_ACCESS_LOG: accessLog }, timeout: 60_000 });
   };

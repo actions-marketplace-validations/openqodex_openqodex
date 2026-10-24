@@ -68,13 +68,10 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
 import { RELEASE, REPOSITORY, assetUrl, boardHash, buildEntry, byBytes, entryProblems, fileList, hashReviewedFolder, listHash, readEntry, runsRoot, reviewedBytes, sha256, writeEntry } from "./lib/index.mjs";
-import { BOARDS, readOutside } from "./lib/outside-boards.mjs";
-import { readDecisions } from "./lib/rulings.mjs";
-import { canonical } from "./lib/score.mjs";
+import { boardRefusal } from "./lib/board-readback.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
 import { redactRowReasons } from "./lib/runner.mjs";
 import { extractAsset } from "./fetch-run.mjs";
-import { decisionsPath, loadRun, scoreRun } from "./score.mjs";
 
 // The files a run may publish, by path inside the run folder.
 export const ALLOWED = [
@@ -408,19 +405,6 @@ function citedScore(folder, recipe) {
   return readJson(join(folder, file));
 }
 
-// Why the board numbers a score carries are not the ones the run's board
-// output gives, as score.mjs --outside computes them (failure 8); null when they are.
-function boardRefusal(folder, runId, outside) {
-  if (outside === undefined) return null;
-  const names = Object.keys(outside);
-  if (names.some((name) => !Object.hasOwn(BOARDS, name))) return `refused: ${runId} names a board outside the registry`;
-  const d = readDecisions(decisionsPath);
-  const run = loadRun(folder);
-  const { jobs } = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
-  const recomputed = readOutside(folder, jobs, run.specs, names);
-  return canonical(outside) === canonical(recomputed) ? null : `refused: ${runId}'s board numbers in score.json are not the ones its board output gives; run node benchmark/score.mjs ${folder} --outside ${names.join(",")} again`;
-}
-
 // Records an accepted entry's board numbers in the accepted pointer, in
 // the order trend.mjs --accept writes them; the path when it changed.
 function recordBoard(entry, runs) {
@@ -453,7 +437,7 @@ function upload(tarPath, runId) {
   if (sent.status !== 0) throw new Error(`gh release upload failed: ${sent.stderr.trim()}`);
 }
 
-export async function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot } = {}) {
+export async function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot, boardOptions = {} } = {}) {
   folder = resolve(folder);
   const recipes = readRecipes();
   const runId = basename(folder);
@@ -496,7 +480,7 @@ export async function publishRun(folder, { dryRun = false, writeIndex = false, o
     throw new Error(`refused: the committed entry for ${runId} names other files (list hash ${committed.asset.listHash}, private ${committed.privateListHash}) than this folder packages (list hash ${entry.asset.listHash}, private ${entry.privateListHash})`);
   }
   const rebytes = committed !== null && committed.asset.sha256 !== entry.asset.sha256;
-  const refusal = recipe ? null : boardRefusal(folder, runId, entry.outside);
+  const refusal = recipe ? null : boardRefusal(folder, runId, entry.outside, boardOptions);
   if (refusal) throw new Error(refusal);
   // An accepted run stays accepted: benchmark/index/accepted.json names it,
   // and only trend.mjs --accept sets the mark.

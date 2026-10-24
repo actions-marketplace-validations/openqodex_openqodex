@@ -1,16 +1,16 @@
 // Each test names the saved-output failure it guards. No judge is called.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { benchRoot } from "../lib/cases.mjs";
-import { boardReview } from "../lib/board-reviews.mjs";
+import { boardReview, greptileInput } from "../lib/board-reviews.mjs";
 import { entryProblems, hashFolder, sha256 } from "../lib/index.mjs";
 import { BOARDS, outsideProblems } from "../lib/outside-boards.mjs";
 import { readGreptileOutside } from "../lib/greptile-board.mjs";
 import { boardConfigOf, boardToolName, martianEvaluations, readMartianOutside } from "../lib/martian-board.mjs";
-import { planJobs } from "../lib/runner.mjs";
+import { attemptDir, planJobs, sampleRecord } from "../lib/runner.mjs";
 import { martianFindings, martianGolden, nativeFindingId, readMartianEvaluation } from "../lib/score.mjs";
 import { martianTruth, readCase, readSuite, specCopy, truthOf } from "../lib/suites.mjs";
 import { extractAsset } from "../fetch-run.mjs";
@@ -27,8 +27,9 @@ const pins = read(join(benchRoot, "outside/boards.json"));
 const judgeModel = pins.deployments[pins.boards.martian.judge.deployment].id;
 const tool = "openqodex-cli-claude-r1";
 const boardPath = (folder, board, path) => join(folder, "outside", board, path);
-const readBlock = (folder, board) => { const run = loadRun(folder); return BOARDS[board](folder, scoreRun(run).jobs, run.specs); };
-const options = () => ({ runs: tempDir("oq-outside-index-"), out: tempDir("oq-outside-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(benchRoot, "test/fixtures/no-model.env") }, dryRun: true, writeIndex: true });
+const boardOptions = new Map();
+const readBlock = (folder, board) => { const run = loadRun(folder); return BOARDS[board](folder, scoreRun(run).jobs, run.specs, boardOptions.get(folder)); };
+const options = (folder) => ({ boardOptions: boardOptions.get(folder), runs: tempDir("oq-outside-index-"), out: tempDir("oq-outside-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(benchRoot, "test/fixtures/no-model.env") }, dryRun: true, writeIndex: true });
 const greptileBlock = (folder) => readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {});
 
 async function martianRun({ native = null, empty = false } = {}) {
@@ -41,6 +42,7 @@ async function martianRun({ native = null, empty = false } = {}) {
   const saved = await savedRun(selected, { configs: [config], plan, settings: { path: "laptop", build: { commit: "a".repeat(40), short: "aaaaaaa", dirty: false }, reviewers: { claude: { version: "fixture", model: "fixture" } } } });
   const folder = join(dirname(saved), "2026-10-11-aaaaaaa");
   renameSync(saved, folder);
+  boardOptions.set(folder, { root: ctx.root, cache: ctx.cache });
   for (const [name, id] of ctx.ids) write(join(folder, "cases", `${name}.json`), specCopy(readCase(id, { root: ctx.root }), truthOf(readCase(id, { root: ctx.root }), { cache: ctx.cache })));
   const { data } = await convertRun(folder, convertOpts(ctx));
   const r = (file) => JSON.parse(readFileSync(join(FIXTURES, "recorded", file), "utf8").replaceAll("openqodex-library-r1", name));
@@ -55,7 +57,7 @@ async function martianRun({ native = null, empty = false } = {}) {
   write(boardPath(folder, "martian", "eval.json"), { version: 1, board: "martian", repo: pins.boards.martian.repo, commit: pins.boards.martian.commit, judge: { deployment: judgeModel }, tools: [{ tool: name, evaluation: `${name}/evaluation.json`, core: evaluation.totals.core, problems: [] }], problems: [] });
   const run = loadRun(folder);
   const scored = scoreRun(run);
-  write(join(folder, "score.json"), { ...scored.score, outside: { martian: readMartianOutside(folder, scored.jobs, run.specs) } });
+  write(join(folder, "score.json"), { ...scored.score, outside: { martian: readMartianOutside(folder, scored.jobs, run.specs, boardOptions.get(folder)) } });
   return { folder, evaluation, data };
 }
 
@@ -65,12 +67,18 @@ function greptileRun({ held = false, comments = true } = {}) {
   const ids = suite.file.cases.map((c) => c.id);
   const first = suite.file.cases[0];
   const { jobs } = planJobs({ cases: [first.name], caseIds: { [first.name]: first.id }, reviewers: ["claude"], graph: ["on"], repeat: 1 });
-  const manifest = { suite: "greptile", splitHash: suite.splitHash, jobs };
+  const manifest = { suite: "greptile", splitHash: suite.splitHash, caseHashes: { [first.name]: first.hash }, jobs };
+  const c = readCase(first.id);
+  write(join(folder, "cases", `${first.name}.json`), specCopy(c, truthOf(c)));
+  const rep = report({ findings: comments ? [finding(held ? { fix: " " } : {})] : [] });
+  const dir = attemptDir(folder, jobs[0], 1);
+  write(join(dir, "sample.json"), sampleRecord({ job: jobs[0], attempt: 1, result: { code: 0, wallMs: 1 }, report: rep, startedAt: "2026-10-24T00:00:00Z" }));
+  write(join(dir, "report/report.json"), rep);
   write(join(folder, "manifest.json"), manifest);
   const manifestSha256 = sha256(readFileSync(join(folder, "manifest.json")));
-  const hold = held ? [{ case: suite.file.cases[0].name, index: 0, lacking: ["fix"] }] : [];
-  const cases = ids.map((id, i) => ({ id, caseId: id, tool, config: CLAUDE, boardConfig: "cli-claude", comments: i === 0 && comments ? ["The loop reads past the array."] : [], status: i === 0 ? "complete" : "not-run", truthSets: {} }));
-  write(boardPath(folder, "greptile", "input.json"), { truthSet: "greptile", manifestSha256, splitHash: suite.splitHash, suite: { name: "greptile", cases: ids }, tools: [{ tool, config: CLAUDE, boardConfig: "cli-claude", held: hold }], cases });
+  const input = greptileInput(folder, "greptile");
+  const hold = input.tools[0].held;
+  write(boardPath(folder, "greptile", "input.json"), input);
   const pin = pins.boards.greptile;
   const judgeModel = pins.deployments[pin.judge.deployment].id;
   const perTool = { [tool]: { config: CLAUDE, boardConfig: "cli-claude", ...(held ? { held: hold } : {}), caught: held ? null : comments ? 1 : 0, missed: held ? null : ids.length - (comments ? 1 : 0), of: ids.length, planned: 1, notRun: ids.length - 1, rate: held ? null : comments ? 1 / ids.length : 0 } };
@@ -81,7 +89,7 @@ function greptileRun({ held = false, comments = true } = {}) {
 
 it("AACR board files cannot change a previously published package list", async () => {
   const { folder } = await martianRun();
-  const opts = options();
+  const opts = options(folder);
   const before = await packageRun(folder, opts);
   const paths = ["outside/aacr/convert.json", "outside/aacr/eval.json"];
   for (const path of paths) write(join(folder, path), { version: 1 });
@@ -153,14 +161,14 @@ it("a held Martian tool preserves the judged tool's numbers in the same block", 
   write(boardPath(folder, "martian", "openqodex-library-r1/evaluation.json"), evaluation);
   const held = record.tools.find((t) => t.held);
   write(boardPath(folder, "martian", "eval.json"), { version: 1, board: "martian", repo: pins.boards.martian.repo, commit: pins.boards.martian.commit, judge: { deployment: judgeModel }, tools: [{ tool: "openqodex-library-r1", evaluation: "openqodex-library-r1/evaluation.json", core: evaluation.totals.core, problems: [] }, { tool: held.tool, evaluation: null, core: null, problems: [`held by the converter: ${held.why}`] }], problems: [] });
-  const block = readMartianOutside(folder, read(join(folder, "manifest.json")).jobs, {});
+  const block = readMartianOutside(folder, read(join(folder, "manifest.json")).jobs, {}, { root: ctx.root, cache: ctx.cache });
   expect(Object.keys(block.perTool).sort()).toEqual([tool, "openqodex-library-r1"]);
   expect(block.perTool[tool]).toMatchObject({ config: CLAUDE, boardConfig: "cli-claude", repeat: 1, held: held.why, official: null });
   expect(block.perTool["openqodex-library-r1"].official.core).toEqual(evaluation.totals.core);
   expect(outsideProblems({ martian: block })).toEqual([]);
 });
 
-const martianRead = (folder) => spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], [], {}, ["martian"]);', folder], { encoding: "utf8" });
+const martianRead = (folder) => spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], [], {}, ["martian"], JSON.parse(process.argv[2]));', folder, JSON.stringify(boardOptions.get(folder) ?? {})], { encoding: "utf8" });
 
 it("a Martian run without board output names the conversion command in one line", () => {
   const folder = tempDir("oq-outside-missing-");
@@ -199,7 +207,7 @@ it("native Martian sources follow the caller's eligibility predicate without ass
 
 it("a martian block edited by hand in score.json refuses the publish", async () => {
   const { folder } = await martianRun();
-  const opts = options();
+  const opts = options(folder);
   const first = await publishRun(folder, opts);
   const before = readFileSync(first.written, "utf8");
   const score = read(join(folder, "score.json"));
@@ -221,14 +229,14 @@ it("a martian core F1 that does not follow from its matches is refused", async (
 
 it("an entry with a board key the registry does not know is invalid", async () => {
   const { folder } = await martianRun();
-  const { entry } = await publishRun(folder, options());
+  const { entry } = await publishRun(folder, options(folder));
   expect(entryProblems(entry)).toEqual([]);
   expect(entryProblems({ ...entry, outside: { borrowed: entry.outside.martian } }).join("\n")).toMatch(/outside.borrowed.*registry/);
 });
 
 it("a board block without its evidence hash or tool identity is invalid", async () => {
   const { folder } = await martianRun();
-  const { entry } = await publishRun(folder, options());
+  const { entry } = await publishRun(folder, options(folder));
   for (const field of ["config", "boardConfig"]) {
     const edited = structuredClone(entry);
     delete edited.outside.martian.perTool[tool][field];
@@ -237,6 +245,43 @@ it("a board block without its evidence hash or tool identity is invalid", async 
   const edited = structuredClone(entry);
   delete edited.outside.martian.evidenceHash;
   expect(entryProblems(edited).join("\n")).toContain("evidenceHash");
+});
+
+it("a Greptile input whose not-run case carries a comment is refused in one line", () => {
+  const folder = greptileRun();
+  const file = boardPath(folder, "greptile", "input.json");
+  const input = read(file);
+  input.cases[1].comments = ["Invented review"];
+  write(file, input);
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], JSON.parse(process.argv[2]), {}, ["greptile"]);', folder, JSON.stringify(read(join(folder, "manifest.json")).jobs)], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  expect(result.stderr.trim().split("\n")).toHaveLength(1);
+  expect(result.stderr).toMatch(/input.json.*(first attempt|rebuild)/);
+});
+
+it("Greptile refuses a verdict that marks a not-run case caught", () => {
+  const folder = greptileRun();
+  const file = boardPath(folder, "greptile", `${tool}/verdicts.json`);
+  const verdicts = read(file); verdicts[1].label = "caught"; write(file, verdicts);
+  expect(() => greptileBlock(folder)).toThrow(/not-run|empty case/);
+});
+
+it("Martian refuses a changed golden comment in one line naming its case", async () => {
+  const { folder, data } = await martianRun();
+  const entry = Object.values(data)[0];
+  entry.golden_comments[0].comment += " Changed truth.";
+  write(boardPath(folder, "martian", "benchmark_data.json"), data);
+  const result = martianRead(folder);
+  expect(result.stderr.trim().split("\n")).toHaveLength(1);
+  expect(result.stderr).toContain(entry.openqodex.caseId);
+  expect(result.stderr).toMatch(/benchmark_data.json.*conversion/);
+});
+
+it("Martian refuses an added review comment in benchmark_data.json", async () => {
+  const { folder, data } = await martianRun();
+  Object.values(data)[0].reviews[0].review_comments.push({ body: "Invented review" });
+  write(boardPath(folder, "martian", "benchmark_data.json"), data);
+  expect(() => readBlock(folder, "martian")).toThrow(/benchmark_data.json.*conversion/);
 });
 
 it("a greptile eval.json whose summary differs from its verdicts is refused", () => {
@@ -316,10 +361,11 @@ it("the published asset keeps the board files and leaves the Martian work folder
   const { folder } = await martianRun();
   const kept = ["outside/martian/convert.json", "outside/martian/eval.json", "outside/martian/benchmark_data.json", `outside/martian/${tool}/evaluation.json`, "outside/greptile/input.json", "outside/greptile/eval.json", `outside/greptile/${tool}/verdicts.json`];
   for (const path of kept.filter((p) => p.startsWith("outside/greptile/"))) write(join(folder, path), { saved: true });
-  const left = ["outside/martian/work/results/evaluations.json", "outside/greptile.superseded-2026-10-24/input.json", "outside/greptile.superseded-2026-10-24/eval.json", `outside/greptile.superseded-2026-10-24/${tool}/verdicts.json`];
+  const left = ["outside/martian/work/results/evaluations.json", "outside/greptile.pending-2026-10-24/input.json", "outside/greptile.pending-2026-10-24/eval.json", `outside/greptile.pending-2026-10-24/${tool}/verdicts.json`, "outside/greptile.superseded-2026-10-24/input.json", "outside/greptile.superseded-2026-10-24/eval.json", `outside/greptile.superseded-2026-10-24/${tool}/verdicts.json`];
   for (const path of left) write(join(folder, path), { path: join(homedir(), "private") });
-  const asset = await packageRun(folder, options());
+  const asset = await packageRun(folder, options(folder));
   const back = extractAsset(asset.tarPath, asset, tempDir("oq-outside-back-"), asset.runId);
+  boardOptions.set(back, boardOptions.get(folder));
   for (const path of kept) expect(readFileSync(join(back, path))).toEqual(readFileSync(join(folder, path)));
   for (const path of left) expect(asset.left).toContain(path);
   expect(read(join(folder, "score.json")).outside.martian.evidenceHash).toBe(hashFolder(back, kept.filter((p) => p.startsWith("outside/martian/"))).listHash);
@@ -329,14 +375,15 @@ it("the published asset keeps the board files and leaves the Martian work folder
 it("the publisher still inspects packaged board input for private paths", async () => {
   const { folder } = await martianRun();
   write(boardPath(folder, "greptile", "input.json"), { path: join(homedir(), "private") });
-  await expect(packageRun(folder, options())).rejects.toThrow(/hit.*files to publish/);
+  await expect(packageRun(folder, options(folder))).rejects.toThrow(/hit.*files to publish/);
 });
 
 it("Greptile labels remain readable after packaging without the source run", async () => {
   const folder = greptileRun();
   const block = greptileBlock(folder);
-  const asset = await packageRun(folder, options());
+  const asset = await packageRun(folder, options(folder));
   const back = extractAsset(asset.tarPath, asset, tempDir("oq-outside-back-"), asset.runId);
+  boardOptions.set(back, boardOptions.get(folder));
   expect(greptileBlock(back)).toEqual(block);
   expect(block.evidenceHash).toBe(hashFolder(back, ["outside/greptile/input.json", "outside/greptile/eval.json", `outside/greptile/${tool}/verdicts.json`]).listHash);
 });
@@ -389,9 +436,18 @@ it("repeated outside flags and all preserve every requested board during an in-p
   const before = read(join(folder, "score.json"));
   before.marker = "keep the reviewed score";
   write(join(folder, "score.json"), before);
-  const script = join(benchRoot, "score.mjs");
+  const root = join(tempDir("oq-outside-score-cli-"), "benchmark");
+  const fixtureOptions = boardOptions.get(folder);
+  for (const file of ["score.mjs", "lib", "legacy", "outside/boards.json"]) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    cpSync(join(benchRoot, file), join(root, file), { recursive: true });
+  }
+  for (const file of ["suites", "splits"]) cpSync(join(fixtureOptions.root, file), join(root, file), { recursive: true });
+  mkdirSync(join(root, "../packages"), { recursive: true });
+  symlinkSync(join(benchRoot, "../packages/scanners"), join(root, "../packages/scanners"));
+  const script = join(root, "score.mjs");
   for (const flags of [["--outside", "martian,aacr", "--outside", "greptile"], ["--outside", "all"]]) {
-    const result = spawnSync(process.execPath, [script, folder, ...flags], { encoding: "utf8" });
+    const result = spawnSync(process.execPath, [script, folder, ...flags], { encoding: "utf8", env: { ...process.env, OPENQODEX_BENCH_CACHE: fixtureOptions.cache } });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr.trim().split("\n")).toHaveLength(2);
     const after = read(join(folder, "score.json"));

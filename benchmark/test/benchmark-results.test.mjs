@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+import { aacrOutside } from "./outside-fixture.mjs";
 import { boardHash, groupKeys, scoreHash } from "../lib/index.mjs";
 
 afterAll(removeTempDirs);
@@ -122,10 +123,10 @@ it("keeps indexed board metrics and A/A issue noise separate", () => {
   const { runId, config: aacrConfig } = aacrGroup(root);
   const path = entryFile(root, runId);
   const entry = JSON.parse(readFileSync(path, "utf8"));
-  entry.outside = { aacr: { byConfig: { [aacrConfig]: { mean: {
+  entry.outside = aacrOutside(aacrConfig, {
     semantic: { precision: 0.2, recall: 0.3, f1: 0.24, noiseRate: 0.8 },
     line: { precision: 0.4, recall: 0.5 },
-  } } } } };
+  });
   putRecorded(root, entry);
   // An A/A twin of an accepted run with at least three issues found, three issues apart.
   const accepted = Object.entries(pointer(root).groups).map(([key, a]) => {
@@ -179,7 +180,7 @@ it("keeps an AACR-Bench row with no board numbers and no ruled hit off the READM
   expect(block(root).some((l) => l.includes(`(${config})`) && l.includes("AACR-Bench"))).toBe(false);
   expect(page(root).split("\n").some((l) => l.startsWith("| ") && l.includes(`[${runId}]`))).toBe(true);
   // The same row with board numbers is on the README.
-  entry.outside = { aacr: { byConfig: { [config]: { mean: { semantic: null, line: { precision: 0.4, recall: 0.5 } } } } } };
+  entry.outside = aacrOutside(config);
   putRecorded(root, entry);
   expect(run(root).status).toBe(0);
   expect(block(root).some((l) => l.includes(`(${config})`) && l.includes("AACR-Bench"))).toBe(true);
