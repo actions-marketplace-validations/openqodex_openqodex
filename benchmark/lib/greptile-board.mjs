@@ -9,7 +9,7 @@ import { readSuite } from "./suites.mjs";
 
 const PINS = JSON.parse(readFileSync(new URL("../outside/boards.json", import.meta.url), "utf8"));
 
-export function readGreptileOutside(folder, jobs, specs) {
+export function readGreptileOutside(folder, jobs, _specs) {
   const out = join(folder, "outside", "greptile");
   if (!existsSync(join(out, "eval.json"))) throw new Error(`${out} holds no eval.json; judge the run first (benchmark/outside/boards/greptile-run.mjs)`);
   const paths = [];

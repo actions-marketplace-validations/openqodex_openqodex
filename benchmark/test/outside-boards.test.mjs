@@ -400,7 +400,7 @@ it("repeated outside flags and all preserve every requested board during an in-p
     expect(after.outside.aacr).toBeNull();
     expect(after.outside.greptile).toBeNull();
     delete after.outside;
-    const { outside, ...rest } = before;
+    const { outside: _outside, ...rest } = before;
     expect(after).toEqual(rest);
     expect(result.stdout).toContain("Martian");
   }
