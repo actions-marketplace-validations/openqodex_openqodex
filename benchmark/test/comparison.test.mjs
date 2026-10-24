@@ -47,6 +47,7 @@ import { planJobs } from "../lib/runner.mjs";
 import { readCase, specCopy, truthOf } from "../lib/suites.mjs";
 import { caseSetHash } from "../lib/score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
+import { boardSuiteFixture } from "./board-suite-fixture.mjs";
 
 afterAll(removeTempDirs);
 const read = (file) => JSON.parse(readFileSync(file, "utf8"));
@@ -89,9 +90,10 @@ function fixture(suite = "aacr", cli = false) {
   }
   write(join(root, ".build/provenance.json"), { ...build, cliVersion: build.version });
   if (cli) git(join(root, ".."), "init", "-q");
+  const truth = suite === "aacr" ? {} : boardSuiteFixture(suite, root);
   const options = { root, build };
   const record = freezeComparison({ release: "compare-2026-10", suites: [suite], boards: [suite], reviewers: structuredClone(reviewers), capUsd: 100 }, options);
-  return { root, build, options, record };
+  return { root, build, options, record, cache: truth.cache };
 }
 const sign = (record) => { record.acceptance = { person: "Sid", date: "2026-10-14", hash: "" }; record.acceptance.hash = comparisonHash(record); return record; };
 function calibrationFixture(f) {
@@ -141,7 +143,7 @@ function runFixture(f, tree = true, list = "private", reviewer = "library") {
       const selected = entry.caseIds.map((id) => readCase(id, { root: f.root }));
       const { jobs } = planJobs({ cases: selected.map((c) => c.name), caseIds: Object.fromEntries(selected.map((c) => [c.name, c.id])), reviewers: [settings.reviewer], graph: [settings.graph], repeat: 1 });
       Object.assign(manifest, { cases: selected.map((c) => c.name), caseHashes: Object.fromEntries(selected.map((c) => [c.name, c.hash])), jobs });
-      for (const c of selected) write(join(folder, "cases", `${c.name}.json`), specCopy(c, truthOf(c)));
+      for (const c of selected) write(join(folder, "cases", `${c.name}.json`), specCopy(c, truthOf(c, { cache: f.cache })));
     }
     write(join(folder, "manifest.json"), manifest);
     const out = join(folder, "outside", suite);
@@ -157,15 +159,15 @@ function runFixture(f, tree = true, list = "private", reviewer = "library") {
       const board = pin.boards.greptile;
       const judgeModel = pin.deployments[board.judge.deployment].id;
       const manifestSha256 = sha256(readFileSync(join(folder, "manifest.json")));
-      const input = greptileInput(folder, "greptile", { root: f.root });
+      const input = greptileInput(folder, "greptile", { root: f.root, cache: f.cache });
       const cases = input.cases;
       write(join(out, "input.json"), input);
       write(join(out, "eval.json"), { version: 1, board: { name: suite, repository: board.repo, commit: board.commit, judgeModel, promptHash: board.judge.prompt.sha256 }, truthSet: "greptile", judgeModel: null, promptHash: board.judge.prompt.sha256, manifestSha256, splitHash: entry.splitHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), caught: 0, missed: ids.length, of: ids.length, planned: entry.caseIds.length, notRun: ids.length - entry.caseIds.length, rate: 0 } } });
       write(join(out, tool, "verdicts.json"), cases.map((c) => ({ id: c.id, label: "missed", reason: c.status })));
-      entry.outside = { greptile: BOARDS.greptile(folder, [{ config, repeat: 1 }], {}, { root: f.root }) };
+      entry.outside = { greptile: BOARDS.greptile(folder, [{ config, repeat: 1 }], {}, { root: f.root, cache: f.cache }) };
     } else {
       const run = readBoardReviews(folder, { root: f.root });
-      const fresh = martianConversion(run);
+      const fresh = martianConversion(run, { cache: f.cache });
       const pins = read(join(f.root, "outside/boards.json"));
       const pin = pins.boards.martian;
       const model = pins.deployments[pin.judge.deployment].id;

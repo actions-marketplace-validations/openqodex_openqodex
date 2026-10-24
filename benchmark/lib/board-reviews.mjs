@@ -9,7 +9,7 @@ import { benchRoot } from "./cases.mjs";
 import { nativeReviewBody } from "./claude-control.mjs";
 import { boardConfigOf, boardToolName, martianBody } from "./martian-board.mjs";
 import { attemptOf, findingId, judgeFieldsMissing, nativeFindingId, normPath, population, shownFindings } from "./score.mjs";
-import { readCase, readPinned, readSuite, realCaseId, realSpecProblems, truthOf } from "./suites.mjs";
+import { readCase, readPinned, readSuite, realCaseId, realSpecProblems, truthHashOf, truthOf } from "./suites.mjs";
 
 export { boardToolName, martianBody, martianToolName } from "./martian-board.mjs";
 export { nativeFindingId } from "./score.mjs";
@@ -98,17 +98,27 @@ export function readBoardReviews(folder, { root = benchRoot, heading = `${folder
   return { manifest, manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"), suite: { name: manifest.suite, cases: cases.map((c) => c.id) }, cases, reviews, tools: toolRows.map((t) => ({ ...t, held: held.some((h) => h.tool === t.tool) })), held };
 }
 
-/** The exact input shared by the Greptile judge and its evidence reader. */
-export function greptileInput(folder, truthSet, { root = benchRoot, cache = cacheRoot() } = {}) {
+/** Shared rebuild: the judge reads not-run truth; readback supplies saved truth. */
+export function greptileInput(folder, truthSet, { root = benchRoot, cache = cacheRoot(), truth = (c) => truthOf(c, { cache }).sets } = {}) {
   const run = readBoardReviews(folder, { root });
   const savedTruth = new Map();
-  const cachedTruth = new Map();
+  const notRunTruth = new Map();
   const byId = new Map(run.cases.map((c) => [c.id, c]));
   const truthSets = (review) => {
     const c = byId.get(review.caseId);
     if (review.status === "not-run") {
-      if (!cachedTruth.has(c.id)) cachedTruth.set(c.id, truthOf(c, { cache }).sets);
-      return cachedTruth.get(c.id);
+      if (!notRunTruth.has(c.id)) {
+        const sets = truth(c);
+        if (!sets || Object.keys(sets).sort().join(",") !== Object.keys(c.truthSets).sort().join(",")) throw new Error(`${c.id}: both truth sets must match the frozen suite`);
+        for (const [name, pin] of Object.entries(c.truthSets)) {
+          const set = sets[name];
+          if (set?.kind !== pin.kind || truthHashOf(set?.source) !== truthHashOf(pin.source) || !Array.isArray(set?.items) || set.items.length !== pin.items || truthHashOf(set.items) !== pin.hash || ["hash", "file", "sha256"].some((field) => Object.hasOwn(set, field) && set[field] !== pin[field])) throw new Error(`${c.id}: ${name} truth differs from the frozen suite`);
+        }
+        const identity = Object.fromEntries(Object.entries(sets).map(([name, set]) => [name, { kind: set.kind, source: set.source, items: set.items }]));
+        if (truthHashOf(identity) !== c.truthHash) throw new Error(`${c.id}: truth sets differ from their frozen hash`);
+        notRunTruth.set(c.id, sets);
+      }
+      return notRunTruth.get(c.id);
     }
     if (!savedTruth.has(c.id)) {
       const spec = readJsonOr(join(folder, "cases", `${c.name}.json`));

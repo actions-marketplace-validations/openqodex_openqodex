@@ -19,6 +19,7 @@ import { convertRun } from "../outside/convert/martian.mjs";
 import { loadRun, scoreRun } from "../score.mjs";
 import { removeTempDirs, tempDir } from "../../tests/temp-dirs.mjs";
 import { CLAUDE, FIXTURES, MODEL, convertOpts, finding, fixturePlan, fixtureReport, report, savedRun, suite } from "./martian-board-fixture.mjs";
+import { boardSuiteFixture } from "./board-suite-fixture.mjs";
 
 afterAll(removeTempDirs);
 const read = (path) => JSON.parse(readFileSync(path, "utf8"));
@@ -30,7 +31,7 @@ const boardPath = (folder, board, path) => join(folder, "outside", board, path);
 const boardOptions = new Map();
 const readBlock = (folder, board) => { const run = loadRun(folder); return BOARDS[board](folder, scoreRun(run).jobs, run.specs, boardOptions.get(folder)); };
 const options = (folder) => ({ boardOptions: boardOptions.get(folder), runs: tempDir("oq-outside-index-"), out: tempDir("oq-outside-asset-"), env: { OPENQODEX_BENCH_MODEL_ENV: join(benchRoot, "test/fixtures/no-model.env") }, dryRun: true, writeIndex: true });
-const greptileBlock = (folder) => readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {});
+const greptileBlock = (folder) => readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {}, boardOptions.get(folder));
 
 async function martianRun({ native = null, empty = false, accessLog } = {}) {
   const ctx = await suite();
@@ -61,22 +62,24 @@ async function martianRun({ native = null, empty = false, accessLog } = {}) {
   return { folder, evaluation, data };
 }
 
-function greptileRun({ held = false, comments = true } = {}) {
+function greptileRun({ held = false, comments = true, caseCount = 50 } = {}) {
   const folder = tempDir("oq-outside-greptile-");
-  const suite = readSuite("greptile");
+  const ctx = boardSuiteFixture("greptile", undefined, caseCount);
+  boardOptions.set(folder, ctx);
+  const suite = readSuite("greptile", ctx);
   const ids = suite.file.cases.map((c) => c.id);
   const first = suite.file.cases[0];
   const { jobs } = planJobs({ cases: [first.name], caseIds: { [first.name]: first.id }, reviewers: ["claude"], graph: ["on"], repeat: 1 });
   const manifest = { suite: "greptile", splitHash: suite.splitHash, caseHashes: { [first.name]: first.hash }, jobs };
-  const c = readCase(first.id);
-  write(join(folder, "cases", `${first.name}.json`), specCopy(c, truthOf(c)));
+  const c = readCase(first.id, ctx);
+  write(join(folder, "cases", `${first.name}.json`), specCopy(c, truthOf(c, ctx)));
   const rep = report({ findings: comments ? [finding(held ? { fix: " " } : {})] : [] });
   const dir = attemptDir(folder, jobs[0], 1);
   write(join(dir, "sample.json"), sampleRecord({ job: jobs[0], attempt: 1, result: { code: 0, wallMs: 1 }, report: rep, startedAt: "2026-10-24T00:00:00Z" }));
   write(join(dir, "report/report.json"), rep);
   write(join(folder, "manifest.json"), manifest);
   const manifestSha256 = sha256(readFileSync(join(folder, "manifest.json")));
-  const input = greptileInput(folder, "greptile");
+  const input = greptileInput(folder, "greptile", ctx);
   const hold = input.tools[0].held;
   write(boardPath(folder, "greptile", "input.json"), input);
   const pin = pins.boards.greptile;
@@ -187,7 +190,8 @@ it("a converted Martian run without an evaluation names the judging command in o
 });
 
 it("Greptile refuses board tools when the run planned no jobs", () => {
-  expect(() => readGreptileOutside(greptileRun(), [], {})).toThrow(/tools differ from the run's planned jobs/);
+  const folder = greptileRun();
+  expect(() => readGreptileOutside(folder, [], {}, boardOptions.get(folder))).toThrow(/tools differ from the run's planned jobs/);
 });
 
 it("native Martian sources follow the caller's eligibility predicate without assuming control names", () => {
@@ -253,7 +257,7 @@ it("an input.json that differs from its first-attempt rebuild is refused", () =>
   const input = read(file);
   input.cases[1].comments = ["Invented review"];
   write(file, input);
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], JSON.parse(process.argv[2]), {}, ["greptile"]);', folder, JSON.stringify(read(join(folder, "manifest.json")).jobs)], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { readOutside } from "./benchmark/lib/outside-boards.mjs"; readOutside(process.argv[1], JSON.parse(process.argv[2]), {}, ["greptile"], JSON.parse(process.argv[3]));', folder, JSON.stringify(read(join(folder, "manifest.json")).jobs), JSON.stringify(boardOptions.get(folder))], { encoding: "utf8" });
   expect(result.status).toBe(0);
   expect(result.stderr.trim().split("\n")).toHaveLength(1);
   expect(result.stderr).toMatch(/^outside\.greptile is null: Greptile input\.json differs from the run's first attempt rebuild\n$/);
@@ -264,6 +268,36 @@ it("Greptile refuses a verdict that marks a not-run case caught", () => {
   const file = boardPath(folder, "greptile", `${tool}/verdicts.json`);
   const verdicts = read(file); verdicts[1].label = "caught"; write(file, verdicts);
   expect(() => greptileBlock(folder)).toThrow(/not-run|empty case/);
+});
+
+it("the Greptile readback reads no pinned truth", () => {
+  const folder = greptileRun({ caseCount: 2 });
+  const saved = greptileBlock(folder);
+  write(join(folder, "score.json"), { outside: { greptile: saved } });
+  expect(saved.perTool[tool]).toMatchObject({ of: 2, planned: 1, notRun: 1 });
+  const cache = tempDir("oq-greptile-readback-no-truth-");
+  const before = process.env.OPENQODEX_BENCH_CACHE;
+  process.env.OPENQODEX_BENCH_CACHE = cache;
+  try {
+    const block = readGreptileOutside(folder, read(join(folder, "manifest.json")).jobs, {}, { root: boardOptions.get(folder).root });
+    expect(block).toEqual(read(join(folder, "score.json")).outside.greptile);
+    expect(readdirSync(cache)).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.OPENQODEX_BENCH_CACHE;
+    else process.env.OPENQODEX_BENCH_CACHE = before;
+  }
+});
+
+for (const name of ["greptile", "augment"]) for (const field of ["items", "hash", "file", "sha256", "source", "kind"]) it(`Greptile refuses not-run ${name} truth whose ${field} differs from the frozen suite`, () => {
+  const folder = greptileRun({ caseCount: 2 });
+  const path = boardPath(folder, "greptile", "input.json");
+  const input = read(path);
+  const set = input.cases.find((c) => c.status === "not-run").truthSets[name];
+  if (field === "items") set.items[0].text += " Changed truth.";
+  else if (field === "source") set.source.url += "/changed";
+  else set[field] = "changed";
+  write(path, input);
+  expect(() => greptileBlock(folder)).toThrow(/truth.*frozen/);
 });
 
 it("Martian readback uses frozen hashes without reading pinned truth or logging held-out access", async () => {
