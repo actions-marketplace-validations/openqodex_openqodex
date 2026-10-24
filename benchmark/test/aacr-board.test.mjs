@@ -10,7 +10,8 @@
 // 2. A sample on a case outside AACR-Bench is converted for the board.
 // 3. A failed or never-started review vanishes from AACR's denominators
 //    (their evaluator leaves out an instance with no result file).
-// 4. A case whose licence nobody verified reaches a board submission.
+// 4. A case whose licence nobody verified reaches a board submission, or
+//    an excluded licence class is converted.
 // 5. The wrapper echoes the judge's key or base URL: a dry run with a fake
 //    settings file, traced by bash -x, leaves neither in any output or file.
 // 6. AACR's mock judge scores a run as if a model judged it.

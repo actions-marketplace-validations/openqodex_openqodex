@@ -462,7 +462,7 @@ AACR writes `submissions/openqodex-<configuration>-r<repeat>/meta.yaml` and `res
 
 Martian writes `benchmark_data.json` and a judge model folder holding `candidates.json`, `evaluations.json` and `dedup_groups.json`, preserving the saved pipeline output. Until an accepted Martian release run exists, use `benchmark/outside/fixtures/martian` as the input. That output is marked as synthetic fixtures with a stand-in judge. It is not a leaderboard score. Martian's maintainers run their own pipeline for leaderboard inclusion, as described in their [README](https://github.com/withmartian/code-review-benchmark#inclusion-criteria).
 
-Both commands refuse unverified-licence cases, even after local conversion and judging. Both validate their output. Run either script with `--check <output-folder>` to check it again. `submission.json` records provenance and expected files. An existing output folder is refused. These commands call no model, send nothing and open no pull request. A person sends a submission by hand.
+For a run, both commands refuse unverified-licence cases. Both validate their output. Run either script with `--check <output-folder>` to check it again. `submission.json` records provenance and expected files. An existing output folder is refused. These commands call no model, send nothing and open no pull request. A person sends a submission by hand.
 
 ## Greptile's reconstructed pull requests
 

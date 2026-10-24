@@ -260,6 +260,24 @@ describe("an unverified licence reaches a board submission, or a sample outside 
     expect(existsSync(submission)).toBe(false);
   });
 
+  it.each(["unknown", "none"])("the Martian converter still refuses an excluded licence class", async (cls) => {
+    const ctx = await suite();
+    const name = "oq-fixture__ledger-7";
+    const path = join(ctx.root, "suites/martian/cases.json");
+    const cases = readJson(path);
+    cases.cases.find((c) => c.name === name).licence.class = cls;
+    write(path, JSON.stringify(cases));
+    const out = await savedRun(ctx, { plan: fixturePlan() });
+    const opts = convertOpts(ctx);
+    const why = await refusal(() => convertRun(out, opts));
+    expect(why).toContain(name);
+    expect(why).not.toContain("oq-fixture__shop-11");
+    expect(why).not.toContain("oq-fixture__shop-12");
+    expect(why).toContain(`licence ${cls}`);
+    expect(existsSync(join(out, "outside"))).toBe(false);
+    expect(existsSync(opts.accessLog)).toBe(false);
+  });
+
   it("refuses a run of another suite and a sample folder of a case the run did not plan", async () => {
     const ctx = await suite();
     const other = await savedRun(ctx, { plan: fixturePlan(), settings: { suite: "aacr" } });
