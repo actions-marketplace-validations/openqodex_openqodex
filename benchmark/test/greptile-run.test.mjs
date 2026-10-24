@@ -3,7 +3,7 @@
 // ignored, empty reviews sent to the model, and an unbounded priced run.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, expect, it } from "vitest";
@@ -221,23 +221,70 @@ test("a priced run requires a cap and refuses a forecast above it before contact
   }
 });
 
-test("a saved Greptile evaluation refuses overwrite unless force is given", async () => {
+test("a dry run refuses a folder that holds a judged evaluation", async () => {
   const folder = savedRun();
+  write(boardPath(folder, "input.json"), { saved: "input" });
   write(boardPath(folder, "eval.json"), { saved: true });
-  const refused = await cli(folder, ["--dry-run"]);
+  for (const args of [["--dry-run"], ["--dry-run", "--force"]]) {
+    const refused = await cli(folder, args);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr.trim().split("\n")).toHaveLength(1);
+    expect(refused.stderr).toMatch(/dry run|priced run/);
+    expect(read(boardPath(folder, "input.json"))).toEqual({ saved: "input" });
+    expect(read(boardPath(folder, "eval.json"))).toEqual({ saved: true });
+    expect(readdirSync(join(folder, "outside"))).toEqual(["greptile"]);
+  }
+
+  const refused = await cli(savedRun(), ["--dry-run", "--force"]);
   expect(refused.code).toBe(2);
-  expect(refused.stderr.trim().split("\n")).toHaveLength(1);
-  expect(refused.stderr).toMatch(/eval.json.*--force/);
-  expect((await cli(folder, ["--dry-run", "--force"])).code).toBe(0);
-  expect(existsSync(boardPath(folder, "eval.json"))).toBe(false);
+  expect(refused.stderr).toMatch(/--force.*priced run/);
 });
 
-test("a forced rerun removes stale verdicts when its tool is now held", async () => {
+test("a forced priced run moves the old evaluation aside after the checks pass and a refused forced run leaves it in place", async () => {
+  const refusals = [
+    { args: [], why: /--max-usd.*required/ },
+    { args: ["--max-usd", "0"], why: /forecast.*exceeds/ },
+    { manifest: { suite: "martian" }, why: /suite martian/ },
+    { manifest: { mode: "scan" }, why: /scanner-only/ },
+    { manifest: { splitHash: "0".repeat(64) }, why: /split hash/ },
+    { manifest: { caseHashes: { [cases[0].name]: "0".repeat(64) } }, why: /case hash.*suite/ },
+    { change: (folder) => {
+      const file = join(folder, "cases", `${cases[0].name}.json`);
+      write(file, { ...read(file), hash: "0".repeat(64) });
+    }, why: /saved case differs/ },
+  ];
+  for (const { args = ["--max-usd", "1"], manifest, change, why } of refusals) {
+    const folder = savedRun();
+    write(boardPath(folder, "input.json"), { saved: "input" });
+    write(boardPath(folder, "eval.json"), { saved: true });
+    write(boardPath(folder, `${tool}/verdicts.json`), [{ saved: "verdict" }]);
+    if (manifest) write(join(folder, "manifest.json"), { ...read(join(folder, "manifest.json")), ...manifest });
+    if (change) change(folder);
+    const result = await cli(folder, [...args, "--force"]);
+    expect(result.code, result.stderr).toBe(2);
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr).toMatch(why);
+    expect(read(boardPath(folder, "input.json"))).toEqual({ saved: "input" });
+    expect(read(boardPath(folder, "eval.json"))).toEqual({ saved: true });
+    expect(read(boardPath(folder, `${tool}/verdicts.json`))).toEqual([{ saved: "verdict" }]);
+    expect(readdirSync(join(folder, "outside"))).toEqual(["greptile"]);
+  }
+
   const folder = savedRun({ reports: [report([finding({ fix: " " })]), report()] });
+  write(boardPath(folder, "input.json"), { saved: "input" });
+  write(boardPath(folder, "eval.json"), { saved: true });
   write(boardPath(folder, `${tool}/verdicts.json`), [{ id: cases[0].id, label: "caught" }]);
   write(boardPath(folder, "obsolete/nested.json"), { stale: true });
-  const result = await cli(folder, ["--max-usd", "1", "--force"]);
+  const result = await cli(folder, ["--max-usd", "0", "--force"]);
   expect(result.code, result.stderr).toBe(0);
+  const superseded = readdirSync(join(folder, "outside")).filter((name) => name !== "greptile");
+  expect(superseded).toHaveLength(1);
+  expect(superseded[0]).toMatch(/^greptile\.superseded-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z$/);
+  const old = join(folder, "outside", superseded[0]);
+  expect(read(join(old, "input.json"))).toEqual({ saved: "input" });
+  expect(read(join(old, "eval.json"))).toEqual({ saved: true });
+  expect(read(join(old, tool, "verdicts.json"))).toEqual([{ id: cases[0].id, label: "caught" }]);
+  expect(read(join(old, "obsolete/nested.json"))).toEqual({ stale: true });
   expect(existsSync(boardPath(folder, `${tool}/verdicts.json`))).toBe(false);
   expect(existsSync(boardPath(folder, "obsolete"))).toBe(false);
   expect(read(boardPath(folder, "eval.json")).perTool[tool].caught).toBeNull();
@@ -277,18 +324,6 @@ it("the script rejects the removed truth-set flag", async () => {
   const result = await cli(tempDir("oq-greptile-old-flag-"), ["--truth-set", "augment"]);
   expect(result.code).toBe(2);
   expect(result.stderr).toMatch(/unknown.*--truth-set/);
-});
-
-it("a calibration whose bytes differ from the release reference refuses in one line", async () => {
-  const fixture = recordFixture();
-  const file = join(fixture.root, fixture.record.calibrations[0].file);
-  writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
-  const folder = tempDir("oq-greptile-calibration-refusal-");
-  const result = await cli(folder, ["--dry-run"], null, { root: fixture.root, release: fixture.record.release });
-  expect(result.code).toBe(2);
-  expect(result.stderr.trim().split("\n")).toHaveLength(1);
-  expect(result.stderr).toMatch(/fixture-calibration.json.*hash/);
-  expect(existsSync(boardPath(folder, "input.json"))).toBe(false);
 });
 
 it("the Martian converter refuses a planned case outside the frozen suite", async () => {

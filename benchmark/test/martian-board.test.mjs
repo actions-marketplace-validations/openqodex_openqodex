@@ -46,7 +46,7 @@
 // 12. Extracted native candidates lack the review's stable source id,
 //     so Martian withholds the control's evaluation.
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -68,14 +68,15 @@ const JUDGE = join(benchRoot, "outside", "boards", "martian-judge.mjs");
 const RECORD = process.env.MARTIAN_BOARD_RECORD === "1";
 const FIXTURE_AT = "2026-10-24T00:00:00.000Z";
 
-// The runner records the wall clock at completion. Fix it before conversion
-// so the manifest hash in the byte baseline is reproducible.
-function freezeFixtureEnd(folder) {
-  const file = join(folder, "manifest.json");
-  const manifest = readJson(file);
-  manifest.ended.at = FIXTURE_AT;
-  manifest.ended.elapsedMin = 0;
-  write(file, `${JSON.stringify(manifest, null, 2)}\n`);
+// Manifest fields can change independently of the converter's output shape.
+function checkConversionBaseline(folder, name) {
+  const file = join(folder, "outside/martian/convert.json");
+  const { manifestSha256, ...converted } = readJson(file);
+  expect(manifestSha256).toBe(createHash("sha256").update(readFileSync(join(folder, "manifest.json"))).digest("hex"));
+  if (RECORD) write(join(FIXTURES, name), readFileSync(file, "utf8"));
+  const expected = readJson(join(FIXTURES, name));
+  delete expected.manifestSha256;
+  expect(converted).toEqual(expected);
 }
 
 const filesUnder = (dir) => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map((p) => join(dir, String(p))).filter((p) => statSync(p).isFile()) : []);
@@ -383,12 +384,11 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
   it("the Martian converter's fixture data stays byte-identical and convert.json freezes its shape from this commit on", async () => {
     const ctx = await suite();
     const out = await savedRun(ctx, { plan: fixturePlan() });
-    freezeFixtureEnd(out);
     await convertRun(out, convertOpts(ctx, { now: () => FIXTURE_AT }));
     const written = readFileSync(join(out, "outside", "martian", "benchmark_data.json"), "utf8");
     // This committed output predates the shared run reader. Never re-record it here.
     expect(written).toBe(readFileSync(join(FIXTURES, "benchmark_data.json"), "utf8"));
-    expect(readFileSync(join(out, "outside/martian/convert.json"), "utf8")).toBe(readFileSync(join(FIXTURES, "convert.json"), "utf8"));
+    checkConversionBaseline(out, "convert.json");
     const data = JSON.parse(written);
     expect(data["https://github.com/oq-fixture/shop/pull/11"].reviews[0].review_comments[0]).toEqual({
       path: "src/checkout.ts",
@@ -405,9 +405,8 @@ describe("the saved fixture converts to entries Martian's evaluator accepts", ()
     const ctx = await suite();
     const partial = { ...ctx, ids: new Map([...ctx.ids].slice(0, 2)) };
     const out = await savedRun(partial, { plan: fixturePlan() });
-    freezeFixtureEnd(out);
     const { record } = await convertRun(out, convertOpts(ctx, { now: () => FIXTURE_AT }));
-    expect(readFileSync(join(out, "outside/martian/convert.json"), "utf8")).toBe(readFileSync(join(FIXTURES, "convert-not-run.json"), "utf8"));
+    checkConversionBaseline(out, "convert-not-run.json");
     expect(record.notRun).toEqual([{ tool: "openqodex-library-r1", caseId: [...ctx.ids.values()][2] }]);
     expect(record.tools[0]).toMatchObject({ reviews: ctx.ids.size, statuses: { "not-run": 1 } });
     expect(record.access.caseCount).toBe(ctx.ids.size);

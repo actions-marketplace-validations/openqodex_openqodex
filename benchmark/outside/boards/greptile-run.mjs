@@ -2,13 +2,12 @@
 // Judge a saved run, with the frozen suite as its denominator. Empty
 // reviews miss by script. Only a scripted model provider stands in for the
 // judge in test/greptile-run.test.mjs, whose failure list precedes this code.
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { boardFolder } from "../../lib/board-files.mjs";
 import { readBoardReviews } from "../../lib/board-reviews.mjs";
 import { benchRoot } from "../../lib/cases.mjs";
-import { hash } from "../../lib/calibration.mjs";
 import { relayClient } from "../../lib/calibration-relay.mjs";
 import { validateComparison } from "../../lib/comparison.mjs";
 import { value } from "../../lib/score.mjs";
@@ -21,7 +20,7 @@ const write = (file, data) => { mkdirSync(join(file, ".."), { recursive: true })
 function options(argv) {
   const [folder, ...args] = argv;
   const opts = { folder, release: null, dryRun: false, force: false, maxUsd: null };
-  if (!folder || folder.startsWith("--")) throw new Error("usage: greptile-run.mjs <run> --release <name> [--dry-run] [--max-usd <n>] [--force (removes everything under <run>/outside/greptile/ first)]");
+  if (!folder || folder.startsWith("--")) throw new Error("usage: greptile-run.mjs <run> --release <name> [--dry-run (refuses a folder holding eval.json)] [--max-usd <n>] [--force (priced runs only; after all checks, moves old outside/greptile/ to outside/greptile.superseded-<UTC timestamp>/; nothing is deleted)]");
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === "--dry-run") opts.dryRun = true;
@@ -35,6 +34,7 @@ function options(argv) {
     } else throw new Error(`unknown or incomplete option ${flag}`);
   }
   if (opts.release === null) throw new Error("--release <name> is required");
+  if (opts.force && opts.dryRun) throw new Error("--force is accepted only on a priced run");
   return opts;
 }
 
@@ -43,6 +43,7 @@ export async function main(argv = process.argv.slice(2), { root = benchRoot } = 
   const opts = options(argv);
   const record = read(join(root, "index/comparisons", `${opts.release}.json`));
   if (record.release !== opts.release) throw new Error("comparison record names another release");
+  // Record validation covers the calibration bytes.
   if (!validateComparison(record, { root, build: record.build }).accepted) throw new Error("the comparison record is not accepted");
   return judgeRun(opts, record, { root });
 }
@@ -55,16 +56,16 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
   if (GREPTILE_PROMPT_HASH !== pin.promptHash) throw new Error("Greptile prompts differ from the board pin");
   let calibration;
   for (const ref of record.calibrations) {
-    const bytes = readFileSync(join(root, ref.file));
-    if (hash(bytes) !== ref.sha256) throw new Error(`calibration ${ref.file} no longer matches its hash`);
-    const candidate = JSON.parse(bytes.toString("utf8"));
+    const candidate = read(join(root, ref.file));
     if (candidate.board.name === "greptile") calibration = candidate;
   }
   if (!calibration) throw new Error("the comparison record has no Greptile calibration");
   const folder = resolve(opts.folder);
   const out = boardFolder(folder, "greptile");
-  if (existsSync(join(out, "eval.json")) && !opts.force) throw new Error(`${join(out, "eval.json")} exists already; use --force to overwrite it`);
-  if (opts.force) rmSync(out, { recursive: true, force: true });
+  if (existsSync(join(out, "eval.json"))) {
+    if (opts.dryRun) throw new Error(`${join(out, "eval.json")} exists already; a dry run would leave input.json disagreeing with the saved verdicts`);
+    if (!opts.force) throw new Error(`${join(out, "eval.json")} exists already; use --force on a priced run to move the old evaluation aside`);
+  }
   const manifest = read(join(folder, "manifest.json"));
   if (manifest.suite !== "greptile") throw new Error(`the run is of suite ${manifest.suite}, not greptile`);
   if (manifest.mode === "scan") throw new Error("a scanner-only run shows no review for the board to judge");
@@ -98,7 +99,6 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
       status: r.status, truthSets: truthSets(r),
     })),
   };
-  write(join(out, "input.json"), input);
   const held = new Set(run.tools.filter((t) => t.held).map((t) => t.tool));
   for (const t of run.tools) {
     const mine = input.cases.filter((c) => c.tool === t.tool);
@@ -111,9 +111,15 @@ export async function judgeRun(opts, record, { root = benchRoot } = {}) {
   const judgedCases = input.cases.filter((c) => !held.has(c.tool) && c.comments.length > 0).length;
   const forecast = judgedCases * unitUsd;
   console.log(`Forecast: USD ${forecast.toFixed(6)} for ${judgedCases} judged cases at USD ${unitUsd.toFixed(8)} per case from calibration.`);
-  if (opts.dryRun) return 0;
+  if (opts.dryRun) { write(join(out, "input.json"), input); return 0; }
   if (opts.maxUsd === null) throw new Error("--max-usd is required for a priced run");
   if (forecast > opts.maxUsd) throw new Error(`forecast USD ${forecast.toFixed(6)} exceeds --max-usd ${opts.maxUsd}`);
+  if (opts.force && existsSync(out)) {
+    const superseded = boardFolder(folder, `greptile.superseded-${new Date().toISOString().replaceAll(":", "-")}`);
+    if (existsSync(superseded)) throw new Error(`${superseded} exists already; the old evaluation stays in place`);
+    renameSync(out, superseded);
+  }
+  write(join(out, "input.json"), input);
 
   let relay;
   try {
