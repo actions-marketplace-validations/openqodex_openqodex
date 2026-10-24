@@ -401,7 +401,7 @@
       "path": "laptop",
       "reviewer": "claude",
       "model": "claude-opus-5-5",
-      "version": "2.1.296",
+      "version": "2.1.310",
       "graph": "on",
       "web": "off",
       "effort": null,
@@ -424,7 +424,8 @@
       "graph": "off",
       "web": "off",
       "effort": null,
-      "maxOutputTokens": null
+      "maxOutputTokens": null,
+      "version": "2.1.310"
     }
   },
   "calibrations": [
@@ -468,11 +469,11 @@
       }
     }
   ],
-  "capUsd": 100,
+  "capUsd": 135,
   "runs": [],
   "acceptance": {
-    "person": "Sid",
-    "date": "2026-10-24",
-    "hash": "d2f0e56f2beee0b42239c61c62d26cc0819d10b58eeb295caf8154525962de7a"
+    "person": "",
+    "date": "",
+    "hash": ""
   }
 }
