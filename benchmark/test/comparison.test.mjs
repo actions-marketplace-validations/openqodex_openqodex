@@ -26,11 +26,17 @@
 // 25. Missing tools, incomplete board accounting or edited evidence attaches.
 // 26. A control is pinned to the product build instead of its version and model.
 // 27. Attachment keeps acceptance, overwrites a duplicate or writes on refusal.
+// 28. A held board tool attaches without a score.
+// 29. AACR problems or an unjudged folder attach as semantic recall.
+// 30. A run's truth profile, board commit, prompt or judge differs from its pin.
+// 31. Greptile names a different not-run case with the same count.
+// 32. Attachment pins entry bytes that are not committed at HEAD.
+// 33. A later checkout's build prevents attaching the record's own build.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { benchRoot, caseHash } from "../lib/cases.mjs";
+import { benchRoot, caseHash, git } from "../lib/cases.mjs";
 import { buildFingerprint, comparisonHash, freezeComparison, validateComparison, validateOutsideRows } from "../lib/comparison.mjs";
 import { entryProblems, hashFolder, hashReviewedFolder, sha256 } from "../lib/index.mjs";
 import { toolName } from "../lib/aacr-board.mjs";
@@ -56,6 +62,7 @@ function fixture(suite = "aacr", cli = false) {
     symlinkSync(join(benchRoot, "../packages/cli"), join(root, "../packages/cli"));
   }
   write(join(root, ".build/provenance.json"), { ...build, cliVersion: build.version });
+  if (cli) git(join(root, ".."), "init", "-q");
   const options = { root, build };
   const record = freezeComparison({ release: "compare-2026-10", suites: [suite], boards: [suite], reviewers: structuredClone(reviewers), capUsd: 100 }, options);
   return { root, build, options, record };
@@ -110,7 +117,7 @@ function runFixture(f, tree = true, list = "private", reviewer = "library") {
     if (suite === "aacr") {
       const dir = `${config}/r1`;
       write(join(out, "convert.json"), { reader: "ocr", references: {}, withoutLine: [], folders: [{ config, repeat: 1, tool, dir, files: entry.caseIds.length }] });
-      write(join(out, "eval.json"), { folders: [{ config, repeat: 1, mode: "llm", judgeErrors: 0, metrics: ["metrics_ocr_fixture.json"] }] });
+      write(join(out, "eval.json"), { judge: { deployment: f.record.boards.aacr.judgeModel }, folders: [{ config, repeat: 1, mode: "llm", judgeErrors: 0, metrics: ["metrics_ocr_fixture.json"] }] });
       write(join(out, dir, "metrics_ocr_fixture.json"), { summary: { evaluated_instances: entry.caseIds.length, missing_instances: 0, expected_notes: 0, generated_notes: 0, matched_line_notes: 0, matched_semantic_notes: 0 } });
       entry.outside = { aacr: BOARDS.aacr(folder, [], {}) };
     } else if (suite === "greptile") {
@@ -122,17 +129,22 @@ function runFixture(f, tree = true, list = "private", reviewer = "library") {
       write(join(out, "input.json"), { truthSet: "greptile", manifestSha256, splitHash: entry.splitHash, suite: { name: suite, cases: ids }, tools: [{ tool, config, boardConfig: boardConfigOf(config) }], cases });
       write(join(out, "eval.json"), { version: 1, board: { name: suite, repository: board.repo, commit: board.commit, judgeModel, promptHash: board.judge.prompt.sha256 }, truthSet: "greptile", judgeModel: null, promptHash: board.judge.prompt.sha256, manifestSha256, splitHash: entry.splitHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), caught: 0, missed: ids.length, of: ids.length, planned: entry.caseIds.length, notRun: ids.length - entry.caseIds.length, rate: 0 } } });
       write(join(out, tool, "verdicts.json"), cases.map((c) => ({ id: c.id, label: "missed", reason: c.status === "not-run" ? "not-run" : "empty" })));
-      entry.outside = { greptile: BOARDS.greptile(folder, [], {}) };
+      entry.outside = { greptile: BOARDS.greptile(folder, [{ config, repeat: 1 }], {}) };
     } else {
       const paths = ["convert.json", "eval.json", "benchmark_data.json", `${tool}/evaluation.json`];
       for (const path of paths) write(join(out, path), path === "convert.json" ? { cases: ids.map((caseId) => ({ caseId })) } : {});
-      entry.outside = { martian: { board: {}, evidenceHash: hashFolder(folder, paths.map((p) => `outside/martian/${p}`)).listHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), official: { core: { tp: 0, fp: 0, fn: 0, f1: 0 } }, ours: {}, candidates: [], matches: [], empty: ids.filter((id) => !entry.caseIds.includes(id)).map((caseId) => ({ caseId, reason: "not-run" })) } } } };
+      entry.outside = { martian: { board: {}, judge: { deployment: f.record.boards.martian.judgeModel }, evidenceHash: hashFolder(folder, paths.map((p) => `outside/martian/${p}`)).listHash, perTool: { [tool]: { config, boardConfig: boardConfigOf(config), official: { core: { tp: 0, fp: 0, fn: 0, f1: 0 } }, ours: {}, candidates: [], matches: [], empty: ids.filter((id) => !entry.caseIds.includes(id)).map((caseId) => ({ caseId, reason: "not-run" })) } } } };
     }
     write(join(folder, "score.json"), { outside: entry.outside });
     saveEntry();
   };
   save();
   return { entry, manifest, folder, save, saveEntry };
+}
+function commitEntry(f, run) {
+  const repo = join(f.root, "..");
+  git(repo, "add", `benchmark/index/runs/${run.entry.runId}.json`);
+  git(repo, "commit", "-qm", "Save run entry");
 }
 
 describe("frozen comparisons", () => {
@@ -141,6 +153,7 @@ describe("frozen comparisons", () => {
     const f = fixture("greptile", true); const run = runFixture(f);
     run.entry.build.commit = "d".repeat(40); run.entry.build.short = "ddddddd";
     run.manifest.build.commit = run.entry.build.commit; run.save();
+    commitEntry(f, run);
     f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
     const before = readFileSync(join(f.root, "comparison.json"), "utf8");
     const result = attach(f, run.entry.runId);
@@ -164,6 +177,7 @@ describe("frozen comparisons", () => {
     expect(validateComparison(f.record, f.options).accepted).toBe(false);
     run.entry.caseIds = run.entry.caseIds.slice(0, -1); run.save();
     const casesNotRun = f.record.runs[0].casesNotRun;
+    commitEntry(f, run);
     f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
     const result = attach(f, run.entry.runId);
     expect(result.status, result.stderr).toBe(0);
@@ -179,6 +193,7 @@ describe("frozen comparisons", () => {
   it("a run with a null board block does not attach", () => {
     const f = fixture("greptile", true); const run = runFixture(f);
     run.entry.outside.greptile = null; run.saveEntry();
+    commitEntry(f, run);
     expect(entryProblems(run.entry)).toEqual([]);
     expect(() => validateComparison(f.record, f.options)).toThrow(/non-null outside.greptile/);
     f.record.runs = []; write(join(f.root, "comparison.json"), f.record);
@@ -232,6 +247,116 @@ describe("frozen comparisons", () => {
     run.entry.outside.martian.evidenceHash = hashFolder(run.folder, ["convert.json", "eval.json", "benchmark_data.json", "openqodex-library-r1/evaluation.json"].map((p) => `outside/martian/${p}`)).listHash;
     run.saveEntry();
     expect(() => validateComparison(f.record, f.options)).toThrow(/case accounting/);
+  });
+  it("a held Greptile tool does not attach", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    const out = join(run.folder, "outside/greptile");
+    const input = read(join(out, "input.json"));
+    const hold = [{ case: "fixture-case", index: 0, lacking: ["fix"] }];
+    input.tools[0].held = hold; write(join(out, "input.json"), input);
+    const evaluation = read(join(out, "eval.json"));
+    Object.assign(evaluation.perTool["openqodex-library-r1"], { held: hold, caught: null, missed: null, rate: null });
+    write(join(out, "eval.json"), evaluation);
+    rmSync(join(out, "openqodex-library-r1/verdicts.json"));
+    run.entry.outside.greptile = BOARDS.greptile(run.folder, [{ config: run.entry.configs[0], repeat: 1 }], {});
+    run.saveEntry();
+    expect(entryProblems(run.entry)).toEqual([]);
+    expect(() => validateComparison(f.record, f.options)).toThrow("tool openqodex-library-r1 is held by the judge: fixture-case index 0: lacks fix");
+  });
+  it("a held Martian tool does not attach", () => {
+    const f = fixture("martian"); const run = runFixture(f);
+    const block = run.entry.outside.martian;
+    Object.assign(block.perTool["openqodex-library-r1"], { held: "fixture-case index 0: lacks fix", official: null, ours: null });
+    rmSync(join(run.folder, "outside/martian/openqodex-library-r1/evaluation.json"));
+    block.evidenceHash = hashFolder(run.folder, ["convert.json", "eval.json", "benchmark_data.json"].map((p) => `outside/martian/${p}`)).listHash;
+    run.saveEntry();
+    expect(entryProblems(run.entry)).toEqual([]);
+    expect(() => validateComparison(f.record, f.options)).toThrow("tool openqodex-library-r1 is held by the judge: fixture-case index 0: lacks fix");
+  });
+  it("an AACR block with one problem does not attach", () => {
+    const f = fixture(); const run = runFixture(f);
+    const path = join(run.folder, "outside/aacr", run.entry.configs[0], "r1/metrics_ocr_fixture.json");
+    const metrics = read(path); metrics.summary.generated_notes = 1; write(path, metrics);
+    run.entry.outside.aacr = BOARDS.aacr(run.folder, [], {}); run.saveEntry();
+    expect(run.entry.outside.aacr.problems).toHaveLength(1);
+    expect(() => validateComparison(f.record, f.options)).toThrow(/outside.aacr.*problems/);
+  });
+  it("an AACR folder with no semantic judgment does not attach", () => {
+    const f = fixture(); const run = runFixture(f);
+    const path = join(run.folder, "outside/aacr/eval.json");
+    const evaluation = read(path); evaluation.folders[0].mode = "mock"; write(path, evaluation);
+    run.entry.outside.aacr = BOARDS.aacr(run.folder, [], {}); run.saveEntry();
+    expect(run.entry.outside.aacr.problems).toEqual([]);
+    expect(run.entry.outside.aacr.folders[0].semantic).toBeNull();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/tool.*not judged/);
+  });
+  it("a Greptile run judged on the augment set does not attach", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    for (const file of ["input.json", "eval.json"]) {
+      const path = join(run.folder, "outside/greptile", file);
+      const value = read(path); value.truthSet = "augment"; write(path, value);
+    }
+    run.entry.outside.greptile = BOARDS.greptile(run.folder, [{ config: run.entry.configs[0], repeat: 1 }], {});
+    run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/truth set.*profile/);
+  });
+  for (const field of ["commit", "promptHash", "judgeModel"]) it(`a Greptile block whose board ${field} differs from the pin does not attach`, () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    run.entry.outside.greptile.board[field] = "changed"; run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/board.*pin/);
+  });
+  for (const suite of ["greptile", "martian", "aacr"]) it(`a ${suite} block whose judge model differs from the pin does not attach`, () => {
+    const f = fixture(suite); const run = runFixture(f);
+    const block = run.entry.outside[suite];
+    if (suite === "greptile") block.judgeModel = "another-model";
+    else block.judge.deployment = "another-model";
+    run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/judge model.*pin/);
+  });
+  it("a Greptile block that marks a different case not-run than the one the entry misses does not attach", () => {
+    const f = fixture("greptile"); const run = runFixture(f);
+    run.entry.caseIds = run.entry.caseIds.slice(0, -1); run.save();
+    const out = join(run.folder, "outside/greptile");
+    const input = read(join(out, "input.json"));
+    input.cases[0].status = "not-run"; input.cases.at(-1).status = "complete";
+    write(join(out, "input.json"), input);
+    const path = join(out, "openqodex-library-r1/verdicts.json");
+    const verdicts = read(path); verdicts[0].reason = "not-run"; verdicts.at(-1).reason = "empty"; write(path, verdicts);
+    run.entry.outside.greptile = BOARDS.greptile(run.folder, [{ config: run.entry.configs[0], repeat: 1 }], {});
+    run.saveEntry();
+    expect(() => validateComparison(f.record, f.options)).toThrow(/case accounting/);
+  });
+  it("attaching an entry that differs from HEAD is refused", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    commitEntry(f, run);
+    const path = join(f.root, "index/runs", `${run.entry.runId}.json`);
+    writeFileSync(path, `${readFileSync(path, "utf8")}\n`);
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const before = readFileSync(join(f.root, "comparison.json"), "utf8");
+    const result = attach(f, run.entry.runId);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`run ${run.entry.runId} entry is not committed at HEAD; commit it before attaching`);
+    expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
+  });
+  it("attaching an entry absent from HEAD is refused", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    git(join(f.root, ".."), "commit", "--allow-empty", "-qm", "Start fixture");
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const result = attach(f, run.entry.runId);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`run ${run.entry.runId} entry is not committed at HEAD; commit it before attaching`);
+  });
+  it("attaching from a different checkout build succeeds when the entry matches the record build", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    commitEntry(f, run);
+    write(join(f.root, ".build/provenance.json"), { ...f.build, commit: "d".repeat(40) });
+    expect(buildFingerprint({ root: f.root })).not.toEqual(f.record.build);
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const result = attach(f, run.entry.runId);
+    expect(result.status, result.stderr).toBe(0);
+    const attached = read(join(f.root, "comparison.json"));
+    expect(attached.runs).toHaveLength(1);
+    expect(validateComparison(attached, f.options).accepted).toBe(false);
   });
   it("refuses edited planted case bytes even when the lock was not updated", () => {
     const { root, options } = fixture();

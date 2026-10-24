@@ -97,20 +97,42 @@ function reference(root, file, kind) {
   need(realpathSync(path).startsWith(`${realpathSync(root)}${sep}`), `${kind}: ${file} leaves benchmark`);
   return path;
 }
+function committedRunEntry(root, runId) {
+  const path = reference(root, `index/runs/${runId}.json`, "run");
+  const bytes = readFileSync(path);
+  const message = `run ${runId} entry is not committed at HEAD; commit it before attaching`;
+  let committed;
+  try {
+    const repo = git(root, "rev-parse", "--show-toplevel").trim();
+    committed = git(repo, "show", `HEAD:${relative(realpathSync(repo), realpathSync(path)).split(sep).join("/")}`);
+  } catch { throw new Error(message); }
+  need(bytes.equals(Buffer.from(committed, "utf8")), message);
+  return bytes;
+}
 const buildProblems = (b) => object(b) && HEX40.test(b.commit ?? "") && HEX40.test(b.tree ?? "") && HEX64.test(b.bundleHash ?? "") && text(b.version);
 const suiteCaseIds = (name, suite) => Object.entries(suite.caseHashes).map(([c, h]) => `${name}/${c}@${h.slice(0, 8)}`);
 const sameIds = (a, b) => Array.isArray(a) && equal([...a].sort(), [...b].sort());
 
 // These are the files the board readers hash, rather than every work file
 // a board pipeline happened to leave behind.
-function validateRunBoard(entry, folder, ids, casesNotRun) {
+function validateRunBoard(entry, folder, ids, casesNotRun, pin) {
   const name = SUITES[entry.suite]?.board;
   if (!name) return;
   const block = entry.outside?.[name];
   const at = `run ${entry.runId} outside.${name}`;
   need(object(block), `run ${entry.runId} needs a non-null outside.${name} block`);
+  if (name === "greptile") {
+    need(block.truthSet === pin.profile, `${at} truth set differs from the comparison profile`);
+    need(block.board?.commit === pin.commit && block.board?.promptHash === pin.promptHash && block.board?.judgeModel === pin.judgeModel, `${at} board pins differ from the comparison pin`);
+    need(block.judgeModel === null || block.judgeModel === pin.judgeModel, `${at} judge model differs from the comparison pin`);
+  } else need(block.judge?.deployment === pin.judgeModel, `${at} judge model differs from the comparison pin`);
+  if (name === "aacr") need(Array.isArray(block.problems) && block.problems.length === 0, `${at} has problems: ${block.problems?.join("; ") ?? "no problem list"}`);
   const tools = name === "aacr" ? Object.fromEntries(block.folders.map((t) => [t.tool, t])) : block.perTool;
-  const paths = name === "greptile" ? ["input.json", "eval.json", ...Object.entries(tools).filter(([, t]) => !t.held?.length).map(([tool]) => `${tool}/verdicts.json`)]
+  for (const [tool, t] of Object.entries(tools)) if (t.held?.length) {
+    const why = Array.isArray(t.held) ? t.held.map((h) => `${h.case} index ${h.index}: lacks ${h.lacking.join(", ")}`).join("; ") : t.held;
+    throw new Error(`${at} tool ${tool} is held by the judge: ${why}`);
+  }
+  const paths = name === "greptile" ? ["input.json", "eval.json", ...Object.keys(tools).map((tool) => `${tool}/verdicts.json`)]
     : name === "martian" ? ["convert.json", "eval.json", "benchmark_data.json", ...Object.keys(tools).map((tool) => `${tool}/evaluation.json`)]
       : ["convert.json", ...(existsSync(join(folder, "outside/aacr/eval.json")) ? ["eval.json"] : []), ...block.folders.flatMap((t) => t.metrics.map((file) => `${t.config}/r${t.repeat}/${file}`))];
   const evidence = paths.map((path) => `outside/${name}/${path}`);
@@ -122,11 +144,15 @@ function validateRunBoard(entry, folder, ids, casesNotRun) {
     const t = tools[tool];
     need(t && t.config === config && t.boardConfig === (name === "aacr" ? config : boardConfigOf(config)), `${at} is missing tool ${tool} or its configuration`);
     let accounted;
-    if (name === "greptile") accounted = t.of === ids.length && t.planned === entry.caseIds.length && t.notRun === casesNotRun.length && t.planned + t.notRun === ids.length;
+    if (name === "greptile") {
+      const notRun = t.labels.filter((c) => c.reason === "not-run").map((c) => c.id);
+      accounted = t.of === ids.length && t.planned === entry.caseIds.length && t.notRun === casesNotRun.length && t.planned + t.notRun === ids.length && sameIds(notRun, casesNotRun);
+    }
     else if (name === "martian") {
       const notRun = t.empty.filter((c) => c.reason === "not-run").map((c) => c.caseId);
       accounted = sameIds(convert.cases?.map((c) => c.caseId), ids) && sameIds(notRun, casesNotRun) && entry.caseIds.length + notRun.length === ids.length;
     } else {
+      need(t.judged === true, `${at} tool ${tool} is not judged: ${t.why}`);
       const converted = convert.folders?.find((f) => f.tool === tool);
       accounted = casesNotRun.length === 0 && converted?.files === ids.length && t.rounds.length > 0 && t.rounds.every((r) => r.evaluated === ids.length && r.missing === 0);
     }
@@ -211,7 +237,7 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
     need(reviewer && e.path === reviewer.path && e.web === reviewer.web && e.reviewers?.[reviewer.reviewer]?.model === reviewer.model && (reviewer.version === undefined || e.reviewers[reviewer.reviewer].version === reviewer.version) && e.configs.every((c) => c === `${reviewer.reviewer.replace(/:/g, "-")}-graph-${reviewer.graph}`), `run ${r.runId} differs from its reviewer settings`);
     const settings = manifest.reviewers?.[reviewer.reviewer]?.settings;
     need((settings?.effort ?? null) === reviewer.effort && (settings?.maxOutputTokens ?? null) === reviewer.maxOutputTokens, `run ${r.runId} differs from its reviewer settings`);
-    validateRunBoard(e, folder, ids, r.casesNotRun);
+    validateRunBoard(e, folder, ids, r.casesNotRun, record.boards[SUITES[e.suite]?.board]);
   }
   const a = record.acceptance;
   need(object(a) && ["person", "date", "hash"].every((f) => typeof a[f] === "string"), "comparison acceptance must give person, date and hash");
@@ -238,6 +264,7 @@ export function comparisonRelease(manifest, { root = benchRoot, admit = false } 
   need(record.release === release, "comparison record names another release");
   const checked = validateComparison(record, { root });
   need(checked.accepted, `comparison ${release} is not accepted`);
+  for (const r of record.runs) committedRunEntry(root, r.runId);
   need(p?.spec === "local" && p.commit === record.build.commit && p.dirty === false, "comparison release requires its pinned clean local build");
   const fingerprint = b ? { commit: b.commit, tree: b.tree, bundleHash: b.bundleHash, version: b.cliVersion ?? b.version } : null;
   need(equal(fingerprint, record.build), "comparison build fingerprint differs from the run's build");
@@ -287,13 +314,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       need(Array.isArray(record.runs), "comparison runs must be an array");
       need(!record.runs.some((r) => r.runId === runId), `duplicate run ${runId}`);
       need(/^\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]+$/.test(runId), "run must pin runId and sha256");
-      const path = reference(benchRoot, `index/runs/${runId}.json`, "run");
-      const entry = json(path);
+      const bytes = committedRunEntry(benchRoot, runId);
+      const entry = JSON.parse(bytes.toString("utf8"));
       need(record.suites?.[entry.suite], `run ${runId} differs from the comparison suite`);
       const casesNotRun = suiteCaseIds(entry.suite, record.suites[entry.suite]).filter((id) => !entry.caseIds?.includes(id));
       record.acceptance = { person: "", date: "", hash: "" };
-      record.runs.push({ runId, sha256: sha256(readFileSync(path)), reviewer, casesNotRun });
-      result = validateComparison(record, { build: buildFingerprint() });
+      record.runs.push({ runId, sha256: sha256(bytes), reviewer, casesNotRun });
+      result = validateComparison(record, { build: record.build });
       writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
     } else result = flag === "--outside-rows" ? validateOutsideRows(record) : validateComparison(record);
     console.log(JSON.stringify(result, null, 2));
