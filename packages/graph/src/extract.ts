@@ -32,7 +32,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 23;
+export const EXTRACTOR_VERSION = 24;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2287,6 +2287,13 @@ const JAVA_TYPES = new Set([
   "catch_clause",
   "try_with_resources_statement",
   "switch_block",
+  "switch_rule",
+  "switch_block_statement_group",
+  "type_pattern",
+  "record_pattern_component",
+  "constant_declaration",
+  "enum_constant",
+  "compact_constructor_declaration",
   "if_statement",
   "while_statement",
   "explicit_constructor_invocation",
@@ -2628,7 +2635,8 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     const owner = ctx.defs[cls.def] as DefFact;
     const mods = javaModifiers(node);
     const inIface = owner.iface === true;
-    const isCtor = node.type === "constructor_declaration";
+    const compact = node.type === "compact_constructor_declaration";
+    const isCtor = node.type === "constructor_declaration" || compact;
     const body = node.childForFieldName("body");
     const typeNode = node.childForFieldName("type");
     const results = isCtor ? [{ name: owner.name, qualifier: owner.owner, ...pos(name) }] : [javaTypeRef(typeNode)];
@@ -2640,7 +2648,8 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       ...(mods.has("abstract") || (inIface && !body) ? { abstract: true } : {}),
       ...(isCtor ? { ctor: true } : {}),
     });
-    const sig = params(node.childForFieldName("parameters"), locals, def);
+    // A record's compact constructor takes the record's components.
+    const sig = params(compact ? (node.parent?.parent?.childForFieldName("parameters") ?? null) : node.childForFieldName("parameters"), locals, def);
     typeUses(typeNode, def);
     enteringTypeParams = null;
     const d = ctx.defs[def] as DefFact;
@@ -2707,8 +2716,37 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return typeDecl(node);
       case "method_declaration":
       case "constructor_declaration":
+      case "compact_constructor_declaration":
       case "annotation_type_element_declaration":
         return method(node);
+      // An interface constant and an enum constant's arguments run on the
+      // type itself, as a static initializer does.
+      case "constant_declaration":
+      case "enum_constant": {
+        const leave = blockFrame();
+        staticInit++;
+        return () => {
+          staticInit--;
+          leave();
+        };
+      }
+      // A case's pattern variables (`case Circle c ->`) end with the case.
+      case "switch_rule":
+      case "switch_block_statement_group":
+        return blockFrame();
+      // `case Circle c`, and each component of a record pattern
+      // (`o instanceof Point(int x, Svc y)`): a local of that type.
+      case "type_pattern":
+      case "record_pattern_component": {
+        const typeNode = node.namedChildren[0] ?? null;
+        const name = node.namedChildren[node.namedChildren.length - 1];
+        typeUses(typeNode, ctx.caller());
+        if (!name || name.type !== "identifier" || name === typeNode) return;
+        ctx.setLocal(name.text, declared(javaTypeRef(typeNode)), true);
+        const decl = ctx.top.decl;
+        patternNames.set(decl, [...(patternNames.get(decl) ?? []), name.text]);
+        return;
+      }
       case "field_declaration":
       case "static_initializer": {
         // A field's initializers have a scope of their own: a pattern
@@ -2724,7 +2762,17 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "class_body": {
         // The body of `new T() { ... }` or of an enum constant: an anonymous class.
         const parent = node.parent?.type;
-        return parent === "object_creation_expression" || parent === "enum_constant" ? anonFrame() : undefined;
+        if (parent === "enum_constant") {
+          // An enum constant's body is an anonymous class: its methods run on an instance.
+          const saved = staticInit;
+          staticInit = 0;
+          const leave = anonFrame();
+          return () => {
+            leave();
+            staticInit = saved;
+          };
+        }
+        return parent === "object_creation_expression" ? anonFrame() : undefined;
       }
       case "block":
       case "constructor_body":

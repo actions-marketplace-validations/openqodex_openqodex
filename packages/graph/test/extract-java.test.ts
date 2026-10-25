@@ -326,6 +326,29 @@ describe("java facts", () => {
     expect(isFileFacts(f)).toBe(true);
   });
 
+  it("e4. a call in an interface constant or an enum constant's arguments is static, and one in its anonymous body is not", async () => {
+    const f = await factsOf(["interface I {", "  int K = make();", "}", "enum E {", "  A(build()) {", "    void m() { inner(); }", "  };", "  E(int x) {}", "}"]);
+    expect(one(f, "make").static).toBe(true);
+    expect(one(f, "build").static).toBe(true);
+    expect(one(f, "inner").static).toBeUndefined();
+  });
+
+  it("e6. a switch case pattern and a record pattern bind their variables as typed locals", async () => {
+    const f = await factsOf([
+      "class A {",
+      "  Object c;",
+      "  void m(Object o) {",
+      "    switch (o) { case Circle c -> c.area(); default -> {} }",
+      "    switch (o) { case Square c: c.side(); break; default: break; }",
+      "    if (o instanceof Point(int x, Svc y)) { y.go(); }",
+      "  }",
+      "}",
+    ]);
+    expect(one(f, "area").recv).toMatchObject({ kind: "type", type: { name: "Circle" } });
+    expect(one(f, "side").recv).toMatchObject({ kind: "type", type: { name: "Square" } });
+    expect(one(f, "go").recv).toMatchObject({ kind: "type", type: { name: "Svc" } });
+  });
+
   it("Type.m() is a name receiver", async () => {
     const f = await factsOf(["class A {", "  void m() { Type.m2(); a.b.Util.m3(); }", "}"]);
     expect(one(f, "m2").recv).toEqual({ kind: "name", name: "Type", path: [], nesting: null });

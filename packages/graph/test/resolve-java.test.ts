@@ -572,3 +572,39 @@ describe("java dogfood review findings", () => {
     for (const f of ["a/Testament.java", "a/Item.java", "a/Contest.java"]) expect(isTestPath(f), f).toBe(false);
   });
 });
+
+// Findings of the second dogfood pass, one test each.
+describe("java second dogfood findings", () => {
+  const ids = (g: Graph, file: string, name: string) => (g.defsByFile.get(file) ?? []).filter((n) => n.name === name).map((n) => n.id);
+  const siteTiers = (g: Graph, file: string, name: string, site: string, kind = "calls") => ids(g, file, name).flatMap((id) => tiers(g, id, kind).filter((t) => t.startsWith(`${site} `)));
+
+  it("e1. reads a package folder named test under src/main as main source, so a main file binds it", async () => {
+    const files = {
+      "pom.xml": "<project/>\n",
+      "src/main/java/com/acme/test/Probe.java": lines("package com.acme.test;", "", "public class Probe {", "    public static void run() {", "    }", "}"),
+      "src/main/java/com/acme/app/App.java": lines("package com.acme.app;", "", "import com.acme.test.Probe;", "", "public class App {", "    void go() {", "        Probe.run(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "src/main/java/com/acme/app/App.java", "CALL");
+    expect(siteTiers(g, "src/main/java/com/acme/test/Probe.java", "run", site)).toEqual([`${site} certain`]);
+  });
+
+  it("e5. binds new R(...) to a record's compact constructor and its body's calls to it", async () => {
+    const files = {
+      "a/Svc.java": lines("package a;", "", "public class Svc {", "    public void go() {", "    }", "}"),
+      "a/R.java": lines("package a;", "", "public record R(int x, Svc s) {", "    public R {", "        s.go(); // BODY", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    Object make(Svc s) {", "        return new R(1, s); // NEW", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const ctor = (g.defsByFile.get("a/R.java") ?? []).find((n) => n.name === "R" && n.kind === "method")?.id as string;
+    expect(tiers(g, ctor)).toEqual([`${at(files, "a/U.java", "NEW")} certain`]);
+    const go = symbol(g, "a/Svc.java", "go", "Svc");
+    expect((g.in.get(go) ?? []).map((e) => e.from)).toEqual([ctor]);
+  });
+
+  it("e7. discloses an unresolved import of a file in the default package as a miss", async () => {
+    const files = { "U.java": lines("import net.other.Thing;", "", "public class U {", "    void go() {", "        Thing.make(); // CALL", "    }", "}") };
+    const g = await graphOf(files);
+    expect(unknownsAt(g, at(files, "U.java", "CALL")).map((u) => u.cause)).toEqual(["miss"]);
+  });
+});

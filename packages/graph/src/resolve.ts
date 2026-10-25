@@ -51,8 +51,9 @@ export const DISPATCH_CAP = 32;
 // constructor calls, source sets by folder, overloads across both sides.
 // 14: abstract members kept below a body, static-import evidence per member.
 // 15: qualified names before external star imports, star imports of a
-// class, the java.lang classes.
-export const RESOLVER_VERSION = 15;
+// class, the java.lang classes. 16: source sets by source root first, no
+// import from the default package.
+export const RESOLVER_VERSION = 16;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
@@ -695,9 +696,16 @@ export function createWorld(input: ResolveInput): World {
   // source never sees a test source; the file's own project and source set
   // come first, then its own project, then every project. One left binds;
   // several are ambiguous; none is null.
-  // The source set by folder only (`src/test/java`, a `test` or `tests`
-  // folder): a main class named `SmokeTest.java` is still main.
-  const javaTestSet = (path: string): boolean => /(^|\/)tests?\//.test(path);
+  // The source set by folder only, never by the file name (a main class
+  // named `SmokeTest.java` is still main). The source roots decide first:
+  // under `src/test/` or `src/it/` is test, under `src/main/` is main
+  // whatever its package folders are called; without either root, a
+  // `test` or `tests` folder decides.
+  const javaTestSet = (path: string): boolean => {
+    if (/(^|\/)src\/(test|it)\//.test(path)) return true;
+    if (/(^|\/)src\/main\//.test(path)) return false;
+    return /(^|\/)tests?\//.test(path);
+  };
   const javaChoose = (from: string, ids: readonly string[]): { id: string } | { candidates: string[] } | null => {
     const fileOf = (id: string) => defById.get(id)?.file ?? id;
     const test = javaTestSet(from);
@@ -718,7 +726,8 @@ export function createWorld(input: ResolveInput): World {
     const via = viaOf(from, line, spec);
     const segs = [...(spec === "" ? [] : spec.split(".")), name];
     let declared = false;
-    for (let i = segs.length - 1; i >= 0; i--) {
+    // Java never imports a type of the default package, so it is not tried.
+    for (let i = segs.length - 1; i >= 1; i--) {
       const pkg = segs.slice(0, i).join(".");
       const rest = segs.slice(i);
       const ids = javaTypes.get(pkg)?.get(rest[0] as string);
