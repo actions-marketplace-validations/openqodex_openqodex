@@ -270,7 +270,7 @@ In the result, `scan.candidates` are the findings and `scan.scanners` has one su
 
 ## graph
 
-`buildGraph(args)` reads the code of a git work tree and returns `Promise<Graph>`: the definitions, calls and imports of its TypeScript, JavaScript, Python, Go and Ruby files, and how they connect. `args` is a `BuildArgs`:
+`buildGraph(args)` reads the code of a git work tree and returns `Promise<Graph>`: the definitions, calls and imports of its TypeScript, JavaScript, Python, Go, Ruby and Java files, and how they connect. `args` is a `BuildArgs`:
 
 - `repoRoot`: the folder to read. It must be a git work tree, because the list of files comes from git.
 - `files` (optional): paths to read first, such as the changed files, so a cut never leaves them out.
@@ -282,7 +282,7 @@ In the result, `scan.candidates` are the findings and `scan.scanners` has one su
 
 `detectImpact(graph, change)` returns the blast radius of a change as an `ImpactSummary`. `change` needs `files` (the changed files) and `coverage` (the changed lines). The summary lists the symbols the change touches or removes, their callers and callees with how certain each link is, the files that import a changed file, what the graph could not see, and a risk level.
 
-`extractFacts(lang, text)` parses the text of one file and returns `Promise<FileFacts | null>`: its definitions, calls and imports, extracted the same way a build does it. `lang` is one of `typescript`, `tsx`, `javascript`, `python`, `go` and `ruby`. It returns `null` when the parse takes longer than two seconds.
+`extractFacts(lang, text)` parses the text of one file and returns `Promise<FileFacts | null>`: its definitions, calls and imports, extracted the same way a build does it. `lang` is one of `typescript`, `tsx`, `javascript`, `python`, `go`, `ruby` and `java`. It returns `null` when the parse takes longer than two seconds.
 
 `writeIndex(graph)` returns the graph as files: a map of file name to content, with the project model in `projects.json`. Save them anywhere. `readIndexFrom(read, repoRoot)` gives the same graph back. `read` returns a file by its name, or `null`. `repoRoot` is the folder the graph was built from. It returns `null` when a file is missing or in another format. `readIndex(generation)` reads a build the graph folder kept. `graphOf(store, generation)` reads one with or without an index.
 

@@ -656,7 +656,7 @@ function blastRadius(report: Report): string {
 
   const touched = impact.touched ?? [];
   if (touched.length === 0 && c.removed.length === 0) {
-    out.push("<p>The change touches no function, method, class or type in a TypeScript, JavaScript, Python, Go or Ruby file, so there is no caller to trace.</p>");
+    out.push("<p>The change touches no function, method, class or type in a TypeScript, JavaScript, Python, Go, Ruby or Java file, so there is no caller to trace.</p>");
   } else {
     if (c.removed.length > 0) {
       const called = new Map<string, number>();
