@@ -72,6 +72,7 @@ const BUILTINS: Record<Family, ReadonlySet<string>> = {
       " ",
     ),
   ),
+  java: new Set(), // B2 fills it
 };
 
 // Built-in types whose methods are the language's: a call on a value of
@@ -83,6 +84,7 @@ const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
   python: new Set("str int float bool bytes bytearray list dict set frozenset tuple complex List Dict Set FrozenSet Tuple Sequence Mapping MutableMapping MutableSequence Iterable Iterator".split(" ")),
   go: new Set("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 byte rune bool error".split(" ")),
   ruby: new Set("String Integer Float Array Hash Symbol Range Proc".split(" ")),
+  java: new Set(), // B2 fills it
 };
 
 // TypeScript's types that say nothing about a value's methods: keywords no
