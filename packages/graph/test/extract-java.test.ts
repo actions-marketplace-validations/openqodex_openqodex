@@ -362,12 +362,12 @@ describe("java facts", () => {
     expect(one(f, "Inner").recv).toEqual({ kind: "name", name: "Outer", path: ["Inner"], nesting: null });
   });
 
-  it("Outer.this.m() is other", async () => {
+  it("Outer.this.m() has the enclosing instance's type", async () => {
     const f = await factsOf(["class Outer {", "  class Inner {", "    void m() { Outer.this.go(); }", "  }", "}"]);
-    expect(one(f, "go").recv).toEqual({ kind: "other" });
+    expect(one(f, "go").recv).toMatchObject({ kind: "type", type: { name: "Outer", qualifier: null }, path: [] });
   });
 
-  it("a self receiver inside an anonymous class body is other and the call belongs to the enclosing method", async () => {
+  it("anonymous methods own their calls and keep access to captured locals", async () => {
     const f = await factsOf([
       "class A {",
       "  Repo repo;",
@@ -379,22 +379,23 @@ describe("java facts", () => {
       "  void m() {}",
       "}",
     ]);
-    for (const name of ["m", "n", "find"]) {
-      expect(one(f, name).recv, name).toEqual({ kind: "other" });
-      expect(callerName(f, one(f, name)), name).toBe("outer");
+    for (const name of ["m", "n"]) {
+      expect(one(f, name).recv, name).toEqual({ kind: "self", path: [] });
+      expect(callerName(f, one(f, name)), name).toBe("run");
     }
+    expect(one(f, "find").recv).toEqual({ kind: "other" });
     expect(one(f, "typed").recv).toMatchObject({ kind: "type", type: { name: "Svc" } });
     expect(one(f, "named").recv).toEqual({ kind: "name", name: "Util", path: [], nesting: null });
-    // The anonymous class's own method is no definition.
-    expect(f.defs.filter((d) => d.name === "run")).toEqual([]);
+    expect(def(f, "run")).toMatchObject({ owner: "A.$1", kind: "method" });
+    expect(def(f, "$1")).toMatchObject({ owner: "A", kind: "class", bases: [{ name: "Runnable", qualifier: null }] });
     expect(one(f, "Runnable").recv).toEqual({ kind: "name", name: "Runnable", path: [], nesting: null });
   });
 
-  it("a local class is no definition and its self calls are other", async () => {
+  it("a local class owns its methods under its declaring scope", async () => {
     const f = await factsOf(["class A {", "  void outer() {", "    class Local { void run() { helper(); } }", "  }", "}"]);
-    expect(f.defs.map((d) => d.name).sort()).toEqual(["A", "outer"]);
-    expect(one(f, "helper").recv).toEqual({ kind: "other" });
-    expect(callerName(f, one(f, "helper"))).toBe("outer");
+    expect(def(f, "Local")).toMatchObject({ owner: "A.outer@2:16", kind: "class", topLevel: false });
+    expect(one(f, "helper").recv).toEqual({ kind: "self", path: [] });
+    expect(callerName(f, one(f, "helper"))).toBe("run");
   });
 
   it("a lambda's calls belong to the enclosing method", async () => {
@@ -459,6 +460,20 @@ describe("java facts", () => {
     expect(used.has("T")).toBe(false);
     const made = f.types.find((t) => t.ref.name === "Made");
     expect(f.defs[made?.caller ?? -1]?.name).toBe("m");
+  });
+
+  it("cached anonymous-body flags reject non-boolean values", async () => {
+    const f = await factsOf([
+      "class Host { Object task = new Object() { void run() {} }; }",
+      "enum Choice { FIRST { void run() {} }; abstract void run(); }",
+    ]);
+    for (const name of ["$1", "FIRST"]) {
+      expect(def(f, name)).toMatchObject({ anonymous: true });
+      const plain = JSON.parse(JSON.stringify(f));
+      expect(isFileFacts(plain)).toBe(true);
+      plain.defs.find((d: DefFact) => d.name === name).anonymous = "true";
+      expect(isFileFacts(plain)).toBe(false);
+    }
   });
 
   it("safe-fs accepts the new fields and rejects a wrong type for each", async () => {

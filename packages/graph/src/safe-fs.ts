@@ -138,6 +138,7 @@ function isDef(v: unknown, imports: number, values: number): boolean {
     (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash))) &&
     optBool(v.abstract) &&
     optBool(v.iface) &&
+    optBool(v.anonymous) &&
     optBool(v.pointer) &&
     optBool(v.varargs) &&
     optBool(v.ctor) &&

@@ -62,7 +62,7 @@ export type Expected = {
   exports?: { file: string; name: string; change: "removed" | "retargeted"; consumers: string[] }[];
   removed?: string[]; // removed and not moved
   moved?: { from: string; to: string; renamed: boolean }[];
-  unknowns?: { file: string; line: number; cause: string; scope?: "file" | "project" }[];
+  unknowns?: { file: string; line: number; cause: string; scope?: "file" | "project"; note?: string }[];
   floor?: Record<string, boolean>;
   cuts?: { by: string; omitted: number | null }[];
   external?: { min: number; sites?: string[] };
@@ -323,12 +323,12 @@ export function scoreAnswer(name: string, expected: Expected, graph: Graph, impa
   // ---------- gap disclosure ----------
   for (const u of expected.unknowns ?? []) {
     gaps.of++;
-    const near = impact.unknown.near.some((n) => n.file === u.file && n.line === u.line && n.cause === u.cause && (u.scope === undefined || n.scope === u.scope));
-    const any = graph.unknowns.some((n) => n.file === u.file && n.line === u.line && n.cause === u.cause && (u.scope === undefined || n.scope === u.scope));
+    const near = impact.unknown.near.some((n) => n.file === u.file && n.line === u.line && n.cause === u.cause && (u.scope === undefined || n.scope === u.scope) && (u.note === undefined || n.note === u.note));
+    const any = graph.unknowns.some((n) => n.file === u.file && n.line === u.line && n.cause === u.cause && (u.scope === undefined || n.scope === u.scope) && (u.note === undefined || n.note === u.note));
     if (near || any) gaps.hit++;
     else {
       const there = graph.unknowns.filter((n) => n.file === u.file && n.line === u.line).map((n) => `${n.cause}/${n.scope}`);
-      failures.push(`unknown not disclosed: ${u.file}:${u.line} ${u.cause}${there.length > 0 ? ` (found ${there.join(", ")})` : ""}`);
+      failures.push(`unknown not disclosed: ${u.file}:${u.line} ${u.cause}${u.note === undefined ? "" : ` with note ${JSON.stringify(u.note)}`}${there.length > 0 ? ` (found ${there.join(", ")})` : ""}`);
     }
   }
   for (const [spec, want] of Object.entries(expected.floor ?? {})) {

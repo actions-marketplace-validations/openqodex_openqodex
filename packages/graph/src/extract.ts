@@ -58,8 +58,9 @@ type Frame = {
   // and the declared type of each field that has one.
   members?: Set<string>;
   fieldTypes?: Record<string, TypeRef>;
-  // A Java anonymous or local class body: its `this` is not the class around it.
-  anon?: boolean;
+  // Java local types bind only within their declaring block and below.
+  javaTypes?: Map<string, TypeRef>;
+  javaScope?: { line: number; column: number };
 };
 
 // A frame once pushed: linked to the one around it, with what every lookup
@@ -2354,6 +2355,16 @@ function opaqueType(at: Node): TypeRef {
   return { name: "", qualifier: null, ...pos(at) };
 }
 
+// Local type names use the same scoped path in annotations, receivers and result qualifiers.
+function javaScopedTypeNames(names: readonly string[]): string[] {
+  const head = names[0] as string;
+  for (let s = readingScope, steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
+    const local = s.javaTypes?.get(head);
+    if (local) return [...(local.qualifier ? local.qualifier.split(".") : []), local.name, ...names.slice(1)];
+  }
+  return [...names];
+}
+
 function javaTypeRef(node: Node | null): TypeRef | null {
   if (!node) return null;
   if (node.type === "array_type") {
@@ -2365,7 +2376,8 @@ function javaTypeRef(node: Node | null): TypeRef | null {
   if (!chain) return null;
   const name = chain.names[chain.names.length - 1] as string;
   if (chain.names.length === 1 && (name === "var" || typeParam(name) !== undefined)) return null;
-  return { name, qualifier: chain.names.length > 1 ? chain.names.slice(0, -1).join(".") : null, ...pos(node) };
+  const names = javaScopedTypeNames(chain.names);
+  return { name, qualifier: names.length > 1 ? names.slice(0, -1).join(".") : null, ...pos(node) };
 }
 
 // Every named type in a written type, generic arguments included (`Map<K,
@@ -2381,25 +2393,12 @@ function javaTypeNames(node: Node | null): TypeRef[] {
   return out;
 }
 
-// A position in the walk inside an anonymous or a local class body, nearer
-// than the named class around it: its `this` is not that class.
-function javaInAnon(ctx: Ctx): boolean {
-  const cls = ctx.cls();
-  if (!cls) return true;
-  for (let s: Scope | null = ctx.top; s && s !== cls; s = s.parent) if (s.anon) return true;
-  return false;
-}
-
-// A field of the class around this point of the walk: "self" when it is the
-// nearest named class's own and no anonymous body stands between, "outer"
-// when it belongs to another class around (its `this` is not this one's).
+// A field belongs to the nearest class or to an enclosing instance.
 function javaField(ctx: Ctx, name: string): "self" | "outer" | null {
-  let crossed = false;
   let first = true;
   for (let s: Scope | null = ctx.top; s; s = s.parent) {
-    if (s.anon) crossed = true;
     if (s.cls === null) continue;
-    if (s.members?.has(name)) return crossed || !first ? "outer" : "self";
+    if (s.members?.has(name)) return first ? "self" : "outer";
     first = false;
   }
   return null;
@@ -2407,17 +2406,26 @@ function javaField(ctx: Ctx, name: string): "self" | "outer" | null {
 
 // An identifier before a dot: a local's declared or constructed type, a
 // field of this class, else a name the resolver looks up (a type, a package).
+function javaLocalValue(ctx: Ctx, name: string): TypeRef | null | undefined {
+  const at = ctx.lookup(ctx.top, name);
+  // A nearer class's field hides a captured local, but not a local declared inside that class's method.
+  for (let s: Scope | null = ctx.top; s && s !== at; s = s.parent) {
+    if (s.members?.has(name)) return undefined;
+  }
+  return ctx.local(name);
+}
+
 function javaIdent(ctx: Ctx, name: string, path: string[]): Receiver {
-  const t = ctx.local(name);
+  const t = javaLocalValue(ctx, name);
   if (t !== undefined) return t && !t.elem ? { kind: "type", type: t, path } : { kind: "other" };
   const field = javaField(ctx, name);
   if (field === "self") return { kind: "self", path: [name, ...path] };
   if (field === "outer") return { kind: "other" };
-  return { kind: "name", name, path, nesting: null };
+  const names = javaScopedTypeNames([name]);
+  return { kind: "name", name: names[0] as string, path: [...names.slice(1), ...path], nesting: null };
 }
 
-// The declared type of a field of the nearest named class, when the walk
-// is in that class's own body (no anonymous body between).
+// The declared type of a field of the nearest class.
 function javaSelfFieldType(ctx: Ctx, name: string): TypeRef | null {
   if (javaField(ctx, name) !== "self") return null;
   for (let s: Scope | null = ctx.top; s; s = s.parent) if (s.cls !== null) return s.fieldTypes?.[name] ?? null;
@@ -2433,7 +2441,7 @@ function javaCallType(ctx: Ctx, call: Node, depth = 0): TypeRef | null {
   let object = call.childForFieldName("object");
   if (!name || depth > 16) return null;
   while (object?.type === "parenthesized_expression") object = object.firstNamedChild;
-  if (!object || object.type === "this") return javaInAnon(ctx) ? null : { name: name.text, qualifier: null, ...pos(call), result: 0 };
+  if (!object || object.type === "this") return ctx.cls() ? { name: name.text, qualifier: null, ...pos(call), result: 0 } : null;
   const depthOf = (t: TypeRef): number => {
     let n = 0;
     for (let x: TypeRef | undefined = t; x?.on; x = x.on) n++;
@@ -2442,14 +2450,14 @@ function javaCallType(ctx: Ctx, call: Node, depth = 0): TypeRef | null {
   // Past MAX_TYPE_DEPTH the type is not followed: the validator keeps the facts.
   const onValue = (on: TypeRef | null | undefined): TypeRef | null => (on && !on.elem && depthOf(on) < MAX_TYPE_DEPTH ? { name: name.text, qualifier: null, ...pos(call), result: 0, on } : null);
   if (object.type === "identifier") {
-    const local = ctx.local(object.text);
+    const local = javaLocalValue(ctx, object.text);
     if (local !== undefined) return onValue(local);
     const field = javaField(ctx, object.text);
     if (field === "self") return onValue(javaSelfFieldType(ctx, object.text));
     if (field === "outer") return null;
-    return { name: name.text, qualifier: object.text, ...pos(call), result: 0 };
+    return { name: name.text, qualifier: javaScopedTypeNames([object.text]).join("."), ...pos(call), result: 0 };
   }
-  if (object.type === "field_access" && object.childForFieldName("object")?.type === "this" && !javaInAnon(ctx)) {
+  if (object.type === "field_access" && object.childForFieldName("object")?.type === "this" && ctx.cls()) {
     const field = object.childForFieldName("field");
     return field?.type === "identifier" ? onValue(javaSelfFieldType(ctx, field.text)) : null;
   }
@@ -2474,7 +2482,19 @@ function javaReceiver(ctx: Ctx, object: Node): Receiver {
   let base: Node | null = object;
   while (base?.type === "field_access") {
     const field = base.childForFieldName("field");
-    // `Outer.this.m()`, `Outer.super.m()`: not supported in this version.
+    if (field?.type === "this") {
+      const type = javaTypeRef(base.childForFieldName("object"));
+      // The qualifier of `Outer.this` is an expression name in the grammar.
+      const qualifier = base.childForFieldName("object");
+      const names = qualifier?.text.replace(/\s+/g, "").split(".");
+      for (let s = ctx.cls(); s; s = s.parent?.clsScope ?? null) {
+        const d = ctx.defs[s.def];
+        if (!d || !names || (d.name !== names.join(".") && s.cls !== names.join("."))) continue;
+        return { kind: "type", type: type ?? { name: d.name, qualifier: d.owner, ...pos(base) }, path };
+      }
+      return { kind: "other" };
+    }
+    // A qualified super receiver is not read.
     if (field?.type !== "identifier") return { kind: "other" };
     path.unshift(field.text);
     base = base.childForFieldName("object");
@@ -2482,9 +2502,9 @@ function javaReceiver(ctx: Ctx, object: Node): Receiver {
   while (base?.type === "parenthesized_expression") base = base.firstNamedChild;
   switch (base?.type) {
     case "this":
-      return javaInAnon(ctx) ? { kind: "other" } : { kind: "self", path };
+      return ctx.cls() ? { kind: "self", path } : { kind: "other" };
     case "super":
-      return path.length === 0 && !javaInAnon(ctx) ? { kind: "super" } : { kind: "other" };
+      return path.length === 0 && ctx.cls() ? { kind: "super" } : { kind: "other" };
     case "identifier":
       return javaIdent(ctx, base.text, path);
     case "method_invocation":
@@ -2500,7 +2520,8 @@ function javaReceiver(ctx: Ctx, object: Node): Receiver {
 
 // The receiver that names a type written in place (`new a.b.T()`, `T::m`).
 function javaTypeReceiver(chain: { names: string[] }): Receiver {
-  return { kind: "name", name: chain.names[0] as string, path: chain.names.slice(1), nesting: null };
+  const names = javaScopedTypeNames(chain.names);
+  return { kind: "name", name: names[0] as string, path: names.slice(1), nesting: null };
 }
 
 function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
@@ -2514,10 +2535,10 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   // A method called on an identifier: when the name is a parameter of its
   // method, decided once the body is read (it may be assigned below).
   const paramCalls: { name: string; scope: Scope }[] = [];
-  const blockFrame = (): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+  const blockFrame = (node: Node): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true, javaScope: pos(node) });
   // The pattern variables each frame's `instanceof` tests bound.
   const patternNames = new Map<Scope, string[]>();
-  const anonFrame = (): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true, anon: true });
+  let anonymous = 0;
   const typeUses = (node: Node | null, caller: number) => {
     for (const r of javaTypeNames(node)) ctx.addTypeUse(r, caller);
   };
@@ -2560,12 +2581,59 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     callAt.set(callNode.endIndex, index);
     return index;
   };
-  // A type declaration: a definition when it stands at the file's top or
-  // directly in a named type; a local class is read as an anonymous body.
+  // Named and anonymous types share field collection and member ownership.
+  const typeBody = (node: Node, body: Node | null, def: number, qualified: string, typeParams?: Map<string, TypeRef | null> | null): Leave => {
+    const fields = (ctx.defs[def] as DefFact).fields;
+    const members = new Set<string>();
+    const leave = ctx.push({ def, cls: qualified, locals: null, members, fieldTypes: fields, ...(typeParams ? { typeParams } : {}) });
+    // Fields are read first so methods can use fields declared below them.
+    const decls = (body?.namedChildren ?? []).flatMap((c) => (c.type === "enum_body_declarations" ? c.namedChildren : [c]));
+    for (const f of decls) {
+      if (f.type === "enum_constant") {
+        const n = f.childForFieldName("name");
+        if (!n) continue;
+        const owner = ctx.defs[def] as DefFact;
+        const hasBody = f.namedChildren.some((c) => c.type === "class_body");
+        members.add(n.text);
+        fields[n.text] = { name: hasBody ? n.text : owner.name, qualifier: hasBody ? qualified : owner.owner, ...pos(n) };
+        continue;
+      }
+      if (f.type !== "field_declaration" && f.type !== "constant_declaration") continue;
+      const typeNode = f.childForFieldName("type");
+      const type = javaTypeRef(typeNode);
+      typeUses(typeNode, def);
+      for (const d of f.childrenForFieldName("declarator")) {
+        const n = d.childForFieldName("name");
+        if (!n) continue;
+        members.add(n.text);
+        fields[n.text] = javaDims(type, d) ?? opaqueType(n);
+      }
+    }
+    for (const p of node.type === "record_declaration" ? (node.childForFieldName("parameters")?.namedChildren ?? []) : []) {
+      if (p.type !== "formal_parameter") continue;
+      const n = p.childForFieldName("name");
+      const typeNode = p.childForFieldName("type");
+      const type = javaTypeRef(typeNode);
+      typeUses(typeNode, def);
+      if (!n) continue;
+      members.add(n.text);
+      fields[n.text] = type ?? opaqueType(n);
+    }
+    return leave;
+  };
+  // A local type carries its declaring block in its identity.
   const typeDecl = (node: Node): Leave => {
     const name = node.childForFieldName("name");
-    const outer = ctx.top.cls;
-    if (!name || (ctx.top.depth > 0 && outer === null)) return anonFrame();
+    if (!name) return blockFrame(node);
+    const local = ctx.top.depth > 0 && ctx.top.cls === null;
+    let outer = ctx.cls()?.cls ?? null;
+    if (local) {
+      const at = ctx.top.decl.javaScope ?? pos(node);
+      const owner = ctx.ownerName() ?? outer ?? "";
+      const scope = ctx.defs[ctx.caller()]?.kind === "class" ? `${owner}.<init>` : owner;
+      outer = `${scope}@${at.line}:${at.column}`;
+      (ctx.top.decl.javaTypes ??= new Map()).set(name.text, { name: name.text, qualifier: outer, ...pos(name) });
+    }
     const typeParams = javaTypeParams(node);
     enteringTypeParams = typeParams;
     const bases: TypeRef[] = [];
@@ -2586,35 +2654,8 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     const iface = node.type === "interface_declaration" || node.type === "annotation_type_declaration";
     const fields: Record<string, TypeRef> = {};
     const def = ctx.addDef(node, name, "class", { owner: outer, topLevel: ctx.top.depth === 0, exported: javaModifiers(node).has("public"), bases, fields, ...(iface ? { iface: true } : {}) });
-    const members = new Set<string>();
-    const leave = ctx.push({ def, cls: outer ? `${outer}.${name.text}` : name.text, locals: null, members, fieldTypes: fields, ...(typeParams ? { typeParams } : {}) });
+    const leave = typeBody(node, node.childForFieldName("body"), def, outer ? `${outer}.${name.text}` : name.text, typeParams);
     for (const b of baseNodes) typeUses(b, def);
-    // The fields first, so a method's bare `f.m()` knows a field declared below it.
-    const body = node.childForFieldName("body");
-    const decls = (body?.namedChildren ?? []).flatMap((c) => (c.type === "enum_body_declarations" ? c.namedChildren : [c]));
-    for (const f of decls) {
-      if (f.type !== "field_declaration" && f.type !== "constant_declaration") continue;
-      const typeNode = f.childForFieldName("type");
-      const type = javaTypeRef(typeNode);
-      typeUses(typeNode, def);
-      for (const d of f.childrenForFieldName("declarator")) {
-        const n = d.childForFieldName("name");
-        if (!n) continue;
-        members.add(n.text);
-        fields[n.text] = javaDims(type, d) ?? opaqueType(n);
-      }
-    }
-    // A record's components are its fields.
-    for (const p of node.type === "record_declaration" ? (node.childForFieldName("parameters")?.namedChildren ?? []) : []) {
-      if (p.type !== "formal_parameter") continue;
-      const n = p.childForFieldName("name");
-      const typeNode = p.childForFieldName("type");
-      const type = javaTypeRef(typeNode);
-      typeUses(typeNode, def);
-      if (!n) continue;
-      members.add(n.text);
-      fields[n.text] = type ?? opaqueType(n);
-    }
     return leave;
   };
   // A method, a constructor or an annotation element: a definition when
@@ -2723,7 +2764,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       // type itself, as a static initializer does.
       case "constant_declaration":
       case "enum_constant": {
-        const leave = blockFrame();
+        const leave = blockFrame(node);
         staticInit++;
         return () => {
           staticInit--;
@@ -2733,7 +2774,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       // A case's pattern variables (`case Circle c ->`) end with the case.
       case "switch_rule":
       case "switch_block_statement_group":
-        return blockFrame();
+        return blockFrame(node);
       // `case Circle c`, and each component of a record pattern
       // (`o instanceof Point(int x, Svc y)`): a local of that type.
       case "type_pattern":
@@ -2751,7 +2792,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "static_initializer": {
         // A field's initializers have a scope of their own: a pattern
         // variable there never reaches the rest of the class.
-        const leave = node.type === "field_declaration" ? blockFrame() : null;
+        const leave = node.type === "field_declaration" ? blockFrame(node) : null;
         const isStatic = node.type === "static_initializer" || javaModifiers(node).has("static");
         if (isStatic) staticInit++;
         return () => {
@@ -2760,19 +2801,24 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         };
       }
       case "class_body": {
-        // The body of `new T() { ... }` or of an enum constant: an anonymous class.
-        const parent = node.parent?.type;
-        if (parent === "enum_constant") {
-          // An enum constant's body is an anonymous class: its methods run on an instance.
-          const saved = staticInit;
-          staticInit = 0;
-          const leave = anonFrame();
-          return () => {
-            leave();
-            staticInit = saved;
-          };
-        }
-        return parent === "object_creation_expression" ? anonFrame() : undefined;
+        const parent = node.parent;
+        if (parent?.type !== "enum_constant" && parent?.type !== "object_creation_expression") return;
+        const outer = ctx.cls()?.cls ?? null;
+        const constant = parent.type === "enum_constant";
+        const name = constant ? parent.childForFieldName("name")?.text : `$${++anonymous}`;
+        if (!name) return blockFrame(node);
+        const base = constant && outer
+          ? { name: (ctx.defs[ctx.cls()?.def ?? -1] as DefFact).name, qualifier: (ctx.defs[ctx.cls()?.def ?? -1] as DefFact).owner, ...pos(parent) }
+          : javaTypeRef(parent.childForFieldName("type"));
+        const def = ctx.addDef(node, node, "class", { name, owner: outer, bases: base ? [base] : [], anonymous: true });
+        delete (ctx.defs[def] as DefFact).bodyHash;
+        const saved = staticInit;
+        staticInit = 0;
+        const leave = typeBody(node, node, def, outer ? `${outer}.${name}` : name);
+        return () => {
+          leave();
+          staticInit = saved;
+        };
       }
       case "block":
       case "constructor_body":
@@ -2784,7 +2830,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       // local of unknown type, never the field it would hide.
       case "if_statement":
       case "while_statement": {
-        const leave = blockFrame();
+        const leave = blockFrame(node);
         const frame = ctx.top.decl;
         return () => {
           const names = patternNames.get(frame) ?? [];
@@ -2797,7 +2843,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const kw = node.childForFieldName("constructor");
         const cls = ctx.cls();
         const owner = cls ? ctx.defs[cls.def] : undefined;
-        if (!kw || !owner || javaInAnon(ctx)) return;
+        if (!kw || !owner) return;
         const isSuper = kw.type === "super";
         const name = isSuper ? owner.bases.find((b) => b.rel === undefined)?.name : owner.name;
         if (name === undefined || (kw.type !== "this" && !isSuper)) return;
@@ -2808,7 +2854,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return;
       }
       case "enhanced_for_statement": {
-        const leave = blockFrame();
+        const leave = blockFrame(node);
         const name = node.childForFieldName("name");
         const typeNode = node.childForFieldName("type");
         typeUses(typeNode, ctx.caller());
@@ -2816,7 +2862,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return leave;
       }
       case "catch_clause": {
-        const leave = blockFrame();
+        const leave = blockFrame(node);
         const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
         const types = param?.namedChildren.find((c) => c.type === "catch_type")?.namedChildren ?? [];
         for (const t of types) typeUses(t, ctx.caller());
@@ -2826,7 +2872,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return leave;
       }
       case "try_with_resources_statement": {
-        const leave = blockFrame();
+        const leave = blockFrame(node);
         for (const r of node.childForFieldName("resources")?.namedChildren ?? []) {
           const name = r.type === "resource" ? r.childForFieldName("name") : null;
           if (!name) continue;
@@ -2850,7 +2896,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "assignment_expression": {
         // A local given another value; a parameter no longer holds what the caller passed.
         const left = node.childForFieldName("left");
-        if (left?.type !== "identifier" || ctx.local(left.text) === undefined) return;
+        if (left?.type !== "identifier" || javaLocalValue(ctx, left.text) === undefined) return;
         // A Java local's type is fixed where it is declared (a `var` by its
         // first value): a later value never changes it, the parameter is
         // only marked as given another value.
@@ -2885,9 +2931,9 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const name = node.childForFieldName("name");
         const object = node.childForFieldName("object");
         if (!name) return;
-        const recv: Receiver = object ? javaReceiver(ctx, object) : javaInAnon(ctx) ? { kind: "other" } : { kind: "self", path: [] };
+        const recv: Receiver = object ? javaReceiver(ctx, object) : ctx.cls() ? { kind: "self", path: [] } : { kind: "other" };
         addCall(name, recv, node.childForFieldName("arguments"), node);
-        if (object?.type === "identifier") paramCalls.push({ name: object.text, scope: ctx.top });
+        if (object?.type === "identifier" && javaLocalValue(ctx, object.text) !== undefined) paramCalls.push({ name: object.text, scope: ctx.top });
         return;
       }
       case "object_creation_expression": {
@@ -2895,7 +2941,9 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const typeNode = node.childForFieldName("type");
         typeUses(typeNode, ctx.caller());
         const chain = javaTypeChain(typeNode);
-        if (chain) (ctx.calls[addCall(chain.last, javaTypeReceiver(chain), node.childForFieldName("arguments"), node)] as CallFact).ctor = true;
+        const type = javaTypeRef(typeNode);
+        const recv = type?.qualifier?.includes("@") ? { kind: "type" as const, type, path: [] } : chain ? javaTypeReceiver(chain) : null;
+        if (chain && recv) (ctx.calls[addCall(chain.last, recv, node.childForFieldName("arguments"), node)] as CallFact).ctor = true;
         return;
       }
       case "method_reference":
