@@ -438,11 +438,12 @@ describe.skipIf(process.env.OPENQODEX_E2E_OFFLINE === "1")("graph acceptance on 
         graphTrue += inTruth;
         lines.push(`  ${t.symbol}: ${found.size} found, ${t.calls.length} bindable, ${(t.gaps ?? []).length} by design out of reach, ${found.size - inTruth} false`);
         if (t.dispatch) {
-          // The implementations and overrides of the target, through every level.
+          // The implementations and overrides of the target, through every
+          // level (`overrides` edges are references, not calls).
           const impls = new Set<string>();
           const queue = [id as string];
           while (queue.length > 0) {
-            for (const e of cold.in.get(queue.pop() as string) ?? []) {
+            for (const e of cold.refsIn.get(queue.pop() as string) ?? []) {
               if (e.kind === "overrides" && !impls.has(e.from)) {
                 impls.add(e.from);
                 queue.push(e.from);

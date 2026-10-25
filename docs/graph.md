@@ -42,7 +42,8 @@ A step through inheritance is part of the proof: a method found on a base class 
 | `go.mod` | calls and imports | the same |
 | `pyproject.toml`, `setup.cfg`, `requirements*.txt`, `requirements*.in`, the `.txt` and `.in` files of a `requirements/` folder, and the files any of them includes with `-r` or `-c` | nothing: imports of what it declares read as misses | the build stays complete |
 | `Gemfile` | nothing: requires of the gems it names read as misses | the build stays complete |
-| `pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, `settings.gradle.kts` | nothing: imports of the dependency groups it declares read as misses | the build stays complete |
+| `pom.xml` | nothing: imports of what it declares read as misses | the build stays complete |
+| `build.gradle`, `build.gradle.kts`, `settings.gradle`, `settings.gradle.kts` | nothing: imports of what it declares read as misses | the build stays complete |
 | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | nothing: a binding through it is only less sure | the build stays complete |
 
   An include is read relative to the file that includes it, only inside the repository, and at most 64 includes in all; one outside the repository, missing, or past that bound is said as a gap of the including file.
