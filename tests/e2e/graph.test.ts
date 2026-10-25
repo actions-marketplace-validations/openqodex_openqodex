@@ -321,8 +321,9 @@ const REPOS: Repo[] = [
         ],
       },
       {
-        // An interface method called through fields, typed locals and
-        // declared results; ThrowingObjectConstructor and
+        // An interface method called through fields, typed locals, declared
+        // results and `var` locals set from a call's result, two of them
+        // inside lambdas; ThrowingObjectConstructor and
         // InstanceCreatorConstructor implement it.
         file: "gson/src/main/java/com/google/gson/internal/ObjectConstructor.java",
         symbol: "ObjectConstructor.construct",
@@ -332,19 +333,14 @@ const REPOS: Repo[] = [
           "gson/src/main/java/com/google/gson/internal/bind/JsonAdapterAnnotationTypeAdapterFactory.java:96",
           "gson/src/main/java/com/google/gson/internal/bind/MapTypeAdapterFactory.java:183",
           "gson/src/main/java/com/google/gson/internal/bind/ReflectiveTypeAdapterFactory.java:577",
-          ...[59, 73, 128, 161, 164, 168, 177, 245].map((l) => `gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:${l}`),
+          ...[59, 73, 128, 149, 161, 164, 168, 177, 245, 257].map((l) => `gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:${l}`),
         ],
         dispatch: [
           "gson/src/main/java/com/google/gson/internal/bind/CollectionTypeAdapterFactory.java:81",
           "gson/src/main/java/com/google/gson/internal/bind/JsonAdapterAnnotationTypeAdapterFactory.java:96",
           "gson/src/main/java/com/google/gson/internal/bind/MapTypeAdapterFactory.java:183",
           "gson/src/main/java/com/google/gson/internal/bind/ReflectiveTypeAdapterFactory.java:577",
-          ...[59, 73, 128, 161, 164, 168, 177, 245].map((l) => `gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:${l}`),
-        ],
-        // `var` set from what a call returned.
-        gaps: [
-          "gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:149",
-          "gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:257",
+          ...[59, 73, 128, 149, 161, 164, 168, 177, 245, 257].map((l) => `gson/src/test/java/com/google/gson/internal/ConstructorConstructorTest.java:${l}`),
         ],
       },
       {
