@@ -51,8 +51,7 @@ type Frame = {
   typeParams?: Map<string, TypeRef | null>; // TypeScript type parameters and their constraints
   objectAt?: number; // a module made from an object literal: the literal's start
   fnAt?: number; // a const bound to a function: the function's start, whose frame is this definition's
-  // Parameters of this function frame given another value in its body: a
-  // call of one may not run what the caller passed.
+  // Parameters and locals given another value lose their original callable value.
   reassigned?: Set<string>;
   // A Java type's frame: the names of its fields, read before its methods,
   // and the declared type of each field that has one.
@@ -238,7 +237,7 @@ class Ctx {
   // Calls whose names are bound when the walk ends, each with a reference to
   // its scope: a scope's names are known only once all of it has been read
   // (hoisting in JavaScript, any assignment makes a Python name local).
-  private pending: { call: CallFact; scope: Scope; ident: Ident | undefined }[] = [];
+  private pending: { call: CallFact; scope: Scope; ident: Ident | undefined; receiverName?: string }[] = [];
   // Value references the same way: a name of a local variable is dropped
   // once every scope is known.
   private pendingValues: { ref: ValueRef; scope: Scope; ident: Ident | undefined }[] = [];
@@ -352,7 +351,6 @@ class Ctx {
   // is no longer evidence for any call to it.
   // `innermost`: Python, where assigning in a function makes a new local.
   assign(name: string, type: TypeRef | null, innermost = false): void {
-    this.reassign(name);
     let s: Scope | null = this.top;
     for (let steps = 0; s && steps <= MAX_SCOPE_DEPTH; s = s.parent, steps++) {
       if (innermost && !s.locals) continue;
@@ -364,6 +362,7 @@ class Ctx {
       if (innermost && !s.locals?.has(name)) break;
       const locals = s.locals;
       if (locals?.has(name)) {
+        (s.reassigned ??= new Set()).add(name);
         const old = locals.get(name) ?? null;
         if (old?.declared) return;
         const same = old !== null && type !== null && sameType(old, type);
@@ -422,7 +421,7 @@ class Ctx {
     this.calls.push({ name: "", line, column, caller: this.caller(), recv: { kind: "other" }, dynamic: true });
   }
 
-  addCall(nameNode: Node, recv: Receiver, implicit = false): number {
+  addCall(nameNode: Node, recv: Receiver, implicit = false, receiverName?: string): number {
     const { line, column } = pos(nameNode);
     const call: CallFact = { name: nameNode.text, line, column, caller: this.caller(), recv };
     const index = this.calls.length;
@@ -433,7 +432,7 @@ class Ctx {
     this.calls.push(call);
     const ident = (recv as Tagged)[IDENT];
     if (ident) delete (recv as Tagged)[IDENT];
-    if (this.lang === "ruby") return index;
+    if (this.lang === "ruby" && receiverName === undefined) return index;
     // Past the depth bound the scopes around a call are not read: the safe
     // reading is a call nothing binds, never one bound past a scope that hides it.
     if (this.top.depth > MAX_SCOPE_DEPTH) {
@@ -443,7 +442,7 @@ class Ctx {
     }
     // A Go receiver name is decided where it is read (identReceiver is not
     // used for Go): no Go name is hoisted.
-    if (recv.kind === "none" || ident) this.pending.push({ call, scope: this.top, ident });
+    if (recv.kind === "none" || ident || receiverName !== undefined) this.pending.push({ call, scope: this.top, ident, receiverName });
     return index;
   }
 
@@ -510,11 +509,10 @@ class Ctx {
     scope.tables.set(name, index);
   }
 
-  // An assignment to `name`: when it is a parameter of the function frame
-  // that holds it, that parameter no longer holds what the caller passed.
+  // An assigned parameter or local no longer holds its original callable value.
   reassign(name: string): void {
     const at = this.lookup(this.top, name);
-    if (at && !at.block && at.def >= 0 && this.defs[at.def]?.params?.includes(name)) (at.reassigned ??= new Set()).add(name);
+    if (at?.locals?.has(name)) (at.reassigned ??= new Set()).add(name);
   }
 
   // A computed call on `name` (`handlers[key]()`, call index `call`).
@@ -548,16 +546,24 @@ class Ctx {
     const topNames = new Set(this.defs.filter((d) => d.topLevel).map((d) => d.name));
     // A local alias's call node, made into the call it names.
     const aliasCalls: { call: CallFact; callNode: number }[] = [...this.aliasCalls];
-    for (const { call, scope, ident } of this.pending) {
-      if (ident) {
+    const bindAlias = (call: CallFact, at: Scope | null, name: string, refOnly = false) => {
+      if (at?.reassigned?.has(name)) return;
+      const alias = at?.aliases?.get(name);
+      if (alias?.ref !== undefined) call.alias = alias.ref;
+      else if (!refOnly && alias?.callNode !== undefined) aliasCalls.push({ call, callNode: alias.callNode });
+    };
+    for (const { call, scope, ident, receiverName } of this.pending) {
+      if (ident || receiverName !== undefined) {
         // The name read again with every scope complete. The same scope
         // answering keeps the type the walk had at the call; a nearer scope
         // that declared the name later decides instead.
-        const at = this.lookup(scope, ident.name);
+        const name = ident?.name ?? receiverName as string;
+        const at = this.lookup(scope, name);
         // A method called on a table (`handlers.set(...)`) may change what it holds.
-        const table = at?.tables?.get(ident.name);
+        const table = at?.tables?.get(name);
         if (table !== undefined) this.openTables.add(table);
-        if (at !== ident.at || call.recv.kind === "name") call.recv = receiverIn(at, ident.name, ident.path, topNames);
+        if (ident && (at !== ident.at || call.recv.kind === "name")) call.recv = receiverIn(at, name, ident.path, topNames);
+        if (!ident || ident.path.length === 0) bindAlias(call, at, name, true);
         continue;
       }
       const at = this.lookup(scope, call.name);
@@ -570,9 +576,7 @@ class Ctx {
       else if (at.depth > 0 || !topNames.has(call.name)) {
         call.shadowed = true;
         // A local given one value once: the call may run that value.
-        const alias = at.aliases?.get(call.name);
-        if (alias?.ref !== undefined) call.alias = alias.ref;
-        else if (alias?.callNode !== undefined) aliasCalls.push({ call, callNode: alias.callNode });
+        bindAlias(call, at, call.name);
         // A parameter of the function whose frame holds it: the function
         // calls what it is given there.
         const owner = !at.block && at.def >= 0 && !at.reassigned?.has(call.name) ? this.defs[at.def] : undefined;
@@ -2332,7 +2336,7 @@ function extractGo(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         else if (fn?.type === "selector_expression") {
           const field = fn.childForFieldName("field");
           const operand = fn.childForFieldName("operand");
-          if (field && operand) ctx.addCall(field, goReceiver(ctx, operand));
+          if (field && operand) ctx.addCall(field, goReceiver(ctx, operand), false, operand.type === "identifier" ? operand.text : undefined);
         } else if (fn?.type === "index_expression") {
           // handlers[key](x): a computed callee, maybe on a literal table.
           ctx.addDynamicCall(fn);
@@ -2661,7 +2665,9 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   };
   // A call: its argument count when the list parsed, and whether it runs on the class.
   const addCall = (nameNode: Node, recv: Receiver, args: Node | null, callNode: Node): number => {
-    const index = ctx.addCall(nameNode, recv);
+    const object = callNode.childForFieldName("object");
+    const receiverName = object?.type === "identifier" && javaLocalValue(ctx, object.text) !== undefined ? object.text : undefined;
+    const index = ctx.addCall(nameNode, recv, false, receiverName);
     const call = ctx.calls[index] as CallFact;
     if (args && !args.hasError) call.arity = args.namedChildren.filter((c) => c.type !== "line_comment" && c.type !== "block_comment").length;
     const callerDef = call.caller >= 0 ? ctx.defs[call.caller] : undefined;
@@ -2808,7 +2814,12 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       const ref = ctx.addValue({ name, recv }, "return");
       const owner = ctx.top.fnDecl.def;
       if (owner >= 0) ((ctx.defs[owner] as DefFact).returns ??= []).push(ref);
-    } else ctx.addValue({ name, recv }, "assign");
+    } else {
+      const ref = ctx.addValue({ name, recv }, "assign");
+      const local = parent?.type === "variable_declarator" && parent.parent?.type === "local_variable_declaration"
+        ? parent.childForFieldName("name") : null;
+      if (local) ctx.noteAssign(local.text, { ref }, true, true);
+    }
   };
   walkTree(tree.rootNode, readers, { interesting: JAVA_TYPES, visit: (node) => {
     switch (node.type) {
@@ -2989,8 +3000,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const left = node.childForFieldName("left");
         if (left?.type !== "identifier" || javaLocalValue(ctx, left.text) === undefined) return;
         // A Java local's type is fixed where it is declared (a `var` by its
-        // first value): a later value never changes it, the parameter is
-        // only marked as given another value.
+        // first value). Reassignment ends the original callable alias.
         ctx.reassign(left.text);
         return;
       }
@@ -3193,7 +3203,7 @@ function extractRuby(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
           const type = ctx.local(recv.text);
           if (type) r = { kind: "type", type, path: [] };
         }
-        ctx.addCall(method, r);
+        ctx.addCall(method, r, false, recv.type === "identifier" ? recv.text : undefined);
         // The receiver identifier is a value, never a call of its own.
         return;
       }

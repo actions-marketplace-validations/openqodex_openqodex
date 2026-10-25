@@ -170,8 +170,8 @@ export type CallFact = {
   arity?: number;
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
   dynamic?: boolean;
-  // A bare call of a local given one value once (`const fn = helper`):
-  // the value reference it holds (index into FileFacts.values).
+  // A call of a local or its member uses the local's single callable value.
+  // The alias indexes FileFacts.values.
   alias?: number;
   // A call of what a call returned: `pick(k)()`, or a local given that
   // value once (`const h = pick(k); h()`): the inner call (index into calls).
