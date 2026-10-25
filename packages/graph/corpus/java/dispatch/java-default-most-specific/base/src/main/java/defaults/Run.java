@@ -35,4 +35,7 @@ class Run {
         r.m();
         r.n(1);
     }
+    void differentTypes() {
+        new DifferentTypes().m("x");
+    }
 }

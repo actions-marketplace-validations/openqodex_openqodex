@@ -1,9 +1,12 @@
-A and B declare defaults with the same name and parameter count. B extends A.
-Calls on C must bind only to B, regardless of the implements order.
-Leaf overrides A through Bridge. Calls on Transitive must bind only to Leaf.
-Two unrelated defaults must stay possible. The diamond is a syntax fixture, not valid Java.
-A class override and a superclass method must keep winning zero-argument calls.
-Defaults with different parameter counts must remain available.
+B extends A and declares defaults with the same names and parameter counts.
+Zero-parameter calls bind only to B, regardless of the implements order.
+Leaf overrides A through Bridge. Zero-parameter calls on Transitive bind only to Leaf.
+A sub-interface default hides an inherited default only for zero-parameter methods, because the graph records parameter names and not types.
+Calls with arguments keep both same-count members as possible candidates.
+The different-type control passes a string to inherited m(String), beside the sub-interface's m(Integer).
+Two unrelated defaults stay possible. The diamond is a syntax fixture with invalid Java semantics.
+A class override and a superclass method keep winning zero-parameter calls.
+Defaults with different parameter counts remain available.
 The existing java-inherited-overload case guards class overloads with the same count and different parameter types.
-B2 redeclares m and n as abstract. Both implements orders must bind only to these abstract declarations.
-Neither A default may run at these sites. There are no concrete implementations to list as dispatch candidates.
+B2 redeclares m and n as abstract. Zero-parameter calls bind only to B2 in both implements orders.
+Calls to n keep both declarations as possible because their parameter types are unavailable.

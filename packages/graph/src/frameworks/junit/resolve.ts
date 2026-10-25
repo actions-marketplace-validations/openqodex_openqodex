@@ -81,25 +81,30 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
     }
   }
   const repositoryType = (full: string): TypeInfo[] => types.get(full) ?? [];
-  const baseCache = new Map<TypeInfo, TypeInfo[]>();
-  const bases = (info: TypeInfo): TypeInfo[] => {
+  const baseCache = new Map<TypeInfo, { types: TypeInfo[]; unresolved: string[] }>();
+  const bases = (info: TypeInfo): { types: TypeInfo[]; unresolved: string[] } => {
     const saved = baseCache.get(info);
     if (saved) return saved;
-    const out: TypeInfo[] = [];
+    const out: { types: TypeInfo[]; unresolved: string[] } = { types: [], unresolved: [] };
     baseCache.set(info, out);
     for (const base of info.def.bases) {
       if (!step()) break;
       const hit = index.lookup(info.file, [...(base.qualifier?.split(".") ?? []), base.name]);
+      let unresolved = hit.kind !== "symbol" || hit.ids.length === 0;
       if (hit.kind === "symbol") for (const id of hit.ids) {
         if (!step()) break;
         const type = byId.get(id);
-        if (type) out.push(type);
+        if (type) out.types.push(type);
+        else unresolved = true;
       }
+      if (unresolved) out.unresolved.push(qualified(base.qualifier ?? "", base.name));
     }
     return out;
   };
-  const inherited = (type: TypeInfo, name: string): "found" | "none" | "cap" => {
-    const queue = [...bases(type)];
+  const inherited = (type: TypeInfo, name: string, unresolved: Set<string>): "found" | "none" | "cap" => {
+    const first = bases(type);
+    for (const name of first.unresolved) unresolved.add(name);
+    const queue = [...first.types];
     const seen = new Set<TypeInfo>();
     for (let at = 0; at < queue.length; at++) {
       if (!step() || at >= MAX_HIERARCHY) return "cap";
@@ -107,7 +112,9 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
       if (seen.has(current)) continue;
       seen.add(current);
       if (repositoryType(qualified(current.full, name)).length > 0) return "found";
-      for (const parent of bases(current)) queue.push(parent);
+      const parents = bases(current);
+      for (const name of parents.unresolved) unresolved.add(name);
+      for (const parent of parents.types) queue.push(parent);
     }
     return capped ? "cap" : "none";
   };
@@ -121,6 +128,7 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
     const decide = (): Identity => {
       const parts = fact.name.split(".");
       const head = parts[0] as string;
+      const unresolved = new Set<string>();
       // Enclosing declarations and inherited nested types precede imports.
       const owners = fact.owner.split(".");
       for (let n = owners.length; n > 0; n--) {
@@ -129,14 +137,16 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
         const owner = env.types.get(path);
         if (!owner) continue;
         if (owner.def.name === head || env.types.has(qualified(path, head))) return { kind: "other" };
-        const hit = inherited(owner, head);
+        const hit = inherited(owner, head, unresolved);
         if (hit === "cap") return { kind: "cap" };
         if (hit === "found") return { kind: "other" };
       }
       const classify = (name: string, via: Via): Identity => {
         if (repositoryType(name).length > 0) return { kind: "other" };
         const role = ANNOTATIONS.get(name);
-        return role ? { kind: "junit", name, role, via, tier: "certain", note: null } : { kind: "other" };
+        if (!role) return { kind: "other" };
+        const note = unresolved.size > 0 ? `An unresolved base may also supply ${head}: ${[...unresolved].sort().join(", ")}.` : null;
+        return { kind: "junit", name, role, via, tier: note ? "likely" : "certain", note };
       };
       const explicit = env.explicit.get(head);
       if (explicit) {
@@ -165,7 +175,8 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
       const competing = matches.filter((b) => b.identity.kind !== "junit");
       if (proven.length !== 1 || competing.some((b) => !b.unresolved)) return { kind: "ambiguous" };
       const imports = competing.map((b) => b.star).sort().join(", ");
-      return { ...junit, tier: "likely", note: `Unresolved star imports may also supply ${head}: ${imports}.` };
+      const note = [junit.note, `Unresolved star imports may also supply ${head}: ${imports}.`].filter(Boolean).join(" ");
+      return { ...junit, tier: "likely", note };
     };
     const found = decide();
     bindCache.set(cacheKey, found);

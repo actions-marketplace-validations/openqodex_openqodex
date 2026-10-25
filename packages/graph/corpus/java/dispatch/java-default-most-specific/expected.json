@@ -1,5 +1,5 @@
 {
-  "guards": "drops Java defaults hidden by sub-interface declarations and preserves unrelated defaults, class overrides, and different parameter counts",
+  "guards": "hides only zero-parameter Java defaults and keeps same-count overload candidates",
   "callers": [
     {
       "to": "src/main/java/defaults/B.java#B.m",
@@ -10,7 +10,7 @@
     {
       "to": "src/main/java/defaults/B.java#B.n",
       "site": "src/main/java/defaults/Run.java:6",
-      "tier": "certain",
+      "tier": "possible",
       "kind": "calls"
     },
     {
@@ -22,7 +22,7 @@
     {
       "to": "src/main/java/defaults/B.java#B.n",
       "site": "src/main/java/defaults/Run.java:10",
-      "tier": "certain",
+      "tier": "possible",
       "kind": "calls"
     },
     {
@@ -34,7 +34,7 @@
     {
       "to": "src/main/java/defaults/Types.java#Leaf.n",
       "site": "src/main/java/defaults/Run.java:14",
-      "tier": "certain",
+      "tier": "possible",
       "kind": "calls"
     },
     {
@@ -94,7 +94,7 @@
     {
       "to": "src/main/java/defaults/Types.java#B2.n",
       "site": "src/main/java/defaults/Run.java:32",
-      "tier": "certain",
+      "tier": "possible",
       "kind": "calls"
     },
     {
@@ -106,7 +106,49 @@
     {
       "to": "src/main/java/defaults/Types.java#B2.n",
       "site": "src/main/java/defaults/Run.java:36",
-      "tier": "certain",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:6",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:10",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:14",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:32",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:36",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#StringDefault.m",
+      "site": "src/main/java/defaults/Run.java:39",
+      "tier": "possible",
+      "kind": "calls"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#IntegerDefault.m",
+      "site": "src/main/java/defaults/Run.java:39",
+      "tier": "possible",
       "kind": "calls"
     }
   ],
@@ -117,28 +159,13 @@
       "kind": "calls"
     },
     {
-      "to": "src/main/java/defaults/A.java#A.n",
-      "site": "src/main/java/defaults/Run.java:6",
-      "kind": "calls"
-    },
-    {
       "to": "src/main/java/defaults/A.java#A.m",
       "site": "src/main/java/defaults/Run.java:9",
       "kind": "calls"
     },
     {
-      "to": "src/main/java/defaults/A.java#A.n",
-      "site": "src/main/java/defaults/Run.java:10",
-      "kind": "calls"
-    },
-    {
       "to": "src/main/java/defaults/A.java#A.m",
       "site": "src/main/java/defaults/Run.java:13",
-      "kind": "calls"
-    },
-    {
-      "to": "src/main/java/defaults/A.java#A.n",
-      "site": "src/main/java/defaults/Run.java:14",
       "kind": "calls"
     },
     {
@@ -171,16 +198,8 @@
       "site": "src/main/java/defaults/Run.java:31"
     },
     {
-      "to": "src/main/java/defaults/A.java#A.n",
-      "site": "src/main/java/defaults/Run.java:32"
-    },
-    {
       "to": "src/main/java/defaults/A.java#A.m",
       "site": "src/main/java/defaults/Run.java:35"
-    },
-    {
-      "to": "src/main/java/defaults/A.java#A.n",
-      "site": "src/main/java/defaults/Run.java:36"
     }
   ],
   "notCertain": [
@@ -199,6 +218,54 @@
     {
       "to": "src/main/java/defaults/Types.java#Other.n",
       "site": "src/main/java/defaults/Run.java:18"
+    },
+    {
+      "to": "src/main/java/defaults/B.java#B.n",
+      "site": "src/main/java/defaults/Run.java:6"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:6"
+    },
+    {
+      "to": "src/main/java/defaults/B.java#B.n",
+      "site": "src/main/java/defaults/Run.java:10"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:10"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#Leaf.n",
+      "site": "src/main/java/defaults/Run.java:14"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:14"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#B2.n",
+      "site": "src/main/java/defaults/Run.java:32"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:32"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#B2.n",
+      "site": "src/main/java/defaults/Run.java:36"
+    },
+    {
+      "to": "src/main/java/defaults/A.java#A.n",
+      "site": "src/main/java/defaults/Run.java:36"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#StringDefault.m",
+      "site": "src/main/java/defaults/Run.java:39"
+    },
+    {
+      "to": "src/main/java/defaults/Types.java#IntegerDefault.m",
+      "site": "src/main/java/defaults/Run.java:39"
     }
   ]
 }

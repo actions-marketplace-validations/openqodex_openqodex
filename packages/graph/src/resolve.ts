@@ -1701,12 +1701,12 @@ export function createWorld(input: ResolveInput): World {
       }
     }
     if (hits.length === 0) return null;
-    // A strict sub-interface declaration hides an inherited default with the same parameter count.
+    // Only zero-parameter signatures can be proved equal without parameter types.
     const declarations = hits.flatMap((h) => h.ids.flatMap((id) => {
       const owner = javaInterfaceMethodOwner(id);
       return owner === null ? [] : [{ id, owner, count: defById.get(id)?.params?.length ?? 0 }];
     }));
-    const defaults = declarations.filter((d) => javaDefaultOwner(d.id) !== null);
+    const defaults = declarations.filter((d) => d.count === 0 && javaDefaultOwner(d.id) !== null);
     const hidden = new Set(defaults.filter((a) => declarations.some((b) =>
       a.owner !== b.owner && a.count === b.count && javaInterfaceAncestors(b.owner).has(a.owner) && !javaInterfaceAncestors(a.owner).has(b.owner),
     )).map((d) => d.id));
@@ -2218,9 +2218,9 @@ export function createWorld(input: ResolveInput): World {
       if (hit.ev) inner = inner ? chain(inner, hit.ev) : hit.ev;
     }
     if (ids.length === 0) return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
-    // An abstract member found beside a member with a body and the same
-    // parameter count on another class is the one that body overrides: it
-    // never runs. Both on one class are two overloads.
+    // A nearer class body suppresses an abstract member with the same parameter count.
+    // Interface defaults prove this only for zero-parameter methods.
+    // Two members on one class remain overloads.
     const classOf = (id: string) => {
       const d = defById.get(id);
       return d ? classKey("java", d.file, d.owner ?? "") : id;
@@ -2228,7 +2228,9 @@ export function createWorld(input: ResolveInput): World {
     // The lookup lists members nearest to the receiver first.
     const live = ids.filter((id, i) => {
       if (defById.get(id)?.abstract !== true) return true;
-      return !ids.some((b, j) => j < i && defById.get(b)?.abstract !== true && javaCount(b) === javaCount(id) && classOf(b) !== classOf(id));
+      return !ids.some((b, j) => j < i && defById.get(b)?.abstract !== true
+        && (javaCount(id) === 0 || javaDefaultOwner(b) === null)
+        && javaCount(b) === javaCount(id) && classOf(b) !== classOf(id));
     });
     // The nearest fixed zero-argument member wins over varargs, including inherited members.
     // Bases passed before that member still contribute their evidence.

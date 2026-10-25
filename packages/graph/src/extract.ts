@@ -2726,9 +2726,19 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   };
   const completesAbruptly = (branch: Node | null): boolean => {
     let last = branch;
+    let read = 0;
     while (last?.type === "block") {
-      const statements = last.namedChildren.filter((c) => c.type !== "line_comment" && c.type !== "block_comment");
-      last = statements[statements.length - 1] ?? null;
+      if (++read > MAX_TYPE_NODES) return false;
+      let statement: Node | null = null;
+      for (let i = last.namedChildCount - 1; i >= 0; i--) {
+        if (++read > MAX_TYPE_NODES) return false;
+        const child = last.namedChild(i);
+        if (child && child.type !== "line_comment" && child.type !== "block_comment") {
+          statement = child;
+          break;
+        }
+      }
+      last = statement;
     }
     return last !== null && ["return_statement", "throw_statement", "break_statement", "continue_statement"].includes(last.type);
   };
@@ -2738,7 +2748,9 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   ]);
   const loopCanBreak = (body: Node | null): boolean => {
     const stack = body ? [{ node: body, nested: false }] : [];
+    let read = 0;
     while (stack.length > 0) {
+      if (++read > MAX_TYPE_NODES) return true;
       const { node, nested } = stack.pop()!;
       if (node.type === "break_statement") {
         // A labeled break may target this loop from a nested statement.
@@ -2746,14 +2758,20 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         continue;
       }
       const inside = nested || breakBoundaries.has(node.type);
-      for (const child of node.namedChildren) stack.push({ node: child, nested: inside });
+      for (let i = 0; i < node.namedChildCount; i++) {
+        if (read + stack.length >= MAX_TYPE_NODES) return true;
+        const child = node.namedChild(i);
+        if (child) stack.push({ node: child, nested: inside });
+      }
     }
     return false;
   };
   const breaksAnyLabel = (body: Node | null, labels: ReadonlySet<string>): boolean => {
     if (labels.size === 0) return false;
     const stack = body ? [body] : [];
+    let read = 0;
     while (stack.length > 0) {
+      if (++read > MAX_TYPE_NODES) return true;
       const node = stack.pop()!;
       // Breaks cannot cross a class or lambda boundary.
       if (["lambda_expression", "class_body", "enum_body", "interface_body", "annotation_type_body"].includes(node.type)) continue;
@@ -2762,7 +2780,11 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         if (label && labels.has(label.text)) return true;
         continue;
       }
-      for (const child of node.namedChildren) stack.push(child);
+      for (let i = 0; i < node.namedChildCount; i++) {
+        if (read + stack.length >= MAX_TYPE_NODES) return true;
+        const child = node.namedChild(i);
+        if (child) stack.push(child);
+      }
     }
     return false;
   };
@@ -3082,21 +3104,24 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
           alternative: node.childForFieldName("alternative"), patterns: new Map(), phase: "condition",
         };
         patternFlows.push(flow);
-        let container = node.parent;
-        const labels = new Set<string>();
-        while (container?.type === "labeled_statement") {
-          const label = container.namedChildren.find((c) => c.type === "identifier");
-          if (label) labels.add(label.text);
-          container = container.parent;
-        }
-        const inBlock = container !== null && ["block", "constructor_body", "switch_block_statement_group"].includes(container.type);
-        const survives = inBlock && !breaksAnyLabel(flow.consequence, labels)
-          && (node.type === "while_statement" ? !loopCanBreak(flow.consequence) : completesAbruptly(flow.consequence));
         return () => {
           patternFlows.pop();
           const surviving = new Map<string, TypeRef | null>();
-          if (survives) for (const [name, binding] of flow.patterns) {
+          for (const [name, binding] of flow.patterns) {
             if (binding.negated && binding.supported) surviving.set(name, binding.type);
+          }
+          if (surviving.size > 0) {
+            let container = node.parent;
+            const labels = new Set<string>();
+            while (container?.type === "labeled_statement") {
+              const label = container.namedChildren.find((c) => c.type === "identifier");
+              if (label) labels.add(label.text);
+              container = container.parent;
+            }
+            const inBlock = container !== null && ["block", "constructor_body", "switch_block_statement_group"].includes(container.type);
+            const survives = inBlock && !breaksAnyLabel(flow.consequence, labels)
+              && (node.type === "while_statement" ? !loopCanBreak(flow.consequence) : completesAbruptly(flow.consequence));
+            if (!survives) surviving.clear();
           }
           endPatterns(leave, frame, surviving);
         };

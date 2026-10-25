@@ -26,3 +26,10 @@ interface B2 extends A {
 }
 abstract class ReAbstract implements A, B2 {}
 abstract class ReAbstractReversed implements B2, A {}
+interface StringDefault {
+    default void m(String s) {}
+}
+interface IntegerDefault extends StringDefault {
+    default void m(Integer i) {}
+}
+class DifferentTypes implements IntegerDefault {}
