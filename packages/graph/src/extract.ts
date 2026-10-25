@@ -32,7 +32,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 24;
+export const EXTRACTOR_VERSION = 25;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none

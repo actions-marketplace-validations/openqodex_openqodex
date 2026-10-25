@@ -53,7 +53,7 @@ export const DISPATCH_CAP = 32;
 // 15: qualified names before external star imports, star imports of a
 // class, the java.lang classes. 16: source sets by source root first, no
 // import from the default package.
-export const RESOLVER_VERSION = 16;
+export const RESOLVER_VERSION = 17;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
