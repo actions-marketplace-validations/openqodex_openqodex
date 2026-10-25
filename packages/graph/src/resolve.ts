@@ -27,6 +27,7 @@ import { weakest } from "./model/records.js";
 import type { Lookup as PluginLookup } from "./frameworks/plugin.js";
 import type { BoundImport, CallFact, DefFact, DispatchSite, EdgeKind, Family, FileFacts, GraphEdge, GraphNode, GraphSite, InvocationSummary, Miss, TypeRef, UnknownSite, ValueRef } from "./types.js";
 import { CALLER_KINDS, familyOf } from "./types.js";
+import { isTestPath } from "./impact.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
 // Files the walk of `export *` may open in one world. Each file is walked
@@ -45,11 +46,15 @@ export const DISPATCH_CAP = 32;
 // (Python C3, Go embedding depth, Ruby mixins), value and type uses,
 // may_invoke, overrides and implements. 9: a dynamic-base gap on each class
 // that names a base with an expression. 10: such a base keeps its place in
-// the lookup order, so a member found past it is likely at most.
-export const RESOLVER_VERSION = 10;
+// the lookup order, so a member found past it is likely at most. 11: Java
+// (declared packages, imports, overloads by argument count, nested types).
+export const RESOLVER_VERSION = 11;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
+
+// The java.lang names a Java file sees without an import.
+const JAVA_LANG = "System Math String Object Integer Long Boolean Thread Runnable Exception RuntimeException StringBuilder Iterable Comparable Override Deprecated".split(" ");
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -72,6 +77,8 @@ const BUILTINS: Record<Family, ReadonlySet<string>> = {
       " ",
     ),
   ),
+  // java.lang: every file sees these names without an import.
+  java: new Set(JAVA_LANG),
 };
 
 // Built-in types whose methods are the language's: a call on a value of
@@ -83,6 +90,7 @@ const BUILTIN_TYPES: Record<Family, ReadonlySet<string>> = {
   python: new Set("str int float bool bytes bytearray list dict set frozenset tuple complex List Dict Set FrozenSet Tuple Sequence Mapping MutableMapping MutableSequence Iterable Iterator".split(" ")),
   go: new Set("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 byte rune bool error".split(" ")),
   ruby: new Set("String Integer Float Array Hash Symbol Range Proc".split(" ")),
+  java: new Set(JAVA_LANG),
 };
 
 // TypeScript's types that say nothing about a value's methods: keywords no
@@ -145,7 +153,8 @@ type Value =
 type Def = DefFact & { id: string; file: string; family: Family };
 
 // `dynamic`: the bases written as expressions the facts cannot name.
-type ClassInfo = { file: string; family: Family; ids: string[]; files: Set<string>; bases: TypeRef[]; dynamic: NonNullable<DefFact["dynamicBases"]>; fields: Map<string, TypeRef>; nesting: string | null };
+// `scope`: a Java type's own dotted path (`Outer.Inner`), the scope its members are read in.
+type ClassInfo = { file: string; family: Family; ids: string[]; files: Set<string>; bases: TypeRef[]; dynamic: NonNullable<DefFact["dynamicBases"]>; fields: Map<string, TypeRef>; nesting: string | null; scope?: string };
 
 export type ResolveInput = {
   files: FileInput[];
@@ -246,6 +255,10 @@ export function createWorld(input: ResolveInput): World {
   // itself ("s") and on an instance ("i").
   const methodsOn = { s: new Map<string, Map<string, string[]>>(), i: new Map<string, Map<string, string[]>>() };
   const rbTop = new Map<string, string[]>(); // Ruby methods outside any class
+  // Java: the top-level types of each declared package by simple name (every
+  // project and source set), and the nested types of each file by simple name.
+  const javaTypes = new Map<string, Map<string, string[]>>();
+  const javaNested = new Map<string, Map<string, string[]>>();
   const filesByName = new Map<string, Set<string>>(); // family:name to defining files
 
   const push = <K, V>(m: Map<K, V[]>, k: K, v: V) => {
@@ -269,9 +282,15 @@ export function createWorld(input: ResolveInput): World {
     return pkg?.endsWith("_test") ? `${dirOf(file)}#test` : dirOf(file);
   };
 
+  // A Java type: its declaring file (which fixes its project, source set
+  // and package) and its path through the enclosing types. Java has no
+  // partial classes, so two declarations of one qualified name (two
+  // projects, a main and a test copy) are two classes and never merge.
+  const javaPkgOf = (file: string): string => facts.get(file)?.javaPackage ?? "";
   const classKey = (family: Family, file: string, qualified: string) => {
     if (family === "ruby") return `rb::${qualified}`;
     if (family === "go") return `go:${pkgOf(file)}::${qualified}`;
+    if (family === "java") return `java:${file}::${qualified}`;
     return `${file}::${qualified}`;
   };
   // Methods called on the class itself ("s") and on an instance ("i") are
@@ -302,8 +321,10 @@ export function createWorld(input: ResolveInput): World {
         // itself and on whatever value the literal is given to (an object
         // typed by an interface it implements).
         const both = family === "python" || (family === "js" && d.static === true && classes.get(key)?.ids.every((x) => defById.get(x)?.kind === "module") === true);
-        if (both || d.static) push(nameIndex(methodsOn.s, key), d.name, id);
-        if (both || !d.static) push(nameIndex(methodsOn.i, key), d.name, id);
+        // A Java constructor is called on the class (`new T()`), never on an instance.
+        const onType = d.static === true || (family === "java" && d.ctor === true);
+        if (both || onType) push(nameIndex(methodsOn.s, key), d.name, id);
+        if (both || !onType) push(nameIndex(methodsOn.i, key), d.name, id);
       } else if (family === "go") {
         if (d.topLevel) push(nameIndex(pkgTop, pkgOf(path)), d.name, id);
       } else if (family === "ruby" && d.kind === "function") {
@@ -313,13 +334,18 @@ export function createWorld(input: ResolveInput): World {
       }
       // A nested definition is reached only through the scopes that declare it (CallFact.local).
       if (d.kind === "class" || d.kind === "module" || d.kind === "type") {
-        const qualified = family === "ruby" && d.owner ? `${d.owner}::${d.name}` : d.name;
+        const qualified = family === "ruby" && d.owner ? `${d.owner}::${d.name}` : family === "java" && d.owner ? `${d.owner}.${d.name}` : d.name;
         const key = classKey(family, path, qualified);
         classOfId.set(id, key);
         let info = classes.get(key);
         if (!info) {
           info = { file: path, family, ids: [], files: new Set(), bases: [], dynamic: [], fields: new Map(), nesting: d.owner };
+          if (family === "java") info.scope = qualified;
           classes.set(key, info);
+        }
+        if (family === "java") {
+          if (d.owner === null) push(nameIndex(javaTypes, javaPkgOf(path)), d.name, id);
+          else push(nameIndex(javaNested, path), d.name, id);
         }
         info.ids.push(id);
         info.files.add(path);
@@ -637,12 +663,87 @@ export function createWorld(input: ResolveInput): World {
     return { gap: "miss", note: `${spec} is not in the repository and the Gemfile does not name it`, candidates: null };
   };
 
+  // Java: a package no file declares is the standard library (`java.*`,
+  // `javax.*`) or a dependency when a build file declares a group it starts
+  // with; any other is a miss the graph discloses.
+  const javaGroups = [...model.javaDeps];
+  const javaExternal = (pkg: string): boolean => {
+    if (pkg === "java" || pkg === "javax" || pkg.startsWith("java.") || pkg.startsWith("javax.")) return true;
+    return javaGroups.some((g) => pkg === g || pkg.startsWith(`${g}.`));
+  };
+  const javaMissNote = (pkg: string) => `the package ${pkg} is not in the repository and no build file declares a dependency for it`;
+  // The folder of the nearest pom.xml, build.gradle or build.gradle.kts above a file.
+  const javaProjectOf = (file: string): string => {
+    let best = "";
+    for (const dir of model.javaProjects) if ((dir === "" || file.startsWith(`${dir}/`)) && dir.length > best.length) best = dir;
+    return best;
+  };
+  // Which of several declarations of one qualified name a file sees: a main
+  // source never sees a test source; the file's own project and source set
+  // come first, then its own project, then every project. One left binds;
+  // several are ambiguous; none is null.
+  const javaChoose = (from: string, ids: readonly string[]): { id: string } | { candidates: string[] } | null => {
+    const fileOf = (id: string) => defById.get(id)?.file ?? id;
+    const test = isTestPath(from);
+    const seen = test ? [...ids] : ids.filter((id) => !isTestPath(fileOf(id)));
+    if (seen.length === 0) return null;
+    if (seen.length === 1) return { id: seen[0] as string };
+    const project = javaProjectOf(from);
+    const own = seen.filter((id) => javaProjectOf(fileOf(id)) === project);
+    const tiers = [own.filter((id) => isTestPath(fileOf(id)) === test), own, seen];
+    const pick = tiers.find((t) => t.length > 0) as string[];
+    return pick.length === 1 ? { id: pick[0] as string } : { candidates: pick.map(fileOf).sort() };
+  };
+  // The class `import <spec>.<name>` names, by the declared packages: the
+  // longest prefix of the name that a file declares as its package, then the
+  // type and the nested types below it. `path`: the type's dotted path in
+  // its file (`Outer.Inner`).
+  const javaClassMod = (from: string, line: number, spec: string, name: string): { mod: Mod; path: string } => {
+    const via = viaOf(from, line, spec);
+    const segs = [...(spec === "" ? [] : spec.split(".")), name];
+    let declared = false;
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const pkg = segs.slice(0, i).join(".");
+      const rest = segs.slice(i);
+      const ids = javaTypes.get(pkg)?.get(rest[0] as string);
+      if (javaTypes.has(pkg)) declared = true;
+      if (!ids) continue;
+      const c = javaChoose(from, ids);
+      if (c === null) continue;
+      if ("candidates" in c) return { mod: { gap: "ambiguous", note: `${[...segs].join(".")} is declared in ${c.candidates.length} files this file may see`, candidates: c.candidates }, path: rest.join(".") };
+      return { mod: { file: defById.get(c.id)?.file ?? from, ev: { kind: "import", tier: "certain", via, note: null, rule: "java-import" } }, path: rest.join(".") };
+    }
+    if (javaExternal(spec)) return { mod: { ext: spec }, path: name };
+    // A package the repository declares without the class: nothing here.
+    if (declared) return { mod: null, path: name };
+    return { mod: { gap: "miss", note: javaMissNote(spec), candidates: null }, path: name };
+  };
+  const javaSpec = (from: string, imp: { spec: string; line: number; names?: { imported: string }[]; star?: boolean; staticStar?: boolean }): Mod => {
+    const name = imp.names?.[0]?.imported;
+    if (name === undefined || (imp.star && !imp.staticStar)) {
+      if (javaTypes.has(imp.spec)) return null;
+      return javaExternal(imp.spec) ? { ext: imp.spec } : { gap: "miss", note: javaMissNote(imp.spec), candidates: null };
+    }
+    return javaClassMod(from, imp.line, imp.spec, name).mod;
+  };
+
   // ---------- the index: every cross-file read goes through here ----------
   type Binding =
     | { kind: "named"; mod: Mod | { ns: string; ev: Ev }; imported: string }
     | { kind: "ns"; mod: Mod | { ns: string; ev: Ev } }
     | { kind: "pyns"; dotted: string };
-  type FileBindings = { names: Map<string, Binding>; stars: (Mod | { ns: string; ev: Ev })[]; starSpecs: string[] };
+  // Java: `jstars`, the packages of `import a.b.*` (`mod` null when the
+  // repository declares the package); `jstatic`, the members of `import
+  // static a.b.C.m` by name, each bound to its class; `jstaticStars`, the
+  // classes of `import static a.b.C.*`.
+  type FileBindings = {
+    names: Map<string, Binding>;
+    stars: (Mod | { ns: string; ev: Ev })[];
+    starSpecs: string[];
+    jstars?: { spec: string; mod: Mod; ev: Ev }[];
+    jstatic?: Map<string, Binding>;
+    jstaticStars?: Binding[];
+  };
   const bindingsCache = new Map<string, FileBindings>();
   const importTargets = new Map<string, { target: string; line: number; column: number; ev: Ev; reexport: boolean }[]>();
   // The export reads of the site being traced, when one is.
@@ -652,6 +753,7 @@ export function createWorld(input: ResolveInput): World {
     if (family === "js") return jsSpec(file, imp.line, imp.spec);
     if (family === "python") return pySpec(file, imp.line, imp.spec);
     if (family === "go") return goSpec(file, imp.line, imp.spec);
+    if (family === "java") return javaSpec(file, imp);
     return rbSpec(file, imp.line, imp.spec, imp.relative === true);
   };
 
@@ -665,6 +767,25 @@ export function createWorld(input: ResolveInput): World {
       if (!f) return b;
       const family = familyOf(f.lang);
       const targets: { target: string; line: number; column: number; ev: Ev; reexport: boolean }[] = [];
+      if (family === "java") {
+        for (const imp of f.imports) {
+          if (imp.star && !imp.staticStar) {
+            const mod = javaSpec(file, imp);
+            (b.jstars ??= []).push({ spec: imp.spec, mod, ev: { kind: "import", tier: "certain", via: viaOf(file, imp.line, imp.spec), note: null, rule: "java-star-import" } });
+            continue;
+          }
+          const n = imp.names[0];
+          if (!n) continue;
+          const { mod, path } = javaClassMod(file, imp.line, imp.spec, n.imported);
+          if (mod !== null && "file" in mod) targets.push({ target: mod.file, line: imp.line, column: imp.column, ev: mod.ev, reexport: false });
+          const binding: Binding = { kind: "named", mod, imported: path };
+          if (imp.staticMember !== undefined) (b.jstatic ??= new Map()).set(imp.staticMember, binding);
+          else if (imp.staticStar) (b.jstaticStars ??= []).push(binding);
+          else b.names.set(n.local, binding);
+        }
+        importTargets.set(file, targets);
+        return b;
+      }
       for (const imp of f.imports) {
         const mod = moduleOf(file, family, imp);
         if (mod !== null && "file" in mod) targets.push({ target: mod.file, line: imp.line, column: imp.column, ev: mod.ev, reexport: imp.reexport });
@@ -776,6 +897,7 @@ export function createWorld(input: ResolveInput): World {
       if (!f) return known.has(file) ? { v: "miss", target: file, name, ev: SAME_SCOPE } : null;
       const family = familyOf(f.lang);
       if (family === "go") return pkgValue(pkgOf(file), name);
+      if (family === "java") return javaExport(file, name);
       if (family === "js") {
         // The export table: exported declarations, `export { a as b }`,
         // `export default`, CommonJS assignments, then re-exports. A private
@@ -893,6 +1015,92 @@ export function createWorld(input: ResolveInput): World {
     return v;
   }
 
+  // What a Java file declares under a dotted name: a top-level type, the
+  // types nested in it, and as the last part a member of the type (every
+  // overload, static or not). Package-private types count: the package and
+  // an importer of the file both read them through here.
+  const javaExport = (file: string, dotted: string): Value => {
+    const parts = dotted.split(".");
+    const top = topByFile.get(file)?.get(parts[0] as string)?.filter((id) => defById.get(id)?.kind === "class");
+    if (!top || top.length === 0) return { v: "miss", target: file, name: dotted, ev: SAME_SCOPE };
+    let key = classOfId.get(top[0] as string) as string;
+    let ids = top;
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i] as string;
+      const nested = classes.get(`${key}.${p}`);
+      if (nested) {
+        key = `${key}.${p}`;
+        ids = nested.ids;
+        continue;
+      }
+      if (i === parts.length - 1) {
+        const members = [...(methodsOn.s.get(key)?.get(p) ?? []), ...(methodsOn.i.get(key)?.get(p) ?? [])];
+        if (members.length > 0) return { v: "sym", ids: members, ev: SAME_SCOPE };
+      }
+      return { v: "miss", target: key, name: p, ev: SAME_SCOPE };
+    }
+    return { v: "sym", ids, ev: SAME_SCOPE };
+  };
+
+  // The one declaration of `<pkg>.<name>` a Java file sees (javaChoose),
+  // read through that file's exports, so a trace records the read.
+  const javaTypeIn = (from: string, pkg: string, name: string, ev: Ev): Value | null => {
+    const ids = javaTypes.get(pkg)?.get(name);
+    if (!ids) return null;
+    const c = javaChoose(from, ids);
+    if (c === null) return null;
+    if ("candidates" in c) return { v: "gap", cause: "ambiguous", note: `${pkg === "" ? "" : `${pkg}.`}${name} is declared in ${c.candidates.length} files this file may see`, candidates: c.candidates };
+    return withEv(index.exports(defById.get(c.id)?.file ?? from, name, 1), ev);
+  };
+
+  // The class a Java scope (`Outer.Inner`, a type's dotted path in `file`)
+  // and each scope around it stand for, innermost first.
+  const javaScopes = (file: string, nesting: string | null): string[] => {
+    if (!nesting) return [];
+    const parts = nesting.split(".");
+    const out: string[] = [];
+    for (let i = parts.length; i > 0; i--) {
+      const key = classKey("java", file, parts.slice(0, i).join("."));
+      if (classes.has(key)) out.push(key);
+    }
+    return out;
+  };
+
+  // A bare type name in a Java file, in the language's order: the enclosing
+  // types and the types nested in them, the file's explicit imports, the
+  // file's own package, its star imports, then java.lang. `nesting`: the
+  // dotted path of the type the name is read in, when known; without it,
+  // a nested type of the file binds only when it is the one of its name.
+  const javaLocal = (file: string, name: string, depth: number, nesting: string | null): Value | null => {
+    const asType = (ids: string[] | undefined): Value | null => (ids && ids.length > 0 ? { v: "sym", ids, ev: SAME_SCOPE } : null);
+    for (const key of javaScopes(file, nesting)) {
+      const inner = classes.get(`${key}.${name}`);
+      if (inner) return asType(inner.ids);
+      if (key.endsWith(`::${name}`) || key.endsWith(`.${name}`)) return asType(classes.get(key)?.ids);
+    }
+    const top = asType(topByFile.get(file)?.get(name)?.filter((id) => defById.get(id)?.kind === "class"));
+    if (top) return top;
+    if (!nesting) {
+      const nested = javaNested.get(file)?.get(name);
+      if (nested && nested.length === 1) return asType(nested);
+    }
+    const b = index.bindings(file);
+    const bound = b.names.get(name);
+    if (bound) return bindingValue(file, "java", name, bound, depth);
+    const same = javaTypeIn(file, javaPkgOf(file), name, { kind: "same-scope", tier: "certain", via: null, note: null, rule: "java-same-package" });
+    if (same) return same;
+    let open: Value | null = null;
+    for (const star of b.jstars ?? []) {
+      if (star.mod === null) {
+        const hit = javaTypeIn(file, star.spec, name, star.ev);
+        if (hit) return hit;
+      } else if ("ext" in star.mod) open ??= { v: "ext" };
+      else if ("gap" in star.mod) open ??= { v: "gap", cause: star.mod.gap, note: star.mod.note, candidates: star.mod.candidates };
+    }
+    if (BUILTINS.java.has(name)) return { v: "ext" };
+    return open;
+  };
+
   const pkgValue = (dir: string, name: string): Value => {
     const ids = pkgTop.get(dir)?.get(name);
     return ids ? { v: "sym", ids, ev: SAME_SCOPE } : { v: "miss", target: `go:${dir}`, name, ev: SAME_SCOPE };
@@ -929,11 +1137,12 @@ export function createWorld(input: ResolveInput): World {
   };
 
   // What a bare name means in a file.
-  const resolveLocal = (file: string, name: string, depth = 0): Value | null => {
+  const resolveLocal = (file: string, name: string, depth = 0, nesting: string | null = null): Value | null => {
     const f = facts.get(file);
     if (!f) return null;
     if (depth > MAX_DEPTH) return TOO_DEEP;
     const family = familyOf(f.lang);
+    if (family === "java") return javaLocal(file, name, depth, nesting);
     if (family === "go") {
       const ids = pkgTop.get(pkgOf(file))?.get(name);
       if (ids) return { v: "sym", ids, ev: SAME_SCOPE };
@@ -982,6 +1191,9 @@ export function createWorld(input: ResolveInput): World {
     }
     const key = value.ids.length === 1 ? classOfId.get(value.ids[0] as string) : undefined;
     if (!key) return null;
+    // A Java class holds its nested types by name.
+    const nested = classes.get(key)?.family === "java" ? classes.get(`${key}.${name}`) : undefined;
+    if (nested) return { v: "sym", ids: nested.ids, ev: value.ev };
     const m = index.members(key, name, "s");
     if (m && "gap" in m) return { v: "gap", cause: m.gap, note: m.note, candidates: null };
     return m ? { v: "sym", ids: m.ids, ev: m.ev ? chain(value.ev, m.ev) : value.ev } : { v: "miss", target: key, name, ev: value.ev };
@@ -1008,8 +1220,9 @@ export function createWorld(input: ResolveInput): World {
   // name's binding. A function's name stands for its declared result type
   // at the position the call took. `ext`: the type comes from a dependency.
   type TypeHit = { key: string; ev: Ev } | "ext" | null;
-  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false): TypeHit => {
+  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false, nesting: string | null = null): TypeHit => {
     if (t.elem || depth > MAX_DEPTH) return null;
+    if (family === "java") return javaTypeKey(file, t, depth, asType, nesting);
     if (family === "ruby") {
       const key = rbConst(t.name, t.qualifier);
       return key ? { key, ev: rbConstEv(key, file) } : null;
@@ -1033,6 +1246,79 @@ export function createWorld(input: ResolveInput): World {
     if (!def || !result) return null;
     const inner = typeKey(def.file, def.family, { ...result, result: undefined }, depth + 1);
     return inner === null || inner === "ext" ? inner : { key: inner.key, ev: chain(v.ev, inner.ev) };
+  };
+
+  // A dotted Java type name (`Repo`, `Outer.Inner`, `a.b.Repo`): its head
+  // by javaLocal, else the longest prefix a file declares as its package,
+  // then the nested types below it. A name under `java.*`, `javax.*` or a
+  // declared dependency group is external.
+  const QUALIFIED: Ev = { kind: "same-scope", tier: "certain", via: null, note: null, rule: "java-qualified-name" };
+  const javaTypeValue = (file: string, parts: readonly string[], nesting: string | null): Value | null => {
+    let v = javaLocal(file, parts[0] as string, 0, nesting);
+    let i = 1;
+    if (v === null || v.v === "miss") {
+      v = null;
+      for (let k = parts.length - 1; k >= 1; k--) {
+        const pkg = parts.slice(0, k).join(".");
+        if (!javaTypes.has(pkg)) continue;
+        v = javaTypeIn(file, pkg, parts[k] as string, QUALIFIED);
+        i = k + 1;
+        break;
+      }
+      if (v === null) return parts.length > 1 && javaExternal(parts.slice(0, -1).join(".")) ? { v: "ext" } : null;
+    }
+    for (; i < parts.length; i++) {
+      if (v.v !== "sym") return v;
+      const key: string | undefined = v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
+      const nested: ClassInfo | undefined = key ? classes.get(`${key}.${parts[i]}`) : undefined;
+      if (!nested) return null;
+      v = { v: "sym", ids: nested.ids, ev: v.ev };
+    }
+    return v;
+  };
+  const javaTypeKey = (file: string, t: TypeRef, depth: number, asType: boolean, nesting: string | null): TypeHit => {
+    if (t.result !== undefined) return asType ? null : javaResultType(file, t, depth, nesting);
+    const v = javaTypeValue(file, t.qualifier ? [...t.qualifier.split("."), t.name] : [t.name], nesting);
+    if (v?.v === "ext") return "ext";
+    if (v?.v !== "sym" || v.ids.length !== 1) return null;
+    const cls = classOfId.get(v.ids[0] as string);
+    return cls ? { key: cls, ev: v.ev } : null;
+  };
+  // What a Java method call returns, by the member's declared result:
+  // `make()` on the enclosing types, or `T.make()` on the type T. Every
+  // member the call may bind must name the same class.
+  const javaResultType = (file: string, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
+    let found: { ids: string[]; ev: Ev } | null = null;
+    if (t.qualifier === null) {
+      for (const key of javaScopes(file, nesting)) {
+        for (const side of ["i", "s"] as const) {
+          const hit = methodOn(key, t.name, side, 0);
+          if (hit && "ids" in hit) {
+            found = { ids: hit.ids, ev: hit.ev ?? SAME_SCOPE };
+            break;
+          }
+        }
+        if (found) break;
+      }
+    } else {
+      const v = javaTypeValue(file, t.qualifier.split("."), nesting);
+      if (v?.v === "ext") return "ext";
+      const key = v?.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
+      const hit = key ? methodOn(key, t.name, "s", 0) : null;
+      if (v?.v === "sym" && hit && "ids" in hit) found = { ids: hit.ids, ev: hit.ev ? chain(v.ev, hit.ev) : v.ev };
+    }
+    if (!found) return null;
+    let out: TypeHit = null;
+    for (const id of found.ids) {
+      const def = defById.get(id);
+      const result = def?.results?.[t.result ?? 0];
+      if (!def || !result) return null;
+      const inner = typeKey(def.file, def.family, { ...result, result: undefined }, depth + 1, false, def.owner);
+      if (inner === null) return null;
+      if (out !== null && (inner === "ext" ? out !== "ext" : out === "ext" || out.key !== inner.key)) return null;
+      out = inner === "ext" ? inner : { key: inner.key, ev: chain(found.ev, inner.ev) };
+    }
+    return out;
   };
 
   // Whether a type says nothing about a value's methods, by what binds its
@@ -1109,7 +1395,7 @@ export function createWorld(input: ResolveInput): World {
         continue;
       }
       const b = w.b;
-      const k = typeKey(info.file, info.family, b);
+      const k = typeKey(info.file, info.family, b, 0, false, info.nesting);
       if (k !== null && k !== "ext" && k.key !== key) {
         out.order.push({ i: out.keys.length });
         out.keys.push(k.key);
@@ -1156,7 +1442,8 @@ export function createWorld(input: ResolveInput): World {
     const kept = perKey.get(name);
     if (kept !== undefined) return kept;
     const family = classes.get(key)?.family;
-    const out = family === "python" ? pyLookup(key, name, side) : family === "go" ? goLookup(key, name, side) : family === "ruby" ? rbLookup(key, name, side, 0, new Set()) : firstWins(key, name, side);
+    const out =
+      family === "python" ? pyLookup(key, name, side) : family === "go" ? goLookup(key, name, side) : family === "ruby" ? rbLookup(key, name, side, 0, new Set()) : family === "java" ? javaLookup(key, name, side) : firstWins(key, name, side);
     perKey.set(name, out);
     return out;
   }
@@ -1194,6 +1481,59 @@ export function createWorld(input: ResolveInput): World {
       pushBases(top.key, top.ev);
     }
     return null;
+  }
+
+  // Java: every member of the name along the superclass chain, then along
+  // the interfaces (an interface's own bases are interfaces), each class
+  // visited once. A Java class inherits every overload it does not hide, so
+  // the lookup never stops at the first class that declares the name; the
+  // argument count chooses among them later (javaOverloads). A superclass
+  // outside the graph passed before a hit makes that hit likely at most.
+  // Static members are not inherited from interfaces.
+  function javaLookup(key: string, name: string, side: Side): Lookup {
+    const hits: { ids: string[]; ev: Ev | null }[] = [];
+    const seen = new Set<string>();
+    let outside: string | null = null;
+    const ifaces: { key: string; ev: Ev | null }[] = [];
+    const take = (k: string, ev: Ev | null) => {
+      const own = ownMethods(k, name, side);
+      if (own) hits.push({ ids: own, ev: outside ? pastOutside(outside, name, ev) : ev });
+    };
+    const step = (ev: Ev | null, base: Ev): Ev => (ev ? chain(ev, base) : base);
+    let cur: { key: string; ev: Ev | null } | null = { key, ev: null };
+    while (cur && !seen.has(cur.key)) {
+      seen.add(cur.key);
+      take(cur.key, cur.ev);
+      const b = basesOf(cur.key);
+      const isInterface = isIface(cur.key);
+      let next: { key: string; ev: Ev | null } | null = null;
+      for (const slot of b.order) {
+        if ("outside" in slot) {
+          if (slot.rel !== "implements" && !isInterface) outside ??= slot.outside;
+          continue;
+        }
+        const at: { key: string; ev: Ev | null } = { key: b.keys[slot.i] as string, ev: step(cur.ev, b.evs[slot.i] as Ev) };
+        if (isInterface || b.rels[slot.i] === "implements") ifaces.push(at);
+        else next ??= at;
+      }
+      cur = next;
+    }
+    if (side === "i") {
+      for (let i = 0; i < ifaces.length && i < 10_000; i++) {
+        const at = ifaces[i] as { key: string; ev: Ev | null };
+        if (seen.has(at.key)) continue;
+        seen.add(at.key);
+        take(at.key, at.ev);
+        const b = basesOf(at.key);
+        b.keys.forEach((k, j) => ifaces.push({ key: k, ev: step(at.ev, b.evs[j] as Ev) }));
+      }
+    }
+    if (hits.length === 0) return null;
+    const ids = [...new Set(hits.flatMap((h) => h.ids))];
+    const evs = hits.map((h) => h.ev).filter((e): e is Ev => e !== null);
+    let ev: Ev | null = null;
+    for (const e of evs) ev = ev === null ? e : chain(ev, e);
+    return { ids, ev };
   }
 
   // Python: the C3 linearisation of the class over its bases in the graph,
@@ -1507,13 +1847,29 @@ export function createWorld(input: ResolveInput): World {
   // Per class key, then per member name and side: the declared member
   // follows from those, so it is no part of the key.
   const dispatchMemo = new Map<string, Map<string, string[]>>();
-  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[]): string[] => {
+  // Java: only members whose parameter count fits the call's arguments,
+  // and never a member the static type itself has (its own overloads and
+  // those it inherits are bound, not dispatched to).
+  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[], arity?: number): string[] => {
     let perKey = dispatchMemo.get(key);
     if (!perKey) dispatchMemo.set(key, (perKey = new Map()));
-    const memoKey = side === "i" ? name : `${name} s`;
+    const java = classes.get(key)?.family === "java";
+    const memoKey = `${side === "i" ? name : `${name} s`}${java ? ` ${arity ?? "?"}` : ""}`;
     const kept = perKey.get(memoKey);
     if (kept) return kept;
     const skip = new Set(declared);
+    if (java) {
+      const above = new Set<string>([key]);
+      const stack = [key];
+      while (stack.length > 0 && above.size < 10_000) {
+        for (const k of basesOf(stack.pop() as string).keys) {
+          if (above.has(k)) continue;
+          above.add(k);
+          stack.push(k);
+        }
+      }
+      for (const k of above) for (const id of [...(methodsOn.i.get(k)?.get(name) ?? []), ...(methodsOn.s.get(k)?.get(name) ?? [])]) skip.add(id);
+    }
     const found = new Set<string>();
     const seen = new Set<string>([key]);
     const queue = childrenOf(key);
@@ -1526,7 +1882,7 @@ export function createWorld(input: ResolveInput): World {
       if (hit && "ids" in hit) for (const id of hit.ids) if (!skip.has(id) && defById.get(id)?.abstract !== true) found.add(id);
       for (const c of childrenOf(k)) if (!seen.has(c)) queue.push(c);
     }
-    const out = [...found].sort((a, b) => {
+    const out = [...found].filter((id) => !java || arity === undefined || javaFits(id, arity)).sort((a, b) => {
       const x = defById.get(a);
       const y = defById.get(b);
       return (x?.file ?? a).localeCompare(y?.file ?? b) || (x?.line ?? 0) - (y?.line ?? 0) || a.localeCompare(b);
@@ -1541,7 +1897,7 @@ export function createWorld(input: ResolveInput): World {
     seen.add(key);
     const info = classes.get(key);
     const t = info?.fields.get(field);
-    if (info && t) return typeKey(info.file, info.family, t);
+    if (info && t) return typeKey(info.file, info.family, t, 0, false, info.scope ?? null);
     const b = basesOf(key);
     for (let i = 0; i < b.keys.length; i++) {
       const hit = fieldKey(b.keys[i] as string, field, depth + 1, seen);
@@ -1624,10 +1980,206 @@ export function createWorld(input: ResolveInput): World {
     return { unknown: "miss", shape: "bare", note: `no definition of ${name} in the repository` };
   };
 
-  const resolveCall = (file: string, family: Family, call: CallFact, caller: Def | undefined): Outcome => {
+  // ---------- Java calls ----------
+  // Whether a Java member takes `k` arguments: its parameter count, or for
+  // varargs any count from its fixed parameters up.
+  const javaFits = (id: string, k: number): boolean => {
+    const d = defById.get(id);
+    const n = d?.params?.length ?? 0;
+    return d?.varargs === true ? k >= n - 1 : k === n;
+  };
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  // The arity rule: the members whose parameter count fits the call's
+  // argument count stay. One left binds at the receiver's tier; several
+  // bind as possible. A call whose argument list did not parse keeps every
+  // member as possible. The count never picks a wrong member, it only fails
+  // to narrow: the parameter types are not compared.
+  const javaOverloads = (ids: string[], name: string, arity: number | undefined, ev: Ev): Outcome => {
+    const possible = (keep: string[], why: string): Outcome => ({ ids: keep, ev: { ...ev, tier: "possible", note: [ev.note, why].filter(Boolean).join(" "), rule: "java-overloads" } });
+    if (arity === undefined) return ids.length <= 1 ? { ids, ev } : possible(ids, `${ids.length} members named ${name} may take this call; its argument list was not read, so the count does not choose.`);
+    const fit = ids.filter((id) => javaFits(id, arity));
+    if (fit.length === 1) return { ids: fit, ev };
+    if (fit.length > 1) return possible(fit, `${fit.length} members named ${name} take ${plural(arity, "argument")}; the graph does not compare parameter types.`);
+    return possible(ids, `no member named ${name} takes ${plural(arity, "argument")}; a member outside the graph may.`);
+  };
+  const javaSimple = (key: string): string => {
+    const q = key.slice(key.lastIndexOf("::") + 2);
+    return q.slice(q.lastIndexOf(".") + 1);
+  };
+  // A member of a Java class by the lookup and the arity rule. `asValue`: a
+  // method reference, which may name a static or an instance member.
+  // A call named like the class on its static side is `new T(...)`: with no
+  // declared constructor it runs no code of the repository and is dropped
+  // (the extractor records the type use).
+  const javaOn = (key: string, name: string, side: Side, ev: Ev, arity: number | undefined, asValue = false): Outcome => {
+    const sides: Side[] = asValue ? ["s", "i"] : [side];
+    const ids: string[] = [];
+    let inner: Ev | null = null;
+    for (const at of sides) {
+      const hit = index.members(key, name, at);
+      if (hit && "gap" in hit) return { unknown: hit.gap, shape: "typed", note: hit.note };
+      if (!hit) continue;
+      for (const id of hit.ids) if (!ids.includes(id)) ids.push(id);
+      if (hit.ev) inner = inner ? chain(inner, hit.ev) : hit.ev;
+    }
+    if (ids.length === 0) {
+      if (side === "s" && name === javaSimple(key)) return "ignore";
+      return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
+    }
+    return javaOverloads(ids, name, arity, inner ? chain(ev, inner) : ev);
+  };
+  // The dotted path of the Java type a definition is read in.
+  const javaNestingOf = (caller: Def | undefined): string | null => {
+    if (!caller) return null;
+    if (caller.kind === "class") return caller.owner ? `${caller.owner}.${caller.name}` : caller.name;
+    return caller.owner;
+  };
+  // What a Java name receiver (`T.m()`, `Outer.Inner.m()`, `a.b.T.m()`,
+  // `f.m()` with `f` a field the extractor did not see) stands for. Java
+  // reads a simple name as a variable first, then a type, then a package.
+  type JavaPath = { type: string; ev: Ev } | { inst: { key: string; ev: Ev } } | "ext" | { gap: Cause; note: string; candidates: string[] | null } | null;
+  const javaPath = (file: string, parts: readonly string[], nesting: string | null): JavaPath => {
+    const fieldEv: Ev = { kind: "receiver-field", tier: "certain", via: null, note: null, rule: "receiver-self" };
+    for (const scope of javaScopes(file, nesting)) {
+      const fk = fieldKey(scope, parts[0] as string);
+      if (fk === "ext") return "ext";
+      if (fk) {
+        const k = followPath({ key: fk.key, ev: chain(fieldEv, fk.ev) }, parts.slice(1));
+        return k === null ? null : k === "ext" ? "ext" : { inst: k };
+      }
+    }
+    let v: Value | null = null;
+    let i = parts.length;
+    for (let n = 1; n <= parts.length && v === null; n++) {
+      // The shortest prefix that names a type: `Outer.Inner.CONST` reads
+      // `Outer.Inner`, then the field CONST of it.
+      v = javaTypeValue(file, parts.slice(0, n), nesting);
+      if (v !== null && v.v === "sym" && !classOfId.has(v.ids[0] as string)) v = null;
+      i = n;
+    }
+    if (v === null) return javaExternal(parts.join(".")) ? "ext" : null;
+    if (v.v === "ext") return "ext";
+    if (v.v === "gap") return { gap: v.cause, note: v.note, candidates: v.candidates };
+    if (v.v !== "sym" || v.ids.length !== 1) return null;
+    const key = classOfId.get(v.ids[0] as string) as string;
+    if (i === parts.length) return { type: key, ev: v.ev };
+    // A static field of the type: an instance from here on.
+    const fk = fieldKey(key, parts[i] as string);
+    if (fk === "ext") return "ext";
+    if (fk === null) return null;
+    const k = followPath({ key: fk.key, ev: chain(v.ev, { ...fk.ev, kind: "receiver-field" }) }, parts.slice(i + 1));
+    return k === null ? null : k === "ext" ? "ext" : { inst: k };
+  };
+  const javaCall = (file: string, call: CallFact, caller: Def | undefined, asValue: boolean): Outcome => {
+    const r = call.recv;
+    const nesting = javaNestingOf(caller);
+    const arity = call.arity;
+    const selfEv: Ev = { kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-self" };
+    switch (r.kind) {
+      case "none": {
+        if (call.local !== undefined) return { ids: [symbolId(file, facts.get(file)?.defs[call.local] as DefFact)], ev: SAME_SCOPE };
+        const v = javaLocal(file, call.name, 0, nesting);
+        if (!v) return { miss: { target: file, name: call.name }, ev: SAME_SCOPE, cause: "miss" };
+        const key = v.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
+        if (key && v.v === "sym") return javaOn(key, call.name, "s", v.ev, arity);
+        return fromValue(v, "bare");
+      }
+      case "self": {
+        const own = enclosingClass(file, "java", caller);
+        if (!own) return { unknown: "no-receiver-type", shape: "self", note: "this outside a method of a class" };
+        if (r.path.length > 0) {
+          const key = followPath({ key: own, ev: selfEv }, r.path);
+          if (key === "ext") return { ext: true };
+          if (key === null) return { unknown: "no-receiver-type", shape: "self", note: "a field whose type no rule knows" };
+          return withDispatch(javaOn(key.key, call.name, "i", { ...key.ev, kind: "receiver-field" }, arity, asValue), { key: key.key, side: "i" });
+        }
+        // A bare m(): the instance side, then the static side (only the
+        // static side in a static context), of the class, then of each
+        // enclosing class, then the static imports.
+        const sides: Side[] = call.static ? ["s"] : ["i", "s"];
+        let first: Outcome | null = null;
+        for (const key of [own, ...javaScopes(file, nesting).filter((k) => k !== own)]) {
+          for (const side of sides) {
+            const out = javaOn(key, call.name, side, selfEv, arity, asValue);
+            if (out === "ignore") continue;
+            if ("ids" in out) return side === "i" ? withDispatch(out, { key, side: "i" }) : out;
+            if ("unknown" in out) return out;
+            first ??= out;
+          }
+        }
+        const b = index.bindings(file);
+        const viaImport = (binding: Binding): Outcome | null => {
+          const v = bindingValue(file, "java", call.name, binding, 0);
+          if (!v || v.v === "miss") return null;
+          if (v.v === "ext") return { ext: true };
+          if (v.v === "gap") return { unknown: v.cause, shape: "bare", note: v.note, candidates: v.candidates };
+          const key = v.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
+          if (!key || v.v !== "sym") return null;
+          const out = javaOn(key, call.name, "s", { ...v.ev, rule: "java-static-import" }, arity, asValue);
+          return out !== "ignore" && "ids" in out ? out : null;
+        };
+        const named = b.jstatic?.get(call.name);
+        const viaNamed = named ? viaImport(named) : null;
+        if (viaNamed) return viaNamed;
+        for (const star of b.jstaticStars ?? []) {
+          const out = viaImport(star);
+          if (out && out !== "ignore" && "ids" in out) return out;
+        }
+        for (const star of b.jstaticStars ?? []) {
+          const out = viaImport(star);
+          if (out) return out;
+        }
+        return first ?? { unknown: "no-receiver-type", shape: "self" };
+      }
+      case "super": {
+        const key = enclosingClass(file, "java", caller);
+        const bases = key ? basesOf(key) : null;
+        const at = bases ? bases.rels.findIndex((rel) => rel !== "implements") : -1;
+        const base = bases?.keys[at];
+        if (!bases || !base) return key && outsideBase(key) ? { unknown: "no-receiver-type", shape: "self", note: "the base class is outside the graph" } : { unknown: "no-receiver-type", shape: "self" };
+        const superEv = chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[at] as Ev);
+        return javaOn(base, call.name, call.static ? "s" : "i", superEv, arity, asValue);
+      }
+      case "type": {
+        const t = typeKey(file, "java", r.type, 0, false, nesting);
+        if (t === "ext") return { ext: true };
+        if (t === null) {
+          if (r.type.elem && r.path.length === 0) return { ext: true };
+          const named = `${r.type.qualifier ? `${r.type.qualifier}.` : ""}${r.type.name}`;
+          if (r.type.result === undefined) {
+            const head = javaTypeValue(file, r.type.qualifier ? [...r.type.qualifier.split("."), r.type.name] : [r.type.name], nesting);
+            if (head?.v === "gap") return { unknown: head.cause, shape: "typed", note: head.note, candidates: head.candidates };
+          }
+          const note = r.type.result !== undefined ? `what ${named} returns is not known to the graph` : `the type ${named} is not found in the graph`;
+          return { unknown: "no-receiver-type", shape: "typed", note };
+        }
+        const key = followPath(t, r.path);
+        if (key === "ext") return { ext: true };
+        if (key === null) return { unknown: "no-receiver-type", shape: "typed", note: "a field whose type no rule knows" };
+        const kind = receiverKind(r.type, r.path);
+        const out = javaOn(key.key, call.name, "i", { ...key.ev, kind, rule: "receiver-type" }, arity, asValue);
+        // A value a constructor made is of that class alone.
+        return withDispatch(out, kind !== "receiver-constructor" ? { key: key.key, side: "i" } : null);
+      }
+      case "name": {
+        const p = javaPath(file, [r.name, ...r.path], nesting);
+        if (p === "ext") return { ext: true };
+        if (p === null) return { unknown: "no-receiver-type", shape: "name" };
+        if ("gap" in p) return { unknown: p.gap, shape: "name", note: p.note, candidates: p.candidates };
+        if ("inst" in p) return withDispatch(javaOn(p.inst.key, call.name, "i", { ...p.inst.ev, kind: "receiver-field" }, arity, asValue), { key: p.inst.key, side: "i" });
+        // `T.m()` and `new T()` (a call named like T on T): the static side.
+        return javaOn(p.type, call.name, "s", p.ev, arity, asValue);
+      }
+      default:
+        return { unknown: "no-receiver-type", shape: "other" };
+    }
+  };
+
+  const resolveCall = (file: string, family: Family, call: CallFact, caller: Def | undefined, asValue = false): Outcome => {
     const r = call.recv;
     if (call.dynamic && call.result !== undefined) return { unknown: "dynamic", shape: "other", note: "a call of what another call returned: the graph cannot tell which function that is", scope: "project" };
     if (call.dynamic) return { unknown: "dynamic", shape: "other", note: "a computed callee: the graph cannot tell which function it calls", scope: "project" };
+    if (family === "java") return javaCall(file, call, caller, asValue);
     const builtin = BUILTINS[family].has(call.name);
     switch (r.kind) {
       case "none": {
@@ -1763,7 +2315,7 @@ export function createWorld(input: ResolveInput): World {
       const asCall: CallFact = { name: ref.name, line: ref.line, column: ref.column, caller: ref.caller, recv: ref.recv };
       if (ref.local !== undefined) asCall.local = ref.local;
       if (ref.bound) asCall.bound = ref.bound;
-      const r = resolveCall(file, familyOf(f.lang), asCall, ref.caller >= 0 ? defOf(file, ref.caller) : undefined);
+      const r = resolveCall(file, familyOf(f.lang), asCall, ref.caller >= 0 ? defOf(file, ref.caller) : undefined, true);
       if (typeof r === "object" && "ids" in r) {
         const ids = r.ids.filter((id) => {
           const d = defById.get(id);
@@ -1983,7 +2535,7 @@ export function createWorld(input: ResolveInput): World {
         // override that may run instead, possible, capped per site.
         if (out.dispatch) {
           const d = out.dispatch;
-          const targets = dispatchTargets(d.key, call.name, d.side, out.ids);
+          const targets = dispatchTargets(d.key, call.name, d.side, out.ids, family === "java" ? call.arity : undefined);
           const contract = isIface(d.key) || out.ids.every((id) => defById.get(id)?.abstract === true);
           const rule = contract ? "dispatch-implements" : "dispatch-override";
           const declared = `${shortKey(d.key)}.${call.name}`;
@@ -2031,7 +2583,7 @@ export function createWorld(input: ResolveInput): World {
         unknowns.push({ file: path, line: 0, column: 0, name: "", cause: "unsupported-rule", shape: "other", caller: path, scope: "file", note: `${f.typeCuts} type ${f.typeCuts === 1 ? "annotation is" : "annotations are"} too large to read whole (over 4,096 parts); the types past the cut are not recorded as type uses` });
       }
       for (const t of f.types) {
-        const k = typeKey(path, family, t.ref, 0, true);
+        const k = typeKey(path, family, t.ref, 0, true, family === "java" && t.caller >= 0 ? javaNestingOf(defById.get(callerOf(t.caller))) : null);
         if (k === null || k === "ext") continue;
         const from = callerOf(t.caller);
         for (const to of classes.get(k.key)?.ids ?? []) if (to !== from) addEdge(from, to, "uses_type", siteOf(path, t.ref.line, t.ref.column, k.ev, "type-use"));
@@ -2040,7 +2592,7 @@ export function createWorld(input: ResolveInput): World {
       f.defs.forEach((d, i) => {
         if (d.bases.length === 0) return;
         for (const b of d.bases) {
-          const key = typeKey(path, family, b);
+          const key = typeKey(path, family, b, 0, false, d.owner);
           if (key === null || key === "ext") continue;
           const info = classes.get(key.key);
           if (!info) continue;
@@ -2066,13 +2618,22 @@ export function createWorld(input: ResolveInput): World {
           if (d.kind !== "method") return;
           const key = classKey(family, path, d.owner ?? "");
           const b = basesOf(key);
+          // Java: a static method hides, never overrides; a constructor is no member.
+          if (family === "java" && (d.static || d.ctor)) return;
           const side: Side = methodsOn.i.get(key)?.has(d.name) ? "i" : "s";
           b.keys.forEach((base, j) => {
             if (b.rels[j] === "extend") return;
             const hit = methodOn(base, d.name, side, 0);
             if (!hit || !("ids" in hit)) return;
-            const ev = throughBase(b.evs[j] as Ev, hit.ev);
-            for (const to of hit.ids) if (to !== defIds[i]) addEdge(defIds[i] as string, to, "overrides", siteOf(path, d.line, d.column, ev, "override"));
+            let ev = throughBase(b.evs[j] as Ev, hit.ev);
+            let ids = hit.ids;
+            if (family === "java") {
+              // The same name and the same number of parameters: the types are not compared.
+              const n = d.params?.length ?? 0;
+              ids = ids.filter((id) => (defById.get(id)?.params?.length ?? 0) === n && (defById.get(id)?.varargs === true) === (d.varargs === true));
+              ev = { ...ev, tier: weakest(ev.tier, "likely"), note: [ev.note, `${d.name} has the name and the number of parameters of the base member; the parameter types are not compared.`].filter(Boolean).join(" ") };
+            }
+            for (const to of ids) if (to !== defIds[i]) addEdge(defIds[i] as string, to, "overrides", siteOf(path, d.line, d.column, ev, "override"));
           });
         });
       }
@@ -2170,6 +2731,19 @@ export function createWorld(input: ResolveInput): World {
       }
       // Import bindings: a named import reads the export it names even when
       // no call uses it.
+      if (family === "java") {
+        for (const imp of f.imports) {
+          const n = imp.names[0];
+          if (!n || imp.star && !imp.staticStar) continue;
+          const { mod, path: dotted } = javaClassMod(path, imp.line, imp.spec, n.imported);
+          if (mod === null || !("file" in mod)) continue;
+          const record = new Set<string>();
+          reading = record;
+          const v = index.exports(mod.file, dotted, 1);
+          reading = null;
+          out.push({ file: path, line: imp.line, column: imp.column, from: path, reads: [...record], targets: v?.v === "sym" ? [...new Set(v.ids.map(stableKey))].sort() : null });
+        }
+      }
       if (family === "js" || family === "python") {
         for (const imp of f.imports) {
           if (imp.reexport || imp.names.length === 0) continue;
@@ -2282,6 +2856,15 @@ export function createWorld(input: ResolveInput): World {
       for (const [k] of index.bindings(file).names) names.set(k, null);
     } else if (family === "go") {
       for (const d of f.defs) if (d.topLevel && d.exported) names.set(d.name, d.line);
+    } else if (family === "java") {
+      // The file's top-level types (package-visible ones too: the package
+      // reads them), and the members of those types other files may call:
+      // static ones and public ones.
+      const tops = new Set(f.defs.filter((d) => d.kind === "class" && d.owner === null).map((d) => d.name));
+      for (const d of f.defs) {
+        if (d.kind === "class" && d.owner === null) names.set(d.name, d.line);
+        else if (d.kind === "method" && d.owner !== null && tops.has(d.owner) && (d.static || d.exported) && !d.ctor) names.set(`${d.owner}.${d.name}`, d.line);
+      }
     }
     for (const [name, line] of names) out.set(name, { target: targetOf(index.exports(file, name, 0)), line });
     return out;
@@ -2364,10 +2947,12 @@ function goGuess(spec: string): string {
 }
 
 // The project folder of a file: its nearest package.json, go.mod,
-// pyproject.toml, setup.cfg or Gemfile folder, else the repository root.
+// pyproject.toml, setup.cfg, Gemfile, pom.xml, build.gradle or
+// build.gradle.kts folder, else the repository root.
 export function projectFolder(model: ProjectModel, goModules: [string, string][], file: string): string {
   let best = nodeProjectOf(model, file)?.dir ?? "";
   for (const [, dir] of goModules) if ((dir === "" || file.startsWith(`${dir}/`)) && dir.length > best.length) best = dir;
   for (const dir of model.pyRoots) if ((dir === "" || file.startsWith(`${dir}/`)) && dir.length > best.length) best = dir;
+  for (const dir of model.javaProjects) if ((dir === "" || file.startsWith(`${dir}/`)) && dir.length > best.length) best = dir;
   return best;
 }

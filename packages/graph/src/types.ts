@@ -6,12 +6,12 @@ import type { FrameworkFileFacts } from "./frameworks/plugin.js";
 import type { FrameworkData } from "./frameworks/stage.js";
 import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
-export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby";
+export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby" | "java";
 // Calls bind only inside one family: a TypeScript file never calls Python.
-export type Family = "js" | "python" | "go" | "ruby";
+export type Family = "js" | "python" | "go" | "ruby" | "java";
 
 export function familyOf(lang: Lang): Family {
-  if (lang === "python" || lang === "go" || lang === "ruby") return lang;
+  if (lang === "python" || lang === "go" || lang === "ruby" || lang === "java") return lang;
   return "js";
 }
 
@@ -81,6 +81,11 @@ export type DefFact = {
   // graph (a parameter, a call, an expression): a call of the result may
   // run that too.
   returnsOther?: boolean;
+  // Java: a constructor (named like its class, on the class's static side,
+  // its body's calls on the instance) and a method whose last parameter
+  // takes any number of arguments.
+  ctor?: boolean;
+  varargs?: boolean;
 };
 
 // A name in value position: an argument, the right side of an assignment,
@@ -156,6 +161,8 @@ export type CallFact = {
   result?: number;
   // A computed call on a name bound to a literal table (index into FileFacts.tables).
   table?: number;
+  // Java: the number of arguments, when the argument list parsed.
+  arity?: number;
 };
 
 export type ImportFact = {
@@ -172,6 +179,9 @@ export type ImportFact = {
   // Made inside a function or a block (`await import()`, a require, a Python
   // import in a function): it binds no name for the whole file, only through `bound`.
   scoped?: boolean;
+  // Java `import static a.b.C.m` (the one member) and `import static a.b.C.*`.
+  staticMember?: string;
+  staticStar?: boolean;
 };
 
 export type FileFacts = {
@@ -186,6 +196,7 @@ export type FileFacts = {
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
   goPackage: string | null;
+  javaPackage?: string | null; // Java: the declared package, null for the default package
   // Each framework plugin's context-free facts of the file, by plugin id
   // (frameworks/plugin.ts); absent when no plugin found anything.
   frameworks?: FrameworkFileFacts;

@@ -75,6 +75,12 @@ export type ProjectModel = {
   pyDeclared: Set<string>; // normalised distribution names declared by any Python manifest
   goRequires: string[]; // module paths go.mod files require
   gems: Set<string>;
+  // Java: the folders of every pom.xml, build.gradle and build.gradle.kts
+  // (a file belongs to the nearest one above it), and the dependency
+  // groups those files declare (pom.xml `<groupId>` of each
+  // `<dependency>`, Gradle `"group:artifact:version"` coordinates).
+  javaProjects: string[];
+  javaDeps: Set<string>;
   pnpmLinks: Map<string, Map<string, Linkage>>; // importer folder to dependency name to what the lockfile resolved
   npmLock: Map<string, Linkage>; // "<importer>/node_modules/<name>" or "node_modules/<name>" to linkage
   yarnWorkspace: Set<string>; // names yarn.lock resolves to a workspace
@@ -100,7 +106,7 @@ const ALL_RELATIONS: Relation[] = ["calls", "inherits", "imports"];
 // declared module into a miss) is said as an unknown and a reason, and the
 // build stays complete: the index digest covers the file, so a kept index
 // is never reused once it changes.
-export type MetadataKind = "package.json" | "tsconfig" | "pnpm-workspace.yaml" | "go.mod" | "python-manifest" | "Gemfile" | "lockfile";
+export type MetadataKind = "package.json" | "tsconfig" | "pnpm-workspace.yaml" | "go.mod" | "python-manifest" | "Gemfile" | "pom.xml" | "gradle" | "lockfile";
 export const GAP_RULES: Record<MetadataKind, { affects: Relation[]; lacks: string }> = {
   "package.json": { affects: ALL_RELATIONS, lacks: "its package's name, dependencies and workspaces are not known" },
   tsconfig: { affects: ALL_RELATIONS, lacks: "imports through its paths and baseUrl may be missing" },
@@ -108,6 +114,8 @@ export const GAP_RULES: Record<MetadataKind, { affects: Relation[]; lacks: strin
   "go.mod": { affects: ["calls", "imports"], lacks: "the module it names and the modules it requires are not known" },
   "python-manifest": { affects: [], lacks: "the dependencies it declares are not known and imports of them read as misses" },
   Gemfile: { affects: [], lacks: "the gems it names are not known and requires of them read as misses" },
+  "pom.xml": { affects: [], lacks: "the dependencies it declares are not known and imports of them read as misses" },
+  gradle: { affects: [], lacks: "the dependencies it declares are not known and imports of them read as misses" },
   lockfile: { affects: [], lacks: "which dependencies link workspace packages is not known" },
 };
 
@@ -434,6 +442,8 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
     pyDeclared: new Set(),
     goRequires: [],
     gems: new Set(),
+    javaProjects: [],
+    javaDeps: new Set(),
     pnpmLinks: new Map(),
     npmLock: new Map(),
     yarnWorkspace: new Set(),
@@ -500,6 +510,12 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
       model.goRequires.push(...goModRequires(read(path, MANIFEST_BYTES, dir, "go.mod")));
     } else if (base === "Gemfile") {
       for (const g of gemfileGems(read(path, MANIFEST_BYTES, dir, "Gemfile"))) model.gems.add(g);
+    } else if (base === "pom.xml") {
+      model.javaProjects.push(dir);
+      for (const g of pomGroups(read(path, MANIFEST_BYTES, dir, "pom.xml"))) model.javaDeps.add(g);
+    } else if (base === "build.gradle" || base === "build.gradle.kts" || base === "settings.gradle" || base === "settings.gradle.kts") {
+      if (base.startsWith("build.")) model.javaProjects.push(dir);
+      for (const g of gradleGroups(read(path, MANIFEST_BYTES, dir, "gradle"))) model.javaDeps.add(g);
     } else if (base === "pnpm-lock.yaml" && dir === "") {
       model.pnpmLinks = pnpmLinks(read(path, LOCKFILE_BYTES, "", "lockfile"));
     } else if (base === "package-lock.json" && dir === "") {
@@ -521,6 +537,7 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
     if (i !== -1 && i < parts.length - 1) pyRoots.add(parts.slice(0, i + 1).join("/"));
   }
   model.pyRoots = [...pyRoots].sort();
+  model.javaProjects = [...new Set(model.javaProjects)].sort();
 
   // Workspaces: pnpm-workspace.yaml and package.json `workspaces`.
   const memberSet = new Set<NodeProject>();
@@ -548,6 +565,63 @@ export function discoverProjects(all: readonly string[], reader: RepoReader, loo
   }
   placePathDeps(model, reader.root);
   return model;
+}
+
+// A Java group name: dotted words, as Maven and Gradle write them.
+const GROUP = /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/;
+
+// The groupId of each <dependency> of a pom.xml, read as text: no parent
+// pom is fetched, no property or entity is expanded (a `${...}` group is
+// skipped). Each element is found by indexOf, so a hostile file reads in
+// one pass.
+export function pomGroups(text: string): string[] {
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    const open = text.indexOf("<dependency>", at);
+    if (open < 0) break;
+    const close = text.indexOf("</dependency>", open);
+    const end = close < 0 ? text.length : close;
+    const g = text.indexOf("<groupId>", open);
+    if (g >= 0 && g < end) {
+      const ge = text.indexOf("</groupId>", g);
+      if (ge >= 0 && ge < end) {
+        const group = text.slice(g + 9, ge).trim();
+        if (group.length <= 200 && GROUP.test(group)) out.push(group);
+      }
+    }
+    if (close < 0) break;
+    at = close + 13;
+  }
+  return out;
+}
+
+// The group of each quoted `group:artifact[:version]` coordinate in a
+// Gradle file (Groovy or Kotlin). Nothing is run: a coordinate built from
+// variables, a version catalog or a map notation is not read.
+export function gradleGroups(text: string): string[] {
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    let q = -1;
+    for (let i = at; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"' || ch === "'") {
+        q = i;
+        break;
+      }
+    }
+    if (q < 0) break;
+    const quote = text[q] as string;
+    let end = text.indexOf(quote, q + 1);
+    const nl = text.indexOf("\n", q + 1);
+    if (end < 0 || (nl >= 0 && nl < end)) end = nl < 0 ? text.length : nl;
+    const body = text.slice(q + 1, end);
+    const parts = body.split(":");
+    if (body.length <= 300 && parts.length >= 2 && parts.length <= 4 && GROUP.test(parts[0] as string) && /^[\w.-]+$/.test(parts[1] as string)) out.push(parts[0] as string);
+    at = end + 1;
+  }
+  return out;
 }
 
 // The nearest package.json folder at or above `file`'s folder.
