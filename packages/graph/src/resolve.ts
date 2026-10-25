@@ -49,7 +49,8 @@ export const DISPATCH_CAP = 32;
 // (declared packages, imports, overloads by argument count, nested types).
 // 12: a Java call on a typed value's method result (TypeRef.on). 13: Java
 // constructor calls, source sets by folder, overloads across both sides.
-export const RESOLVER_VERSION = 13;
+// 14: abstract members kept below a body, static-import evidence per member.
+export const RESOLVER_VERSION = 14;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
@@ -2053,14 +2054,15 @@ export function createWorld(input: ResolveInput): World {
   // static and the instance side together (a bare call, a method
   // reference); `value`: a method reference, which passes no arguments.
   const javaOn = (key: string, name: string, side: Side, ev: Ev, arity: number | undefined, both = false, value = both): Outcome => {
-    const sides: Side[] = both ? ["s", "i"] : [side];
+    const sides: Side[] = both ? ["i", "s"] : [side];
     const ids: string[] = [];
     let inner: Ev | null = null;
     for (const at of sides) {
       const hit = index.members(key, name, at);
       if (hit && "gap" in hit) return { unknown: hit.gap, shape: "typed", note: hit.note };
       if (!hit) continue;
-      for (const id of hit.ids) if (!ids.includes(id)) ids.push(id);
+      // A constructor is no member: only javaCtor reads it.
+      for (const id of hit.ids) if (!ids.includes(id) && defById.get(id)?.ctor !== true) ids.push(id);
       if (hit.ev) inner = inner ? chain(inner, hit.ev) : hit.ev;
     }
     if (ids.length === 0) return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
@@ -2071,9 +2073,10 @@ export function createWorld(input: ResolveInput): World {
       const d = defById.get(id);
       return d ? classKey("java", d.file, d.owner ?? "") : id;
     };
-    const live = ids.filter((id) => {
+    // The lookup lists members nearest to the receiver first.
+    const live = ids.filter((id, i) => {
       if (defById.get(id)?.abstract !== true) return true;
-      return !ids.some((b) => b !== id && defById.get(b)?.abstract !== true && javaCount(b) === javaCount(id) && classOf(b) !== classOf(id));
+      return !ids.some((b, j) => j < i && defById.get(b)?.abstract !== true && javaCount(b) === javaCount(id) && classOf(b) !== classOf(id));
     });
     return javaOverloads(live, name, arity, inner ? chain(ev, inner) : ev, value);
   };
@@ -2147,8 +2150,14 @@ export function createWorld(input: ResolveInput): World {
         const bases = key ? basesOf(key) : null;
         const at = bases ? bases.rels.findIndex((rel) => rel !== "implements") : -1;
         const base = bases?.keys[at];
-        // A superclass outside the graph: its constructor is not the repository's.
-        if (!bases || !base) return key && outsideBase(key) ? { ext: true } : "ignore";
+        // A superclass outside the graph: external when its name binds to a
+        // declared dependency or the standard library, else unknown.
+        if (!bases || !base) {
+          const info = key ? classes.get(key) : undefined;
+          const sup = info?.bases.find((t) => t.rel === undefined);
+          if (!info || !sup) return "ignore";
+          return typeKey(info.file, "java", sup, 0, false, info.nesting) === "ext" ? { ext: true } : { unknown: "no-receiver-type", shape: "self", note: "the superclass is outside the graph" };
+        }
         return javaCtor(base, arity, chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[at] as Ev));
       }
       if (r.kind === "name") {
@@ -2185,31 +2194,49 @@ export function createWorld(input: ResolveInput): World {
         for (const key of [own, ...javaScopes(file, nesting).filter((k) => k !== own)]) {
           const out = javaOn(key, call.name, call.static ? "s" : "i", selfEv, arity, asValue || !call.static, asValue);
           if (out === "ignore") continue;
-          if ("ids" in out) return out.ids.some((id) => methodsOn.i.get(classOfMember(id))?.has(call.name)) ? withDispatch(out, { key, side: "i" }) : out;
+          if ("ids" in out) return out.ids.some((id) => methodsOn.i.get(classOfMember(id))?.get(call.name)?.includes(id) === true) ? withDispatch(out, { key, side: "i" }) : out;
           if ("unknown" in out) return out;
           first ??= out;
         }
         // Every static import of the name together (a single-member import
         // shadows the on-demand ones), then the arity rule once.
         const b = index.bindings(file);
+        // Each candidate keeps the evidence of its own import; a source the
+        // graph cannot read (outside it, or not found) may take the call.
         const viaImports = (bindings: readonly Binding[]): Outcome | null => {
-          const ids: string[] = [];
-          let ev: Ev | null = null;
+          const evOf = new Map<string, Ev>();
           let open: Outcome | null = null;
+          let outside = false;
           for (const binding of bindings) {
             const v = bindingValue(file, "java", call.name, binding, 0);
-            if (!v || v.v === "miss") continue;
+            if (!v || v.v === "miss") {
+              outside = true;
+              continue;
+            }
             if (v.v === "ext") open ??= { ext: true };
             if (v.v === "gap") open ??= { unknown: v.cause, shape: "bare", note: v.note, candidates: v.candidates };
             const key = v.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
-            if (!key || v.v !== "sym") continue;
+            if (!key || v.v !== "sym") {
+              outside = true;
+              continue;
+            }
             const hit = index.members(key, call.name, "s");
             if (!hit || "gap" in hit) continue;
-            for (const id of hit.ids) if (!ids.includes(id)) ids.push(id);
-            ev ??= { ...(hit.ev ? chain(v.ev, hit.ev) : v.ev), rule: "java-static-import" };
+            const ev: Ev = { ...(hit.ev ? chain(v.ev, hit.ev) : v.ev), rule: "java-static-import" };
+            for (const id of hit.ids) if (!evOf.has(id) && defById.get(id)?.ctor !== true) evOf.set(id, ev);
           }
-          if (ids.length > 0 && ev) return javaOverloads(ids, call.name, arity, ev);
-          return open;
+          if (evOf.size === 0) return open;
+          const base = [...evOf.values()][0] as Ev;
+          const out = javaOverloads([...evOf.keys()], call.name, arity, base);
+          if (out === "ignore" || !("ids" in out)) return out;
+          // The weakest evidence among the candidates left decides.
+          let ev = out.ev;
+          for (const id of out.ids) {
+            const own = evOf.get(id) as Ev;
+            if (weakest(ev.tier, own.tier) !== ev.tier) ev = { ...ev, tier: own.tier, note: [ev.note, own.note].filter(Boolean).join(" ") || null };
+          }
+          if (open !== null || outside) ev = { ...ev, tier: "possible", note: [ev.note, "A static import outside the graph may take this call."].filter(Boolean).join(" "), rule: "java-static-import" };
+          return { ids: out.ids, ev };
         };
         const viaNamed = viaImports(b.jstatic?.get(call.name) ?? []);
         if (viaNamed) return viaNamed;

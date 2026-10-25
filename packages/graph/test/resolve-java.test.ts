@@ -416,3 +416,87 @@ describe("java review findings", () => {
     expect(gradleGroups("  // implementation('com.acme:lib:1')\n/* api 'com.block:lib:1'\n testImplementation 'com.block2:x:1' */\nimplementation 'org.real:lib:1'\n")).toEqual(["org.real"]);
   });
 });
+
+// Findings of the second review of the fix diff, one test each.
+describe("java second review findings", () => {
+  const ids = (g: Graph, file: string, name: string) => (g.defsByFile.get(file) ?? []).filter((n) => n.name === name).map((n) => n.id);
+  const siteTiers = (g: Graph, file: string, name: string, site: string, kind = "calls") => ids(g, file, name).flatMap((id) => tiers(g, id, kind).filter((t) => t.startsWith(`${site} `)));
+
+  it("r1. keeps an abstract member nearer to the receiver than a body member of the same parameter count", async () => {
+    const files = {
+      "a/B.java": lines("package a;", "", "public class B {", "    void f(Object x) {", "    }", "}"),
+      "a/C.java": lines("package a;", "", "public abstract class C extends B {", "    abstract void f(String x);", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go(C c) {", '        c.f("x"); // CALL', "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/C.java", "f", site)).toEqual([`${site} possible`]);
+    expect(siteTiers(g, "a/B.java", "f", site)).toEqual([`${site} possible`]);
+  });
+
+  it("r2. never reads a pattern variable after a negated guard as the field of that name", async () => {
+    const files = {
+      "a/Foo.java": lines("package a;", "", "public class Foo {", "    public void run() {", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    Foo x;", "", "    void m(Object o) {", "        if (!(o instanceof Bar x)) return;", "        x.run(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    expect(siteTiers(g, "a/Foo.java", "run", at(files, "a/U.java", "CALL"))).toEqual([]);
+  });
+
+  it("r3. never makes a constructor a candidate of an ordinary call named like the class", async () => {
+    const files = { "a/C.java": lines("package a;", "", "public class C {", "    C() {", "    }", "", "    void C() {", "    }", "", "    void g() {", "        C(); // CALL", "    }", "}") };
+    const g = await graphOf(files);
+    const site = at(files, "a/C.java", "CALL");
+    expect(siteTiers(g, "a/C.java", "C", site)).toEqual([`${site} certain`]);
+    const method = (g.defsByFile.get("a/C.java") ?? []).find((n) => n.name === "C" && n.startLine === 7)?.id as string;
+    expect(tiers(g, method)).toEqual([`${site} certain`]);
+  });
+
+  it("r4. never dispatches a bare call whose only fitting candidate is static", async () => {
+    const files = {
+      "a/Base.java": lines("package a;", "", "public class Base {", "    static void f(String s) {", "    }", "", "    void f(int a, int b) {", "    }", "", "    void g() {", '        f("x"); // CALL', "    }", "}"),
+      "a/Sub.java": lines("package a;", "", "public class Sub extends Base {", "    void f(Object o) {", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    expect(siteTiers(g, "a/Sub.java", "f", at(files, "a/Base.java", "CALL"), "dispatches_to")).toEqual([]);
+  });
+
+  it("r5. leaves super(...) to a superclass nothing declares as an unknown, never external", async () => {
+    const files = { "a/C.java": lines("package a;", "", "import missing.Base;", "", "public class C extends Base {", "    C() {", "        super(1); // CALL", "    }", "}") };
+    const g = await graphOf(files);
+    expect(unknownsAt(g, at(files, "a/C.java", "CALL")).map((u) => u.cause)).toEqual(["no-receiver-type"]);
+  });
+
+  it("r6. binds a repository static import possible when another static import of the name is external", async () => {
+    const files = {
+      "a/A.java": lines("package a;", "", "public class A {", "    public static int abs(Object o) {", "        return 0;", "    }", "}"),
+      "c/U.java": lines("package c;", "", "import static java.lang.Math.abs;", "import static a.A.abs;", "", "public class U {", "    int go() {", "        return abs(1); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "c/U.java", "CALL");
+    expect(siteTiers(g, "a/A.java", "abs", site)).toEqual([`${site} possible`]);
+  });
+
+  it("r7. emits a static-import candidate with its own lowered evidence, never the first import's", async () => {
+    const files = {
+      "a/A.java": lines("package a;", "", "public class A {", "    public static void f(String s) {", "    }", "}"),
+      "a/B.java": lines("package a;", "", "import java.util.ArrayList;", "", "public class B extends ArrayList<String> {", "    public static void f(int a, int b) {", "    }", "}"),
+      "c/U.java": lines("package c;", "", "import static a.A.f;", "import static a.B.f;", "", "public class U {", "    void go() {", "        f(1, 2); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "c/U.java", "CALL");
+    expect(siteTiers(g, "a/B.java", "f", site)).toEqual([`${site} likely`]);
+  });
+
+  it("r8. never opens a block comment inside a quoted Gradle string", () => {
+    expect(gradleGroups('exclude("META-INF/*")\nimplementation "org.real:lib:1"\n')).toEqual(["org.real"]);
+  });
+
+  it("r9. never reads a dependency from a trailing Gradle comment", () => {
+    expect(gradleGroups('println("x") // implementation("com.fake:lib:1")\nimplementation "org.real:lib:1" // ok\n')).toEqual(["org.real"]);
+  });
+
+  it("r10. reads a pom groupId split by an XML comment as one name", () => {
+    expect(pomGroups("<dependency><groupId>com.<!-- note -->acme</groupId></dependency>")).toEqual(["com.acme"]);
+  });
+});

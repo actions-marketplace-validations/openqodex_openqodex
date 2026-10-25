@@ -584,11 +584,11 @@ function withoutXmlComments(text: string): string {
     if (open < 0) break;
     parts.push(text.slice(at, open));
     const close = text.indexOf("-->", open + 4);
-    if (close < 0) return parts.join(" ");
+    if (close < 0) return parts.join("");
     at = close + 3;
   }
   parts.push(text.slice(at));
-  return parts.join(" ");
+  return parts.join("");
 }
 
 export function pomGroups(source: string): string[] {
@@ -618,45 +618,33 @@ export function pomGroups(source: string): string[] {
 // variables, a version catalog or a map notation is not read.
 export function gradleGroups(text: string): string[] {
   const out: string[] = [];
-  // Line by line: a string never spans lines, and each character is
-  // looked at once (the quote that opens a string, then the one that closes it).
-  // A line commented out with `//` and every `/* ... */` block are skipped.
+  // One pass over the text: a string never spans lines; `/*` opens a block
+  // comment and `//` ends the line, both only outside a string.
   let inBlock = false;
-  for (const raw of text.split("\n")) {
-    const kept: string[] = [];
-    let at = 0;
-    while (at < raw.length) {
-      if (inBlock) {
-        const end = raw.indexOf("*/", at);
-        if (end < 0) break;
-        at = end + 2;
-        inBlock = false;
-        continue;
-      }
-      const start = raw.indexOf("/*", at);
-      if (start < 0) {
-        kept.push(raw.slice(at));
-        break;
-      }
-      kept.push(raw.slice(at, start));
-      at = start + 2;
-      inBlock = true;
-    }
-    const line = kept.join(" ");
-    if (line.trimStart().startsWith("//")) continue;
-    let open = -1;
+  for (const line of text.split("\n")) {
+    let open = -1; // where the string being read starts, -1 outside one
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
-      if (ch !== '"' && ch !== "'") continue;
-      if (open < 0) {
-        open = i;
+      if (inBlock) {
+        if (ch === "*" && line[i + 1] === "/") {
+          inBlock = false;
+          i++;
+        }
         continue;
       }
-      if (line[open] !== ch) continue;
-      const body = line.slice(open + 1, i);
-      open = -1;
-      const parts = body.split(":", 5);
-      if (body.length <= 300 && parts.length >= 2 && parts.length <= 4 && GROUP.test(parts[0] as string) && /^[\w.-]+$/.test(parts[1] as string)) out.push(parts[0] as string);
+      if (open >= 0) {
+        if (ch !== line[open]) continue;
+        const body = line.slice(open + 1, i);
+        open = -1;
+        const parts = body.split(":", 5);
+        if (body.length <= 300 && parts.length >= 2 && parts.length <= 4 && GROUP.test(parts[0] as string) && /^[\w.-]+$/.test(parts[1] as string)) out.push(parts[0] as string);
+        continue;
+      }
+      if (ch === '"' || ch === "'") open = i;
+      else if (ch === "/" && line[i + 1] === "*") {
+        inBlock = true;
+        i++;
+      } else if (ch === "/" && line[i + 1] === "/") break;
     }
   }
   return out;

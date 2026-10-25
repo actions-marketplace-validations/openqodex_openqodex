@@ -31,7 +31,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 21;
+export const EXTRACTOR_VERSION = 22;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2501,6 +2501,8 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   // method, decided once the body is read (it may be assigned below).
   const paramCalls: { name: string; scope: Scope }[] = [];
   const blockFrame = (): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true });
+  // The pattern variables each frame's `instanceof` tests bound.
+  const patternNames = new Map<Scope, string[]>();
   const anonFrame = (): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true, anon: true });
   const typeUses = (node: Node | null, caller: number) => {
     for (const r of javaTypeNames(node)) ctx.addTypeUse(r, caller);
@@ -2718,10 +2720,19 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "for_statement":
       case "switch_block":
       // An `if` or a `while` holds the pattern variables its condition binds
-      // (`o instanceof A x`): they end with the statement.
+      // (`o instanceof A x`). After a negated guard Java keeps them alive in
+      // the block, which the graph does not follow: there the name is a
+      // local of unknown type, never the field it would hide.
       case "if_statement":
-      case "while_statement":
-        return blockFrame();
+      case "while_statement": {
+        const leave = blockFrame();
+        const frame = ctx.top.decl;
+        return () => {
+          const names = patternNames.get(frame) ?? [];
+          leave();
+          for (const n of names) ctx.setLocal(n, null, true);
+        };
+      }
       case "explicit_constructor_invocation": {
         // `this(...)` and `super(...)`: a constructor call on the own class or the superclass.
         const kw = node.childForFieldName("constructor");
@@ -2789,7 +2800,11 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         typeUses(typeNode, ctx.caller());
         // `o instanceof Svc s`: s is a Svc where the test holds.
         const name = node.childForFieldName("name");
-        if (name) ctx.setLocal(name.text, declared(javaTypeRef(typeNode)), true);
+        if (name) {
+          ctx.setLocal(name.text, declared(javaTypeRef(typeNode)), true);
+          const decl = ctx.top.decl;
+          patternNames.set(decl, [...(patternNames.get(decl) ?? []), name.text]);
+        }
         return;
       }
       case "cast_expression":

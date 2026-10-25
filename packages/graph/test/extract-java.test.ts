@@ -277,10 +277,10 @@ describe("java facts", () => {
     expect(one(f, "trim").recv).toEqual({ kind: "other" });
   });
 
-  it("10. an instanceof pattern variable is bound in the consequence only, never after the if", async () => {
+  it("10. an instanceof pattern variable is typed in the consequence only, and after the if it is never read as the field", async () => {
     const f = await factsOf(["class A {", "  Foo x;", "  void m(Object o) {", "    if (o instanceof Bar x) {", "      x.run();", "    }", "    x.go();", "  }", "}"]);
     expect(one(f, "run").recv).toMatchObject({ kind: "type", type: { name: "Bar" } });
-    expect(one(f, "go").recv).toEqual({ kind: "self", path: ["x"] });
+    expect(one(f, "go").recv).toEqual({ kind: "other" });
   });
 
   it("12. a field whose type is a type parameter or a primitive is recorded so it hides a superclass field", async () => {
