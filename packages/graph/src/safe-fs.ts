@@ -68,9 +68,14 @@ function optBound(b: unknown, imports: number): boolean {
 
 const RELS = new Set(["implements", "include", "prepend", "extend"]);
 
-function isTypeRef(v: unknown, imports: number): boolean {
+// `on` nests a type in a type; past this depth a TypeRef is refused.
+const MAX_TYPE_DEPTH = 16;
+
+function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
   return (
+    depth <= MAX_TYPE_DEPTH &&
     isObj(v) &&
+    (v.on === undefined || isTypeRef(v.on, imports, depth + 1)) &&
     isStr(v.name) &&
     (v.qualifier === null || isStr(v.qualifier)) &&
     isInt(v.line) &&

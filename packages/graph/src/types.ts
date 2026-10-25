@@ -33,6 +33,10 @@ export type TypeRef = {
   line: number;
   column: number;
   result?: number;
+  // With `result`: the method `name` is called on a value of type `on`
+  // (`repo.find(id)` with `repo` a typed local or field); this type is that
+  // method's declared result at position `result`. Chains nest through `on`.
+  on?: TypeRef;
   elem?: boolean;
   declared?: boolean;
   bound?: BoundImport;

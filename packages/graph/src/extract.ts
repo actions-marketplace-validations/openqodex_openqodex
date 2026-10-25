@@ -31,7 +31,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 19;
+export const EXTRACTOR_VERSION = 20;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -53,8 +53,10 @@ type Frame = {
   // Parameters of this function frame given another value in its body: a
   // call of one may not run what the caller passed.
   reassigned?: Set<string>;
-  // A Java type's frame: the names of its fields, read before its methods.
+  // A Java type's frame: the names of its fields, read before its methods,
+  // and the declared type of each field that has one.
   members?: Set<string>;
+  fieldTypes?: Record<string, TypeRef>;
   // A Java anonymous or local class body: its `this` is not the class around it.
   anon?: boolean;
 };
@@ -2392,16 +2394,39 @@ function javaIdent(ctx: Ctx, name: string, path: string[]): Receiver {
   return { kind: "name", name, path, nesting: null };
 }
 
+// The declared type of a field of the nearest named class, when the walk
+// is in that class's own body (no anonymous body between).
+function javaSelfFieldType(ctx: Ctx, name: string): TypeRef | null {
+  if (javaField(ctx, name) !== "self") return null;
+  for (let s: Scope | null = ctx.top; s; s = s.parent) if (s.cls !== null) return s.fieldTypes?.[name] ?? null;
+  return null;
+}
+
 // `make()`, `this.make()` or `Type.make()`: typed by make's declared result,
-// looked up when the graph is resolved. A method called on a value is not followed.
-function javaCallType(ctx: Ctx, call: Node): TypeRef | null {
+// looked up when the graph is resolved. A method called on a value of a
+// known type (a typed local or parameter, a field, a constructed value,
+// another call whose type is known) carries that type in `on`.
+function javaCallType(ctx: Ctx, call: Node, depth = 0): TypeRef | null {
   const name = call.childForFieldName("name");
-  const object = call.childForFieldName("object");
-  if (!name) return null;
+  let object = call.childForFieldName("object");
+  if (!name || depth > 16) return null;
+  while (object?.type === "parenthesized_expression") object = object.firstNamedChild;
   if (!object || object.type === "this") return javaInAnon(ctx) ? null : { name: name.text, qualifier: null, ...pos(call), result: 0 };
-  if (object.type === "identifier" && ctx.local(object.text) === undefined && javaField(ctx, object.text) === null) {
+  const onValue = (on: TypeRef | null | undefined): TypeRef | null => (on && !on.elem ? { name: name.text, qualifier: null, ...pos(call), result: 0, on } : null);
+  if (object.type === "identifier") {
+    const local = ctx.local(object.text);
+    if (local !== undefined) return onValue(local);
+    const field = javaField(ctx, object.text);
+    if (field === "self") return onValue(javaSelfFieldType(ctx, object.text));
+    if (field === "outer") return null;
     return { name: name.text, qualifier: object.text, ...pos(call), result: 0 };
   }
+  if (object.type === "field_access" && object.childForFieldName("object")?.type === "this" && !javaInAnon(ctx)) {
+    const field = object.childForFieldName("field");
+    return field?.type === "identifier" ? onValue(javaSelfFieldType(ctx, field.text)) : null;
+  }
+  if (object.type === "method_invocation") return onValue(javaCallType(ctx, object, depth + 1));
+  if (object.type === "object_creation_expression") return onValue(javaValueType(ctx, object));
   return null;
 }
 
@@ -2532,7 +2557,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     const fields: Record<string, TypeRef> = {};
     const def = ctx.addDef(node, name, "class", { owner: outer, topLevel: ctx.top.depth === 0, exported: javaModifiers(node).has("public"), bases, fields, ...(iface ? { iface: true } : {}) });
     const members = new Set<string>();
-    const leave = ctx.push({ def, cls: outer ? `${outer}.${name.text}` : name.text, locals: null, members, ...(typeParams ? { typeParams } : {}) });
+    const leave = ctx.push({ def, cls: outer ? `${outer}.${name.text}` : name.text, locals: null, members, fieldTypes: fields, ...(typeParams ? { typeParams } : {}) });
     for (const b of baseNodes) typeUses(b, def);
     // The fields first, so a method's bare `f.m()` knows a field declared below it.
     const body = node.childForFieldName("body");

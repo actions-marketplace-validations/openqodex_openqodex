@@ -48,7 +48,8 @@ export const DISPATCH_CAP = 32;
 // that names a base with an expression. 10: such a base keeps its place in
 // the lookup order, so a member found past it is likely at most. 11: Java
 // (declared packages, imports, overloads by argument count, nested types).
-export const RESOLVER_VERSION = 11;
+// 12: a Java call on a typed value's method result (TypeRef.on).
+export const RESOLVER_VERSION = 12;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
@@ -1285,11 +1286,23 @@ export function createWorld(input: ResolveInput): World {
     return cls ? { key: cls, ev: v.ev } : null;
   };
   // What a Java method call returns, by the member's declared result:
-  // `make()` on the enclosing types, or `T.make()` on the type T. Every
+  // `make()` on the enclosing types, `T.make()` on the type T, or
+  // `x.make()` on a value of the type `on` (its instance side). Every
   // member the call may bind must name the same class.
   const javaResultType = (file: string, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
     let found: { ids: string[]; ev: Ev } | null = null;
-    if (t.qualifier === null) {
+    if (t.on) {
+      // A method of a class outside the graph returns what the graph does not know.
+      const on = typeKey(file, "java", t.on, depth + 1, false, nesting);
+      if (on === null || on === "ext") return null;
+      const hit = methodOn(on.key, t.name, "i", 0);
+      if (!hit || !("ids" in hit)) return null;
+      // Members with a declared result: an abstract one beside an
+      // implementation of its parameter count names the same thing.
+      const ids = hit.ids.filter((id) => defById.get(id)?.results?.[t.result ?? 0]);
+      if (ids.length === 0) return null;
+      found = { ids, ev: hit.ev ? chain(on.ev, hit.ev) : on.ev };
+    } else if (t.qualifier === null) {
       for (const key of javaScopes(file, nesting)) {
         for (const side of ["i", "s"] as const) {
           const hit = methodOn(key, t.name, side, 0);

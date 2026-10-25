@@ -252,6 +252,29 @@ describe("java facts", () => {
     expect(one(f, "go").recv).toMatchObject({ kind: "type", type: { name: "build", qualifier: "Factory", result: 0 }, path: [] });
   });
 
+  it("a call on a typed local's method result carries the local's type in on", async () => {
+    const f = await factsOf(["class A {", "  void m(Repo r) {", "    Repo s = r;", "    s.find(1).normalize();", "    var t = r.find(2);", "    t.close();", "  }", "}"]);
+    expect(one(f, "normalize").recv).toMatchObject({ kind: "type", type: { name: "find", qualifier: null, result: 0, on: { name: "Repo", declared: true } }, path: [] });
+    expect(one(f, "close").recv).toMatchObject({ kind: "type", type: { name: "find", result: 0, on: { name: "Repo" } } });
+  });
+
+  it("a call on a field's method result carries the field's type in on", async () => {
+    const f = await factsOf(["class A {", "  private Repo repo;", "  void m() {", "    repo.find(1).normalize();", "    this.repo.find(2).close();", "  }", "}"]);
+    expect(one(f, "normalize").recv).toMatchObject({ kind: "type", type: { name: "find", qualifier: null, result: 0, on: { name: "Repo" } } });
+    expect(one(f, "close").recv).toMatchObject({ kind: "type", type: { name: "find", qualifier: null, result: 0, on: { name: "Repo" } } });
+  });
+
+  it("a chain of two calls nests on", async () => {
+    const f = await factsOf(["class A {", "  void m(Repo r) {", "    r.find(1).item().normalize();", "  }", "}"]);
+    expect(one(f, "normalize").recv).toMatchObject({ kind: "type", type: { name: "item", result: 0, on: { name: "find", result: 0, on: { name: "Repo" } } } });
+    expect(isFileFacts(f)).toBe(true);
+  });
+
+  it("a call on an other receiver is still recorded", async () => {
+    const f = await factsOf(["class A {", "  void m(Object[] xs) {", "    xs[0].toString().trim();", "  }", "}"]);
+    expect(one(f, "trim").recv).toEqual({ kind: "other" });
+  });
+
   it("Type.m() is a name receiver", async () => {
     const f = await factsOf(["class A {", "  void m() { Type.m2(); a.b.Util.m3(); }", "}"]);
     expect(one(f, "m2").recv).toEqual({ kind: "name", name: "Type", path: [], nesting: null });
