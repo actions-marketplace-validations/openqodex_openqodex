@@ -70,6 +70,12 @@ export type DefFact = {
   abstract?: boolean;
   iface?: boolean; // a TypeScript interface or a Go interface type
   pointer?: boolean; // a Go method with a pointer receiver
+  // A Java method whose last parameter is varargs (`Object... rest`): it
+  // takes any number of arguments from its fixed parameters up.
+  varargs?: boolean;
+  // A Java constructor: a method named like its class, called by `new`.
+  // It is not static: its body runs on the new instance.
+  ctor?: boolean;
   // Functions and methods: the parameter names in order (a Python method
   // without its self or cls), the ones the body calls (at any depth of
   // nested functions), and the value references it returns (indices into
@@ -81,11 +87,6 @@ export type DefFact = {
   // graph (a parameter, a call, an expression): a call of the result may
   // run that too.
   returnsOther?: boolean;
-  // Java: a constructor (named like its class, on the class's static side,
-  // its body's calls on the instance) and a method whose last parameter
-  // takes any number of arguments.
-  ctor?: boolean;
-  varargs?: boolean;
 };
 
 // A name in value position: an argument, the right side of an assignment,
@@ -151,6 +152,8 @@ export type CallFact = {
   bound?: BoundImport; // a bare call to a name a scoped import binds
 
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
+  // Java: the number of arguments, when the argument list parsed.
+  arity?: number;
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
   dynamic?: boolean;
   // A bare call of a local given one value once (`const fn = helper`):
@@ -161,8 +164,6 @@ export type CallFact = {
   result?: number;
   // A computed call on a name bound to a literal table (index into FileFacts.tables).
   table?: number;
-  // Java: the number of arguments, when the argument list parsed.
-  arity?: number;
 };
 
 export type ImportFact = {
@@ -179,8 +180,9 @@ export type ImportFact = {
   // Made inside a function or a block (`await import()`, a require, a Python
   // import in a function): it binds no name for the whole file, only through `bound`.
   scoped?: boolean;
-  // Java `import static a.b.C.m` (the one member) and `import static a.b.C.*`.
+  // Java `import static a.b.C.m`: the member `m` of the named class C.
   staticMember?: string;
+  // Java `import static a.b.C.*`: every static member of the named class C.
   staticStar?: boolean;
 };
 
@@ -196,7 +198,9 @@ export type FileFacts = {
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
   goPackage: string | null;
-  javaPackage?: string | null; // Java: the declared package, null for the default package
+  // Java: the declared package (`a.b`), null for the default package.
+  // Absent for the other languages.
+  javaPackage?: string | null;
   // Each framework plugin's context-free facts of the file, by plugin id
   // (frameworks/plugin.ts); absent when no plugin found anything.
   frameworks?: FrameworkFileFacts;
