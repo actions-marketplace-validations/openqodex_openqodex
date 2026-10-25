@@ -17,6 +17,10 @@ export function familyOf(lang: Lang): Family {
 
 // ---------- facts one parse of one file yields (cached by content) ----------
 
+// How deep a TypeRef may nest through `on`: the extractor drops `on` past
+// it and the validator refuses deeper ones, so a kept file is never refused.
+export const MAX_TYPE_DEPTH = 16;
+
 // A type named in source: `Repo`, `pkg.Repo` (qualifier "pkg"), Ruby `A::B`
 // (whole path in `name`, the lexical nesting in `qualifier`).
 // `result`: the type is what calling the function `name` returns, at that
@@ -36,7 +40,7 @@ export type TypeRef = {
   // With `result`: the method `name` is called on a value of type `on`
   // (`repo.find(id)` with `repo` a typed local or field); this type is that
   // method's declared result at position `result`. Chains nest through `on`.
-  on?: TypeRef;
+  on?: TypeRef; // nested at most MAX_TYPE_DEPTH deep
   elem?: boolean;
   declared?: boolean;
   bound?: BoundImport;

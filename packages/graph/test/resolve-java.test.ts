@@ -500,3 +500,75 @@ describe("java second review findings", () => {
     expect(pomGroups("<dependency><groupId>com.<!-- note -->acme</groupId></dependency>")).toEqual(["com.acme"]);
   });
 });
+
+// Findings of the dogfood review of the branch, one test each.
+describe("java dogfood review findings", () => {
+  const ids = (g: Graph, file: string, name: string) => (g.defsByFile.get(file) ?? []).filter((n) => n.name === name).map((n) => n.id);
+  const siteTiers = (g: Graph, file: string, name: string, site: string, kind = "calls") => ids(g, file, name).flatMap((id) => tiers(g, id, kind).filter((t) => t.startsWith(`${site} `)));
+
+  it("d1. binds a fully qualified repository type in a file with an external star import", async () => {
+    const files = {
+      "com/acme/Repo.java": lines("package com.acme;", "", "public class Repo {", "    public static void find() {", "    }", "}"),
+      "app/U.java": lines("package app;", "", "import java.util.*;", "", "public class U {", "    void go() {", "        com.acme.Repo.find(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "app/U.java", "CALL");
+    expect(siteTiers(g, "com/acme/Repo.java", "find", site)).toEqual([`${site} certain`]);
+  });
+
+  it("d3. keeps a var local's type when it is given what a call on it returns", async () => {
+    const files = {
+      "a/B.java": lines("package a;", "", "public class B {", "    public B with(int x) {", "        return this;", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go() {", "        var b = new B();", "        b = b.with(1); // CALL", "        b.with(2); // AFTER", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    expect(siteTiers(g, "a/B.java", "with", at(files, "a/U.java", "CALL"))).toEqual([`${at(files, "a/U.java", "CALL")} certain`]);
+    expect(siteTiers(g, "a/B.java", "with", at(files, "a/U.java", "AFTER"))).toEqual([`${at(files, "a/U.java", "AFTER")} certain`]);
+  });
+
+  it("d4. keeps a reassigned var local at the static type its declaration gave, as javac does", async () => {
+    const files = {
+      "a/Item.java": lines("package a;", "", "public class Item {", "    public void run() {", "    }", "}"),
+      "a/A.java": lines("package a;", "", "public class A {", "    public Item get() {", "        return null;", "    }", "}"),
+      "a/B.java": lines("package a;", "", "public class B {", "    public Item get() {", "        return null;", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go(A a, B b) {", "        var x = a.get();", "        x = b.get();", "        x.run(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/Item.java", "run", site)).toEqual([`${site} certain`]);
+  });
+
+  it("d7. reads common java.lang classes without an import as external, never as unknowns", async () => {
+    const files = {
+      "a/U.java": lines("package a;", "", "public class U {", "    Object go(String s) {", "        Double.parseDouble(s); // DOUBLE", "        Character.isDigit('1'); // CHAR", '        return new IllegalArgumentException("x"); // EXC', "    }", "}"),
+    };
+    const g = await graphOf(files);
+    for (const m of ["DOUBLE", "CHAR", "EXC"]) expect(unknownsAt(g, at(files, "a/U.java", m))).toEqual([]);
+  });
+
+  it("d7b. lets a repository class named like a java.lang class win over it", async () => {
+    const files = {
+      "a/Double.java": lines("package a;", "", "public class Double {", "    public static void parse() {", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go() {", "        Double.parse(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/Double.java", "parse", site)).toEqual([`${site} certain`]);
+  });
+
+  it("d8. binds the nested types a star import of a class brings, with no missing-package gap", async () => {
+    const files = {
+      "a/b/Outer.java": lines("package a.b;", "", "public class Outer {", "    public static class Inner {", "        public static void run() {", "        }", "    }", "}"),
+      "c/U.java": lines("package c;", "", "import a.b.Outer.*;", "", "public class U {", "    void go() {", "        Inner.run(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "c/U.java", "CALL");
+    expect(siteTiers(g, "a/b/Outer.java", "run", site)).toEqual([`${site} certain`]);
+    expect(g.unknowns.filter((u) => u.file === "c/U.java")).toEqual([]);
+  });
+
+  it("d6. reads Maven's test class names as tests, one shape each", () => {
+    for (const f of ["a/TestFoo.java", "a/FooTest.java", "a/FooTests.java", "a/FooTestCase.java", "a/FooIT.java", "a/ITFoo.java", "a/FooITCase.java"]) expect(isTestPath(f), f).toBe(true);
+    for (const f of ["a/Testament.java", "a/Item.java", "a/Contest.java"]) expect(isTestPath(f), f).toBe(false);
+  });
+});

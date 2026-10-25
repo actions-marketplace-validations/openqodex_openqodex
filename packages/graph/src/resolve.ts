@@ -50,13 +50,24 @@ export const DISPATCH_CAP = 32;
 // 12: a Java call on a typed value's method result (TypeRef.on). 13: Java
 // constructor calls, source sets by folder, overloads across both sides.
 // 14: abstract members kept below a body, static-import evidence per member.
-export const RESOLVER_VERSION = 14;
+// 15: qualified names before external star imports, star imports of a
+// class, the java.lang classes.
+export const RESOLVER_VERSION = 15;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
 
 // The java.lang names a Java file sees without an import.
-const JAVA_LANG = "System Math String Object Integer Long Boolean Thread Runnable Exception RuntimeException StringBuilder Iterable Comparable Override Deprecated".split(" ");
+const JAVA_LANG = (
+  "Object String StringBuilder StringBuffer CharSequence Math StrictMath System Thread ThreadLocal Runnable Iterable Comparable Cloneable AutoCloseable Readable Appendable " +
+  "Integer Long Short Byte Double Float Boolean Character Number Void Class Enum Record ClassLoader Process ProcessBuilder Runtime StackTraceElement " +
+  "Override Deprecated SuppressWarnings FunctionalInterface SafeVarargs " +
+  "Throwable Exception RuntimeException Error IllegalArgumentException IllegalStateException NullPointerException UnsupportedOperationException " +
+  "IndexOutOfBoundsException ArrayIndexOutOfBoundsException StringIndexOutOfBoundsException ArithmeticException ClassCastException NumberFormatException " +
+  "InterruptedException CloneNotSupportedException ReflectiveOperationException ClassNotFoundException NoSuchMethodException NoSuchFieldException " +
+  "IllegalAccessException InstantiationException SecurityException NegativeArraySizeException ArrayStoreException " +
+  "AssertionError OutOfMemoryError StackOverflowError LinkageError NoClassDefFoundError ExceptionInInitializerError VirtualMachineError"
+).split(" ");
 
 const BUILTINS: Record<Family, ReadonlySet<string>> = {
   js: new Set(
@@ -723,10 +734,20 @@ export function createWorld(input: ResolveInput): World {
     if (declared) return { mod: null, path: name };
     return { mod: { gap: "miss", note: javaMissNote(spec), candidates: null }, path: name };
   };
+  // `import a.b.Outer.*`: the spec names a class of the repository, whose
+  // member types the import brings. Null when no class has that name.
+  const javaStarClass = (from: string, line: number, spec: string): { mod: Mod; path: string } | null => {
+    const dot = spec.lastIndexOf(".");
+    if (dot < 0) return null;
+    const hit = javaClassMod(from, line, spec.slice(0, dot), spec.slice(dot + 1));
+    return hit.mod !== null && "file" in hit.mod ? hit : null;
+  };
   const javaSpec = (from: string, imp: { spec: string; line: number; names?: { imported: string }[]; star?: boolean; staticStar?: boolean }): Mod => {
     const name = imp.names?.[0]?.imported;
     if (name === undefined || (imp.star && !imp.staticStar)) {
       if (javaTypes.has(imp.spec)) return null;
+      const cls = javaStarClass(from, imp.line, imp.spec);
+      if (cls) return cls.mod;
       return javaExternal(imp.spec) ? { ext: imp.spec } : { gap: "miss", note: javaMissNote(imp.spec), candidates: null };
     }
     return javaClassMod(from, imp.line, imp.spec, name).mod;
@@ -745,7 +766,8 @@ export function createWorld(input: ResolveInput): World {
     names: Map<string, Binding>;
     stars: (Mod | { ns: string; ev: Ev })[];
     starSpecs: string[];
-    jstars?: { spec: string; mod: Mod; ev: Ev }[];
+    // `type`: the class an `import a.b.Outer.*` names, whose member types it brings.
+    jstars?: { spec: string; mod: Mod; ev: Ev; type?: Binding }[];
     jstatic?: Map<string, Binding[]>;
     jstaticStars?: Binding[];
   };
@@ -776,7 +798,13 @@ export function createWorld(input: ResolveInput): World {
         for (const imp of f.imports) {
           if (imp.star && !imp.staticStar) {
             const mod = javaSpec(file, imp);
-            (b.jstars ??= []).push({ spec: imp.spec, mod, ev: { kind: "import", tier: "certain", via: viaOf(file, imp.line, imp.spec), note: null, rule: "java-star-import" } });
+            const star: { spec: string; mod: Mod; ev: Ev; type?: Binding } = { spec: imp.spec, mod, ev: { kind: "import", tier: "certain", via: viaOf(file, imp.line, imp.spec), note: null, rule: "java-star-import" } };
+            const cls = mod !== null && "file" in mod ? javaStarClass(file, imp.line, imp.spec) : null;
+            if (cls && mod !== null && "file" in mod) {
+              star.type = { kind: "named", mod, imported: cls.path };
+              targets.push({ target: mod.file, line: imp.line, column: imp.column, ev: mod.ev, reexport: false });
+            }
+            (b.jstars ??= []).push(star);
             continue;
           }
           const n = imp.names[0];
@@ -1115,6 +1143,13 @@ export function createWorld(input: ResolveInput): World {
     if (same) return same;
     let open: Value | null = null;
     for (const star of b.jstars ?? []) {
+      if (star.type) {
+        const cls = bindingValue(file, "java", name, star.type, depth);
+        const key = cls?.v === "sym" && cls.ids.length === 1 ? classOfId.get(cls.ids[0] as string) : undefined;
+        const inner = key ? classes.get(`${key}.${name}`) : undefined;
+        if (inner && cls?.v === "sym") return { v: "sym", ids: inner.ids, ev: cls.ev };
+        continue;
+      }
       if (star.mod === null) {
         const hit = javaTypeIn(file, star.spec, name, star.ev);
         if (hit) return hit;
@@ -1280,7 +1315,11 @@ export function createWorld(input: ResolveInput): World {
   const javaTypeValue = (file: string, parts: readonly string[], nesting: string | null): Value | null => {
     let v = javaLocal(file, parts[0] as string, 0, nesting);
     let i = 1;
-    if (v === null || v.v === "miss") {
+    // A qualified name tries the declared packages first: an external or a
+    // gap head (a star import outside the graph may bring a name `com`) is
+    // no answer while a package of the repository spells the name.
+    const head = v;
+    if (v === null || v.v === "miss" || (parts.length > 1 && (v.v === "ext" || v.v === "gap"))) {
       v = null;
       for (let k = parts.length - 1; k >= 1; k--) {
         const pkg = parts.slice(0, k).join(".");
@@ -1289,6 +1328,7 @@ export function createWorld(input: ResolveInput): World {
         i = k + 1;
         break;
       }
+      if (v === null && head !== null && (head.v === "ext" || head.v === "gap")) v = head;
       if (v === null) return parts.length > 1 && javaExternal(parts.slice(0, -1).join(".")) ? { v: "ext" } : null;
     }
     for (; i < parts.length; i++) {

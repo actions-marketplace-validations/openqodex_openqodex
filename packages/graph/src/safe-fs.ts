@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from "node:path";
 import { FolderReader, type EntryResult } from "@openqodex/core";
 import { isFrameworkFileFacts } from "./frameworks/facts.js";
 import type { FileFacts } from "./types.js";
+import { MAX_TYPE_DEPTH } from "./types.js";
 
 // Repo-relative reads, each decided by what the filesystem holds at the
 // moment of that read and by nothing kept from an earlier one. The root is
@@ -68,8 +69,6 @@ function optBound(b: unknown, imports: number): boolean {
 
 const RELS = new Set(["implements", "include", "prepend", "extend"]);
 
-// `on` nests a type in a type; past this depth a TypeRef is refused.
-const MAX_TYPE_DEPTH = 16;
 
 function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
   return (

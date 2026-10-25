@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import type { Node, Tree } from "web-tree-sitter";
 import type { BoundImport, CallFact, DefFact, FileFacts, ImportFact, Lang, Receiver, TableFact, TypeRef, TypeUse, ValueRef } from "./types.js";
+import { MAX_TYPE_DEPTH } from "./types.js";
 import { walkTree } from "./walk.js";
 import type { TreeVisitor } from "./walk.js";
 
@@ -31,7 +32,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 22;
+export const EXTRACTOR_VERSION = 23;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2426,7 +2427,13 @@ function javaCallType(ctx: Ctx, call: Node, depth = 0): TypeRef | null {
   if (!name || depth > 16) return null;
   while (object?.type === "parenthesized_expression") object = object.firstNamedChild;
   if (!object || object.type === "this") return javaInAnon(ctx) ? null : { name: name.text, qualifier: null, ...pos(call), result: 0 };
-  const onValue = (on: TypeRef | null | undefined): TypeRef | null => (on && !on.elem ? { name: name.text, qualifier: null, ...pos(call), result: 0, on } : null);
+  const depthOf = (t: TypeRef): number => {
+    let n = 0;
+    for (let x: TypeRef | undefined = t; x?.on; x = x.on) n++;
+    return n;
+  };
+  // Past MAX_TYPE_DEPTH the type is not followed: the validator keeps the facts.
+  const onValue = (on: TypeRef | null | undefined): TypeRef | null => (on && !on.elem && depthOf(on) < MAX_TYPE_DEPTH ? { name: name.text, qualifier: null, ...pos(call), result: 0, on } : null);
   if (object.type === "identifier") {
     const local = ctx.local(object.text);
     if (local !== undefined) return onValue(local);
@@ -2627,7 +2634,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     const results = isCtor ? [{ name: owner.name, qualifier: owner.owner, ...pos(name) }] : [javaTypeRef(typeNode)];
     const def = ctx.addDef(node, name, "method", {
       owner: cls.cls,
-      exported: mods.has("public") || inIface,
+      exported: mods.has("public") || (inIface && !mods.has("private")),
       results,
       ...(mods.has("static") && !isCtor ? { static: true } : {}),
       ...(mods.has("abstract") || (inIface && !body) ? { abstract: true } : {}),
@@ -2704,10 +2711,14 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return method(node);
       case "field_declaration":
       case "static_initializer": {
-        if (node.type === "field_declaration" && !javaModifiers(node).has("static")) return;
-        staticInit++;
+        // A field's initializers have a scope of their own: a pattern
+        // variable there never reaches the rest of the class.
+        const leave = node.type === "field_declaration" ? blockFrame() : null;
+        const isStatic = node.type === "static_initializer" || javaModifiers(node).has("static");
+        if (isStatic) staticInit++;
         return () => {
-          staticInit--;
+          if (isStatic) staticInit--;
+          leave?.();
         };
       }
       case "class_body": {
@@ -2792,7 +2803,10 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         // A local given another value; a parameter no longer holds what the caller passed.
         const left = node.childForFieldName("left");
         if (left?.type !== "identifier" || ctx.local(left.text) === undefined) return;
-        ctx.assign(left.text, javaValueType(ctx, node.childForFieldName("right")));
+        // A Java local's type is fixed where it is declared (a `var` by its
+        // first value): a later value never changes it, the parameter is
+        // only marked as given another value.
+        ctx.reassign(left.text);
         return;
       }
       case "instanceof_expression": {

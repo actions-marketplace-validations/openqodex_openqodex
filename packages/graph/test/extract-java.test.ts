@@ -308,6 +308,24 @@ describe("java facts", () => {
     expect(calls(f, "C")).toMatchObject([{ recv: { kind: "self", path: [] }, ctor: true, arity: 0 }]);
   });
 
+  it("d2. a private interface method is not exported", async () => {
+    const f = await factsOf(["public interface I {", "  void a();", "  private void b() {}", "  default void c() { b(); }", "}"]);
+    expect(def(f, "a").exported).toBe(true);
+    expect(def(f, "b").exported).toBe(false);
+  });
+
+  it("d5. a pattern variable in a field initializer stays in that initializer", async () => {
+    const f = await factsOf(["class A {", "  Foo x;", "  boolean ok = o() instanceof Bar x;", "  void m() {", "    x.go();", "  }", "  Object o() { return null; }", "}"]);
+    expect(one(f, "go").recv).toEqual({ kind: "self", path: ["x"] });
+  });
+
+  it("d9. a long chain of calls and var locals keeps on within the validator's depth, so the facts are kept", async () => {
+    const chain = Array.from({ length: 30 }, (_, i) => `m${i}()`).join(".");
+    const vars = Array.from({ length: 30 }, (_, i) => `    var v${i + 1} = v${i}.m();`);
+    const f = await factsOf(["class A {", "  void m(Repo v0) {", `    v0.${chain}.end();`, ...vars, "    v30.end();", "  }", "}"]);
+    expect(isFileFacts(f)).toBe(true);
+  });
+
   it("Type.m() is a name receiver", async () => {
     const f = await factsOf(["class A {", "  void m() { Type.m2(); a.b.Util.m3(); }", "}"]);
     expect(one(f, "m2").recv).toEqual({ kind: "name", name: "Type", path: [], nesting: null });
