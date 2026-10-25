@@ -5,7 +5,7 @@ public class Maker {
         return new Widget(3); // @NEWW
     }
 
-    public Plain plain() {
+    public Object plain() {
         return new Plain(); // @NEWP
     }
 }

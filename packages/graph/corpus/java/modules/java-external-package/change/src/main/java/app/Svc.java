@@ -10,7 +10,7 @@ public class Svc {
     public void run() {
         LOG.info("run"); // @LOG
         Thing.create(); // @THING
-        helper();
+        helper(); // @HELPER
     }
 
     void helper() {

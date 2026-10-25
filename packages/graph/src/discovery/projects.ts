@@ -574,21 +574,21 @@ const GROUP = /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/;
 // pom is fetched, no property or entity is expanded (a `${...}` group is
 // skipped). Each element is found by indexOf, so a hostile file reads in
 // one pass.
+export const POM_DEPENDENCIES = 10_000; // <dependency> elements read per file
 export function pomGroups(text: string): string[] {
   const out: string[] = [];
   let at = 0;
-  for (;;) {
+  for (let n = 0; n < POM_DEPENDENCIES; n++) {
     const open = text.indexOf("<dependency>", at);
     if (open < 0) break;
     const close = text.indexOf("</dependency>", open);
-    const end = close < 0 ? text.length : close;
-    const g = text.indexOf("<groupId>", open);
-    if (g >= 0 && g < end) {
-      const ge = text.indexOf("</groupId>", g);
-      if (ge >= 0 && ge < end) {
-        const group = text.slice(g + 9, ge).trim();
-        if (group.length <= 200 && GROUP.test(group)) out.push(group);
-      }
+    // The element's own text: a groupId is never read from the next one.
+    const element = text.slice(open + 12, close < 0 ? text.length : close);
+    const g = element.indexOf("<groupId>");
+    const ge = g < 0 ? -1 : element.indexOf("</groupId>", g);
+    if (ge >= 0) {
+      const group = element.slice(g + 9, ge).trim();
+      if (group.length <= 200 && GROUP.test(group)) out.push(group);
     }
     if (close < 0) break;
     at = close + 13;
@@ -601,25 +601,23 @@ export function pomGroups(text: string): string[] {
 // variables, a version catalog or a map notation is not read.
 export function gradleGroups(text: string): string[] {
   const out: string[] = [];
-  let at = 0;
-  for (;;) {
-    let q = -1;
-    for (let i = at; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === '"' || ch === "'") {
-        q = i;
-        break;
+  // Line by line: a string never spans lines, and each character is
+  // looked at once (the quote that opens a string, then the one that closes it).
+  for (const line of text.split("\n")) {
+    let open = -1;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch !== '"' && ch !== "'") continue;
+      if (open < 0) {
+        open = i;
+        continue;
       }
+      if (line[open] !== ch) continue;
+      const body = line.slice(open + 1, i);
+      open = -1;
+      const parts = body.split(":", 5);
+      if (body.length <= 300 && parts.length >= 2 && parts.length <= 4 && GROUP.test(parts[0] as string) && /^[\w.-]+$/.test(parts[1] as string)) out.push(parts[0] as string);
     }
-    if (q < 0) break;
-    const quote = text[q] as string;
-    let end = text.indexOf(quote, q + 1);
-    const nl = text.indexOf("\n", q + 1);
-    if (end < 0 || (nl >= 0 && nl < end)) end = nl < 0 ? text.length : nl;
-    const body = text.slice(q + 1, end);
-    const parts = body.split(":");
-    if (body.length <= 300 && parts.length >= 2 && parts.length <= 4 && GROUP.test(parts[0] as string) && /^[\w.-]+$/.test(parts[1] as string)) out.push(parts[0] as string);
-    at = end + 1;
   }
   return out;
 }

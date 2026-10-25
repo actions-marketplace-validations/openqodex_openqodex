@@ -1,5 +1,13 @@
 {
   "guards": "keeps a call into a package a build file declares as external, and discloses a call into a package nothing declares as a miss",
+  "callers": [
+    {
+      "to": "src/main/java/app/Svc.java#Svc.helper",
+      "site": "src/main/java/app/Svc.java:13",
+      "tier": "certain",
+      "kind": "calls"
+    }
+  ],
   "unknowns": [
     {
       "file": "src/main/java/app/Svc.java",

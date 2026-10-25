@@ -2026,7 +2026,12 @@ export function createWorld(input: ResolveInput): World {
       if (side === "s" && name === javaSimple(key)) return "ignore";
       return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
     }
-    return javaOverloads(ids, name, arity, inner ? chain(ev, inner) : ev);
+    // An abstract member found beside a member with a body and the same
+    // parameter count is the one that body implements: it never runs.
+    const shape = (id: string) => `${defById.get(id)?.params?.length ?? 0}${defById.get(id)?.varargs ? "+" : ""}`;
+    const bodies = new Set(ids.filter((id) => defById.get(id)?.abstract !== true).map(shape));
+    const live = ids.filter((id) => defById.get(id)?.abstract !== true || !bodies.has(shape(id)));
+    return javaOverloads(live, name, arity, inner ? chain(ev, inner) : ev);
   };
   // The dotted path of the Java type a definition is read in.
   const javaNestingOf = (caller: Def | undefined): string | null => {
@@ -2050,8 +2055,8 @@ export function createWorld(input: ResolveInput): World {
     }
     let v: Value | null = null;
     let i = parts.length;
-    for (let n = 1; n <= parts.length && v === null; n++) {
-      // The shortest prefix that names a type: `Outer.Inner.CONST` reads
+    for (let n = parts.length; n >= 1 && v === null; n--) {
+      // The longest prefix that names a type: `Outer.Inner.CONST` reads
       // `Outer.Inner`, then the field CONST of it.
       v = javaTypeValue(file, parts.slice(0, n), nesting);
       if (v !== null && v.v === "sym" && !classOfId.has(v.ids[0] as string)) v = null;

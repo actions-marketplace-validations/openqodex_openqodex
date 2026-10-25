@@ -219,6 +219,15 @@ describe("java project model", () => {
     expect(gradleGroups("implementation 'com.squareup.okhttp3:okhttp:4.12.0'\napi(\"io.netty:netty-all\")\nprintln \"a: b\"\n")).toEqual(["com.squareup.okhttp3", "io.netty"]);
   });
 
+  it("never takes a groupId for a pom.xml dependency that has none from the next dependency", () => {
+    expect(pomGroups("<dependencies><dependency><artifactId>x</artifactId></dependency><dependency><groupId>org.next</groupId></dependency></dependencies>")).toEqual(["org.next"]);
+  });
+
+  it("reads a long single-line Gradle file of many quotes to its end", () => {
+    const line = `${'"a" '.repeat(100_000)}implementation 'org.end:lib:1.0' ${"'".repeat(1)}`;
+    expect(gradleGroups(line)).toEqual(["org.end"]);
+  });
+
   it("keeps the Java projects and dependency groups through a saved index, and reads an older one without them", async () => {
     const g = await graphOf({ "svc/pom.xml": "<project><dependencies><dependency><groupId>org.slf4j</groupId></dependency></dependencies></project>\n", "svc/A.java": "package a;\nclass A {}\n" });
     expect(g.model.javaProjects).toEqual(["svc"]);
