@@ -2655,9 +2655,117 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   // A method called on an identifier: when the name is a parameter of its
   // method, decided once the body is read (it may be assigned below).
   const paramCalls: { name: string; scope: Scope }[] = [];
-  const blockFrame = (node: Node): Leave => ctx.push({ def: -1, cls: null, locals: new Map(), block: true, javaScope: pos(node) });
-  // The pattern variables each frame's `instanceof` tests bound.
-  const patternNames = new Map<Scope, string[]>();
+  const blockFrame = (node: Node, locals = new Map<string, TypeRef | null>()): Leave => ctx.push({ def: -1, cls: null, locals, block: true, javaScope: pos(node) });
+  // Pattern names stay local when their typed scope ends.
+  const patternNames = new Map<Scope, Set<string>>();
+  type PatternBinding = { type: TypeRef | null; negated: boolean; supported: boolean };
+  type PatternFlow = {
+    frame: Scope;
+    condition: Node;
+    consequence: Node | null;
+    alternative: Node | null;
+    patterns: Map<string, PatternBinding>;
+    phase: "condition" | "consequence" | "alternative";
+  };
+  const patternFlows: PatternFlow[] = [];
+  const notePattern = (frame: Scope, name: string) => {
+    let names = patternNames.get(frame);
+    if (!names) patternNames.set(frame, (names = new Set()));
+    names.add(name);
+  };
+  const endPatterns = (leave: Leave, frame: Scope, surviving?: ReadonlyMap<string, TypeRef | null>) => {
+    leave();
+    for (const name of patternNames.get(frame) ?? []) {
+      ctx.setLocal(name, surviving?.get(name) ?? null, true);
+      notePattern(ctx.top.decl, name);
+    }
+    patternNames.delete(frame);
+  };
+  const bindPattern = (node: Node, name: string, type: TypeRef | null) => {
+    const frame = ctx.top.decl;
+    const flow = patternFlows[patternFlows.length - 1];
+    let binding: PatternBinding | null = null;
+    if (flow?.frame === frame && node.startIndex >= flow.condition.startIndex && node.endIndex <= flow.condition.endIndex) {
+      binding = { type, negated: false, supported: true };
+      // Record components start inside the pattern expression.
+      let expression: Node | null = node;
+      while (expression && expression.id !== flow.condition.id && expression.type !== "instanceof_expression") expression = expression.parent;
+      binding.supported = expression?.type === "instanceof_expression";
+      for (let at = expression?.parent; binding.supported && at && at.id !== flow.condition.id; at = at.parent) {
+        const operator = at.childForFieldName("operator")?.text;
+        if (at.type === "parenthesized_expression") continue;
+        if (at.type === "unary_expression" && operator === "!") {
+          binding.negated = !binding.negated;
+          continue;
+        }
+        if (at.type === "binary_expression" && operator === "&&" && !binding.negated) continue;
+        binding.supported = false;
+      }
+      if (!binding.supported) binding.type = null;
+      flow.patterns.set(name, binding);
+    }
+    ctx.setLocal(name, binding?.negated || binding?.supported === false ? null : type, true);
+    notePattern(frame, name);
+  };
+  // Read the branch boundary before extracting its first relevant node.
+  const enterPatternBranch = (node: Node) => {
+    const flow = patternFlows[patternFlows.length - 1];
+    if (!flow || node.startIndex < flow.condition.endIndex) return;
+    const phase = flow.alternative && node.startIndex >= flow.alternative.startIndex ? "alternative" : "consequence";
+    if (phase === flow.phase) return;
+    flow.phase = phase;
+    const branch = phase === "alternative" ? flow.alternative : flow.consequence;
+    // Block branches keep separate maps for value references resolved after the walk.
+    const branchLocals = branch?.type === "block" && branch.id === node.id ? new Map<string, TypeRef | null>() : undefined;
+    const locals = branchLocals ?? flow.frame.locals;
+    for (const [name, binding] of flow.patterns) {
+      const visible = binding.supported && binding.negated === (phase === "alternative");
+      locals?.set(name, visible ? binding.type : null);
+    }
+    return branchLocals;
+  };
+  const completesAbruptly = (branch: Node | null): boolean => {
+    let last = branch;
+    while (last?.type === "block") {
+      const statements = last.namedChildren.filter((c) => c.type !== "line_comment" && c.type !== "block_comment");
+      last = statements[statements.length - 1] ?? null;
+    }
+    return last !== null && ["return_statement", "throw_statement", "break_statement", "continue_statement"].includes(last.type);
+  };
+  const breakBoundaries = new Set([
+    "for_statement", "enhanced_for_statement", "while_statement", "do_statement",
+    "switch_expression", "switch_statement", "lambda_expression", "class_body", "enum_body",
+  ]);
+  const loopCanBreak = (body: Node | null): boolean => {
+    const stack = body ? [{ node: body, nested: false }] : [];
+    while (stack.length > 0) {
+      const { node, nested } = stack.pop()!;
+      if (node.type === "break_statement") {
+        // A labeled break may target this loop from a nested statement.
+        if (!nested || node.namedChildren.some((c) => c.type === "identifier")) return true;
+        continue;
+      }
+      const inside = nested || breakBoundaries.has(node.type);
+      for (const child of node.namedChildren) stack.push({ node: child, nested: inside });
+    }
+    return false;
+  };
+  const breaksAnyLabel = (body: Node | null, labels: ReadonlySet<string>): boolean => {
+    if (labels.size === 0) return false;
+    const stack = body ? [body] : [];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      // Breaks cannot cross a class or lambda boundary.
+      if (["lambda_expression", "class_body", "enum_body", "interface_body", "annotation_type_body"].includes(node.type)) continue;
+      if (node.type === "break_statement") {
+        const label = node.namedChildren.find((c) => c.type === "identifier");
+        if (label && labels.has(label.text)) return true;
+        continue;
+      }
+      for (const child of node.namedChildren) stack.push(child);
+    }
+    return false;
+  };
   let anonymous = 0;
   const typeUses = (node: Node | null, caller: number) => {
     for (const r of javaTypeNames(node)) ctx.addTypeUse(r, caller);
@@ -2852,6 +2960,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     }
   };
   walkTree(tree.rootNode, readers, { interesting: JAVA_TYPES, visit: (node) => {
+    const branchLocals = enterPatternBranch(node);
     switch (node.type) {
       case "package_declaration": {
         const id = node.namedChildren.find((c) => c.type === "scoped_identifier" || c.type === "identifier");
@@ -2905,8 +3014,11 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       }
       // A case's pattern variables (`case Circle c ->`) end with the case.
       case "switch_rule":
-      case "switch_block_statement_group":
-        return blockFrame(node);
+      case "switch_block_statement_group": {
+        const leave = blockFrame(node);
+        const frame = ctx.top.decl;
+        return () => endPatterns(leave, frame);
+      }
       // `case Circle c`, and each component of a record pattern
       // (`o instanceof Point(int x, Svc y)`): a local of that type.
       case "type_pattern":
@@ -2915,9 +3027,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const name = node.namedChildren[node.namedChildren.length - 1];
         typeUses(typeNode, ctx.caller());
         if (!name || name.type !== "identifier" || name === typeNode) return;
-        ctx.setLocal(name.text, declared(javaTypeRef(typeNode)), true);
-        const decl = ctx.top.decl;
-        patternNames.set(decl, [...(patternNames.get(decl) ?? []), name.text]);
+        bindPattern(node, name.text, declared(javaTypeRef(typeNode)));
         return;
       }
       case "field_declaration":
@@ -2955,19 +3065,40 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "block":
       case "constructor_body":
       case "for_statement":
-      case "switch_block":
-      // An `if` or a `while` holds the pattern variables its condition binds
-      // (`o instanceof A x`). After a negated guard Java keeps them alive in
-      // the block, which the graph does not follow: there the name is a
-      // local of unknown type, never the field it would hide.
+      case "switch_block": {
+        const leave = blockFrame(node, branchLocals);
+        const frame = ctx.top.decl;
+        return () => endPatterns(leave, frame);
+      }
+      // Negated patterns bind in the alternative or after a guard that exits.
       case "if_statement":
       case "while_statement": {
         const leave = blockFrame(node);
         const frame = ctx.top.decl;
+        const condition = node.childForFieldName("condition");
+        if (!condition) return () => endPatterns(leave, frame);
+        const flow: PatternFlow = {
+          frame, condition, consequence: node.childForFieldName("consequence") ?? node.childForFieldName("body"),
+          alternative: node.childForFieldName("alternative"), patterns: new Map(), phase: "condition",
+        };
+        patternFlows.push(flow);
+        let container = node.parent;
+        const labels = new Set<string>();
+        while (container?.type === "labeled_statement") {
+          const label = container.namedChildren.find((c) => c.type === "identifier");
+          if (label) labels.add(label.text);
+          container = container.parent;
+        }
+        const inBlock = container !== null && ["block", "constructor_body", "switch_block_statement_group"].includes(container.type);
+        const survives = inBlock && !breaksAnyLabel(flow.consequence, labels)
+          && (node.type === "while_statement" ? !loopCanBreak(flow.consequence) : completesAbruptly(flow.consequence));
         return () => {
-          const names = patternNames.get(frame) ?? [];
-          leave();
-          for (const n of names) ctx.setLocal(n, null, true);
+          patternFlows.pop();
+          const surviving = new Map<string, TypeRef | null>();
+          if (survives) for (const [name, binding] of flow.patterns) {
+            if (binding.negated && binding.supported) surviving.set(name, binding.type);
+          }
+          endPatterns(leave, frame, surviving);
         };
       }
       case "explicit_constructor_invocation": {
@@ -3040,9 +3171,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         // `o instanceof Svc s`: s is a Svc where the test holds.
         const name = node.childForFieldName("name");
         if (name) {
-          ctx.setLocal(name.text, declared(javaTypeRef(typeNode)), true);
-          const decl = ctx.top.decl;
-          patternNames.set(decl, [...(patternNames.get(decl) ?? []), name.text]);
+          bindPattern(node, name.text, declared(javaTypeRef(typeNode)));
         }
         return;
       }
