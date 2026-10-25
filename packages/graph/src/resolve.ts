@@ -1296,7 +1296,7 @@ export function createWorld(input: ResolveInput): World {
   // The class a type name in `file` stands for, with the evidence of that
   // name's binding. A function's name stands for its declared result type
   // at the position the call took. `ext`: the type comes from a dependency.
-  type TypeHit = { key: string; ev: Ev } | "ext" | null;
+  type TypeHit = { key: string; ev: Ev; args?: { types: TypeRef[]; file: string; nesting: string | null } } | "ext" | null;
   const typeValue = (file: string, t: TypeRef): Value | null => {
     // The head name, through the scoped import that binds it where the type was read.
     const head = (name: string) => (t.bound ? boundValue(file, name, t.bound) : resolveLocal(file, name));
@@ -1310,7 +1310,7 @@ export function createWorld(input: ResolveInput): World {
     return v;
   };
   const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false, nesting: string | null = null): TypeHit => {
-    if (t.elem || depth > MAX_TYPE_DEPTH) return null;
+    if (t.elem || t.param !== undefined || depth > MAX_TYPE_DEPTH) return null;
     if (t.promise) return "ext";
     if (t.result !== undefined) return asType ? null : resultType(file, family, t, depth, nesting);
     if (family === "java") return javaTypeKey(file, t, asType, nesting);
@@ -1328,7 +1328,7 @@ export function createWorld(input: ResolveInput): World {
     const result = def?.results?.[t.result ?? 0];
     if (!def || !result) return null;
     const inner = typeKey(def.file, def.family, { ...result, result: undefined }, depth + 1);
-    return inner === null || inner === "ext" ? inner : { key: inner.key, ev: chain(v.ev, inner.ev) };
+    return inner === null || inner === "ext" ? inner : { ...inner, ev: chain(v.ev, inner.ev) };
   };
 
   // A dotted Java type name (`Repo`, `Outer.Inner`, `a.b.Repo`): its head
@@ -1379,7 +1379,7 @@ export function createWorld(input: ResolveInput): World {
     if (v?.v === "ext") return "ext";
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
-    return cls ? { key: cls, ev: v.ev } : null;
+    return cls ? { key: cls, ev: v.ev, args: t.args ? { types: t.args, file, nesting } : undefined } : null;
   };
   type ResultTarget = { ids: string[]; ev: Ev } | "ext" | null;
   const javaResultTarget = (file: string, t: TypeRef, nesting: string | null): ResultTarget => {
@@ -1420,10 +1420,12 @@ export function createWorld(input: ResolveInput): World {
   // Every candidate must declare the same result type. Receiver lookup follows the family's method rules.
   const resultType = (file: string, family: Family, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
     let found: ResultTarget;
+    let receiver: TypeHit = null;
     if (t.on) {
       const on = typeKey(file, family, t.on, depth + 1, false, nesting);
       // An external receiver has no readable method declaration.
       if (on === null || on === "ext") return null;
+      receiver = on;
       const hit = methodOn(on.key, t.name, "i", 0);
       if (!hit || !("ids" in hit)) return null;
       const ids = hit.ids.filter((id) => defById.get(id)?.results?.[t.result ?? 0]);
@@ -1442,13 +1444,23 @@ export function createWorld(input: ResolveInput): World {
       const def = defById.get(id);
       const result = def?.results?.[t.result ?? 0];
       if (!def || !result) return null;
-      // Only an awaited call exposes the value inside a declared Promise.
-      const inner = result.promise && !t.awaited
-        ? "ext"
-        : typeKey(def.file, def.family, { ...result, result: undefined, promise: undefined }, depth + 1, false, def.owner);
+      let inner: TypeHit;
+      if (def.family === "java" && result.param !== undefined) {
+        // Arguments belong to the receiver's file, which may differ from the method's file.
+        if (!receiver || receiver.key !== classKey("java", def.file, def.owner ?? "")) return null;
+        const args = receiver.args;
+        const arg = args?.types[result.param];
+        if (!args || !arg || result.elem) return null;
+        inner = typeKey(args.file, "java", arg, depth + 1, false, args.nesting);
+      } else {
+        // Only an awaited call exposes the value inside a declared Promise.
+        inner = result.promise && !t.awaited
+          ? "ext"
+          : typeKey(def.file, def.family, { ...result, result: undefined, promise: undefined }, depth + 1, false, def.owner);
+      }
       if (inner === null) return null;
       if (out !== null && (inner === "ext" ? out !== "ext" : out === "ext" || out.key !== inner.key)) return null;
-      out = inner === "ext" ? inner : { key: inner.key, ev: chain(found.ev, inner.ev) };
+      out = inner === "ext" ? inner : { ...inner, ev: chain(found.ev, inner.ev) };
     }
     return out;
   };

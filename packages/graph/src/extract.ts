@@ -48,7 +48,7 @@ type Frame = {
   // end (`pick(k)()` and `pick(k)` start at one place, never end at one).
   aliases?: Map<string, { ref?: number; callNode?: number }>;
   tables?: Map<string, number>; // names bound to a literal table, index into tables
-  typeParams?: Map<string, TypeRef | null>; // TypeScript type parameters and their constraints
+  typeParams?: Map<string, TypeRef | null>; // Type parameters and their bounds.
   objectAt?: number; // a module made from an object literal: the literal's start
   fnAt?: number; // a const bound to a function: the function's start, whose frame is this definition's
   // Parameters and locals given another value lose their original callable value.
@@ -109,6 +109,8 @@ function sameType(a: TypeRef | undefined, b: TypeRef | undefined): boolean {
   if (!a || !b) return a === b;
   return a.name === b.name && a.qualifier === b.qualifier && !a.elem === !b.elem && a.result === b.result
     && !a.promise === !b.promise && !a.awaited === !b.awaited
+    && a.kind === b.kind && a.param === b.param && (a.args?.length ?? 0) === (b.args?.length ?? 0)
+    && (a.args ?? []).every((arg, i) => sameType(arg, b.args?.[i]))
     && a.bound?.import === b.bound?.import && a.bound?.imported === b.bound?.imported && sameType(a.on, b.on);
 }
 
@@ -652,6 +654,7 @@ class Ctx {
     // assigned the name something else after.
     const bindType = (t: TypeRef | null | undefined): void => {
       if (t?.on) bindType(t.on);
+      t?.args?.forEach(bindType);
       const s = t as Stamped | null | undefined;
       const at = s?.[READ_IN];
       if (!s || !at) return;
@@ -2409,8 +2412,7 @@ function javaModifiers(node: Node): Set<string> {
   return new Set(mods ? mods.children.filter((c) => !c.isNamed).map((c) => c.type) : []);
 }
 
-// The type parameters a class or a method declares. Their bounds are not
-// read: a bounded type parameter is no receiver type in this version.
+// Class and method parameters use their first bound. All names shadow outer parameters.
 function javaTypeParams(node: Node): Map<string, TypeRef | null> | null {
   const list = node.childForFieldName("type_parameters");
   if (!list) return null;
@@ -2419,14 +2421,26 @@ function javaTypeParams(node: Node): Map<string, TypeRef | null> | null {
     const name = tp.type === "type_parameter" ? tp.namedChildren.find((c) => c.type === "type_identifier") : undefined;
     if (name) out.set(name.text, null);
   }
+  const previous = enteringTypeParams;
+  enteringTypeParams = out;
+  for (const tp of list.namedChildren) {
+    const name = tp.type === "type_parameter" ? tp.namedChildren.find((c) => c.type === "type_identifier") : undefined;
+    const bound = tp.namedChildren.find((c) => c.type === "type_bound")?.firstNamedChild;
+    if (name && bound) out.set(name.text, declared(javaTypeRef(bound)));
+  }
+  enteringTypeParams = previous;
   return out.size > 0 ? out : null;
 }
 
 // The names of a type written `a.b.C` in order, with the node of the last;
 // null for anything that is not a plain or a scoped type name.
-function javaTypeChain(node: Node | null): { names: string[]; last: Node } | null {
+function javaTypeChain(node: Node | null): { names: string[]; last: Node; args?: Node } | null {
   if (!node) return null;
-  if (node.type === "generic_type") return javaTypeChain(node.namedChildren.find((c) => c.type === "type_identifier" || c.type === "scoped_type_identifier") ?? null);
+  if (node.type === "generic_type") {
+    const head = javaTypeChain(node.namedChildren.find((c) => c.type === "type_identifier" || c.type === "scoped_type_identifier") ?? null);
+    const args = node.namedChildren.find((c) => c.type === "type_arguments");
+    return head ? { ...head, ...(args ? { args } : {}) } : null;
+  }
   if (node.type === "type_identifier") return { names: [node.text], last: node };
   if (node.type !== "scoped_type_identifier") return null;
   const parts = node.namedChildren.filter((c) => c.type === "type_identifier" || c.type === "scoped_type_identifier");
@@ -2436,9 +2450,6 @@ function javaTypeChain(node: Node | null): { names: string[]; last: Node } | nul
   return { names: [...head.names, last.text], last };
 }
 
-// A written type as the graph reads it: the raw class (`List<Item>` is a
-// List), an array as an element of its type; null for a primitive, `void`,
-// `var` and a type parameter in scope.
 // A declarator's own dimensions (`Foo xs[]`): the type is an array of what is written.
 function javaDims(t: TypeRef | null, declarator: Node | null | undefined): TypeRef | null {
   return t && declarator?.childForFieldName("dimensions") ? { ...t, elem: true } : t;
@@ -2460,19 +2471,34 @@ function javaScopedTypeNames(names: readonly string[]): string[] {
   return [...names];
 }
 
-function javaTypeRef(node: Node | null): TypeRef | null {
-  if (!node) return null;
+// A bound can be used inside arguments that already consumed part of the depth limit.
+function javaBoundType(t: TypeRef, depth: number): TypeRef {
+  return { ...t, args: depth < MAX_TYPE_DEPTH ? t.args?.map((a) => javaBoundType(a, depth + 1)) : undefined };
+}
+
+// Written types keep arguments. Parameters use their bound, or remain unknown without one.
+function javaTypeRef(node: Node | null, depth = 0): TypeRef | null {
+  if (!node || depth > MAX_TYPE_DEPTH) return null;
   if (node.type === "array_type") {
-    const inner = javaTypeRef(node.childForFieldName("element"));
+    const inner = javaTypeRef(node.childForFieldName("element"), depth + 1);
     return inner ? { ...inner, elem: true } : null;
   }
-  if (node.type === "annotated_type") return javaTypeRef(node.namedChildren.find((c) => c.type !== "marker_annotation" && c.type !== "annotation") ?? null);
+  if (node.type === "annotated_type") return javaTypeRef(node.namedChildren.find((c) => c.type !== "marker_annotation" && c.type !== "annotation") ?? null, depth + 1);
   const chain = javaTypeChain(node);
   if (!chain) return null;
   const name = chain.names[chain.names.length - 1] as string;
-  if (chain.names.length === 1 && (name === "var" || typeParam(name) !== undefined)) return null;
+  if (chain.names.length === 1) {
+    if (name === "var") return null;
+    const bound = typeParam(name);
+    // Nested bounds keep their head type to prevent exponential expansion.
+    if (bound !== undefined) return bound ? (depth > 0 ? { ...bound, args: undefined } : javaBoundType(bound, depth)) : null;
+  }
   const names = javaScopedTypeNames(chain.names);
-  return { name, qualifier: names.length > 1 ? names.slice(0, -1).join(".") : null, ...pos(node) };
+  // Unknown arguments keep their slot, so later parameter indices never shift.
+  const args = depth < MAX_TYPE_DEPTH ? chain.args?.namedChildren
+    .filter((c) => c.type !== "line_comment" && c.type !== "block_comment")
+    .map((c) => javaTypeRef(c, depth + 1) ?? opaqueType(c)) : undefined;
+  return { name, qualifier: names.length > 1 ? names.slice(0, -1).join(".") : null, ...pos(node), ...(args ? { args } : {}) };
 }
 
 // Every named type in a written type, generic arguments included (`Map<K,
@@ -2534,13 +2560,12 @@ function javaSelfFieldType(ctx: Ctx, name: string): TypeRef | null {
 function javaCallType(ctx: Ctx, call: Node, depth = 0): TypeRef | null {
   const name = call.childForFieldName("name");
   let object = call.childForFieldName("object");
-  if (!name || depth > 16) return null;
+  if (!name || depth > MAX_TYPE_DEPTH) return null;
   while (object?.type === "parenthesized_expression") object = object.firstNamedChild;
   if (!object || object.type === "this") return ctx.cls() ? { name: name.text, qualifier: null, ...pos(call), result: 0 } : null;
   const depthOf = (t: TypeRef): number => {
-    let n = 0;
-    for (let x: TypeRef | undefined = t; x?.on; x = x.on) n++;
-    return n;
+    const children = [...(t.args ?? []), ...(t.on ? [t.on] : [])];
+    return children.reduce((max, child) => Math.max(max, 1 + depthOf(child)), 0);
   };
   // Past MAX_TYPE_DEPTH the type is not followed: the validator keeps the facts.
   const onValue = (on: TypeRef | null | undefined): TypeRef | null => (on && !on.elem && depthOf(on) < MAX_TYPE_DEPTH ? { name: name.text, qualifier: null, ...pos(call), result: 0, on } : null);
@@ -2777,7 +2802,12 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     const isCtor = node.type === "constructor_declaration" || compact;
     const body = node.childForFieldName("body");
     const typeNode = node.childForFieldName("type");
-    const results = isCtor ? [{ name: owner.name, qualifier: owner.owner, ...pos(name) }] : [javaTypeRef(typeNode)];
+    const resultName = typeNode?.type === "type_identifier" ? typeNode.text : null;
+    const param = resultName && !typeParams?.has(resultName) ? [...(cls.typeParams?.keys() ?? [])].indexOf(resultName) : -1;
+    const result: TypeRef | null = param >= 0 && typeNode
+      ? { kind: "param", name: resultName as string, qualifier: null, ...pos(typeNode), param }
+      : javaTypeRef(typeNode);
+    const results = isCtor ? [{ name: owner.name, qualifier: owner.owner, ...pos(name) }] : [result];
     const def = ctx.addDef(node, name, "method", {
       owner: cls.cls,
       exported: mods.has("public") || (inIface && !mods.has("private")),

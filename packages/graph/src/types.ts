@@ -17,8 +17,7 @@ export function familyOf(lang: Lang): Family {
 
 // ---------- facts one parse of one file yields (cached by content) ----------
 
-// How deep a TypeRef may nest through `on`: the extractor drops `on` past
-// it and the validator refuses deeper ones, so a kept file is never refused.
+// Type nesting through `on` and `args` shares one depth limit.
 export const MAX_TYPE_DEPTH = 16;
 
 // A type named in source: `Repo`, `pkg.Repo` (qualifier "pkg"), Ruby `A::B`
@@ -47,6 +46,9 @@ export type TypeRef = {
   declared?: boolean;
   bound?: BoundImport;
   rel?: "implements" | "include" | "prepend" | "extend";
+  args?: TypeRef[]; // Java arguments, in declaration order.
+  kind?: "param"; // A Java result naming a class type parameter.
+  param?: number; // The class type parameter's index.
 };
 
 export type DefFact = {

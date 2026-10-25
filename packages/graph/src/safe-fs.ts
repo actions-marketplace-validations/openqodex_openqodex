@@ -75,6 +75,9 @@ function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
     depth <= MAX_TYPE_DEPTH &&
     isObj(v) &&
     (v.on === undefined || isTypeRef(v.on, imports, depth + 1)) &&
+    (v.args === undefined || (Array.isArray(v.args) && v.args.every((a: unknown) => isTypeRef(a, imports, depth + 1)))) &&
+    (v.kind === undefined || v.kind === "param") &&
+    (v.param === undefined || (isInt(v.param) && (v.param as number) >= 0)) &&
     isStr(v.name) &&
     (v.qualifier === null || isStr(v.qualifier)) &&
     isInt(v.line) &&
