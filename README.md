@@ -10,7 +10,7 @@
 [![CI](https://github.com/openqodex/openqodex/actions/workflows/ci.yml/badge.svg)](https://github.com/openqodex/openqodex/actions/workflows/ci.yml)
 [![Discussions](https://img.shields.io/github/discussions/openqodex/openqodex)](https://github.com/openqodex/openqodex/discussions)
 
-Your agent writes the change. A separate reviewer checks it before you push. Works in Claude Code, Codex, Cursor and Cline. The reviewer is Claude Code or Codex, on your own login.
+Open source AI code review for coding agents. A separate reviewer checks every change your agent writes before you push. A code graph gives your agent a map of your codebase. Works in Claude Code, Codex, Cursor and Cline.
 
 For people, in your terminal:
 
