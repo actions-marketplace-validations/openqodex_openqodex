@@ -70,7 +70,7 @@ import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
 import { RELEASE, REPOSITORY, assetUrl, boardHash, buildEntry, byBytes, entryProblems, fileList, hashReviewedFolder, listHash, readEntry, runsRoot, reviewedBytes, sha256, writeEntry } from "./lib/index.mjs";
 import { boardRefusal } from "./lib/board-readback.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
-import { redactRowReasons } from "./lib/runner.mjs";
+import { redactMachinePaths, redactRowReasons } from "./lib/runner.mjs";
 import { extractAsset } from "./fetch-run.mjs";
 
 // The files a run may publish, by path inside the run folder.
@@ -377,6 +377,20 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     for (const [from, to] of reasons) text = text.split(from).join(to);
     file.bytes = Buffer.from(text);
   }
+  // A machine path outside a reason field (a scanner's own message, a hook
+  // command in a control row, a trace) gets the same placeholders in the
+  // packaged copy of every text file. The inspection below still refuses
+  // a path the placeholders do not cover, and score.json at its source.
+  let pathsRedacted = 0;
+  for (const file of files) {
+    if (file.path.startsWith("_archive/")) continue;
+    const text = file.bytes.toString("utf8");
+    if (Buffer.from(text).length !== file.bytes.length) continue;
+    const clean = redactMachinePaths(text, folder);
+    if (clean.lines === 0) continue;
+    pathsRedacted += clean.lines;
+    file.bytes = Buffer.from(clean.text);
+  }
   const inspected = files.map((f) => f.path === "score.json" ? { path: f.path, bytes: readFileSync(join(folder, f.path)) } : f);
   const { hits, looked } = await inspect(folder, inspected, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
   if (hits.length > 0) throw new Error(`refused: ${hits.length} hit${hits.length === 1 ? "" : "s"} in the files to publish:\n${hits.slice(0, 40).join("\n")}`);
@@ -387,6 +401,7 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
   return {
     runId,
     reasonsRedacted,
+    pathsRedacted,
     tarPath,
     sha256: sha256(tar),
     bytes: tar.length,
@@ -522,7 +537,7 @@ async function main() {
   }
   const { asset, entry, written, rebytes, boardOnly, pointer } = r;
   console.log(`${asset.runId}: ${asset.files} files in ${asset.tarPath} (${asset.bytes} bytes, sha256 ${asset.sha256}, list hash ${asset.listHash})`);
-  console.log(`${asset.reasonsRedacted} reasons redacted`);
+  console.log(`${asset.reasonsRedacted} reasons redacted, ${asset.pathsRedacted} lines with a machine path rewritten`);
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;

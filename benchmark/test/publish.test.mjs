@@ -141,10 +141,15 @@ describe("nothing private leaves in an asset", () => {
     expect(message).not.toContain(secret);
   });
 
-  it("refuses a run whose stderr holds this machine's home folder", async () => {
+  it("publishes a stderr holding this machine's home folder with a placeholder, and refuses another machine's", async () => {
     const run = plantedRun();
     write(join(run, "samples/flask-path-traversal/claude-graph-on/1/stderr.txt"), `warning: ${join(homedir(), "Projects", "x")} is not a git repository\n`);
-    expect(await refused(run)).toMatch(/samples\/flask-path-traversal\/claude-graph-on\/1\/stderr\.txt:1: the home folder path/);
+    const asset = await packageRun(run, { out: tempDir("oq-publish-out-") });
+    expect(asset.pathsRedacted).toBe(1);
+    const back = extractAsset(asset.tarPath, asset, tempDir("oq-fetch-"), asset.runId);
+    expect(readFileSync(join(back, "samples/flask-path-traversal/claude-graph-on/1/stderr.txt"), "utf8")).toBe("warning: <home>/Projects/x is not a git repository\n");
+    write(join(run, "samples/flask-path-traversal/claude-graph-on/1/stderr.txt"), "warning: /home/someone/Projects/x is not a git repository\n");
+    expect(await refused(run)).toMatch(/samples\/flask-path-traversal\/claude-graph-on\/1\/stderr\.txt:1: a home folder path/);
   });
 
   it("refuses a run whose transcript holds the model key or base URL, without printing either", async () => {
@@ -347,6 +352,31 @@ it("publishes saved scanner reasons with placeholders without changing the run",
   expect(saved.scanners[1].reason).toBeNull();
   expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/report/brief.md"), "utf8")).toContain(saved.scanners[0].reason);
   expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/transcript.jsonl"), "utf8")).toBe(transcript);
+  expect(hashFolder(run)).toEqual(before);
+});
+
+// Failure case: a scanner's own message or a control row's hook command
+// holds a machine path outside a reason field, and the run cannot publish
+// or publishes the path.
+it("publishes a scanner message and a control row holding a machine path with placeholders without changing the run", async () => {
+  const run = plantedRun();
+  const message = `Lint/DuplicateMethods: Method \`A.b\` is defined at both ${homedir()}/.openqodex/checkouts/work-x/tree/a.rb:1 and ${homedir()}/.openqodex/checkouts/work-x/tree/a.rb:9.`;
+  const settings = JSON.stringify({ hooks: [{ command: `'node' '${run}/lib/control-gate.mjs'` }] });
+  write(join(run, "rows.jsonl"), `${JSON.stringify({ settings })}\n${JSON.stringify({ settings: null })}\n`);
+  const dir = join(run, "samples", "demo-polyglot", "claude-graph-on", "1");
+  write(join(dir, "report/scan.json"), JSON.stringify({ findings: [{ message }] }, null, 2));
+  write(join(dir, "report/brief.md"), `- c1 [rubocop] a.rb:9 ${message}\n`);
+  const before = hashFolder(run);
+  const asset = await packageRun(run, { out: tempDir("oq-publish-out-") });
+  expect(asset.reasonsRedacted).toBe(0);
+  expect(asset.pathsRedacted).toBe(3);
+  const back = extractAsset(asset.tarPath, asset, tempDir("oq-fetch-"), asset.runId);
+  const scan = JSON.parse(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/report/scan.json"), "utf8"));
+  expect(scan.findings[0].message).toBe("Lint/DuplicateMethods: Method `A.b` is defined at both <home>/.openqodex/checkouts/work-x/tree/a.rb:1 and <home>/.openqodex/checkouts/work-x/tree/a.rb:9.");
+  expect(readFileSync(join(back, "samples/demo-polyglot/claude-graph-on/1/report/brief.md"), "utf8")).toContain(scan.findings[0].message);
+  const rows = readFileSync(join(back, "rows.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  expect(rows[0].settings).toBe(JSON.stringify({ hooks: [{ command: "'node' '<run>/lib/control-gate.mjs'" }] }));
+  expect(rows[1].settings).toBeNull();
   expect(hashFolder(run)).toEqual(before);
 });
 
