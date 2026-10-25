@@ -72,10 +72,11 @@ describe("java facts", () => {
     expect(def(f, "R").bases.map((b) => [b.name, b.rel])).toEqual([["Q", "implements"]]);
   });
 
-  it("fields are raw types: generics stripped, arrays as elem, primitives left out", async () => {
+  it("fields are raw types: generics stripped, arrays as elem, primitives an entry that names no class", async () => {
     const f = await factsOf(["class A {", "  void m() {}", "  private List<Item> items;", "  Item[] arr;", "  int count;", "  a.b.C qualified;", "}"]);
     const fields = def(f, "A").fields;
-    expect(Object.keys(fields).sort()).toEqual(["arr", "items", "qualified"]);
+    expect(Object.keys(fields).sort()).toEqual(["arr", "count", "items", "qualified"]);
+    expect(fields.count).toMatchObject({ name: "", qualifier: null });
     expect(fields.items).toMatchObject({ name: "List", qualifier: null });
     expect(fields.items?.elem).toBeUndefined();
     expect(fields.arr).toMatchObject({ name: "Item", qualifier: null, elem: true });
@@ -85,7 +86,8 @@ describe("java facts", () => {
   it("a record's components are fields", async () => {
     const f = await factsOf(["record R(int a, Svc b, List<Item> c) {}"]);
     const fields = def(f, "R").fields;
-    expect(Object.keys(fields).sort()).toEqual(["b", "c"]);
+    expect(Object.keys(fields).sort()).toEqual(["a", "b", "c"]);
+    expect(fields.a).toMatchObject({ name: "" });
     expect(fields.b).toMatchObject({ name: "Svc", qualifier: null });
     expect(fields.c).toMatchObject({ name: "List", qualifier: null });
   });
@@ -273,6 +275,37 @@ describe("java facts", () => {
   it("a call on an other receiver is still recorded", async () => {
     const f = await factsOf(["class A {", "  void m(Object[] xs) {", "    xs[0].toString().trim();", "  }", "}"]);
     expect(one(f, "trim").recv).toEqual({ kind: "other" });
+  });
+
+  it("10. an instanceof pattern variable is bound in the consequence only, never after the if", async () => {
+    const f = await factsOf(["class A {", "  Foo x;", "  void m(Object o) {", "    if (o instanceof Bar x) {", "      x.run();", "    }", "    x.go();", "  }", "}"]);
+    expect(one(f, "run").recv).toMatchObject({ kind: "type", type: { name: "Bar" } });
+    expect(one(f, "go").recv).toEqual({ kind: "self", path: ["x"] });
+  });
+
+  it("12. a field whose type is a type parameter or a primitive is recorded so it hides a superclass field", async () => {
+    const f = await factsOf(["class A<T> extends B {", "  T r;", "  int n;", "}"]);
+    expect(Object.keys(def(f, "A").fields).sort()).toEqual(["n", "r"]);
+    expect(isFileFacts(f)).toBe(true);
+  });
+
+  it("14. an array dimension after a name makes the parameter, field and local an array", async () => {
+    const f = await factsOf(["class A {", "  Foo fs[];", "  void m(Foo xs[]) {", "    Foo ls[] = null;", "  }", "}"]);
+    expect(def(f, "A").fields.fs).toMatchObject({ name: "Foo", elem: true });
+    const g = await factsOf(["class A {", "  void m(Foo xs[]) {", "    xs.clone();", "    Foo ls[] = null;", "    ls.clone();", "  }", "}"]);
+    expect(calls(g, "clone").map((c) => c.recv.kind)).toEqual(["other", "other"]);
+  });
+
+  it("3. new T() marks its call ctor and a method call does not", async () => {
+    const f = await factsOf(["class A {", "  void m() {", "    new T();", "    T.T();", "  }", "}"]);
+    expect(calls(f, "T").map((c) => c.ctor === true)).toEqual([true, false]);
+    expect(isFileFacts(f)).toBe(true);
+  });
+
+  it("9. this(...) and super(...) are constructor calls on the own class and the super receiver", async () => {
+    const f = await factsOf(["class C extends B {", "  C() {", "    super(1);", "  }", "  C(int a) {", "    this();", "  }", "}"]);
+    expect(calls(f, "B")).toMatchObject([{ recv: { kind: "super" }, ctor: true, arity: 1 }]);
+    expect(calls(f, "C")).toMatchObject([{ recv: { kind: "self", path: [] }, ctor: true, arity: 0 }]);
   });
 
   it("Type.m() is a name receiver", async () => {

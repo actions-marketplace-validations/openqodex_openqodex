@@ -249,3 +249,170 @@ describe("java project model", () => {
     expect(isTestPath("src/main/java/a/Foo.java")).toBe(false);
   });
 });
+
+// Findings of the review of the final diff, one test each.
+describe("java review findings", () => {
+  const ids = (g: Graph, file: string, name: string) => (g.defsByFile.get(file) ?? []).filter((n) => n.name === name).map((n) => n.id);
+  const siteTiers = (g: Graph, file: string, name: string, site: string, kind = "calls") => ids(g, file, name).flatMap((id) => tiers(g, id, kind).filter((t) => t.startsWith(`${site} `)));
+
+  it("1. never drops an abstract overload for a body member of the same class with the same parameter count", async () => {
+    const files = {
+      "a/A.java": lines("package a;", "", "public abstract class A {", "    abstract void m(String s);", "", "    void m(Integer i) {", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go(A a) {", '        a.m("x"); // CALL', "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/A.java", "m", site).sort()).toEqual([`${site} possible`, `${site} possible`]);
+  });
+
+  it("2. keeps a static overload of the class as a candidate of a bare call in an instance method", async () => {
+    const files = { "a/C.java": lines("package a;", "", "public class C {", "    void f(Object o) {", "    }", "", "    static void f(String s) {", "    }", "", "    void g() {", '        f("x"); // CALL', "    }", "}") };
+    const g = await graphOf(files);
+    const site = at(files, "a/C.java", "CALL");
+    expect(siteTiers(g, "a/C.java", "f", site).sort()).toEqual([`${site} possible`, `${site} possible`]);
+  });
+
+  it("3. never binds new C() to a static method named C or to a base class's constructor", async () => {
+    const files = {
+      "a/B.java": lines("package a;", "", "public class B {", "    public B() {", "    }", "}"),
+      "a/C.java": lines("package a;", "", "public class C extends B {", "    static C C() {", "        return null;", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    Object go() {", "        return new C(); // NEW", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "NEW");
+    expect(siteTiers(g, "a/B.java", "B", site)).toEqual([]);
+    expect(siteTiers(g, "a/C.java", "C", site)).toEqual([]);
+  });
+
+  it("4. reads a main source named like a test by its folder, so it never binds the test copy", async () => {
+    const util = (n: number) => lines("package a.b;", "", "public class Util {", "    public static int v() {", `        return ${n};`, "    }", "}");
+    const files = {
+      "pom.xml": "<project/>\n",
+      "src/main/java/a/b/Util.java": util(1),
+      "src/test/java/a/b/Util.java": util(2),
+      "src/main/java/app/SmokeTest.java": lines("package app;", "", "import a.b.Util;", "", "public class SmokeTest {", "    int go() {", "        return Util.v(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "src/main/java/app/SmokeTest.java", "CALL");
+    expect(siteTiers(g, "src/main/java/a/b/Util.java", "v", site)).toEqual([`${site} certain`]);
+    expect(siteTiers(g, "src/test/java/a/b/Util.java", "v", site)).toEqual([]);
+  });
+
+  const varargs = {
+    "a/Base.java": lines("package a;", "", "public class Base {", "    void f(String... xs) {", "    }", "}"),
+    "a/Pair.java": lines("package a;", "", "public class Pair extends Base {", "    void f(String a, String b) {", "    }", "}"),
+    "a/Arr.java": lines("package a;", "", "public class Arr extends Base {", "    void f(String[] xs) {", "    }", "}"),
+    "a/U.java": lines("package a;", "", "public class U {", "    void go(Base b) {", '        b.f("a", "b"); // CALL', "    }", "}"),
+  };
+
+  it("5. dispatches by the bound member's parameter count, with T... and T[] the same, never by the call's argument count", async () => {
+    const g = await graphOf(varargs);
+    const site = at(varargs, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/Arr.java", "f", site, "dispatches_to")).toEqual([`${site} possible`]);
+    expect(siteTiers(g, "a/Pair.java", "f", site, "dispatches_to")).toEqual([]);
+  });
+
+  it("6. joins f(String[]) as an override of f(String...)", async () => {
+    const g = await graphOf(varargs);
+    const out = (g.refsOut.get(symbol(g, "a/Arr.java", "f", "Arr")) ?? []).filter((e) => e.kind === "overrides").map((e) => e.to);
+    expect(out).toEqual([symbol(g, "a/Base.java", "f", "Base")]);
+  });
+
+  it("7. binds a member likely, never certain, when a base outside the graph may declare a better overload", async () => {
+    const files = {
+      "a/L.java": lines("package a;", "", "import java.util.ArrayList;", "", "public class L extends ArrayList<String> {", "    public boolean add(String s) {", "        return true;", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go(L l) {", '        l.add("x"); // CALL', "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/L.java", "add", site)).toEqual([`${site} likely`]);
+  });
+
+  it("8. leaves a call no member's parameter count fits as an unknown, with no edge", async () => {
+    const files = {
+      "a/C.java": lines("package a;", "", "public class C {", "    void m(int a) {", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go(C c) {", "        c.m(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "CALL");
+    expect(siteTiers(g, "a/C.java", "m", site)).toEqual([]);
+    expect(unknownsAt(g, site).map((u) => u.note)).toEqual(["no member named m takes 0 arguments; a member outside the graph may"]);
+  });
+
+  it("9. binds this(...) to the class's own constructor and super(...) to the superclass's", async () => {
+    const files = {
+      "a/B.java": lines("package a;", "", "public class B {", "    public B(int x) {", "    }", "}"),
+      "a/C.java": lines("package a;", "", "public class C extends B {", "    public C() {", "        super(1); // SUPER", "    }", "", "    public C(String s) {", "        this(); // THIS", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const sup = at(files, "a/C.java", "SUPER");
+    const own = at(files, "a/C.java", "THIS");
+    expect(siteTiers(g, "a/B.java", "B", sup)).toEqual([`${sup} certain`]);
+    const noArgs = (g.defsByFile.get("a/C.java") ?? []).find((n) => n.name === "C" && n.startLine === 4)?.id as string;
+    expect(tiers(g, noArgs)).toEqual([`${own} certain`]);
+  });
+
+  it("11. combines every static import of one member name before the arity rule", async () => {
+    const files = {
+      "a/A.java": lines("package a;", "", "public class A {", "    public static void f(int x) {", "    }", "}"),
+      "a/B.java": lines("package a;", "", "public class B {", "    public static void f(String x) {", "    }", "}"),
+      "c/U.java": lines("package c;", "", "import static a.B.f;", "import static a.A.f;", "", "public class U {", "    void go() {", "        f(1); // CALL", "    }", "}"),
+      "c/V.java": lines("package c;", "", "import static a.A.*;", "import static a.B.*;", "", "public class V {", "    void go() {", "        f(1); // STAR", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "c/U.java", "CALL");
+    const star = at(files, "c/V.java", "STAR");
+    expect(siteTiers(g, "a/A.java", "f", site)).toEqual([`${site} possible`]);
+    expect(siteTiers(g, "a/B.java", "f", site)).toEqual([`${site} possible`]);
+    expect(siteTiers(g, "a/A.java", "f", star)).toEqual([`${star} possible`]);
+    expect(siteTiers(g, "a/B.java", "f", star)).toEqual([`${star} possible`]);
+  });
+
+  it("12. never reads a superclass field for a field of the subclass whose type is not a class", async () => {
+    const files = {
+      "a/Repo.java": lines("package a;", "", "public class Repo {", "    public void find() {", "    }", "}"),
+      "a/Base.java": lines("package a;", "", "public class Base {", "    Repo r;", "}"),
+      "a/Child.java": lines("package a;", "", "public class Child<T> extends Base {", "    T r;", "", "    void m() {", "        r.find(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/Child.java", "CALL");
+    expect(siteTiers(g, "a/Repo.java", "find", site)).toEqual([]);
+    expect(unknownsAt(g, site).length).toBe(1);
+  });
+
+  it("13. finds a nested type inherited from a superclass before a same-named type of the package", async () => {
+    const files = {
+      "p/Outer.java": lines("package p;", "", "public class Outer {", "    public static class Inner {", "        public static void run() {", "        }", "    }", "}"),
+      "p/Inner.java": lines("package p;", "", "public class Inner {", "    public static void run() {", "    }", "}"),
+      "p/Child.java": lines("package p;", "", "public class Child extends Outer {", "    void go() {", "        Inner.run(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "p/Child.java", "CALL");
+    expect(siteTiers(g, "p/Outer.java", "run", site)).toEqual([`${site} certain`]);
+    expect(siteTiers(g, "p/Inner.java", "run", site)).toEqual([]);
+  });
+
+  it("14. reads an array dimension written after a parameter's name, so a call on it is the array's", async () => {
+    const files = {
+      "a/Foo.java": lines("package a;", "", "public class Foo {", "    public Object clone() {", "        return null;", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    Object go(Foo xs[]) {", "        return xs.clone(); // CALL", "    }", "}"),
+    };
+    const g = await graphOf(files);
+    expect(siteTiers(g, "a/Foo.java", "clone", at(files, "a/U.java", "CALL"))).toEqual([]);
+  });
+
+  it("15. binds the one member of a call whose argument list did not parse as possible", async () => {
+    const files = {
+      "a/F.java": lines("package a;", "", "public class F {", "    public static void fmt(String s) {", "    }", "}"),
+      "a/U.java": lines("package a;", "", "public class U {", "    void go() {", '        F.fmt("a", +); // BROKEN', "    }", "}"),
+    };
+    const g = await graphOf(files);
+    const site = at(files, "a/U.java", "BROKEN");
+    expect(siteTiers(g, "a/F.java", "fmt", site)).toEqual([`${site} possible`]);
+  });
+
+  it("16. never reads a dependency group from a commented-out pom.xml dependency or Gradle line", () => {
+    expect(pomGroups("<dependencies><!-- <dependency><groupId>com.acme</groupId></dependency> --><dependency><groupId>org.real</groupId></dependency></dependencies>")).toEqual(["org.real"]);
+    expect(gradleGroups("  // implementation('com.acme:lib:1')\n/* api 'com.block:lib:1'\n testImplementation 'com.block2:x:1' */\nimplementation 'org.real:lib:1'\n")).toEqual(["org.real"]);
+  });
+});

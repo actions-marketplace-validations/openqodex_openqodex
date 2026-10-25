@@ -575,7 +575,24 @@ const GROUP = /^[A-Za-z_][\w-]*(\.[A-Za-z_][\w-]*)*$/;
 // skipped). Each element is found by indexOf, so a hostile file reads in
 // one pass.
 export const POM_DEPENDENCIES = 10_000; // <dependency> elements read per file
-export function pomGroups(text: string): string[] {
+// The text without its XML comments, in one pass.
+function withoutXmlComments(text: string): string {
+  const parts: string[] = [];
+  let at = 0;
+  for (;;) {
+    const open = text.indexOf("<!--", at);
+    if (open < 0) break;
+    parts.push(text.slice(at, open));
+    const close = text.indexOf("-->", open + 4);
+    if (close < 0) return parts.join(" ");
+    at = close + 3;
+  }
+  parts.push(text.slice(at));
+  return parts.join(" ");
+}
+
+export function pomGroups(source: string): string[] {
+  const text = withoutXmlComments(source);
   const out: string[] = [];
   let at = 0;
   for (let n = 0; n < POM_DEPENDENCIES; n++) {
@@ -603,7 +620,30 @@ export function gradleGroups(text: string): string[] {
   const out: string[] = [];
   // Line by line: a string never spans lines, and each character is
   // looked at once (the quote that opens a string, then the one that closes it).
-  for (const line of text.split("\n")) {
+  // A line commented out with `//` and every `/* ... */` block are skipped.
+  let inBlock = false;
+  for (const raw of text.split("\n")) {
+    const kept: string[] = [];
+    let at = 0;
+    while (at < raw.length) {
+      if (inBlock) {
+        const end = raw.indexOf("*/", at);
+        if (end < 0) break;
+        at = end + 2;
+        inBlock = false;
+        continue;
+      }
+      const start = raw.indexOf("/*", at);
+      if (start < 0) {
+        kept.push(raw.slice(at));
+        break;
+      }
+      kept.push(raw.slice(at, start));
+      at = start + 2;
+      inBlock = true;
+    }
+    const line = kept.join(" ");
+    if (line.trimStart().startsWith("//")) continue;
     let open = -1;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];

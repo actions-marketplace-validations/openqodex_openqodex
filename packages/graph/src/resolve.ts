@@ -27,7 +27,6 @@ import { weakest } from "./model/records.js";
 import type { Lookup as PluginLookup } from "./frameworks/plugin.js";
 import type { BoundImport, CallFact, DefFact, DispatchSite, EdgeKind, Family, FileFacts, GraphEdge, GraphNode, GraphSite, InvocationSummary, Miss, TypeRef, UnknownSite, ValueRef } from "./types.js";
 import { CALLER_KINDS, familyOf } from "./types.js";
-import { isTestPath } from "./impact.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
 // Files the walk of `export *` may open in one world. Each file is walked
@@ -48,8 +47,9 @@ export const DISPATCH_CAP = 32;
 // that names a base with an expression. 10: such a base keeps its place in
 // the lookup order, so a member found past it is likely at most. 11: Java
 // (declared packages, imports, overloads by argument count, nested types).
-// 12: a Java call on a typed value's method result (TypeRef.on).
-export const RESOLVER_VERSION = 12;
+// 12: a Java call on a typed value's method result (TypeRef.on). 13: Java
+// constructor calls, source sets by folder, overloads across both sides.
+export const RESOLVER_VERSION = 13;
 
 // How a base written as an expression stands in a lookup order.
 const DYNAMIC_BASE = "\u0000a base written as an expression";
@@ -683,15 +683,18 @@ export function createWorld(input: ResolveInput): World {
   // source never sees a test source; the file's own project and source set
   // come first, then its own project, then every project. One left binds;
   // several are ambiguous; none is null.
+  // The source set by folder only (`src/test/java`, a `test` or `tests`
+  // folder): a main class named `SmokeTest.java` is still main.
+  const javaTestSet = (path: string): boolean => /(^|\/)tests?\//.test(path);
   const javaChoose = (from: string, ids: readonly string[]): { id: string } | { candidates: string[] } | null => {
     const fileOf = (id: string) => defById.get(id)?.file ?? id;
-    const test = isTestPath(from);
-    const seen = test ? [...ids] : ids.filter((id) => !isTestPath(fileOf(id)));
+    const test = javaTestSet(from);
+    const seen = test ? [...ids] : ids.filter((id) => !javaTestSet(fileOf(id)));
     if (seen.length === 0) return null;
     if (seen.length === 1) return { id: seen[0] as string };
     const project = javaProjectOf(from);
     const own = seen.filter((id) => javaProjectOf(fileOf(id)) === project);
-    const tiers = [own.filter((id) => isTestPath(fileOf(id)) === test), own, seen];
+    const tiers = [own.filter((id) => javaTestSet(fileOf(id)) === test), own, seen];
     const pick = tiers.find((t) => t.length > 0) as string[];
     return pick.length === 1 ? { id: pick[0] as string } : { candidates: pick.map(fileOf).sort() };
   };
@@ -742,7 +745,7 @@ export function createWorld(input: ResolveInput): World {
     stars: (Mod | { ns: string; ev: Ev })[];
     starSpecs: string[];
     jstars?: { spec: string; mod: Mod; ev: Ev }[];
-    jstatic?: Map<string, Binding>;
+    jstatic?: Map<string, Binding[]>;
     jstaticStars?: Binding[];
   };
   const bindingsCache = new Map<string, FileBindings>();
@@ -780,7 +783,10 @@ export function createWorld(input: ResolveInput): World {
           const { mod, path } = javaClassMod(file, imp.line, imp.spec, n.imported);
           if (mod !== null && "file" in mod) targets.push({ target: mod.file, line: imp.line, column: imp.column, ev: mod.ev, reexport: false });
           const binding: Binding = { kind: "named", mod, imported: path };
-          if (imp.staticMember !== undefined) (b.jstatic ??= new Map()).set(imp.staticMember, binding);
+          if (imp.staticMember !== undefined) {
+            const all = (b.jstatic ??= new Map());
+            all.set(imp.staticMember, [...(all.get(imp.staticMember) ?? []), binding]);
+          }
           else if (imp.staticStar) (b.jstaticStars ??= []).push(binding);
           else b.names.set(n.local, binding);
         }
@@ -1067,6 +1073,22 @@ export function createWorld(input: ResolveInput): World {
     return out;
   };
 
+  // A nested type a Java class inherits: declared in one of its superclasses
+  // or interfaces, nearest first.
+  const javaInheritedNested = (key: string, name: string): ClassInfo | undefined => {
+    const seen = new Set([key]);
+    const queue = [...basesOf(key).keys];
+    for (let i = 0; i < queue.length && i < 1000; i++) {
+      const k = queue[i] as string;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const hit = classes.get(`${k}.${name}`);
+      if (hit) return hit;
+      queue.push(...basesOf(k).keys);
+    }
+    return undefined;
+  };
+
   // A bare type name in a Java file, in the language's order: the enclosing
   // types and the types nested in them, the file's explicit imports, the
   // file's own package, its star imports, then java.lang. `nesting`: the
@@ -1075,7 +1097,7 @@ export function createWorld(input: ResolveInput): World {
   const javaLocal = (file: string, name: string, depth: number, nesting: string | null): Value | null => {
     const asType = (ids: string[] | undefined): Value | null => (ids && ids.length > 0 ? { v: "sym", ids, ev: SAME_SCOPE } : null);
     for (const key of javaScopes(file, nesting)) {
-      const inner = classes.get(`${key}.${name}`);
+      const inner = classes.get(`${key}.${name}`) ?? javaInheritedNested(key, name);
       if (inner) return asType(inner.ids);
       if (key.endsWith(`::${name}`) || key.endsWith(`.${name}`)) return asType(classes.get(key)?.ids);
     }
@@ -1546,6 +1568,9 @@ export function createWorld(input: ResolveInput): World {
     const evs = hits.map((h) => h.ev).filter((e): e is Ev => e !== null);
     let ev: Ev | null = null;
     for (const e of evs) ev = ev === null ? e : chain(ev, e);
+    // A superclass outside the graph may declare an overload that fits the
+    // call better than any member found: no member is certain then.
+    if (outside !== null) ev = pastOutside(outside, name, ev);
     return { ids, ev };
   }
 
@@ -1863,11 +1888,14 @@ export function createWorld(input: ResolveInput): World {
   // Java: only members whose parameter count fits the call's arguments,
   // and never a member the static type itself has (its own overloads and
   // those it inherits are bound, not dispatched to).
-  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[], arity?: number): string[] => {
+  const javaCount = (id: string): number => defById.get(id)?.params?.length ?? 0;
+  const dispatchTargets = (key: string, name: string, side: Side, declared: readonly string[]): string[] => {
     let perKey = dispatchMemo.get(key);
     if (!perKey) dispatchMemo.set(key, (perKey = new Map()));
     const java = classes.get(key)?.family === "java";
-    const memoKey = `${side === "i" ? name : `${name} s`}${java ? ` ${arity ?? "?"}` : ""}`;
+    // Java: an override has the bound member's parameter count (`T...` and `T[]` alike).
+    const counts = java ? new Set(declared.map(javaCount)) : null;
+    const memoKey = `${side === "i" ? name : `${name} s`}${counts ? ` ${[...counts].sort().join(",")}` : ""}`;
     const kept = perKey.get(memoKey);
     if (kept) return kept;
     const skip = new Set(declared);
@@ -1895,7 +1923,7 @@ export function createWorld(input: ResolveInput): World {
       if (hit && "ids" in hit) for (const id of hit.ids) if (!skip.has(id) && defById.get(id)?.abstract !== true) found.add(id);
       for (const c of childrenOf(k)) if (!seen.has(c)) queue.push(c);
     }
-    const out = [...found].filter((id) => !java || arity === undefined || javaFits(id, arity)).sort((a, b) => {
+    const out = [...found].filter((id) => counts === null || counts.has(javaCount(id))).sort((a, b) => {
       const x = defById.get(a);
       const y = defById.get(b);
       return (x?.file ?? a).localeCompare(y?.file ?? b) || (x?.line ?? 0) - (y?.line ?? 0) || a.localeCompare(b);
@@ -2007,25 +2035,25 @@ export function createWorld(input: ResolveInput): World {
   // bind as possible. A call whose argument list did not parse keeps every
   // member as possible. The count never picks a wrong member, it only fails
   // to narrow: the parameter types are not compared.
-  const javaOverloads = (ids: string[], name: string, arity: number | undefined, ev: Ev): Outcome => {
+  // `value`: a method reference, which passes no arguments to count.
+  const javaOverloads = (ids: string[], name: string, arity: number | undefined, ev: Ev, value = false): Outcome => {
     const possible = (keep: string[], why: string): Outcome => ({ ids: keep, ev: { ...ev, tier: "possible", note: [ev.note, why].filter(Boolean).join(" "), rule: "java-overloads" } });
-    if (arity === undefined) return ids.length <= 1 ? { ids, ev } : possible(ids, `${ids.length} members named ${name} may take this call; its argument list was not read, so the count does not choose.`);
+    if (arity === undefined && value && ids.length === 1) return { ids, ev };
+    if (arity === undefined) return possible(ids, `${plural(ids.length, "member")} named ${name} may take this call; its argument list was not read, so the count does not choose.`);
     const fit = ids.filter((id) => javaFits(id, arity));
     if (fit.length === 1) return { ids: fit, ev };
     if (fit.length > 1) return possible(fit, `${fit.length} members named ${name} take ${plural(arity, "argument")}; the graph does not compare parameter types.`);
-    return possible(ids, `no member named ${name} takes ${plural(arity, "argument")}; a member outside the graph may.`);
+    return { unknown: "no-receiver-type", shape: "typed", note: `no member named ${name} takes ${plural(arity, "argument")}; a member outside the graph may` };
   };
   const javaSimple = (key: string): string => {
     const q = key.slice(key.lastIndexOf("::") + 2);
     return q.slice(q.lastIndexOf(".") + 1);
   };
-  // A member of a Java class by the lookup and the arity rule. `asValue`: a
-  // method reference, which may name a static or an instance member.
-  // A call named like the class on its static side is `new T(...)`: with no
-  // declared constructor it runs no code of the repository and is dropped
-  // (the extractor records the type use).
-  const javaOn = (key: string, name: string, side: Side, ev: Ev, arity: number | undefined, asValue = false): Outcome => {
-    const sides: Side[] = asValue ? ["s", "i"] : [side];
+  // A member of a Java class by the lookup and the arity rule. `both`: the
+  // static and the instance side together (a bare call, a method
+  // reference); `value`: a method reference, which passes no arguments.
+  const javaOn = (key: string, name: string, side: Side, ev: Ev, arity: number | undefined, both = false, value = both): Outcome => {
+    const sides: Side[] = both ? ["s", "i"] : [side];
     const ids: string[] = [];
     let inner: Ev | null = null;
     for (const at of sides) {
@@ -2035,16 +2063,32 @@ export function createWorld(input: ResolveInput): World {
       for (const id of hit.ids) if (!ids.includes(id)) ids.push(id);
       if (hit.ev) inner = inner ? chain(inner, hit.ev) : hit.ev;
     }
-    if (ids.length === 0) {
-      if (side === "s" && name === javaSimple(key)) return "ignore";
-      return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
-    }
+    if (ids.length === 0) return { miss: { target: key, name }, ev, cause: outsideBase(key) ? "no-receiver-type" : "miss" };
     // An abstract member found beside a member with a body and the same
-    // parameter count is the one that body implements: it never runs.
-    const shape = (id: string) => `${defById.get(id)?.params?.length ?? 0}${defById.get(id)?.varargs ? "+" : ""}`;
-    const bodies = new Set(ids.filter((id) => defById.get(id)?.abstract !== true).map(shape));
-    const live = ids.filter((id) => defById.get(id)?.abstract !== true || !bodies.has(shape(id)));
-    return javaOverloads(live, name, arity, inner ? chain(ev, inner) : ev);
+    // parameter count on another class is the one that body overrides: it
+    // never runs. Both on one class are two overloads.
+    const classOf = (id: string) => {
+      const d = defById.get(id);
+      return d ? classKey("java", d.file, d.owner ?? "") : id;
+    };
+    const live = ids.filter((id) => {
+      if (defById.get(id)?.abstract !== true) return true;
+      return !ids.some((b) => b !== id && defById.get(b)?.abstract !== true && javaCount(b) === javaCount(id) && classOf(b) !== classOf(id));
+    });
+    return javaOverloads(live, name, arity, inner ? chain(ev, inner) : ev, value);
+  };
+  // `new T(...)`, `this(...)`, `super(...)`: the constructors T itself
+  // declares (they are not inherited). None declared: the default
+  // constructor runs no code of the repository, and the call is dropped
+  // (the extractor records the type use).
+  const classOfMember = (id: string): string => {
+    const d = defById.get(id);
+    return d ? classKey("java", d.file, d.owner ?? "") : id;
+  };
+  const javaCtor = (key: string, arity: number | undefined, ev: Ev): Outcome => {
+    const name = javaSimple(key);
+    const ids = (methodsOn.s.get(key)?.get(name) ?? []).filter((id) => defById.get(id)?.ctor === true);
+    return ids.length === 0 ? "ignore" : javaOverloads(ids, name, arity, ev);
   };
   // The dotted path of the Java type a definition is read in.
   const javaNestingOf = (caller: Def | undefined): string | null => {
@@ -2093,6 +2137,29 @@ export function createWorld(input: ResolveInput): World {
     const nesting = javaNestingOf(caller);
     const arity = call.arity;
     const selfEv: Ev = { kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-self" };
+    if (call.ctor) {
+      if (r.kind === "self") {
+        const own = enclosingClass(file, "java", caller);
+        return own ? javaCtor(own, arity, selfEv) : "ignore";
+      }
+      if (r.kind === "super") {
+        const key = enclosingClass(file, "java", caller);
+        const bases = key ? basesOf(key) : null;
+        const at = bases ? bases.rels.findIndex((rel) => rel !== "implements") : -1;
+        const base = bases?.keys[at];
+        // A superclass outside the graph: its constructor is not the repository's.
+        if (!bases || !base) return key && outsideBase(key) ? { ext: true } : "ignore";
+        return javaCtor(base, arity, chain({ kind: "receiver-self", tier: "certain", via: null, note: null, rule: "receiver-super" }, bases.evs[at] as Ev));
+      }
+      if (r.kind === "name") {
+        const p = javaPath(file, [r.name, ...r.path], nesting);
+        if (p === "ext") return { ext: true };
+        if (p === null) return { unknown: "no-receiver-type", shape: "name", note: `the type ${[r.name, ...r.path].join(".")} is not found in the graph` };
+        if ("gap" in p) return { unknown: p.gap, shape: "name", note: p.note, candidates: p.candidates };
+        if ("type" in p) return javaCtor(p.type, arity, p.ev);
+        return { unknown: "no-receiver-type", shape: "name" };
+      }
+    }
     switch (r.kind) {
       case "none": {
         if (call.local !== undefined) return { ids: [symbolId(file, facts.get(file)?.defs[call.local] as DefFact)], ev: SAME_SCOPE };
@@ -2111,42 +2178,43 @@ export function createWorld(input: ResolveInput): World {
           if (key === null) return { unknown: "no-receiver-type", shape: "self", note: "a field whose type no rule knows" };
           return withDispatch(javaOn(key.key, call.name, "i", { ...key.ev, kind: "receiver-field" }, arity, asValue), { key: key.key, side: "i" });
         }
-        // A bare m(): the instance side, then the static side (only the
-        // static side in a static context), of the class, then of each
-        // enclosing class, then the static imports.
-        const sides: Side[] = call.static ? ["s"] : ["i", "s"];
+        // A bare m(): the class's members of both sides together (only the
+        // static side in a static context), then each enclosing class's,
+        // then the static imports.
         let first: Outcome | null = null;
         for (const key of [own, ...javaScopes(file, nesting).filter((k) => k !== own)]) {
-          for (const side of sides) {
-            const out = javaOn(key, call.name, side, selfEv, arity, asValue);
-            if (out === "ignore") continue;
-            if ("ids" in out) return side === "i" ? withDispatch(out, { key, side: "i" }) : out;
-            if ("unknown" in out) return out;
-            first ??= out;
-          }
+          const out = javaOn(key, call.name, call.static ? "s" : "i", selfEv, arity, asValue || !call.static, asValue);
+          if (out === "ignore") continue;
+          if ("ids" in out) return out.ids.some((id) => methodsOn.i.get(classOfMember(id))?.has(call.name)) ? withDispatch(out, { key, side: "i" }) : out;
+          if ("unknown" in out) return out;
+          first ??= out;
         }
+        // Every static import of the name together (a single-member import
+        // shadows the on-demand ones), then the arity rule once.
         const b = index.bindings(file);
-        const viaImport = (binding: Binding): Outcome | null => {
-          const v = bindingValue(file, "java", call.name, binding, 0);
-          if (!v || v.v === "miss") return null;
-          if (v.v === "ext") return { ext: true };
-          if (v.v === "gap") return { unknown: v.cause, shape: "bare", note: v.note, candidates: v.candidates };
-          const key = v.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
-          if (!key || v.v !== "sym") return null;
-          const out = javaOn(key, call.name, "s", { ...v.ev, rule: "java-static-import" }, arity, asValue);
-          return out !== "ignore" && "ids" in out ? out : null;
+        const viaImports = (bindings: readonly Binding[]): Outcome | null => {
+          const ids: string[] = [];
+          let ev: Ev | null = null;
+          let open: Outcome | null = null;
+          for (const binding of bindings) {
+            const v = bindingValue(file, "java", call.name, binding, 0);
+            if (!v || v.v === "miss") continue;
+            if (v.v === "ext") open ??= { ext: true };
+            if (v.v === "gap") open ??= { unknown: v.cause, shape: "bare", note: v.note, candidates: v.candidates };
+            const key = v.v === "sym" && v.ids.length === 1 ? classOfId.get(v.ids[0] as string) : undefined;
+            if (!key || v.v !== "sym") continue;
+            const hit = index.members(key, call.name, "s");
+            if (!hit || "gap" in hit) continue;
+            for (const id of hit.ids) if (!ids.includes(id)) ids.push(id);
+            ev ??= { ...(hit.ev ? chain(v.ev, hit.ev) : v.ev), rule: "java-static-import" };
+          }
+          if (ids.length > 0 && ev) return javaOverloads(ids, call.name, arity, ev);
+          return open;
         };
-        const named = b.jstatic?.get(call.name);
-        const viaNamed = named ? viaImport(named) : null;
+        const viaNamed = viaImports(b.jstatic?.get(call.name) ?? []);
         if (viaNamed) return viaNamed;
-        for (const star of b.jstaticStars ?? []) {
-          const out = viaImport(star);
-          if (out && out !== "ignore" && "ids" in out) return out;
-        }
-        for (const star of b.jstaticStars ?? []) {
-          const out = viaImport(star);
-          if (out) return out;
-        }
+        const viaStars = viaImports(b.jstaticStars ?? []);
+        if (viaStars) return viaStars;
         return first ?? { unknown: "no-receiver-type", shape: "self" };
       }
       case "super": {
@@ -2553,7 +2621,7 @@ export function createWorld(input: ResolveInput): World {
         // override that may run instead, possible, capped per site.
         if (out.dispatch) {
           const d = out.dispatch;
-          const targets = dispatchTargets(d.key, call.name, d.side, out.ids, family === "java" ? call.arity : undefined);
+          const targets = dispatchTargets(d.key, call.name, d.side, out.ids);
           const contract = isIface(d.key) || out.ids.every((id) => defById.get(id)?.abstract === true);
           const rule = contract ? "dispatch-implements" : "dispatch-override";
           const declared = `${shortKey(d.key)}.${call.name}`;
@@ -2648,7 +2716,7 @@ export function createWorld(input: ResolveInput): World {
             if (family === "java") {
               // The same name and the same number of parameters: the types are not compared.
               const n = d.params?.length ?? 0;
-              ids = ids.filter((id) => (defById.get(id)?.params?.length ?? 0) === n && (defById.get(id)?.varargs === true) === (d.varargs === true));
+              ids = ids.filter((id) => (defById.get(id)?.params?.length ?? 0) === n);
               ev = { ...ev, tier: weakest(ev.tier, "likely"), note: [ev.note, `${d.name} has the name and the number of parameters of the base member; the parameter types are not compared.`].filter(Boolean).join(" ") };
             }
             for (const to of ids) if (to !== defIds[i]) addEdge(defIds[i] as string, to, "overrides", siteOf(path, d.line, d.column, ev, "override"));

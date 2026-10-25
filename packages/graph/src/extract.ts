@@ -31,7 +31,7 @@ import type { TreeVisitor } from "./walk.js";
 // plugins' facts beside the language facts (FileFacts.frameworks). 18: how
 // a Ruby class takes a mixin written as an expression. 19: Java (its
 // package, static imports, constructors, varargs and each call's argument count).
-export const EXTRACTOR_VERSION = 20;
+export const EXTRACTOR_VERSION = 21;
 
 type Frame = {
   def: number; // the definition this frame belongs to, -1 for none
@@ -2286,6 +2286,9 @@ const JAVA_TYPES = new Set([
   "catch_clause",
   "try_with_resources_statement",
   "switch_block",
+  "if_statement",
+  "while_statement",
+  "explicit_constructor_invocation",
   "local_variable_declaration",
   "instanceof_expression",
   "cast_expression",
@@ -2332,6 +2335,17 @@ function javaTypeChain(node: Node | null): { names: string[]; last: Node } | nul
 // A written type as the graph reads it: the raw class (`List<Item>` is a
 // List), an array as an element of its type; null for a primitive, `void`,
 // `var` and a type parameter in scope.
+// A declarator's own dimensions (`Foo xs[]`): the type is an array of what is written.
+function javaDims(t: TypeRef | null, declarator: Node | null | undefined): TypeRef | null {
+  return t && declarator?.childForFieldName("dimensions") ? { ...t, elem: true } : t;
+}
+
+// A field whose type names no class (a type parameter, a primitive): an
+// entry that names nothing, so the field hides one of a base class.
+function opaqueType(at: Node): TypeRef {
+  return { name: "", qualifier: null, ...pos(at) };
+}
+
 function javaTypeRef(node: Node | null): TypeRef | null {
   if (!node) return null;
   if (node.type === "array_type") {
@@ -2502,7 +2516,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const typeNode = p.childForFieldName("type");
         typeUses(typeNode, user);
         if (!name) continue;
-        locals.set(name.text, declared(javaTypeRef(typeNode)));
+        locals.set(name.text, declared(javaDims(javaTypeRef(typeNode), p)));
         names.push(name.text);
       } else if (p.type === "spread_parameter") {
         const typeNode = p.namedChildren.find((c) => c.type !== "modifiers" && c.type !== "variable_declarator") ?? null;
@@ -2571,7 +2585,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const n = d.childForFieldName("name");
         if (!n) continue;
         members.add(n.text);
-        if (type) fields[n.text] = type;
+        fields[n.text] = javaDims(type, d) ?? opaqueType(n);
       }
     }
     // A record's components are its fields.
@@ -2583,7 +2597,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       typeUses(typeNode, def);
       if (!n) continue;
       members.add(n.text);
-      if (type) fields[n.text] = type;
+      fields[n.text] = type ?? opaqueType(n);
     }
     return leave;
   };
@@ -2703,7 +2717,26 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "constructor_body":
       case "for_statement":
       case "switch_block":
+      // An `if` or a `while` holds the pattern variables its condition binds
+      // (`o instanceof A x`): they end with the statement.
+      case "if_statement":
+      case "while_statement":
         return blockFrame();
+      case "explicit_constructor_invocation": {
+        // `this(...)` and `super(...)`: a constructor call on the own class or the superclass.
+        const kw = node.childForFieldName("constructor");
+        const cls = ctx.cls();
+        const owner = cls ? ctx.defs[cls.def] : undefined;
+        if (!kw || !owner || javaInAnon(ctx)) return;
+        const isSuper = kw.type === "super";
+        const name = isSuper ? owner.bases.find((b) => b.rel === undefined)?.name : owner.name;
+        if (name === undefined || (kw.type !== "this" && !isSuper)) return;
+        const index = addCall(kw, isSuper ? { kind: "super" } : { kind: "self", path: [] }, node.childForFieldName("arguments"), node);
+        const call = ctx.calls[index] as CallFact;
+        call.name = name;
+        call.ctor = true;
+        return;
+      }
       case "enhanced_for_statement": {
         const leave = blockFrame();
         const name = node.childForFieldName("name");
@@ -2740,7 +2773,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const type = isVar ? null : declared(javaTypeRef(typeNode));
         for (const d of node.childrenForFieldName("declarator")) {
           const name = d.childForFieldName("name");
-          if (name) ctx.setLocal(name.text, isVar ? javaValueType(ctx, d.childForFieldName("value")) : type, true);
+          if (name) ctx.setLocal(name.text, isVar ? javaValueType(ctx, d.childForFieldName("value")) : javaDims(type, d), true);
         }
         return;
       }
@@ -2785,7 +2818,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const typeNode = node.childForFieldName("type");
         typeUses(typeNode, ctx.caller());
         const chain = javaTypeChain(typeNode);
-        if (chain) addCall(chain.last, javaTypeReceiver(chain), node.childForFieldName("arguments"), node);
+        if (chain) (ctx.calls[addCall(chain.last, javaTypeReceiver(chain), node.childForFieldName("arguments"), node)] as CallFact).ctor = true;
         return;
       }
       case "method_reference":

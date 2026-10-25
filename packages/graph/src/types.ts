@@ -156,6 +156,9 @@ export type CallFact = {
   bound?: BoundImport; // a bare call to a name a scoped import binds
 
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
+  // Java: `new T(...)`, `this(...)` or `super(...)`: a constructor call,
+  // bound only to the constructors the class itself declares.
+  ctor?: boolean;
   // Java: the number of arguments, when the argument list parsed.
   arity?: number;
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
