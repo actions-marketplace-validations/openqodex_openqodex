@@ -82,6 +82,8 @@ function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
     (v.result === undefined || isInt(v.result)) &&
     optBool(v.elem) &&
     optBool(v.declared) &&
+    optBool(v.promise) &&
+    optBool(v.awaited) &&
     optBound(v.bound, imports) &&
     (v.rel === undefined || RELS.has(v.rel as string))
   );

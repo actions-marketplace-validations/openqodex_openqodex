@@ -104,6 +104,14 @@ function typeRef(t: TypeRef): TypeRef {
   return t;
 }
 
+// Assignment preserves a result only when its receiver type also stays the same.
+function sameType(a: TypeRef | undefined, b: TypeRef | undefined): boolean {
+  if (!a || !b) return a === b;
+  return a.name === b.name && a.qualifier === b.qualifier && !a.elem === !b.elem && a.result === b.result
+    && !a.promise === !b.promise && !a.awaited === !b.awaited
+    && a.bound?.import === b.bound?.import && a.bound?.imported === b.bound?.imported && sameType(a.on, b.on);
+}
+
 // The first scope from `from` outwards that knows `name` as a nested
 // definition, a scoped import or a local; null when none does, or when the
 // answer lies more than MAX_SCOPE_DEPTH scopes out.
@@ -215,6 +223,7 @@ function typeNodes(node: Node | null, take: (n: Node) => boolean): void {
 }
 
 class Ctx {
+  goFields = new Map<string, Record<string, TypeRef>>();
   defs: DefFact[] = [];
   calls: CallFact[] = [];
   values: ValueRef[] = [];
@@ -356,7 +365,7 @@ class Ctx {
       if (locals?.has(name)) {
         const old = locals.get(name) ?? null;
         if (old?.declared) return;
-        const same = old !== null && type !== null && old.name === type.name && old.qualifier === type.qualifier && !old.elem === !type.elem && old.result === type.result;
+        const same = old !== null && type !== null && sameType(old, type);
         locals.set(name, same ? old : null);
         return;
       }
@@ -637,6 +646,7 @@ class Ctx {
     // holds now, or the import it held when the type was read if the code
     // assigned the name something else after.
     const bindType = (t: TypeRef | null | undefined): void => {
+      if (t?.on) bindType(t.on);
       const s = t as Stamped | null | undefined;
       const at = s?.[READ_IN];
       if (!s || !at) return;
@@ -778,7 +788,10 @@ function jsTypeRef(annotation: Node | null): TypeRef | null {
     const head = t.childForFieldName("name")?.text;
     const arg = t.childForFieldName("type_arguments")?.firstNamedChild ?? null;
     // Promise<T> is a T once awaited; Array<T> and its kin hold T.
-    if (head === "Promise") return jsTypeRef(arg);
+    if (head === "Promise") {
+      const inner = jsTypeRef(arg);
+      return inner ? { ...inner, promise: true } : null;
+    }
     if (head === "Array" || head === "ReadonlyArray" || head === "Set" || head === "ReadonlySet") {
       const inner = jsTypeRef(arg);
       return inner ? { ...inner, elem: true } : null;
@@ -817,13 +830,13 @@ function jsReceiver(ctx: Ctx, object: Node): Receiver {
   if (!base) return { kind: "other" };
   if (base.type === "this") return { kind: "self", path };
   if (base.type === "super") return path.length === 0 ? { kind: "super" } : { kind: "other" };
-  if (base.type === "parenthesized_expression" && base.firstNamedChild?.type === "new_expression") base = base.firstNamedChild;
+  while (base.type === "parenthesized_expression" && base.firstNamedChild) base = base.firstNamedChild;
   if (base.type === "new_expression") {
     const type = newType(base);
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "call_expression" || base.type === "await_expression") {
-    const type = callType(base);
+    const type = callType(ctx, base);
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base.type === "identifier") {
@@ -1107,20 +1120,71 @@ function newType(value: Node | null): TypeRef | null {
   return ctor ? jsTypeRef(ctor) : null;
 }
 
-// `make()`, `await make()`, `ns.make()`: typed by make's declared return type,
-// looked up when the graph is resolved.
-function callType(value: Node | null): TypeRef | null {
+// A method result keeps its receiver type. Deeper chains remain unknown.
+function methodResultType(name: Node, on: TypeRef | null | undefined, result = 0): TypeRef | null {
+  if (!on || on.elem) return null;
+  let depth = 0;
+  for (let t: TypeRef | undefined = on; t?.on; t = t.on) {
+    if (++depth >= MAX_TYPE_DEPTH) return null;
+  }
+  return typeRef({ name: name.text, qualifier: null, ...pos(name), result, on });
+}
+
+// Calls carry the function name or the declared type of their receiver.
+function callType(ctx: Ctx, value: Node | null, depth = 0): TypeRef | null {
+  if (depth > MAX_TYPE_DEPTH) return null;
   let v = value;
-  if (v?.type === "await_expression") v = v.firstNamedChild;
+  while (v?.type === "parenthesized_expression") v = v.firstNamedChild;
+  if (v?.type === "await_expression") {
+    const result = callType(ctx, v.firstNamedChild, depth);
+    return result ? { ...result, awaited: true } : null;
+  }
   if (v?.type !== "call_expression") return null;
   const fn = v.childForFieldName("function");
   if (fn?.type === "identifier") return typeRef({ name: fn.text, qualifier: null, ...pos(fn), result: 0 });
-  if (fn?.type === "member_expression" && fn.childForFieldName("object")?.type === "identifier") {
+  if (fn?.type === "member_expression") {
     const prop = fn.childForFieldName("property");
-    const object = fn.childForFieldName("object") as Node;
-    if (prop) return typeRef({ name: prop.text, qualifier: object.text, ...pos(fn), result: 0 });
+    let object = fn.childForFieldName("object");
+    while (object?.type === "parenthesized_expression") object = object.firstNamedChild;
+    if (!prop || !object) return null;
+    if (object.type === "identifier") {
+      const local = ctx.local(object.text);
+      if (local !== undefined) return methodResultType(prop, local);
+      return typeRef({ name: prop.text, qualifier: object.text, ...pos(fn), result: 0 });
+    }
+    if (object.type === "call_expression" || object.type === "await_expression") return methodResultType(prop, callType(ctx, object, depth + 1));
+    if (object.type === "new_expression") return methodResultType(prop, newType(object));
+    const cls = ctx.cls();
+    if (!cls || ctx.defs[ctx.caller()]?.static) return null;
+    if (object.type === "this" && cls.cls) {
+      return ctx.defs[cls.def]?.topLevel ? methodResultType(prop, typeRef({ name: cls.cls, qualifier: null, ...pos(object) })) : null;
+    }
+    if (object.type === "member_expression" && object.childForFieldName("object")?.type === "this") {
+      const field = object.childForFieldName("property");
+      return field ? methodResultType(prop, ctx.defs[cls.def]?.fields[field.text]) : null;
+    }
   }
   return null;
+}
+
+// Read fields before method bodies, including fields declared after their callers.
+function jsFields(node: Node): Record<string, TypeRef> {
+  const fields: Record<string, TypeRef> = {};
+  for (const member of node.childForFieldName("body")?.namedChildren ?? []) {
+    if (member.type === "public_field_definition" || member.type === "field_definition") {
+      const name = member.childForFieldName("name") ?? member.childForFieldName("property");
+      const type = jsTypeRef(member.childForFieldName("type")) ?? newType(member.childForFieldName("value"));
+      if (name && type) fields[name.text] = type;
+    }
+    if (member.type !== "method_definition" || member.childForFieldName("name")?.text !== "constructor") continue;
+    for (const p of member.childForFieldName("parameters")?.namedChildren ?? []) {
+      const isProperty = p.namedChildren.some((c) => c.type === "accessibility_modifier") || p.children.some((c) => c.type === "readonly");
+      const pattern = p.childForFieldName("pattern");
+      const type = jsTypeRef(p.childForFieldName("type"));
+      if (isProperty && pattern?.type === "identifier" && type) fields[pattern.text] = type;
+    }
+  }
+  return fields;
 }
 
 function jsResults(fn: Node): TypeRef[] | undefined {
@@ -1211,7 +1275,9 @@ function extractJs(tree: Tree, lang: Lang, readers: readonly TreeVisitor[]): Fil
         // The superclass first: a member is looked up there before an interface.
         bases.push(...implemented);
         const def = ctx.addDef(node, name, "class", { topLevel: ctx.atModuleLevel(), exported: isExportedDecl(node) && !isDefaultExport(node), bases, ...(dynamicBases.length > 0 ? { dynamicBases } : {}) });
-        return ctx.push({ def, cls: name.text, locals: null, ...(typeParams ? { typeParams } : {}) });
+        const leave = ctx.push({ def, cls: name.text, locals: null, ...(typeParams ? { typeParams } : {}) });
+        (ctx.defs[def] as DefFact).fields = jsFields(node);
+        return leave;
       }
       case "method_definition": {
         const name = node.childForFieldName("name");
@@ -1309,7 +1375,7 @@ function extractJs(tree: Tree, lang: Lang, readers: readonly TreeVisitor[]): Fil
           ctx.declareFn(name.text, def, block);
           return ctx.push({ def, cls: null, locals: null, fnAt: (value as Node).startIndex });
         }
-        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(value), block);
+        ctx.setLocal(name.text, declared(jsTypeRef(node.childForFieldName("type"))) ?? newType(value) ?? callType(ctx, value), block);
         return;
       }
       case "statement_block":
@@ -1449,7 +1515,7 @@ function extractJs(tree: Tree, lang: Lang, readers: readonly TreeVisitor[]): Fil
         if (assigned) ctx.addValue(assigned, "assign");
         const type = newType(right);
         if (left?.type === "identifier") {
-          ctx.assign(left.text, type ?? callType(right));
+          ctx.assign(left.text, type ?? callType(ctx, right));
           return;
         }
         // `({ f } = deps)`, `[a, b] = list`: each name gets a value whose type is not known.
@@ -1962,9 +2028,9 @@ function goResults(node: Node): (TypeRef | null)[] | undefined {
   return out;
 }
 
-// `F()` or `pkg.F()`: typed by F's declared result at `index`, looked up when
-// the graph is resolved. A method call's result is not followed.
-function goCallType(ctx: Ctx, call: Node, index: number): TypeRef | null {
+// Calls keep their result position and the type of a known receiver.
+function goCallType(ctx: Ctx, call: Node, index: number, depth = 0): TypeRef | null {
+  if (depth > MAX_TYPE_DEPTH) return null;
   const fn = call.childForFieldName("function");
   if (fn?.type === "identifier") return { name: fn.text, qualifier: null, ...pos(fn), result: index };
   if (fn?.type === "selector_expression") {
@@ -1973,6 +2039,15 @@ function goCallType(ctx: Ctx, call: Node, index: number): TypeRef | null {
     if (operand?.type === "identifier" && field && ctx.local(operand.text) === undefined) {
       return { name: field.text, qualifier: operand.text, ...pos(fn), result: index };
     }
+    if (!operand || !field) return null;
+    const recv = goReceiver(ctx, operand, depth + 1);
+    if (recv.kind !== "type") return null;
+    let on: TypeRef | undefined = recv.type;
+    for (const name of recv.path) {
+      if (!on || on.qualifier || on.elem || on.result !== undefined) return null;
+      on = ctx.goFields.get(on.name)?.[name];
+    }
+    return methodResultType(field, on, index);
   }
   return null;
 }
@@ -1985,7 +2060,7 @@ function goValueType(ctx: Ctx, value: Node | undefined, index = 0): TypeRef | nu
   return null;
 }
 
-function goReceiver(ctx: Ctx, operand: Node): Receiver {
+function goReceiver(ctx: Ctx, operand: Node, depth = 0): Receiver {
   const path: string[] = [];
   let base: Node | null = operand;
   while (base && base.type === "selector_expression") {
@@ -2001,7 +2076,7 @@ function goReceiver(ctx: Ctx, operand: Node): Receiver {
     return t?.elem ? { kind: "type", type: { ...t, elem: false }, path } : { kind: "other" };
   }
   if (base?.type === "call_expression") {
-    const type = goCallType(ctx, base, 0);
+    const type = goCallType(ctx, base, 0, depth);
     return type ? { kind: "type", type, path } : { kind: "other" };
   }
   if (base?.type !== "identifier") return { kind: "other" };
@@ -2014,6 +2089,22 @@ function goReceiver(ctx: Ctx, operand: Node): Receiver {
 
 function extractGo(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   const ctx = new Ctx("go");
+  // Package types are visible before their declarations. Keep their direct field annotations for receiver calls.
+  for (const decl of tree.rootNode.namedChildren) {
+    if (decl.type !== "type_declaration") continue;
+    for (const spec of decl.namedChildren) {
+      const name = spec.childForFieldName("name");
+      const body = spec.childForFieldName("type");
+      if (!name || body?.type !== "struct_type") continue;
+      const fields: Record<string, TypeRef> = {};
+      const list = body.namedChildren.find((c) => c.type === "field_declaration_list");
+      for (const field of list?.namedChildren ?? []) {
+        const type = goTypeRef(field.childForFieldName("type"));
+        if (type) for (const n of field.childrenForFieldName("name")) fields[n.text] = type;
+      }
+      ctx.goFields.set(name.text, fields);
+    }
+  }
   const exported = (name: string) => /^[A-Z]/.test(name);
   const signatureUses = (node: Node, def: number) => {
     for (const field of ["parameters", "result"]) for (const r of goTypeNames(node.childForFieldName(field))) ctx.addTypeUse(r, def);

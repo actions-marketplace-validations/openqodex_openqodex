@@ -26,7 +26,7 @@ import type { Cause, Cut, EvidenceKind, Shape, Tier, Via } from "./model/records
 import { weakest } from "./model/records.js";
 import type { Lookup as PluginLookup } from "./frameworks/plugin.js";
 import type { BoundImport, CallFact, DefFact, DispatchSite, EdgeKind, Family, FileFacts, GraphEdge, GraphNode, GraphSite, InvocationSummary, Miss, TypeRef, UnknownSite, ValueRef } from "./types.js";
-import { CALLER_KINDS, familyOf } from "./types.js";
+import { CALLER_KINDS, MAX_TYPE_DEPTH, familyOf } from "./types.js";
 
 const MAX_DEPTH = 8; // re-export and base-class chains
 // Files the walk of `export *` may open in one world. Each file is walked
@@ -1288,13 +1288,7 @@ export function createWorld(input: ResolveInput): World {
   // name's binding. A function's name stands for its declared result type
   // at the position the call took. `ext`: the type comes from a dependency.
   type TypeHit = { key: string; ev: Ev } | "ext" | null;
-  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false, nesting: string | null = null): TypeHit => {
-    if (t.elem || depth > MAX_DEPTH) return null;
-    if (family === "java") return javaTypeKey(file, t, depth, asType, nesting);
-    if (family === "ruby") {
-      const key = rbConst(t.name, t.qualifier);
-      return key ? { key, ev: rbConstEv(key, file) } : null;
-    }
+  const typeValue = (file: string, t: TypeRef): Value | null => {
     // The head name, through the scoped import that binds it where the type was read.
     const head = (name: string) => (t.bound ? boundValue(file, name, t.bound) : resolveLocal(file, name));
     let v: Value | null;
@@ -1304,6 +1298,18 @@ export function createWorld(input: ResolveInput): World {
       for (const p of parts.slice(1)) v = attr(v, p);
       v = v && v.v !== "sym" ? attr(v, t.name) : null;
     } else v = head(t.name);
+    return v;
+  };
+  const typeKey = (file: string, family: Family, t: TypeRef, depth = 0, asType = false, nesting: string | null = null): TypeHit => {
+    if (t.elem || depth > MAX_TYPE_DEPTH) return null;
+    if (t.promise) return "ext";
+    if (t.result !== undefined) return asType ? null : resultType(file, family, t, depth, nesting);
+    if (family === "java") return javaTypeKey(file, t, nesting);
+    if (family === "ruby") {
+      const key = rbConst(t.name, t.qualifier);
+      return key ? { key, ev: rbConstEv(key, file) } : null;
+    }
+    const v = typeValue(file, t);
     if (v?.v === "ext") return "ext";
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
@@ -1349,32 +1355,17 @@ export function createWorld(input: ResolveInput): World {
     }
     return v;
   };
-  const javaTypeKey = (file: string, t: TypeRef, depth: number, asType: boolean, nesting: string | null): TypeHit => {
-    if (t.result !== undefined) return asType ? null : javaResultType(file, t, depth, nesting);
+  const javaTypeKey = (file: string, t: TypeRef, nesting: string | null): TypeHit => {
     const v = javaTypeValue(file, t.qualifier ? [...t.qualifier.split("."), t.name] : [t.name], nesting);
     if (v?.v === "ext") return "ext";
     if (v?.v !== "sym" || v.ids.length !== 1) return null;
     const cls = classOfId.get(v.ids[0] as string);
     return cls ? { key: cls, ev: v.ev } : null;
   };
-  // What a Java method call returns, by the member's declared result:
-  // `make()` on the enclosing types, `T.make()` on the type T, or
-  // `x.make()` on a value of the type `on` (its instance side). Every
-  // member the call may bind must name the same class.
-  const javaResultType = (file: string, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
+  type ResultTarget = { ids: string[]; ev: Ev } | "ext" | null;
+  const javaResultTarget = (file: string, t: TypeRef, nesting: string | null): ResultTarget => {
     let found: { ids: string[]; ev: Ev } | null = null;
-    if (t.on) {
-      // A method of a class outside the graph returns what the graph does not know.
-      const on = typeKey(file, "java", t.on, depth + 1, false, nesting);
-      if (on === null || on === "ext") return null;
-      const hit = methodOn(on.key, t.name, "i", 0);
-      if (!hit || !("ids" in hit)) return null;
-      // Members with a declared result: an abstract one beside an
-      // implementation of its parameter count names the same thing.
-      const ids = hit.ids.filter((id) => defById.get(id)?.results?.[t.result ?? 0]);
-      if (ids.length === 0) return null;
-      found = { ids, ev: hit.ev ? chain(on.ev, hit.ev) : on.ev };
-    } else if (t.qualifier === null) {
+    if (t.qualifier === null) {
       for (const key of javaScopes(file, nesting)) {
         for (const side of ["i", "s"] as const) {
           const hit = methodOn(key, t.name, side, 0);
@@ -1392,13 +1383,50 @@ export function createWorld(input: ResolveInput): World {
       const hit = key ? methodOn(key, t.name, "s", 0) : null;
       if (v?.v === "sym" && hit && "ids" in hit) found = { ids: hit.ids, ev: hit.ev ? chain(v.ev, hit.ev) : v.ev };
     }
+    return found;
+  };
+  const namedResultTarget = (file: string, t: TypeRef): ResultTarget => {
+    const v = typeValue(file, t);
+    if (v?.v === "ext") return "ext";
+    return v?.v === "sym" && v.ids.length === 1 ? { ids: v.ids, ev: v.ev } : null;
+  };
+  const resultTargets: Record<Family, (file: string, t: TypeRef, nesting: string | null) => ResultTarget> = {
+    java: javaResultTarget,
+    js: namedResultTarget,
+    go: namedResultTarget,
+    python: namedResultTarget,
+    ruby: namedResultTarget,
+  };
+
+  // Every candidate must declare the same result type. Receiver lookup follows the family's method rules.
+  const resultType = (file: string, family: Family, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
+    let found: ResultTarget;
+    if (t.on) {
+      const on = typeKey(file, family, t.on, depth + 1, false, nesting);
+      // An external receiver has no readable method declaration.
+      if (on === null || on === "ext") return null;
+      const hit = methodOn(on.key, t.name, "i", 0);
+      if (!hit || !("ids" in hit)) return null;
+      const ids = hit.ids.filter((id) => defById.get(id)?.results?.[t.result ?? 0]);
+      if (ids.length === 0) return null;
+      found = { ids, ev: hit.ev ? chain(on.ev, hit.ev) : on.ev };
+    } else {
+      found = resultTargets[family](file, t, nesting);
+      if (found === "ext") return "ext";
+      // A constructor or a Go type conversion names its class directly.
+      const key = found?.ids.length === 1 ? classOfId.get(found.ids[0] as string) : undefined;
+      if (key && found) return { key, ev: found.ev };
+    }
     if (!found) return null;
     let out: TypeHit = null;
     for (const id of found.ids) {
       const def = defById.get(id);
       const result = def?.results?.[t.result ?? 0];
       if (!def || !result) return null;
-      const inner = typeKey(def.file, def.family, { ...result, result: undefined }, depth + 1, false, def.owner);
+      // Only an awaited call exposes the value inside a declared Promise.
+      const inner = result.promise && !t.awaited
+        ? "ext"
+        : typeKey(def.file, def.family, { ...result, result: undefined, promise: undefined }, depth + 1, false, def.owner);
       if (inner === null) return null;
       if (out !== null && (inner === "ext" ? out !== "ext" : out === "ext" || out.key !== inner.key)) return null;
       out = inner === "ext" ? inner : { key: inner.key, ev: chain(found.ev, inner.ev) };

@@ -37,6 +37,8 @@ export type TypeRef = {
   line: number;
   column: number;
   result?: number;
+  promise?: boolean; // The declared type wraps this type in Promise.
+  awaited?: boolean; // The call result is read through await.
   // With `result`: the method `name` is called on a value of type `on`
   // (`repo.find(id)` with `repo` a typed local or field); this type is that
   // method's declared result at position `result`. Chains nest through `on`.

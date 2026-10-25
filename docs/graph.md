@@ -205,6 +205,8 @@ The `graph` keys of `.openqodex/config.yaml` are in `config`: `graph.enabled`, `
 
 ## Dispatch, values and types
 
+Go follows chained results through fields only when each field's struct is declared in the caller's file.
+
 A call through an interface or a base type binds to the member it declares, at the level its type is proved (an annotation, a declared result, a field type, `this` or `self`). Each implementation or override that may run instead is then a possible caller of the call's site, found by each class's own lookup, so an inherited implementation counts and an abstract member never does:
 
 - TypeScript and JavaScript: the class, then its superclass chain, then the interfaces it implements. Implementations are the classes that declare `implements`, their subclasses, interfaces that extend it, and a module-level `const x: Repo = { ... }`. A call through an interface also leaves an `unsupported-rule` gap, since an object of the same shape may answer it without declaring anything. A generic argument never drops an implementation: TypeScript compares `Repo<A>` and `Repo<B>` by the shapes of `A` and `B`, which the graph does not hold whole.
