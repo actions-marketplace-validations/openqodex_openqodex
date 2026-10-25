@@ -1627,6 +1627,34 @@ export function createWorld(input: ResolveInput): World {
     return null;
   }
 
+  // Public instance methods on Java interfaces can hide inherited defaults.
+  const javaInterfaceMethodOwner = (id: string): string | null => {
+    const d = defById.get(id);
+    if (!d || d.family !== "java" || d.kind !== "method" || !d.exported || d.static || d.ctor) return null;
+    const key = classKey("java", d.file, d.owner ?? "");
+    return isIface(key) ? key : null;
+  };
+  // A public instance method with a body on a Java interface is a default.
+  const javaDefaultOwner = (id: string): string | null => defById.get(id)?.abstract ? null : javaInterfaceMethodOwner(id);
+  const javaInterfaceAncestorsMemo = new Map<string, Set<string>>();
+  const javaInterfaceAncestors = (key: string): Set<string> => {
+    const kept = javaInterfaceAncestorsMemo.get(key);
+    if (kept) return kept;
+    const seen = new Set([key]);
+    const stack = [key];
+    while (stack.length > 0 && seen.size < 10_000) {
+      if (seen.size % 1024 === 0) checkBudget();
+      for (const base of basesOf(stack.pop() as string).keys) {
+        if (seen.has(base) || !isIface(base)) continue;
+        seen.add(base);
+        stack.push(base);
+      }
+    }
+    seen.delete(key);
+    javaInterfaceAncestorsMemo.set(key, seen);
+    return seen;
+  };
+
   // Java: every member of the name along the superclass chain, then along
   // the interfaces (an interface's own bases are interfaces), each class
   // visited once. A Java class inherits every overload it does not hide, so
@@ -1673,14 +1701,24 @@ export function createWorld(input: ResolveInput): World {
       }
     }
     if (hits.length === 0) return null;
-    const ids = [...new Set(hits.flatMap((h) => h.ids))];
-    const evs = hits.map((h) => h.ev).filter((e): e is Ev => e !== null);
+    // A strict sub-interface declaration hides an inherited default with the same parameter count.
+    const declarations = hits.flatMap((h) => h.ids.flatMap((id) => {
+      const owner = javaInterfaceMethodOwner(id);
+      return owner === null ? [] : [{ id, owner, count: defById.get(id)?.params?.length ?? 0 }];
+    }));
+    const defaults = declarations.filter((d) => javaDefaultOwner(d.id) !== null);
+    const hidden = new Set(defaults.filter((a) => declarations.some((b) =>
+      a.owner !== b.owner && a.count === b.count && javaInterfaceAncestors(b.owner).has(a.owner) && !javaInterfaceAncestors(a.owner).has(b.owner),
+    )).map((d) => d.id));
+    const kept = hits.map((h) => ({ ...h, ids: h.ids.filter((id) => !hidden.has(id)) })).filter((h) => h.ids.length > 0);
+    const ids = [...new Set(kept.flatMap((h) => h.ids))];
+    const evs = kept.map((h) => h.ev).filter((e): e is Ev => e !== null);
     let ev: Ev | null = null;
     for (const e of evs) ev = ev === null ? e : chain(ev, e);
     // An outside superclass may declare a better overload for a call with arguments.
     if (outside !== null) ev = pastOutside(outside, name, ev);
     // Fixed zero-argument members keep only evidence from the path before their declaration.
-    const zero = hits.flatMap((h) => h.ids.filter((id) => {
+    const zero = kept.flatMap((h) => h.ids.filter((id) => {
       const d = defById.get(id);
       return d?.params?.length === 0 && !d.varargs && !d.ctor;
     }).map((id) => ({ id, ev: h.ev })));
@@ -2197,8 +2235,16 @@ export function createWorld(input: ResolveInput): World {
     if (arity === 0) {
       const fixed = live.find((id) => javaCount(id) === 0 && !defById.get(id)?.varargs);
       if (fixed) {
-        const step = zeroEvidence.get(fixed);
-        return { ids: [fixed], ev: step ? chain(ev, step) : ev };
+        // Unrelated defaults remain possible. A class member still wins first.
+        const candidates = javaDefaultOwner(fixed) === null ? [fixed] : live.filter((id) =>
+          javaCount(id) === 0 && !defById.get(id)?.varargs && javaDefaultOwner(id) !== null,
+        );
+        let evidence = ev;
+        for (const id of candidates) {
+          const step = zeroEvidence.get(id);
+          if (step) evidence = chain(evidence, step);
+        }
+        return javaOverloads(candidates, name, arity, evidence, value);
       }
     }
     return javaOverloads(live, name, arity, inner ? chain(ev, inner) : ev, value);
