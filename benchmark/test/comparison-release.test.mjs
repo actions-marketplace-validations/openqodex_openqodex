@@ -132,6 +132,19 @@ for (const changed of ["first", "second"]) it(`comparison release refuses the ${
   expect(() => comparisonRelease(f.manifest, { root: f.root })).toThrow(`run 2026-10-24-${changed} entry is not committed at HEAD; commit it before attaching`);
 });
 
+it("a conversion on a later checkout accepts the record on its pinned build, and making a run there is refused", () => {
+  const f = fixture();
+  writeFileSync(join(f.repo, "later.txt"), "a commit after the pinned build\n");
+  git(f.repo, "add", "."); git(f.repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Later work");
+  expect(git(f.repo, "rev-parse", "HEAD").trim()).not.toBe(f.build.commit);
+  expect(comparisonRelease(f.manifest, { root: f.root }).buildLabel).toBe(`local build ${f.build.commit}`);
+  // The bundle built on the later commit is not the pinned build, so no run may be made from it.
+  const later = { commit: git(f.repo, "rev-parse", "HEAD").trim(), tree: git(f.repo, "rev-parse", "HEAD^{tree}").trim() };
+  write(join(f.root, ".build/provenance.json"), { ...f.build, ...later, commitTree: later.tree, dirty: false });
+  expect(() => comparisonRelease(f.manifest, { root: f.root, admit: true })).toThrow("comparison release requires the pinned build checked out and built");
+  expect(comparisonRelease(f.manifest, { root: f.root }).buildLabel).toBe(`local build ${f.build.commit}`);
+});
+
 it("refuses a development run on a held-out split", () => {
   expect(() => selectCases({ suite: "aacr", split: "test" })).toThrow(/held out/);
 });

@@ -292,15 +292,22 @@ export function comparisonRelease(manifest, { root = benchRoot, admit = false } 
   need(bytes === committed, `comparison ${release} differs from its committed record`);
   const record = JSON.parse(bytes);
   need(record.release === release, "comparison record names another release");
-  const checked = validateComparison(record, { root });
+  // The record keeps the build its runs were made on: a conversion or a
+  // judge on a later checkout validates it on that build (the run's own
+  // build is checked against it below); only a run made now needs the
+  // pinned build checked out and built.
+  const checked = validateComparison(record, { root, build: record.build });
   need(checked.accepted, `comparison ${release} is not accepted`);
+  if (admit) need(equal(record.build, buildFingerprint({ root })), "comparison release requires the pinned build checked out and built");
   for (const r of record.runs) committedRunEntry(root, r.runId);
   need(p?.spec === "local" && p.commit === record.build.commit && p.dirty === false, "comparison release requires its pinned clean local build");
   const fingerprint = b ? { commit: b.commit, tree: b.tree, bundleHash: b.bundleHash, version: b.cliVersion ?? b.version } : null;
   need(equal(fingerprint, record.build), "comparison build fingerprint differs from the run's build");
   need(b.dirty === false && b.commitTree === b.tree && git(repo, "rev-parse", `${b.commit}^{tree}`).trim() === b.tree, "comparison build must be clean and match its commit tree");
-  const provenance = json(join(root, ".build/provenance.json"));
-  need(provenance.dirty === false && provenance.commitTree === b.tree, "comparison build provenance must be clean");
+  if (admit) {
+    const provenance = json(join(root, ".build/provenance.json"));
+    need(provenance.dirty === false && provenance.commitTree === b.tree, "comparison build provenance must be clean");
+  }
   need(record.suites[suite] && split === "test" && record.suites[suite].splitHash === splitHash, "comparison suite or test split differs from the accepted pins");
   if (admit) need(git(repo, "status", "--porcelain").trim() === "", "comparison release requires a clean checkout; the tree is dirty");
   return { release, package: p, comparison: { release, hash: checked.hash }, buildLabel: `local build ${b.commit}` };
