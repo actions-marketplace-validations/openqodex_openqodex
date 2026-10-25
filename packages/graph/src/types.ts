@@ -6,16 +6,20 @@ import type { FrameworkFileFacts } from "./frameworks/plugin.js";
 import type { FrameworkData } from "./frameworks/stage.js";
 import type { Cause, Cut, Shape, Tier } from "./model/records.js";
 
-export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby";
+export type Lang = "typescript" | "tsx" | "javascript" | "python" | "go" | "ruby" | "java";
 // Calls bind only inside one family: a TypeScript file never calls Python.
-export type Family = "js" | "python" | "go" | "ruby";
+export type Family = "js" | "python" | "go" | "ruby" | "java";
 
 export function familyOf(lang: Lang): Family {
-  if (lang === "python" || lang === "go" || lang === "ruby") return lang;
+  if (lang === "python" || lang === "go" || lang === "ruby" || lang === "java") return lang;
   return "js";
 }
 
 // ---------- facts one parse of one file yields (cached by content) ----------
+
+// How deep a TypeRef may nest through `on`: the extractor drops `on` past
+// it and the validator refuses deeper ones, so a kept file is never refused.
+export const MAX_TYPE_DEPTH = 16;
 
 // A type named in source: `Repo`, `pkg.Repo` (qualifier "pkg"), Ruby `A::B`
 // (whole path in `name`, the lexical nesting in `qualifier`).
@@ -33,6 +37,10 @@ export type TypeRef = {
   line: number;
   column: number;
   result?: number;
+  // With `result`: the method `name` is called on a value of type `on`
+  // (`repo.find(id)` with `repo` a typed local or field); this type is that
+  // method's declared result at position `result`. Chains nest through `on`.
+  on?: TypeRef; // nested at most MAX_TYPE_DEPTH deep
   elem?: boolean;
   declared?: boolean;
   bound?: BoundImport;
@@ -70,6 +78,12 @@ export type DefFact = {
   abstract?: boolean;
   iface?: boolean; // a TypeScript interface or a Go interface type
   pointer?: boolean; // a Go method with a pointer receiver
+  // A Java method whose last parameter is varargs (`Object... rest`): it
+  // takes any number of arguments from its fixed parameters up.
+  varargs?: boolean;
+  // A Java constructor: a method named like its class, called by `new`.
+  // It is not static: its body runs on the new instance.
+  ctor?: boolean;
   // Functions and methods: the parameter names in order (a Python method
   // without its self or cls), the ones the body calls (at any depth of
   // nested functions), and the value references it returns (indices into
@@ -146,6 +160,11 @@ export type CallFact = {
   bound?: BoundImport; // a bare call to a name a scoped import binds
 
   static?: boolean; // the caller runs on the class itself (static method, Ruby class body)
+  // Java: `new T(...)`, `this(...)` or `super(...)`: a constructor call,
+  // bound only to the constructors the class itself declares.
+  ctor?: boolean;
+  // Java: the number of arguments, when the argument list parsed.
+  arity?: number;
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
   dynamic?: boolean;
   // A bare call of a local given one value once (`const fn = helper`):
@@ -172,6 +191,10 @@ export type ImportFact = {
   // Made inside a function or a block (`await import()`, a require, a Python
   // import in a function): it binds no name for the whole file, only through `bound`.
   scoped?: boolean;
+  // Java `import static a.b.C.m`: the member `m` of the named class C.
+  staticMember?: string;
+  // Java `import static a.b.C.*`: every static member of the named class C.
+  staticStar?: boolean;
 };
 
 export type FileFacts = {
@@ -186,6 +209,9 @@ export type FileFacts = {
   exportsLocal: { local: string; exported: string; line?: number }[]; // `export { a as b }` without a source
   defaultExport: string | null; // the local name `export default` names
   goPackage: string | null;
+  // Java: the declared package (`a.b`), null for the default package.
+  // Absent for the other languages.
+  javaPackage?: string | null;
   // Each framework plugin's context-free facts of the file, by plugin id
   // (frameworks/plugin.ts); absent when no plugin found anything.
   frameworks?: FrameworkFileFacts;

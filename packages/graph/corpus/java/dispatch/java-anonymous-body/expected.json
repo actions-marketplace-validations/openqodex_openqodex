@@ -1,0 +1,19 @@
+{
+  "guards": "never binds this.m() inside a Java anonymous class to the enclosing class's m",
+  "notReached": [
+    {
+      "to": "src/main/java/an/Host.java#Host.m",
+      "site": "src/main/java/an/Host.java:15"
+    }
+  ],
+  "unknowns": [
+    {
+      "file": "src/main/java/an/Host.java",
+      "line": 15,
+      "cause": "no-receiver-type"
+    }
+  ],
+  "floor": {
+    "src/main/java/an/Host.java#Host.m": true
+  }
+}
