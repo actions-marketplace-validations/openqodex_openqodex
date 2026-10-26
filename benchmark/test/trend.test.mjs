@@ -370,7 +370,7 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
       expect(result.status, result.stdout + result.stderr).toBe(variant.accepted ? 0 : 2);
       expect(readEntryAt(target, NEWER.runId).accepted).toBe(variant.accepted === true);
       expect(existsSync(join(target, "accepted.json"))).toBe(variant.accepted === true);
-      if (!variant.accepted) expect(result.stderr).toContain(`publishExceptions do not match benchmark/index/exceptions/${NEWER.runId}.json`);
+      if (!variant.accepted) expect(result.stderr).toMatch(new RegExp(`(publishExceptions do not match|the run cannot be packaged again under) benchmark/index/exceptions/${NEWER.runId}\\.json`));
     }
   });
 

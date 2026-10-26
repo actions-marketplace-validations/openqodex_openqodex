@@ -353,6 +353,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       need(/^\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]+$/.test(runId), "run must pin runId and sha256");
       const bytes = committedRunEntry(benchRoot, runId);
       const entry = JSON.parse(bytes.toString("utf8"));
+      // A stopped run lists the cases it planned, not the ones it reviewed, so
+      // its unreviewed cases would count as misses under a full case list.
+      need(entry.ended?.how === "finished", `run ${runId} ended ${entry.ended?.how ?? "unknown"}; only a finished run attaches`);
       need(record.suites?.[entry.suite], `run ${runId} differs from the comparison suite`);
       const casesNotRun = suiteCaseIds(entry.suite, record.suites[entry.suite]).filter((id) => !entry.caseIds?.includes(id));
       record.acceptance = { person: "", date: "", hash: "" };

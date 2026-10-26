@@ -598,7 +598,7 @@ async function main() {
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;
-  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, this machine's and any platform's home folder paths, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns. No hit.`);
+  console.log(`Inspected every packaged file for: ${l.secrets} generated secrets, this machine's and any platform's home folder paths, ${l.modelValues} model settings values, ${l.patterns} public and ${l.privatePatterns} private scrub patterns. ${asset.exceptions.length === 0 ? "No hit." : `No hit beyond the ${asset.exceptions.length} excused.`}`);
   console.log(dryRun ? `Dry run: nothing uploaded. The asset unpacks to the same file list.` : boardOnly ? "Board numbers refreshed in the index entry. The asset is unchanged, and nothing was uploaded." : `Uploaded to ${entry.asset.url}`);
   if (written) {
     console.log(`Index entry written: ${written}`);

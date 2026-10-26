@@ -206,6 +206,16 @@ describe("frozen comparisons", () => {
     expect(result.status).toBe(1); expect(result.stderr).toContain("build differs from the comparison build");
     expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
   });
+  it("a stopped run is refused: its planned case list would count unreviewed cases as misses", () => {
+    const f = fixture("greptile", true); const run = runFixture(f);
+    run.entry.ended = { ...run.entry.ended, how: "stopped", why: "the benchmark itself failed on one case" }; run.save();
+    commitEntry(f, run);
+    f.record.runs = []; write(join(f.root, "comparison.json"), sign(f.record));
+    const before = readFileSync(join(f.root, "comparison.json"), "utf8");
+    const result = attach(f, run.entry.runId);
+    expect(result.status).toBe(1); expect(result.stderr).toContain("ended stopped; only a finished run attaches");
+    expect(readFileSync(join(f.root, "comparison.json"), "utf8")).toBe(before);
+  });
   it("a run that covers 49 of 50 cases is refused unless it names the case it did not run", () => {
     const f = fixture("greptile"); const run = runFixture(f);
     const missing = run.entry.caseIds.at(-1);

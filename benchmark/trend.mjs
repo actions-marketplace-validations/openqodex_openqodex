@@ -578,7 +578,7 @@ export async function runMismatch(entry, results, index = indexRoot) {
     const packaged = await packageRun(folder, { out: scratch, runs: join(index, "runs") });
     if (canonical(packaged.exceptions) !== canonical(entry.publishExceptions ?? [])) return [mismatch];
   } catch (error) {
-    return [`${mismatch}: ${error.message}`];
+    return [`the run cannot be packaged again under benchmark/index/exceptions/${entry.runId}.json: ${error.message}`];
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

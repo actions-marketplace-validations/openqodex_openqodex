@@ -480,12 +480,6 @@
       ]
     },
     {
-      "runId": "2026-10-24-25e37262-greptile-control",
-      "sha256": "f09ecee0eb005a87a326de3f8964e6700702e2988189d9b96c078a70ffbbc1bf",
-      "reviewer": "control",
-      "casesNotRun": []
-    },
-    {
       "runId": "2026-10-24-25e37262-greptile-library",
       "sha256": "5b7092819e36cc4f7a387fdb04e4dde79c4f80469855b8b0806067059ee38ea7",
       "reviewer": "library",
@@ -498,12 +492,6 @@
       "casesNotRun": [
         "martian/ai-code-review-evaluation__sentry-greptile-3@e43c2b26"
       ]
-    },
-    {
-      "runId": "2026-10-24-25e37262-martian-control",
-      "sha256": "54848533e2fe449eed53f25a8437917cba7d53ebeb0b1a33586284d0c3b7239f",
-      "reviewer": "control",
-      "casesNotRun": []
     },
     {
       "runId": "2026-10-24-25e37262-martian-library",
