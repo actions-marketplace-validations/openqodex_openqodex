@@ -1,5 +1,15 @@
 # openqodex
 
+## 0.15.0
+
+### Minor Changes
+
+- [#250](https://github.com/openqodex/openqodex/pull/250) [`81d9a4b`](https://github.com/openqodex/openqodex/commit/81d9a4b3b04d7b5408d223ed84fb52be4d798f18) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - The code graph reads Java: types, methods, constructors, imports, static imports and calls, with no build step. A call through an interface or a base class lists the implementations that may run. Overloads are told apart by their argument count. The review of a Java change names its callers, each with its tier.
+
+### Patch Changes
+
+- [#247](https://github.com/openqodex/openqodex/pull/247) [`1106615`](https://github.com/openqodex/openqodex/commit/1106615523c41165915dacd2501c76bb5c6d7b39) Thanks [@siddhant-mohan](https://github.com/siddhant-mohan)! - Benchmark docs: the comparison record attaches judged runs with their board evidence, scores read Martian and Greptile board results, and the calibration takes a comment form.
+
 ## 0.14.0
 
 ### Minor Changes
