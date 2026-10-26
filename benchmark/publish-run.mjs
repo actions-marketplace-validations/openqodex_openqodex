@@ -253,7 +253,7 @@ function textsOf(line) {
 // A home folder of any platform, followed by a path inside it:
 // /Users/<name>/, /home/<name>/, C:\Users\<name>\ (or with forward slashes).
 // A name in angle brackets or starting with $ is a placeholder, not a home.
-const HOME_PATH = /(?:^|[^\w.~-])(?:\/Users\/[^/\s"'`<>$]+\/|\/home\/[^/\s"'`<>$]+\/|[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`<>$]+[\\/])/;
+const HOME_PATH = /(?<=^|[^\w.~-])(?:\/Users\/[^/\s"'`<>$]+\/|\/home\/[^/\s"'`<>$]+\/|[A-Za-z]:[\\/]Users[\\/][^\\/\s"'`<>$]+[\\/])/;
 
 // Every hit in the files to publish, as "<path>:<line>: <what>", and how
 // many values and patterns of each kind were looked for.
@@ -279,11 +279,7 @@ export async function inspect(folder, files, { cases, env = process.env, manifes
       const out = [];
       for (const value of values) for (let i = text.indexOf(value); i >= 0; i = text.indexOf(value, i + 1)) out.push([i, i + value.length]);
       for (const regex of regexes) {
-        for (const m of text.matchAll(regex)) {
-          // HOME_PATH takes the character before the path with it; the span starts at the path.
-          const lead = regex.source === HOME_PATH.source && !/^(?:\/Users\/|\/home\/|[A-Za-z]:[\\/]Users[\\/])/.test(m[0]) ? 1 : 0;
-          out.push([m.index + lead, m.index + m[0].length]);
-        }
+        for (const m of text.matchAll(regex)) out.push([m.index, m.index + m[0].length]);
       }
       return out;
     });
@@ -426,15 +422,19 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     let reason;
     rules.forEach((rule, i) => {
       if ((rule.file !== undefined && rule.file !== file) || rule.label !== label || (rule.line !== undefined && rule.line !== line) || !texts.some((text) => text.includes(rule.text))) return;
-      // Every piece of private text on the line must sit inside an occurrence of
-      // the rule's text; a real path beside the example, or a rule that names
-      // only part of a secret, leaves a span uncovered and the hit stands.
+      // Two checks, both must pass. Every piece of private text on the line
+      // must sit inside an occurrence of the rule's text, so a real path
+      // beside the example, or a rule that names only part of a secret, keeps
+      // the hit. And with every occurrence replaced by a space, nothing may be
+      // found, which catches a span the first scan skipped because it began
+      // where an earlier match ended.
+      const find = spans.get(label);
       const covered = texts.every((text) => {
         const places = [];
         for (let i = text.indexOf(rule.text); i >= 0; i = text.indexOf(rule.text, i + 1)) places.push([i, i + rule.text.length]);
-        return spans.get(label)(text).every(([start, end]) => places.some(([from, to]) => from <= start && end <= to));
+        return find(text).every(([start, end]) => places.some(([from, to]) => from <= start && end <= to));
       });
-      if (!covered) return;
+      if (!covered || texts.some((text) => find(text.split(rule.text).join(" ")).length > 0)) return;
       used.add(i);
       reason ??= rule.reason;
     });
