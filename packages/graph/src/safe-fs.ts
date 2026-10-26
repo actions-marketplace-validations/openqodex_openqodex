@@ -75,6 +75,9 @@ function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
     depth <= MAX_TYPE_DEPTH &&
     isObj(v) &&
     (v.on === undefined || isTypeRef(v.on, imports, depth + 1)) &&
+    (v.args === undefined || (Array.isArray(v.args) && v.args.every((a: unknown) => isTypeRef(a, imports, depth + 1)))) &&
+    (v.kind === undefined || v.kind === "param") &&
+    (v.param === undefined || (isInt(v.param) && (v.param as number) >= 0)) &&
     isStr(v.name) &&
     (v.qualifier === null || isStr(v.qualifier)) &&
     isInt(v.line) &&
@@ -82,6 +85,8 @@ function isTypeRef(v: unknown, imports: number, depth = 0): boolean {
     (v.result === undefined || isInt(v.result)) &&
     optBool(v.elem) &&
     optBool(v.declared) &&
+    optBool(v.promise) &&
+    optBool(v.awaited) &&
     optBound(v.bound, imports) &&
     (v.rel === undefined || RELS.has(v.rel as string))
   );
@@ -138,6 +143,7 @@ function isDef(v: unknown, imports: number, values: number): boolean {
     (v.bodyHash === undefined || (typeof v.bodyHash === "string" && /^[0-9a-f]{16}$/.test(v.bodyHash))) &&
     optBool(v.abstract) &&
     optBool(v.iface) &&
+    optBool(v.anonymous) &&
     optBool(v.pointer) &&
     optBool(v.varargs) &&
     optBool(v.ctor) &&
@@ -173,6 +179,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
     optBound(c.bound, imports) &&
     optIndex(c.alias, values) &&
+    (c.aliasOf === undefined || isStr(c.aliasOf)) &&
     optIndex(c.result, calls) &&
     optIndex(c.table, tables);
   const isValue = (r: unknown) =>

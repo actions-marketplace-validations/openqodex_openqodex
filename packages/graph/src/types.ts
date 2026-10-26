@@ -17,8 +17,7 @@ export function familyOf(lang: Lang): Family {
 
 // ---------- facts one parse of one file yields (cached by content) ----------
 
-// How deep a TypeRef may nest through `on`: the extractor drops `on` past
-// it and the validator refuses deeper ones, so a kept file is never refused.
+// Type nesting through `on` and `args` shares one depth limit.
 export const MAX_TYPE_DEPTH = 16;
 
 // A type named in source: `Repo`, `pkg.Repo` (qualifier "pkg"), Ruby `A::B`
@@ -37,6 +36,8 @@ export type TypeRef = {
   line: number;
   column: number;
   result?: number;
+  promise?: boolean; // The declared type wraps this type in Promise.
+  awaited?: boolean; // The call result is read through await.
   // With `result`: the method `name` is called on a value of type `on`
   // (`repo.find(id)` with `repo` a typed local or field); this type is that
   // method's declared result at position `result`. Chains nest through `on`.
@@ -45,6 +46,9 @@ export type TypeRef = {
   declared?: boolean;
   bound?: BoundImport;
   rel?: "implements" | "include" | "prepend" | "extend";
+  args?: TypeRef[]; // Java arguments, in declaration order.
+  kind?: "param"; // A Java result naming a class type parameter.
+  param?: number; // The class type parameter's index.
 };
 
 export type DefFact = {
@@ -77,6 +81,7 @@ export type DefFact = {
   // never a dispatch target.
   abstract?: boolean;
   iface?: boolean; // a TypeScript interface or a Go interface type
+  anonymous?: boolean; // a Java object or enum constant body, never a source-level type name
   pointer?: boolean; // a Go method with a pointer receiver
   // A Java method whose last parameter is varargs (`Object... rest`): it
   // takes any number of arguments from its fixed parameters up.
@@ -167,9 +172,11 @@ export type CallFact = {
   arity?: number;
   // A computed callee (`table[key]()`): no name to bind. `name` is empty.
   dynamic?: boolean;
-  // A bare call of a local given one value once (`const fn = helper`):
-  // the value reference it holds (index into FileFacts.values).
+  // A call of a local or its member uses the local's single callable value.
+  // The alias indexes FileFacts.values.
   alias?: number;
+  // The local given the value, when it is not the callee name.
+  aliasOf?: string;
   // A call of what a call returned: `pick(k)()`, or a local given that
   // value once (`const h = pick(k); h()`): the inner call (index into calls).
   result?: number;

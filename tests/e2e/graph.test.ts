@@ -1,6 +1,6 @@
 // The code graph on real code. Two failures this file guards against:
 // 1. The graph misses a real caller (recall) or invents one (precision) on a
-//    large public repo. Four repos are pinned to a commit; for five symbols
+//    large public repo. Four repos are pinned to a commit; for selected symbols
 //    in each, every call site below was read by hand from `git grep -n` at
 //    that commit. `calls` are the sites the resolution rules can bind (an
 //    import, a known receiver type, self); `gaps` are real calls the rules do
@@ -36,6 +36,23 @@ const REPOS: Repo[] = [
     url: "https://github.com/nestjs/nest.git",
     sha: "35142c3eca8edaaf6abc5984d915da2fbd458aa2",
     targets: [
+      {
+        // Three calls have a result type whose source the graph can resolve.
+        file: "packages/common/interfaces/features/arguments-host.interface.ts",
+        symbol: "WsArgumentsHost.getPattern",
+        grep: ["getPattern"],
+        calls: [
+          "integration/websockets/src/request.filter.ts:8",
+          "integration/websockets/src/request.interceptor.ts:7",
+          "packages/websockets/exceptions/base-ws-exception-filter.ts:59",
+        ],
+        // Both hosts are typed ExecutionContextHost values. Its result imports WsArgumentsHost through @nestjs/common/internal.
+        // The graph does not read the referenced build config's source mapping for that JavaScript entry.
+        gaps: [
+          "packages/core/test/helpers/execution-context-host.spec.ts:75",
+          "packages/websockets/test/context/ws-context-creator.spec.ts:302",
+        ],
+      },
       {
         file: "packages/common/utils/validate-each.util.ts",
         symbol: "validateEach",
@@ -206,6 +223,16 @@ const REPOS: Repo[] = [
     url: "https://github.com/etcd-io/etcd.git",
     sha: "64f26db45f5feb2c491a9eb82768a2f41fc857df",
     targets: [
+      {
+        // KV returns WatchableKV, which embeds KV. Both chained calls bind to KV.Commit.
+        file: "server/storage/mvcc/kv.go",
+        symbol: "KV.Commit",
+        grep: ["Commit"],
+        calls: [
+          "server/etcdserver/server.go:2099",
+          "server/etcdserver/snapshot_merge.go:36",
+        ],
+      },
       {
         file: "client/v3/op.go",
         symbol: "WithCountOnly",
