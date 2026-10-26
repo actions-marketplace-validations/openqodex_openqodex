@@ -39,6 +39,54 @@ function tiers(graph: Graph, id: string, kind = "calls"): string[] {
 
 const unknownsAt = (graph: Graph, site: string) => graph.unknowns.filter((u) => `${u.file}:${u.line}` === site);
 
+describe("java callable aliases and anonymous member classes", () => {
+  it("names the receiver local in the alias note when a callable held in a local is invoked through it", async () => {
+    const files = {
+      "Host.java": lines(
+        "class Host {",
+        "  void work() {}",
+        "  void use() {",
+        "    Runnable r = this::work;",
+        "    r.run(); // CALL",
+        "  }",
+        "}",
+      ),
+      "run.py": lines("def work():", "    pass", "", "def use():", "    callback = work", "    callback()"),
+    };
+    const g = await graphOf(files);
+    const sites = (id: string) => (g.in.get(id) ?? []).filter((e) => e.kind === "may_invoke").flatMap((e) => e.sites);
+    const receiver = sites(symbol(g, "Host.java", "work", "Host"));
+    expect(receiver).toHaveLength(1);
+    expect(`${receiver[0]?.file}:${receiver[0]?.line}`).toBe(at(files, "Host.java", "CALL"));
+    expect(receiver[0]?.note).toMatch(/^r is given/);
+    const bare = sites(symbol(g, "run.py", "work"));
+    expect(bare).toHaveLength(1);
+    expect(bare[0]?.note).toMatch(/^callback is given/);
+  });
+
+  it("binds a bare type name to the package class, not to a member class of an anonymous class", async () => {
+    const files = {
+      "A.java": lines(
+        "package p;",
+        "class Host {",
+        "  Runnable r = new Runnable() {",
+        "    class Inner { void go() {} }",
+        "    public void run() {}",
+        "  };",
+        "  void use() { new Inner().go(); } // CALL",
+        "}",
+        "class Outside extends Inner {",
+        "  void use() { go(); } // INHERITED",
+        "}",
+      ),
+      "B.java": lines("package p;", "class Inner { void go() {} }"),
+    };
+    const g = await graphOf(files);
+    expect(callSites(g, symbol(g, "B.java", "go", "Inner"))).toEqual([at(files, "A.java", "CALL"), at(files, "A.java", "INHERITED")].sort());
+    expect(callSites(g, symbol(g, "A.java", "go", "Host.$1.Inner"))).toEqual([]);
+  });
+});
+
 describe("java result candidates", () => {
   const candidates = (other: string) => ({
     "A.java": lines(

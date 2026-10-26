@@ -179,6 +179,7 @@ export function isFileFacts(v: unknown): v is FileFacts {
     (c.local === undefined || (isInt(c.local) && (c.local as number) >= 0 && (c.local as number) < defs)) &&
     optBound(c.bound, imports) &&
     optIndex(c.alias, values) &&
+    (c.aliasOf === undefined || isStr(c.aliasOf)) &&
     optIndex(c.result, calls) &&
     optIndex(c.table, tables);
   const isValue = (r: unknown) =>

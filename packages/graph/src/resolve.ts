@@ -360,7 +360,7 @@ export function createWorld(input: ResolveInput): World {
         }
         if (family === "java") {
           const ownerKey = d.owner === null ? null : classKey("java", path, d.owner);
-          if (ownerKey !== null && (!classes.has(ownerKey) || javaLocalClasses.has(ownerKey))) javaLocalClasses.add(key);
+          if (ownerKey !== null && (!classes.has(ownerKey) || javaLocalClasses.has(ownerKey) || classes.get(ownerKey)?.ids.some((o) => defById.get(o)?.anonymous))) javaLocalClasses.add(key);
           if (d.owner === null) push(nameIndex(javaTypes, javaPkgOf(path)), d.name, id);
           else if (!javaLocalClasses.has(key) && !d.anonymous) push(nameIndex(javaNested, path), d.name, id);
         }
@@ -2759,7 +2759,7 @@ export function createWorld(input: ResolveInput): World {
           const v = valueOf(path, call.alias);
           const ref = f.values[call.alias];
           if (v && ref) {
-            const ev: Ev = { kind: "value-alias", tier: "possible", via: null, note: `${call.name} is given ${ref.name} at line ${ref.line}, so calling it may run it.`, rule: "value-alias" };
+            const ev: Ev = { kind: "value-alias", tier: "possible", via: null, note: `${call.aliasOf ?? call.name} is given ${ref.name} at line ${ref.line}, so calling it may run it.`, rule: "value-alias" };
             for (const t of v.ids) addEdge(callerId, t, "may_invoke", siteOf(path, call.line, call.column, ev));
             continue;
           }

@@ -175,6 +175,8 @@ export type CallFact = {
   // A call of a local or its member uses the local's single callable value.
   // The alias indexes FileFacts.values.
   alias?: number;
+  // The local given the value, when it is not the callee name.
+  aliasOf?: string;
   // A call of what a call returned: `pick(k)()`, or a local given that
   // value once (`const h = pick(k); h()`): the inner call (index into calls).
   result?: number;

@@ -550,7 +550,10 @@ class Ctx {
     const bindAlias = (call: CallFact, at: Scope | null, name: string, refOnly = false) => {
       if (at?.reassigned?.has(name)) return;
       const alias = at?.aliases?.get(name);
-      if (alias?.ref !== undefined) call.alias = alias.ref;
+      if (alias?.ref !== undefined) {
+        call.alias = alias.ref;
+        if (name !== call.name) call.aliasOf = name;
+      }
       else if (!refOnly && alias?.callNode !== undefined) aliasCalls.push({ call, callNode: alias.callNode });
     };
     for (const { call, scope, ident, receiverName } of this.pending) {
@@ -636,8 +639,10 @@ class Ctx {
     for (const c of this.calls) {
       if (c.alias === undefined) continue;
       const to = renumber.get(c.alias);
-      if (to === undefined) delete c.alias;
-      else c.alias = to;
+      if (to === undefined) {
+        delete c.alias;
+        delete c.aliasOf;
+      } else c.alias = to;
     }
     for (const d of this.defs) {
       if (!d.returns) continue;

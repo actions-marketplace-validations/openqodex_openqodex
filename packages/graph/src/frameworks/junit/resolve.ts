@@ -191,7 +191,6 @@ export function analyse(index: PluginIndex<JunitFact>): Analysis {
     const env = files.get(file);
     if (!env || cappedProjects.has(env.project)) continue;
     for (const fact of index.factsOf(file)) {
-      if (!step()) break;
       if (fact.kind === "cap") {
         gap("fan-out-capped", file, fact.line, fact.column, null, "JUnit annotation reading stopped at its limit.");
         continue;
