@@ -278,7 +278,8 @@ export function validateComparison(record, { root = benchRoot, build } = {}) {
 
 // A comparison release uses the accepted record committed on this branch.
 // Admission checks the checkout; runtime access is logged in the cache.
-// Conversion checks the saved build and the installed bundle again.
+// Conversion and a judge check the run's saved build against the record;
+// only admission also checks the installed bundle and its provenance.
 export function comparisonRelease(manifest, { root = benchRoot, admit = false } = {}) {
   const { release, suite, split, splitHash, build: b, package: p } = manifest;
   need(typeof release === "string" && /^[a-z0-9][a-z0-9.-]*$/.test(release), "comparison release is missing or malformed");

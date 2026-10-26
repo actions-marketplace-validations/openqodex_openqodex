@@ -571,14 +571,15 @@ export async function runMismatch(entry, results, index = indexRoot) {
   // hits it excuses now must be the ones the entry records, so a rule
   // changed, dropped or added since the publish, or an entry edited by
   // hand, refuses. Nothing is uploaded; the package goes to a scratch folder.
-  const mismatch = `publishExceptions do not match benchmark/index/exceptions/${entry.runId}.json`;
+  const exceptionFile = relative(repoRoot, join(index, "exceptions", `${entry.runId}.json`));
+  const mismatch = `publishExceptions do not match ${exceptionFile}`;
   const scratch = mkdtempSync(join(tmpdir(), "oq-accept-"));
   try {
     const { packageRun } = await import("./publish-run.mjs");
     const packaged = await packageRun(folder, { out: scratch, runs: join(index, "runs") });
     if (canonical(packaged.exceptions) !== canonical(entry.publishExceptions ?? [])) return [mismatch];
   } catch (error) {
-    return [`the run cannot be packaged again under benchmark/index/exceptions/${entry.runId}.json: ${error.message}`];
+    return [`the run cannot be packaged again under ${exceptionFile}: ${error.message}`];
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
