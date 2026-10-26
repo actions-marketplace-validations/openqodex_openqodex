@@ -270,6 +270,16 @@ it("Greptile refuses a verdict that marks a not-run case caught", () => {
   expect(() => greptileBlock(folder)).toThrow(/not-run|empty case/);
 });
 
+// Failure: a judge writes an em dash in a reason, the score and the index entry copy it, and the scrub fails the gate.
+it("a judge reason with an em dash enters the block with a comma, so the index entry passes the scrub", () => {
+  const folder = greptileRun();
+  const file = boardPath(folder, "greptile", `${tool}/verdicts.json`);
+  const verdicts = read(file); verdicts[0].reason = "Golden bug is a null check \u2014 none of the comments mention it"; write(file, verdicts);
+  const label = greptileBlock(folder).perTool[tool].labels[0];
+  expect(label.reason).toBe("Golden bug is a null check, none of the comments mention it");
+  expect(JSON.stringify(greptileBlock(folder))).not.toContain("\u2014");
+});
+
 it("Greptile reads back the saved input when one tool plans both cases and another plans one", () => {
   const folder = greptileRun({ caseCount: 2 });
   const ctx = boardOptions.get(folder);
@@ -492,7 +502,8 @@ it("the published asset keeps the board files and leaves the Martian work folder
 
 it("the publisher still inspects packaged board input for private paths", async () => {
   const { folder } = await martianRun();
-  write(boardPath(folder, "greptile", "input.json"), { path: join(homedir(), "private") });
+  // This machine's home folder is rewritten to a placeholder at publish; another machine's is a hit.
+  write(boardPath(folder, "greptile", "input.json"), { path: "/home/someone/private" });
   await expect(packageRun(folder, options(folder))).rejects.toThrow(/hit.*files to publish/);
 });
 

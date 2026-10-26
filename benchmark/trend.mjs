@@ -550,7 +550,7 @@ export function acceptRefusals(e) {
 // copy fetched from the asset (its list hash is the asset's), and the entry
 // built from its files the way publish-run.mjs builds it must equal the
 // committed one, the accepted mark aside.
-export function runMismatch(entry, results) {
+export function runMismatch(entry, results, index = indexRoot) {
   const folder = join(results, entry.runId);
   if (!existsSync(join(folder, "manifest.json"))) return [`the run folder ${folder} is missing: fetch it with node benchmark/fetch-run.mjs ${entry.runId}, or name the folder that holds it with --results`];
   const { listHash: hash } = hashFolder(folder);
@@ -565,6 +565,17 @@ export function runMismatch(entry, results) {
     rebuilt = buildEntry({ runId: entry.runId, manifest: read("manifest.json"), resumes, score: read("score.json"), asset: entry.asset, privateListHash: entry.privateListHash });
   } catch (error) {
     return [`the entry cannot be built again from ${folder}: ${error.message}`];
+  }
+  if (entry.publishExceptions !== undefined) {
+    const mismatch = `publishExceptions do not match benchmark/index/exceptions/${entry.runId}.json`;
+    let rules;
+    try {
+      rules = JSON.parse(readFileSync(join(index, "exceptions", `${entry.runId}.json`), "utf8"));
+    } catch {
+      return [mismatch];
+    }
+    if (!Array.isArray(rules) || !Array.isArray(entry.publishExceptions) || !entry.publishExceptions.every((exception) => exception && rules.some((rule) => rule && rule.label === exception.label && rule.reason === exception.reason && (rule.file === undefined || rule.file === exception.file) && (rule.line === undefined || rule.line === exception.line)))) return [mismatch];
+    rebuilt.publishExceptions = entry.publishExceptions;
   }
   if (canonical(rebuilt.outside ?? null) !== canonical(entry.outside ?? null)) throw new Refusal(`refused: ${entry.runId}'s board numbers (outside) differ from those in its score.json`);
   const committed = { ...entry, accepted: false, acceptedAt: null, acceptedBy: null };
@@ -583,7 +594,7 @@ export function acceptRun({ index = indexRoot, results = resultsRoot, runId, by,
   const entry = byId.get(runId);
   if (!entry) throw new Refusal(`refused: the index holds no entry ${runId}`);
   const why = acceptRefusals(entry);
-  if (why.length === 0) why.push(...runMismatch(entry, results));
+  if (why.length === 0) why.push(...runMismatch(entry, results, index));
   if (why.length > 0) throw new Refusal(`refused: ${runId} cannot be accepted:\n${why.map((w) => `- ${w}`).join("\n")}`);
   if (entry.mode !== "scan" && entry.reviewers?.claude) {
     // The index entry keeps no requested model; the run folder's manifest, checked above, does.

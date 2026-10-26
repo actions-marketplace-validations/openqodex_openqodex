@@ -257,7 +257,7 @@
             {
               "id": "greptile/ai-code-review-evaluation__cal.com-greptile-5@ea3b55cf",
               "label": "missed",
-              "reason": "Golden bug is SQL injection risk in raw SQL construction. None of the comments mention unsafe raw SQL, unparameterized interpolation, user-controlled input in SQL, or injection impact. They discuss option typing/validation causing deny-all behavior, missing caching tests, and unreachable branches—unrelated to SQL injection."
+              "reason": "Golden bug is SQL injection risk in raw SQL construction. None of the comments mention unsafe raw SQL, unparameterized interpolation, user-controlled input in SQL, or injection impact. They discuss option typing/validation causing deny-all behavior, missing caching tests, and unreachable branches, unrelated to SQL injection."
             },
             {
               "id": "greptile/ai-code-review-evaluation__cal.com-greptile-6@413167ac",
@@ -322,7 +322,7 @@
             {
               "id": "greptile/ai-code-review-evaluation__discourse-greptile-8@c2168b7b",
               "label": "missed",
-              "reason": "Golden bug is about race conditions in async member loading. None of the review comments mention async loading, races, concurrency, out-of-order responses, or state being overwritten due to asynchronous requests. The comments cover pagination math, truncation, unbounded params, counter cache staleness, param type crash, a confusing assignment-in-condition, a spec HTTP verb, and a spec expecting old response shape—different issues."
+              "reason": "Golden bug is about race conditions in async member loading. None of the review comments mention async loading, races, concurrency, out-of-order responses, or state being overwritten due to asynchronous requests. The comments cover pagination math, truncation, unbounded params, counter cache staleness, param type crash, a confusing assignment-in-condition, a spec HTTP verb, and a spec expecting old response shape, different issues."
             },
             {
               "id": "greptile/ai-code-review-evaluation__discourse-greptile-9@343352b1",

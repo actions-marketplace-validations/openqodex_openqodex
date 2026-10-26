@@ -240,7 +240,7 @@
             {
               "id": "greptile/ai-code-review-evaluation__cal.com-greptile-11@33c9a938",
               "label": "caught",
-              "reason": "A comment explicitly identifies unreliable cache status tracking via SelectedCalendar.updatedAt not being updated during refresh (empty update to Prisma), causing timestamps to remain stale and unable to indicate completed refreshes—this matches the golden bug about inaccurate cache status tracking due to unreliable updatedAt."
+              "reason": "A comment explicitly identifies unreliable cache status tracking via SelectedCalendar.updatedAt not being updated during refresh (empty update to Prisma), causing timestamps to remain stale and unable to indicate completed refreshes, this matches the golden bug about inaccurate cache status tracking due to unreliable updatedAt."
             },
             {
               "id": "greptile/ai-code-review-evaluation__cal.com-greptile-2@40eb8226",
@@ -320,7 +320,7 @@
             {
               "id": "greptile/ai-code-review-evaluation__discourse-greptile-7@e7b1abe0",
               "label": "caught",
-              "reason": "Multiple comments explicitly identify theme-related lightness/contrast issues and explain visibility impact. One notes the light-theme branch increasing lightness (30%→50%) lowers contrast below accessibility thresholds, and others describe dark-theme background/heading colors being too dark/close to text, making unread badges and headings hard to read—matching the golden bug about inconsistent theme color lightness affecting visibility."
+              "reason": "Multiple comments explicitly identify theme-related lightness/contrast issues and explain visibility impact. One notes the light-theme branch increasing lightness (30%→50%) lowers contrast below accessibility thresholds, and others describe dark-theme background/heading colors being too dark/close to text, making unread badges and headings hard to read, matching the golden bug about inconsistent theme color lightness affecting visibility."
             },
             {
               "id": "greptile/ai-code-review-evaluation__discourse-greptile-8@c2168b7b",
@@ -455,7 +455,7 @@
             {
               "id": "greptile/ai-code-review-evaluation__sentry-greptile-4@b56ee62d",
               "label": "missed",
-              "reason": "Golden bug is a null reference when `github_authenticated_user` state is missing. None of the line-level comments mention missing `github_authenticated_user` in state or a resulting null/attribute error. The closest items discuss missing `sender` metadata causing KeyError, OAuth state predictability, unhandled request failures, missing ownership verification, and login vs ID verification—different defects."
+              "reason": "Golden bug is a null reference when `github_authenticated_user` state is missing. None of the line-level comments mention missing `github_authenticated_user` in state or a resulting null/attribute error. The closest items discuss missing `sender` metadata causing KeyError, OAuth state predictability, unhandled request failures, missing ownership verification, and login vs ID verification, different defects."
             },
             {
               "id": "greptile/ai-code-review-evaluation__sentry-greptile-5@89b5cfa0",

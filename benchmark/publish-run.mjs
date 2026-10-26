@@ -268,6 +268,13 @@ export async function inspect(folder, files, { cases, env = process.env, manifes
   for (const value of modelValues(env, basename(folder), manifest)) needles.push({ value, label: "a value from the model settings file" });
   const patterns = scrubPatterns();
   patterns.push({ regex: HOME_PATH, label: "a home folder path" });
+  const matchers = new Map();
+  for (const { label } of [...needles, ...patterns]) {
+    if (matchers.has(label)) continue;
+    const values = needles.filter((n) => n.label === label).map((n) => n.value);
+    const regexes = patterns.filter((p) => p.label === label).map((p) => p.regex);
+    matchers.set(label, (texts) => texts.some((text) => values.some((value) => text.includes(value)) || regexes.some((regex) => regex.test(text))));
+  }
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
     secrets: needles.filter((n) => n.label.startsWith("the generated secret")).length,
@@ -281,11 +288,10 @@ export async function inspect(folder, files, { cases, env = process.env, manifes
     text.split("\n").forEach((line, i) => {
       const at = `${f.path}:${i + 1}`;
       const texts = textsOf(line);
-      for (const n of needles) if (texts.some((t) => t.includes(n.value))) hits.push(`${at}: ${n.label}`);
-      for (const p of patterns) if (texts.some((t) => p.regex.test(t))) hits.push(`${at}: ${p.label}`);
+      for (const [label, matches] of matchers) if (matches(texts)) hits.push(`${at}: ${label}`);
     });
   }
-  return { hits: [...new Set(hits)], looked };
+  return { hits: [...new Set(hits)], looked, matchers };
 }
 
 // For a legacy run: every file of the folder must be the blob the recipe's
@@ -311,7 +317,7 @@ function originalsProblems(folder, recipe) {
 
 // Packages a run into <out>/<run-id>.tar.gz after every check, and returns
 // what the index entry records about it. Throws, writing nothing, on any hit.
-export async function packageRun(folder, { out, env = process.env, recipes = readRecipes() } = {}) {
+export async function packageRun(folder, { out, env = process.env, recipes = readRecipes(), runs = runsRoot } = {}) {
   folder = resolve(folder);
   const runId = basename(folder);
   if (!existsSync(join(folder, "manifest.json"))) throw new Error(`${folder} has no manifest.json; it is not a benchmark run`);
@@ -392,8 +398,34 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     file.bytes = Buffer.from(clean.text);
   }
   const inspected = files.map((f) => f.path === "score.json" ? { path: f.path, bytes: readFileSync(join(folder, f.path)) } : f);
-  const { hits, looked } = await inspect(folder, inspected, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
-  if (hits.length > 0) throw new Error(`refused: ${hits.length} hit${hits.length === 1 ? "" : "s"} in the files to publish:\n${hits.slice(0, 40).join("\n")}`);
+  const { hits, looked, matchers } = await inspect(folder, inspected, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
+  const exceptionPath = join(dirname(runs), "exceptions", `${runId}.json`);
+  const rules = existsSync(exceptionPath) ? readJson(exceptionPath) : [];
+  if (!Array.isArray(rules) || rules.some((rule) => !rule || ["text", "label", "reason"].some((field) => typeof rule[field] !== "string" || rule[field].length === 0) || (rule.file !== undefined && (typeof rule.file !== "string" || rule.file.length === 0)) || (rule.line !== undefined && (!Number.isInteger(rule.line) || rule.line < 1)))) {
+    throw new Error(`refused: ${exceptionPath} must contain an array of publish exceptions with text, label, reason and optional file and line`);
+  }
+  const used = new Set();
+  const exceptions = [];
+  const remaining = hits.filter((hit) => {
+    const [, file, number, label] = /^(.*):(\d+): (.*)$/.exec(hit);
+    const line = Number(number);
+    const texts = textsOf(inspected.find((f) => f.path === file).bytes.toString("utf8").split("\n")[line - 1]);
+    let reason;
+    rules.forEach((rule, i) => {
+      if ((rule.file !== undefined && rule.file !== file) || rule.label !== label || (rule.line !== undefined && rule.line !== line) || !texts.some((text) => text.includes(rule.text))) return;
+      // The text goes, its first character stays, so a path that ends where the text begins keeps its closing slash.
+      if (matchers.get(label)(texts.map((text) => text.split(rule.text).join(rule.text[0])))) return;
+      used.add(i);
+      reason ??= rule.reason;
+    });
+    if (reason === undefined) return true;
+    exceptions.push({ file, line, label, reason });
+    return false;
+  });
+  if (remaining.length > 0) throw new Error(`refused: ${remaining.length} hit${remaining.length === 1 ? "" : "s"} in the files to publish:\n${remaining.slice(0, 40).join("\n")}`);
+  for (let i = 0; i < rules.length; i++) {
+    if (!used.has(i)) throw new Error(`refused: exception ${i + 1} in ${exceptionPath} names no hit`);
+  }
   const tar = tarGz(files.map((f) => ({ path: `${runId}/${f.path}`, bytes: f.bytes })));
   mkdirSync(out, { recursive: true });
   const tarPath = join(out, `${runId}.tar.gz`);
@@ -402,6 +434,7 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     runId,
     reasonsRedacted,
     pathsRedacted,
+    exceptions,
     tarPath,
     sha256: sha256(tar),
     bytes: tar.length,
@@ -464,7 +497,7 @@ export async function publishRun(folder, { dryRun = false, writeIndex = false, o
     if (scored.status === 2) throw new Error(`scoring ${runId} failed:\n${scored.stderr.trim()}`);
   }
   const outDir = out ?? mkdtempSync(join(tmpdir(), "oq-publish-"));
-  const asset = await packageRun(folder, { out: outDir, env, recipes });
+  const asset = await packageRun(folder, { out: outDir, env, recipes, runs });
   // The package must unpack, with the system tar, to the files it was made from.
   const check = mkdtempSync(join(tmpdir(), "oq-publish-check-"));
   try {
@@ -506,6 +539,8 @@ export async function publishRun(folder, { dryRun = false, writeIndex = false, o
     if (outside !== undefined) entry.outside = outside;
     else delete entry.outside;
   }
+  if (asset.exceptions.length > 0) entry.publishExceptions = asset.exceptions;
+  else delete entry.publishExceptions;
   if (!dryRun && !boardOnly) upload(asset.tarPath, runId);
   const written = !dryRun || writeIndex ? writeEntry(entry, runs) : null;
   const pointer = written && entry.accepted === true ? recordBoard(entry, runs) : null;
@@ -538,6 +573,8 @@ async function main() {
   const { asset, entry, written, rebytes, boardOnly, pointer } = r;
   console.log(`${asset.runId}: ${asset.files} files in ${asset.tarPath} (${asset.bytes} bytes, sha256 ${asset.sha256}, list hash ${asset.listHash})`);
   console.log(`${asset.reasonsRedacted} reasons redacted, ${asset.pathsRedacted} lines with a machine path rewritten`);
+  for (const exception of asset.exceptions) console.log(`excused: ${exception.file}:${exception.line} ${exception.label} (${exception.reason})`);
+  console.log(`${asset.exceptions.length} inspection hits excused by benchmark/index/exceptions/${asset.runId}.json`);
   if (rebytes) console.log(`The committed entry names the same files packaged to other bytes; ${written ? "the entry now names this asset's sha256, and the change must be committed" : "a publish rewrites its sha256"}.`);
   if (asset.left.length > 0) console.log(`Left out (not on the allowlist): ${asset.left.length} files, such as ${asset.left.slice(0, 3).join(", ")}`);
   const l = asset.looked;
