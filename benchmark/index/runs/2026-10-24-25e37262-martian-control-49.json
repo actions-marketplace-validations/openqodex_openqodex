@@ -3098,7 +3098,7 @@
                 "share": 0.792,
                 "tied": 1
               },
-              "extractedText": "app/assets/stylesheets/mobile/user.scss:497: Same .name color issue as desktop—changed to 50%/50% instead of preserving 30% for light and using 70% for dark—causing an unintended light-theme change.",
+              "extractedText": "app/assets/stylesheets/mobile/user.scss:497: Same .name color issue as desktop, changed to 50%/50% instead of preserving 30% for light and using 70% for dark, causing an unintended light-theme change.",
               "officialFp": false,
               "extraction": {
                 "model": "gpt-5.2",
@@ -9881,7 +9881,7 @@
                 "share": 0.875,
                 "tied": 1
               },
-              "extractedText": "pkg/expr/nodes.go: Feature-flag gating is inconsistent—only the ExpressionQueryReader path checks sqlExpressions, while the legacy buildCMDNode (TypeSQL -> UnmarshalSQLCommand) path can still accept SQL expressions without the flag",
+              "extractedText": "pkg/expr/nodes.go: Feature-flag gating is inconsistent, only the ExpressionQueryReader path checks sqlExpressions, while the legacy buildCMDNode (TypeSQL -> UnmarshalSQLCommand) path can still accept SQL expressions without the flag",
               "officialFp": true,
               "extraction": {
                 "model": "gpt-5.2",
