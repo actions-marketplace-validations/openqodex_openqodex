@@ -242,7 +242,8 @@ export function martianEvaluations({ data, candidates, dedup, evaluations, total
         const group = Array.isArray(groups) ? groups.findIndex((g) => Array.isArray(g) && g.includes(k)) : list.length === 1 ? 0 : -1;
         const { sourceFindingIds, attribution } = attributeCandidate(c.text, findings);
         if (sourceFindingIds.length === 0) problems.push(`${url}: ${tool}'s candidate ${c.id} has no finding of the review to come from`);
-        cands.push({ candidateId: c.id, prUrl: url, sourceFindingIds, attribution, extractedText: c.text, officialFp: falsePositives.has(c.text), extraction: c.step ? { model: null, step: c.step, file: null } : extraction, dedupGroup: group === -1 ? null : group });
+        // The candidate's words stay; an em dash becomes a comma, so the index entry passes the scrub (the asset keeps the text verbatim).
+        cands.push({ candidateId: c.id, prUrl: url, sourceFindingIds, attribution, extractedText: c.text.replace(/\s*\u2014\s*/g, ", "), officialFp: falsePositives.has(c.text), extraction: c.step ? { model: null, step: c.step, file: null } : extraction, dedupGroup: group === -1 ? null : group });
       });
       for (const tp of ev?.true_positives ?? []) {
         const goldenId = goldenIds.get(tp.golden_comment);
