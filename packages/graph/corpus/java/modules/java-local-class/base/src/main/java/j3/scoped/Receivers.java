@@ -24,6 +24,6 @@ class Receivers {
         class Box<T> {
             static <T> Box<T> make() { return new Box<T>(); }
         }
-        register(Box<String>::make); // LOCAL_GENERIC_REFERENCE
+        register(Box::make); // LOCAL_GENERIC_REFERENCE
     }
 }
