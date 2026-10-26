@@ -57,7 +57,7 @@
 // 7. An asset is uploaded twice under one name: an existing asset of that
 //    name refuses the upload.
 // 8. Board numbers edited by hand in score.json reach the index: the board
-//    block is computed again from <run>/outside/aacr, and a block that
+//    blocks are computed again through the board registry, and a block that
 //    differs refuses the publish.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -68,13 +68,10 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { benchRoot, generatedValue, repoRoot } from "./lib/cases.mjs";
 import { RELEASE, REPOSITORY, assetUrl, boardHash, buildEntry, byBytes, entryProblems, fileList, hashReviewedFolder, listHash, readEntry, runsRoot, reviewedBytes, sha256, writeEntry } from "./lib/index.mjs";
-import { readAacrOutside } from "./lib/aacr-board.mjs";
-import { readDecisions } from "./lib/rulings.mjs";
-import { canonical } from "./lib/score.mjs";
+import { boardRefusal } from "./lib/board-readback.mjs";
 import { archiveDir, readRecipes, scorerFiles, scorerHash } from "./legacy/rescore.mjs";
 import { redactRowReasons } from "./lib/runner.mjs";
 import { extractAsset } from "./fetch-run.mjs";
-import { decisionsPath, loadRun, scoreRun } from "./score.mjs";
 
 // The files a run may publish, by path inside the run folder.
 export const ALLOWED = [
@@ -83,6 +80,10 @@ export const ALLOWED = [
   /^samples\/[^/]+\/[^/]+\/[^/]+\/(sample\.json|stderr\.txt|receipt\.txt|usage\.json|dispositions\.json|completion\.json|transcript\.jsonl|progress\.jsonl)$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/(report|scan|trace|submission|reviewer|manifest|rounds)\.json$/,
   /^samples\/[^/]+\/[^/]+\/[^/]+\/report\/brief\.md$/,
+  /^outside\/greptile\/(input|eval)\.json$/,
+  /^outside\/greptile\/[^/]+\/verdicts\.json$/,
+  /^outside\/martian\/(convert|eval|benchmark_data)\.json$/,
+  /^outside\/martian\/(?!work\/)[^/]+\/evaluation\.json$/,
 ];
 const FIXED_MTIME = 1767225600; // 2026-01-01T00:00:00Z, the time every packaged file carries
 
@@ -404,22 +405,6 @@ function citedScore(folder, recipe) {
   return readJson(join(folder, file));
 }
 
-// Why the board numbers a score carries are not the ones the run's board
-// output gives, as score.mjs --outside aacr computes them (failure 8); null when they are.
-function boardRefusal(folder, runId, outside) {
-  if (outside === undefined) return null;
-  const d = readDecisions(decisionsPath);
-  const run = loadRun(folder);
-  const { jobs } = scoreRun(run, { decisionsHash: d.hash, decisions: d.lines, people: d.people });
-  let aacr = null;
-  try {
-    aacr = readAacrOutside(folder, jobs, run.specs);
-  } catch {
-    // score.mjs saves a board block it cannot read as null.
-  }
-  return canonical(outside) === canonical({ aacr }) ? null : `refused: ${runId}'s board numbers in score.json are not the ones its board output gives; run node benchmark/score.mjs ${folder} --outside aacr again`;
-}
-
 // Records an accepted entry's board numbers in the accepted pointer, in
 // the order trend.mjs --accept writes them; the path when it changed.
 function recordBoard(entry, runs) {
@@ -452,7 +437,7 @@ function upload(tarPath, runId) {
   if (sent.status !== 0) throw new Error(`gh release upload failed: ${sent.stderr.trim()}`);
 }
 
-export async function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot } = {}) {
+export async function publishRun(folder, { dryRun = false, writeIndex = false, out = null, env = process.env, runs = runsRoot, boardOptions = {} } = {}) {
   folder = resolve(folder);
   const recipes = readRecipes();
   const runId = basename(folder);
@@ -495,7 +480,7 @@ export async function publishRun(folder, { dryRun = false, writeIndex = false, o
     throw new Error(`refused: the committed entry for ${runId} names other files (list hash ${committed.asset.listHash}, private ${committed.privateListHash}) than this folder packages (list hash ${entry.asset.listHash}, private ${entry.privateListHash})`);
   }
   const rebytes = committed !== null && committed.asset.sha256 !== entry.asset.sha256;
-  const refusal = recipe ? null : boardRefusal(folder, runId, entry.outside);
+  const refusal = recipe ? null : boardRefusal(folder, runId, entry.outside, boardOptions);
   if (refusal) throw new Error(refusal);
   // An accepted run stays accepted: benchmark/index/accepted.json names it,
   // and only trend.mjs --accept sets the mark.
