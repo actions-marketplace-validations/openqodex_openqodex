@@ -145,7 +145,7 @@ export function scoreFrameworks(expected: FrameworkExpected | undefined, graph: 
     else out.failures.push(found.length > 0 ? `role ${r.role} on ${r.target} has detail ${found.map((x) => x.detail).join(", ")}, expected ${r.detail}` : `role not found: ${r.role} on ${r.target}`);
     if (r.tier !== undefined || r.note !== undefined) {
       out.recall.of++;
-      if (found.some((x) => (r.tier === undefined || x.evidence.tier === r.tier) && (r.note === undefined || x.evidence.note === r.note))) out.recall.hit++;
+      if (found.some((x) => (r.detail === undefined || x.detail === r.detail) && (r.tier === undefined || x.evidence.tier === r.tier) && (r.note === undefined || x.evidence.note === r.note))) out.recall.hit++;
       else out.failures.push(`role evidence mismatch: ${r.role} on ${r.target}, expected ${r.tier ?? "any tier"}, ${r.note ?? "any note"}`);
     }
   }
