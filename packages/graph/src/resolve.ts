@@ -273,6 +273,7 @@ export function createWorld(input: ResolveInput): World {
   // project and source set), and the nested types of each file by simple name.
   const javaTypes = new Map<string, Map<string, string[]>>();
   const javaNested = new Map<string, Map<string, string[]>>();
+  const javaLocalClasses = new Set<string>();
   const filesByName = new Map<string, Set<string>>(); // family:name to defining files
 
   const push = <K, V>(m: Map<K, V[]>, k: K, v: V) => {
@@ -358,8 +359,10 @@ export function createWorld(input: ResolveInput): World {
           classes.set(key, info);
         }
         if (family === "java") {
+          const ownerKey = d.owner === null ? null : classKey("java", path, d.owner);
+          if (ownerKey !== null && (!classes.has(ownerKey) || javaLocalClasses.has(ownerKey))) javaLocalClasses.add(key);
           if (d.owner === null) push(nameIndex(javaTypes, javaPkgOf(path)), d.name, id);
-          else if (!d.owner.includes("@") && !d.anonymous) push(nameIndex(javaNested, path), d.name, id);
+          else if (!javaLocalClasses.has(key) && !d.anonymous) push(nameIndex(javaNested, path), d.name, id);
         }
         info.ids.push(id);
         info.files.add(path);
@@ -1296,7 +1299,8 @@ export function createWorld(input: ResolveInput): World {
   // The class a type name in `file` stands for, with the evidence of that
   // name's binding. A function's name stands for its declared result type
   // at the position the call took. `ext`: the type comes from a dependency.
-  type TypeHit = { key: string; ev: Ev; args?: { types: TypeRef[]; file: string; nesting: string | null } } | "ext" | null;
+  type TypeArgs = { types: TypeRef[]; file: string; nesting: string | null };
+  type TypeHit = { key: string; ev: Ev; args?: TypeArgs } | "ext" | null;
   const typeValue = (file: string, t: TypeRef): Value | null => {
     // The head name, through the scoped import that binds it where the type was read.
     const head = (name: string) => (t.bound ? boundValue(file, name, t.bound) : resolveLocal(file, name));
@@ -1338,8 +1342,9 @@ export function createWorld(input: ResolveInput): World {
   const QUALIFIED: Ev = { kind: "same-scope", tier: "certain", via: null, note: null, rule: "java-qualified-name" };
   const javaTypeValue = (file: string, parts: readonly string[], nesting: string | null): Value | null => {
     // Scoped local names are qualified by the extractor, never by source text.
-    if (parts.some((p) => p.includes("@"))) {
-      const local = javaNamedClass(classes.get(classKey("java", file, parts.join("."))));
+    const localKey = classKey("java", file, parts.join("."));
+    if (javaLocalClasses.has(localKey)) {
+      const local = javaNamedClass(classes.get(localKey));
       return local ? { v: "sym", ids: local.ids, ev: SAME_SCOPE } : null;
     }
     let v = javaLocal(file, parts[0] as string, 0, nesting);
@@ -1417,6 +1422,19 @@ export function createWorld(input: ResolveInput): World {
     ruby: namedResultTarget,
   };
 
+  // Each argument resolves in the context of its own declaration.
+  const sameTypeArguments = (a: TypeArgs | undefined, b: TypeArgs | undefined, depth: number): boolean => {
+    if (!a || !b) return a === b;
+    if (depth > MAX_TYPE_DEPTH || a.types.length !== b.types.length) return false;
+    return a.types.every((type, i) => {
+      const left = typeKey(a.file, "java", type, depth + 1, false, a.nesting);
+      const right = typeKey(b.file, "java", b.types[i] as TypeRef, depth + 1, false, b.nesting);
+      if (left === "ext" || right === "ext") return left === right;
+      if (left === null || right === null) return false;
+      return left.key === right.key && sameTypeArguments(left.args, right.args, depth + 1);
+    });
+  };
+
   // Every candidate must declare the same result type. Receiver lookup follows the family's method rules.
   const resultType = (file: string, family: Family, t: TypeRef, depth: number, nesting: string | null): TypeHit => {
     let found: ResultTarget;
@@ -1460,7 +1478,9 @@ export function createWorld(input: ResolveInput): World {
       }
       if (inner === null) return null;
       if (out !== null && (inner === "ext" ? out !== "ext" : out === "ext" || out.key !== inner.key)) return null;
-      out = inner === "ext" ? inner : { ...inner, ev: chain(found.ev, inner.ev) };
+      // Candidates that disagree on type arguments keep the class and lose the arguments.
+      const agreed: boolean = out === null || out === "ext" || inner === "ext" || sameTypeArguments(out.args, inner.args, depth + 1);
+      out = inner === "ext" ? inner : { key: inner.key, ev: chain(found.ev, inner.ev), ...(agreed && inner.args ? { args: inner.args } : {}) };
     }
     return out;
   };

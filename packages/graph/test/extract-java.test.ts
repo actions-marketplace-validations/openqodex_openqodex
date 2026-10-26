@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { extract } from "../src/extract.js";
 import { parserFor } from "../src/parser.js";
+import { stableKey, symbolId } from "../src/resolve.js";
 import { isFileFacts } from "../src/safe-fs.js";
 import type { CallFact, DefFact, FileFacts } from "../src/types.js";
 
@@ -393,9 +394,54 @@ describe("java facts", () => {
 
   it("a local class owns its methods under its declaring scope", async () => {
     const f = await factsOf(["class A {", "  void outer() {", "    class Local { void run() { helper(); } }", "  }", "}"]);
-    expect(def(f, "Local")).toMatchObject({ owner: "A.outer@2:16", kind: "class", topLevel: false });
+    expect(def(f, "Local")).toMatchObject({ owner: "A.outer", kind: "class", topLevel: false });
     expect(one(f, "helper").recv).toEqual({ kind: "self", path: [] });
     expect(callerName(f, one(f, "helper"))).toBe("run");
+  });
+
+  it("keeps a local class and its members under the same owner when a line is inserted above its block", async () => {
+    const source = [
+      "class Host {",
+      "  void first() {",
+      "    {",
+      "      class Local {",
+      "        Local() {}",
+      "        void run() {}",
+      "        void work() {}",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+    ];
+    const before = await factsOf(source);
+    const after = await factsOf([...source.slice(0, 2), "    int added = 1;", ...source.slice(2)]);
+    const localBefore = before.defs.find((d) => d.name === "Local" && d.kind === "class")!;
+    const localAfter = after.defs.find((d) => d.name === "Local" && d.kind === "class")!;
+    expect(localBefore.owner).toBe("Host.first");
+    expect(localAfter.owner).toBe(localBefore.owner);
+    const members = (f: FileFacts) => f.defs.filter((d) => d.kind === "method" && d.owner?.endsWith(".Local"));
+    expect(members(before).map((d) => [d.name, d.owner])).toEqual([
+      ["Local", "Host.first.Local"],
+      ["run", "Host.first.Local"],
+      ["work", "Host.first.Local"],
+    ]);
+    expect(members(after).map((d) => [d.name, d.owner])).toEqual(members(before).map((d) => [d.name, d.owner]));
+    expect(stableKey(symbolId("Host.java", localAfter))).toBe(stableKey(symbolId("Host.java", localBefore)));
+  });
+
+  it("gives two same-named local classes in one method distinct owners", async () => {
+    const f = await factsOf([
+      "class Host {",
+      "  void blocks() {",
+      "    { class Local { void run() { first(); } } }",
+      "    { class Other {} class Local { void run() { second(); } } }",
+      "  }",
+      "}",
+    ]);
+    expect(f.defs.filter((d) => d.name === "Local").map((d) => d.owner)).toEqual(["Host.blocks", "Host.blocks$2"]);
+    expect(f.defs.filter((d) => d.name === "run").map((d) => d.owner)).toEqual(["Host.blocks.Local", "Host.blocks$2.Local"]);
+    expect(f.defs[one(f, "first").caller]?.owner).toBe("Host.blocks.Local");
+    expect(f.defs[one(f, "second").caller]?.owner).toBe("Host.blocks$2.Local");
   });
 
   it("a lambda's calls belong to the enclosing method", async () => {

@@ -59,7 +59,6 @@ type Frame = {
   fieldTypes?: Record<string, TypeRef>;
   // Java local types bind only within their declaring block and below.
   javaTypes?: Map<string, TypeRef>;
-  javaScope?: { line: number; column: number };
 };
 
 // A frame once pushed: linked to the one around it, with what every lookup
@@ -2655,7 +2654,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
   // A method called on an identifier: when the name is a parameter of its
   // method, decided once the body is read (it may be assigned below).
   const paramCalls: { name: string; scope: Scope }[] = [];
-  const blockFrame = (node: Node, locals = new Map<string, TypeRef | null>()): Leave => ctx.push({ def: -1, cls: null, locals, block: true, javaScope: pos(node) });
+  const blockFrame = (locals = new Map<string, TypeRef | null>()): Leave => ctx.push({ def: -1, cls: null, locals, block: true });
   // Pattern names stay local when their typed scope ends.
   const patternNames = new Map<Scope, Set<string>>();
   type PatternBinding = { type: TypeRef | null; negated: boolean; supported: boolean };
@@ -2789,6 +2788,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     return false;
   };
   let anonymous = 0;
+  const localTypes = new Map<string, Map<string, number>>();
   const typeUses = (node: Node | null, caller: number) => {
     for (const r of javaTypeNames(node)) ctx.addTypeUse(r, caller);
   };
@@ -2873,17 +2873,20 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
     }
     return leave;
   };
-  // A local type carries its declaring block in its identity.
+  // Same-named local types use source-order ordinals within their enclosing scope.
   const typeDecl = (node: Node): Leave => {
     const name = node.childForFieldName("name");
-    if (!name) return blockFrame(node);
+    if (!name) return blockFrame();
     const local = ctx.top.depth > 0 && ctx.top.cls === null;
     let outer = ctx.cls()?.cls ?? null;
     if (local) {
-      const at = ctx.top.decl.javaScope ?? pos(node);
       const owner = ctx.ownerName() ?? outer ?? "";
       const scope = ctx.defs[ctx.caller()]?.kind === "class" ? `${owner}.<init>` : owner;
-      outer = `${scope}@${at.line}:${at.column}`;
+      let names = localTypes.get(scope);
+      if (!names) localTypes.set(scope, (names = new Map()));
+      const ordinal = (names.get(name.text) ?? 0) + 1;
+      names.set(name.text, ordinal);
+      outer = ordinal === 1 ? scope : `${scope}$${ordinal}`;
       (ctx.top.decl.javaTypes ??= new Map()).set(name.text, { name: name.text, qualifier: outer, ...pos(name) });
     }
     const typeParams = javaTypeParams(node);
@@ -3027,7 +3030,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       // type itself, as a static initializer does.
       case "constant_declaration":
       case "enum_constant": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         staticInit++;
         return () => {
           staticInit--;
@@ -3037,7 +3040,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       // A case's pattern variables (`case Circle c ->`) end with the case.
       case "switch_rule":
       case "switch_block_statement_group": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         const frame = ctx.top.decl;
         return () => endPatterns(leave, frame);
       }
@@ -3056,7 +3059,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "static_initializer": {
         // A field's initializers have a scope of their own: a pattern
         // variable there never reaches the rest of the class.
-        const leave = node.type === "field_declaration" ? blockFrame(node) : null;
+        const leave = node.type === "field_declaration" ? blockFrame() : null;
         const isStatic = node.type === "static_initializer" || javaModifiers(node).has("static");
         if (isStatic) staticInit++;
         return () => {
@@ -3070,7 +3073,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         const outer = ctx.cls()?.cls ?? null;
         const constant = parent.type === "enum_constant";
         const name = constant ? parent.childForFieldName("name")?.text : `$${++anonymous}`;
-        if (!name) return blockFrame(node);
+        if (!name) return blockFrame();
         const base = constant && outer
           ? { name: (ctx.defs[ctx.cls()?.def ?? -1] as DefFact).name, qualifier: (ctx.defs[ctx.cls()?.def ?? -1] as DefFact).owner, ...pos(parent) }
           : javaTypeRef(parent.childForFieldName("type"));
@@ -3088,14 +3091,14 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
       case "constructor_body":
       case "for_statement":
       case "switch_block": {
-        const leave = blockFrame(node, branchLocals);
+        const leave = blockFrame(branchLocals);
         const frame = ctx.top.decl;
         return () => endPatterns(leave, frame);
       }
       // Negated patterns bind in the alternative or after a guard that exits.
       case "if_statement":
       case "while_statement": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         const frame = ctx.top.decl;
         const condition = node.childForFieldName("condition");
         if (!condition) return () => endPatterns(leave, frame);
@@ -3142,7 +3145,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return;
       }
       case "enhanced_for_statement": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         const name = node.childForFieldName("name");
         const typeNode = node.childForFieldName("type");
         typeUses(typeNode, ctx.caller());
@@ -3150,7 +3153,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return leave;
       }
       case "catch_clause": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
         const types = param?.namedChildren.find((c) => c.type === "catch_type")?.namedChildren ?? [];
         for (const t of types) typeUses(t, ctx.caller());
@@ -3160,7 +3163,7 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         return leave;
       }
       case "try_with_resources_statement": {
-        const leave = blockFrame(node);
+        const leave = blockFrame();
         for (const r of node.childForFieldName("resources")?.namedChildren ?? []) {
           const name = r.type === "resource" ? r.childForFieldName("name") : null;
           if (!name) continue;
@@ -3227,7 +3230,8 @@ function extractJava(tree: Tree, readers: readonly TreeVisitor[]): FileFacts {
         typeUses(typeNode, ctx.caller());
         const chain = javaTypeChain(typeNode);
         const type = javaTypeRef(typeNode);
-        const recv = type?.qualifier?.includes("@") ? { kind: "type" as const, type, path: [] } : chain ? javaTypeReceiver(chain) : null;
+        const scoped = type && chain && type.qualifier !== (chain.names.slice(0, -1).join(".") || null);
+        const recv = scoped ? { kind: "type" as const, type, path: [] } : chain ? javaTypeReceiver(chain) : null;
         if (chain && recv) (ctx.calls[addCall(chain.last, recv, node.childForFieldName("arguments"), node)] as CallFact).ctor = true;
         return;
       }
