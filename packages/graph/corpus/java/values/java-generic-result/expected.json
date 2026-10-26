@@ -7,8 +7,6 @@
   ],
   "notReached": [
     { "to": "generic/Repo.java#Repo.find", "site": "generic/Host.java:14" },
-    { "to": "generic/Repo.java#Repo.find", "site": "generic/Host.java:17" },
-    { "to": "generic/Repo.java#Repo.find", "site": "generic/Host.java:20" },
     { "to": "generic/Repo.java#Repo.find", "site": "generic/Host.java:23" },
     { "to": "generic/Box.java#Other.find", "site": "generic/Host.java:26" },
     { "to": "generic/Box.java#Other.find", "site": "generic/Host.java:29" }
