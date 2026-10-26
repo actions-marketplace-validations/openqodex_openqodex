@@ -338,7 +338,7 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
     expect(readEntryAt(index, ACCEPTED.runId).accepted).toBe(true);
   });
 
-  it("accepts an entry whose publishExceptions match its exception file, and refuses one whose exceptions name a reason the file does not hold", async () => {
+  it("accepts an entry whose exception file still excuses the recorded hits, and refuses one whose file or entry has changed since the publish", async () => {
     const root = tempDir("oq-bench-exceptions-");
     const index = join(root, "index");
     const folder = await savedRun({ parent: root, ...NEWER, cases: TWENTY.slice(0, 1), repeat: 1, found: () => true });
@@ -355,11 +355,16 @@ describe("a run that cannot be a baseline is accepted, or the accepted entry cha
       { rules: [rule], changed: { label: "the home folder path" } },
       { rules: [{ ...rule, file: "outside/greptile/input.json" }] },
       { rules: [{ ...rule, line: 2 }] },
+      { rules: [{ ...rule, text: "/home/other/" }] },
+      { rules: [{ ...rule, text: "/home/emailteam/x" }], accepted: true },
+      { rules: [rule], dropped: true },
       { rules: null },
     ];
     for (const variant of variants) {
       const target = tempDir("oq-bench-exception-index-");
-      putEntry(target, { ...entry, publishExceptions: [{ ...recorded, ...variant.changed }] });
+      const candidate = { ...entry, publishExceptions: [{ ...recorded, ...variant.changed }] };
+      if (variant.dropped) delete candidate.publishExceptions;
+      putEntry(target, candidate);
       if (variant.rules !== null) write(join(target, "exceptions", `${NEWER.runId}.json`), JSON.stringify(variant.rules));
       const result = trend(["--accept", NEWER.runId, "--by", "Sid", "--index", target, "--results", root]);
       expect(result.status, result.stdout + result.stderr).toBe(variant.accepted ? 0 : 2);

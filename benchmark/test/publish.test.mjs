@@ -216,6 +216,18 @@ describe("nothing private leaves in an asset", () => {
     expect(readdirSync(options.out)).toEqual([]);
   });
 
+  it("refuses a real home path whose boundary sits inside the excused text", async () => {
+    const run = plantedRun();
+    const runs = join(tempDir("oq-publish-index-"), "runs");
+    const options = { runs, out: tempDir("oq-publish-out-"), env: { ...process.env, OPENQODEX_BENCH_MODEL_ENV: join(runs, "missing") } };
+    write(join(run, "rows.jsonl"), `${JSON.stringify({ findings: [{ text: "x /home/emailteam/ /home/bob/private" }] })}\n`);
+    write(join(dirname(runs), "exceptions", "2026-10-10-abc1234.json"), JSON.stringify([
+      { text: "x /home/emailteam/ ", label: "a home folder path", reason: "The reviewer wrote an example path inside a finding." },
+    ]));
+    await expect(packageRun(run, options)).rejects.toThrow(/^refused: 1 hit in the files to publish:\nrows\.jsonl:1: a home folder path$/);
+    expect(readdirSync(options.out)).toEqual([]);
+  });
+
   it("refuses an exception that excuses nothing", async () => {
     const run = plantedRun();
     const runs = join(tempDir("oq-publish-index-"), "runs");

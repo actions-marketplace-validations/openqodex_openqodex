@@ -268,12 +268,25 @@ export async function inspect(folder, files, { cases, env = process.env, manifes
   for (const value of modelValues(env, basename(folder), manifest)) needles.push({ value, label: "a value from the model settings file" });
   const patterns = scrubPatterns();
   patterns.push({ regex: HOME_PATH, label: "a home folder path" });
-  const matchers = new Map();
+  // Where each kind of private text sits in a text, as [start, end) spans,
+  // so an exception can be held to cover the private text itself.
+  const spans = new Map();
   for (const { label } of [...needles, ...patterns]) {
-    if (matchers.has(label)) continue;
+    if (spans.has(label)) continue;
     const values = needles.filter((n) => n.label === label).map((n) => n.value);
-    const regexes = patterns.filter((p) => p.label === label).map((p) => p.regex);
-    matchers.set(label, (texts) => texts.some((text) => values.some((value) => text.includes(value)) || regexes.some((regex) => regex.test(text))));
+    const regexes = patterns.filter((p) => p.label === label).map((p) => new RegExp(p.regex.source, p.regex.flags.includes("g") ? p.regex.flags : `${p.regex.flags}g`));
+    spans.set(label, (text) => {
+      const out = [];
+      for (const value of values) for (let i = text.indexOf(value); i >= 0; i = text.indexOf(value, i + 1)) out.push([i, i + value.length]);
+      for (const regex of regexes) {
+        for (const m of text.matchAll(regex)) {
+          // HOME_PATH takes the character before the path with it; the span starts at the path.
+          const lead = regex.source === HOME_PATH.source && !/^(?:\/Users\/|\/home\/|[A-Za-z]:[\\/]Users[\\/])/.test(m[0]) ? 1 : 0;
+          out.push([m.index + lead, m.index + m[0].length]);
+        }
+      }
+      return out;
+    });
   }
   // What was looked for, by kind and count only, for the publish's report.
   const looked = {
@@ -288,10 +301,10 @@ export async function inspect(folder, files, { cases, env = process.env, manifes
     text.split("\n").forEach((line, i) => {
       const at = `${f.path}:${i + 1}`;
       const texts = textsOf(line);
-      for (const [label, matches] of matchers) if (matches(texts)) hits.push(`${at}: ${label}`);
+      for (const [label, find] of spans) if (texts.some((text) => find(text).length > 0)) hits.push(`${at}: ${label}`);
     });
   }
-  return { hits: [...new Set(hits)], looked, matchers };
+  return { hits: [...new Set(hits)], looked, spans };
 }
 
 // For a legacy run: every file of the folder must be the blob the recipe's
@@ -398,7 +411,7 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     file.bytes = Buffer.from(clean.text);
   }
   const inspected = files.map((f) => f.path === "score.json" ? { path: f.path, bytes: readFileSync(join(folder, f.path)) } : f);
-  const { hits, looked, matchers } = await inspect(folder, inspected, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
+  const { hits, looked, spans } = await inspect(folder, inspected, { cases, env, manifest: readJson(join(folder, "manifest.json")) });
   const exceptionPath = join(dirname(runs), "exceptions", `${runId}.json`);
   const rules = existsSync(exceptionPath) ? readJson(exceptionPath) : [];
   if (!Array.isArray(rules) || rules.some((rule) => !rule || ["text", "label", "reason"].some((field) => typeof rule[field] !== "string" || rule[field].length === 0) || (rule.file !== undefined && (typeof rule.file !== "string" || rule.file.length === 0)) || (rule.line !== undefined && (!Number.isInteger(rule.line) || rule.line < 1)))) {
@@ -413,8 +426,15 @@ export async function packageRun(folder, { out, env = process.env, recipes = rea
     let reason;
     rules.forEach((rule, i) => {
       if ((rule.file !== undefined && rule.file !== file) || rule.label !== label || (rule.line !== undefined && rule.line !== line) || !texts.some((text) => text.includes(rule.text))) return;
-      // The text goes, its first character stays, so a path that ends where the text begins keeps its closing slash.
-      if (matchers.get(label)(texts.map((text) => text.split(rule.text).join(rule.text[0])))) return;
+      // Every piece of private text on the line must sit inside an occurrence of
+      // the rule's text; a real path beside the example, or a rule that names
+      // only part of a secret, leaves a span uncovered and the hit stands.
+      const covered = texts.every((text) => {
+        const places = [];
+        for (let i = text.indexOf(rule.text); i >= 0; i = text.indexOf(rule.text, i + 1)) places.push([i, i + rule.text.length]);
+        return spans.get(label)(text).every(([start, end]) => places.some(([from, to]) => from <= start && end <= to));
+      });
+      if (!covered) return;
       used.add(i);
       reason ??= rule.reason;
     });
