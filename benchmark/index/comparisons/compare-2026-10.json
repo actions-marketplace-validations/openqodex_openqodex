@@ -470,39 +470,10 @@
     }
   ],
   "capUsd": 135,
-  "runs": [
-    {
-      "runId": "2026-10-24-25e37262-greptile-claude",
-      "sha256": "8cbc4f5e9c581eab3fae21170d2a2be2154e20f99e1d023c8d01acec8450269c",
-      "reviewer": "cli-claude",
-      "casesNotRun": [
-        "greptile/ai-code-review-evaluation__sentry-greptile-3@82aa2d7c"
-      ]
-    },
-    {
-      "runId": "2026-10-24-25e37262-greptile-library",
-      "sha256": "5b7092819e36cc4f7a387fdb04e4dde79c4f80469855b8b0806067059ee38ea7",
-      "reviewer": "library",
-      "casesNotRun": []
-    },
-    {
-      "runId": "2026-10-24-25e37262-martian-claude",
-      "sha256": "c0c1fdccd8f24414369d148cba60097f201e4fea7c22f7c5220090511dfe1faf",
-      "reviewer": "cli-claude",
-      "casesNotRun": [
-        "martian/ai-code-review-evaluation__sentry-greptile-3@e43c2b26"
-      ]
-    },
-    {
-      "runId": "2026-10-24-25e37262-martian-library",
-      "sha256": "0bd66b92ad71fbfc543a031c97e2b1990e151071adac1f060d638011f3ec6e94",
-      "reviewer": "library",
-      "casesNotRun": []
-    }
-  ],
+  "runs": [],
   "acceptance": {
-    "person": "",
-    "date": "",
-    "hash": ""
+    "person": "Sid",
+    "date": "2026-10-25",
+    "hash": "5a0a09d2faf1c411f467460054b16d2d80005e7c39dfce1f4290088d2e4e2f31"
   }
 }
