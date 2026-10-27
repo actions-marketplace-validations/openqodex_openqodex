@@ -5309,9 +5309,9 @@
     "files": 435,
     "listHash": "28d75356a20e864ae079de7b9c908efecbf734064b92a5c5138c940aa239b1af"
   },
-  "accepted": false,
-  "acceptedAt": null,
-  "acceptedBy": null,
+  "accepted": true,
+  "acceptedAt": "2026-10-27T17:15:32.737Z",
+  "acceptedBy": "Sid",
   "legacy": false,
   "privateListHash": "4d7303233bdab96788805bdc3490160ac7b6cd1847f64f38846b721752257490",
   "publishExceptions": [

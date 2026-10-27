@@ -2084,9 +2084,9 @@
     "files": 720,
     "listHash": "adddb526d39778000fcc1cc82d02c79fd01d799bf69e163a89a9b6546db11ac4"
   },
-  "accepted": false,
-  "acceptedAt": null,
-  "acceptedBy": null,
+  "accepted": true,
+  "acceptedAt": "2026-10-27T17:15:30.233Z",
+  "acceptedBy": "Sid",
   "legacy": false,
   "privateListHash": "25f61cea1010d66aeae75b6dc137d36a679581f67ead509427755b546a8f9053"
 }
