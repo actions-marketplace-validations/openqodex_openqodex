@@ -82,7 +82,7 @@ export const report = ({ findings = [], outside = [], status = "complete" } = {}
   verdict: "passed",
   findings,
   outside_change: outside,
-  low_confidence: [],
+  possible: [], low_confidence: [],
   dropped: [],
   scanners: [],
   impact: { status: "ok", build: { durationMs: 100 } },
