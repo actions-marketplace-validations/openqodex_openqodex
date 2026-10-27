@@ -420,7 +420,10 @@ const BUILTIN_SCANNERS = ["semgrep", "gitleaks", "sqllint", "osv-scanner", "acti
 export function sentences(text: string): string[] {
   return text
     .trim()
-    .split(/(?<=[.!?])\s+(?=\S)/)
+    // A full stop ends a sentence before any text. A bang or a question mark ends one only before a
+    // capital, a digit, a quote, a backtick or a bracket: Ruby names such as destroy! and admin? sit
+    // mid-sentence before a lowercase word.
+    .split(/(?:(?<=\.)\s+(?=\S)|(?<=[!?])\s+(?=[\p{Lu}\p{N}"'`([]))/u)
     .map((s) => s.trim())
     .filter((s) => s !== "");
 }

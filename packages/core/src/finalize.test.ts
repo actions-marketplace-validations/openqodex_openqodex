@@ -31,7 +31,7 @@
 //     it counts as minor, or raised by the reviewer at a low severity in
 //     either submission version.
 import { describe, expect, it } from "vitest";
-import { checkSubmission, finalizeReview, scanReport, SETTINGS_RULE, SUPPRESSION_RULE } from "./finalize.js";
+import { checkSubmission, finalizeReview, proseErrors, scanReport, sentences, SETTINGS_RULE, SUPPRESSION_RULE } from "./finalize.js";
 import {
   KEY_CANDIDATE,
   LINT_CANDIDATE,
@@ -539,5 +539,19 @@ describe("dependency information", () => {
     const notes = fixedIn === undefined ? [] : fixedIn.length ? ["Scanner: fixed in 4.17.21"] : ["Scanner: no fixed version published"];
     expect(legacy.findings[0].notes).toEqual(notes);
     expect(modern.report.findings[0].notes).toEqual(notes);
+  });
+});
+
+// Failure: a Ruby bang or predicate method name followed by a word (destroy!, admin?) was counted as a
+// sentence end, so a three-sentence problem naming such calls failed the sentence limit on every
+// correction round and the review went incomplete (planted rails-controller-model, wave 9 candidate).
+describe("sentence counting around code names", () => {
+  it("does not count a bang or predicate method followed by a lowercase word as a sentence end", () => {
+    const problem = "The destroy action looks up the user by params[:id] without scoping it to the caller. The before_action on line 2 excludes destroy from require_admin. Only authenticate! runs, and it checks admin? on the record.";
+    expect(sentences(problem)).toHaveLength(3);
+    expect(proseErrors("problem", problem, null, 3)).toEqual([]);
+  });
+  it("still ends a sentence at a bang or question mark followed by a capital, a digit, a quote or a backtick", () => {
+    expect(sentences("The action calls destroy! The caller is unscoped. Is it guarded? `authenticate!` runs first. Why? 2 reasons.")).toHaveLength(6);
   });
 });
