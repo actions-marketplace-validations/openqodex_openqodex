@@ -36,7 +36,7 @@ function numbersOf(args: string[], findings: number, observations = 0, possible 
     if (n > count) {
       if (possible > 0) {
         // wording: session
-        throw new OpenQodexError(`${n} is not an item of the last review. Its ${count} items are numbered 1 to ${count}.`);
+        throw new OpenQodexError(`${n} is not an item of the last review. ${count === 1 ? "Its only item is numbered 1." : `Its ${count} items are numbered 1 to ${count}.`}`);
       }
       if (observations > 0) {
         const items = `${findings} ${findings === 1 ? "finding" : "findings"} and ${observations} ${observations === 1 ? "observation" : "observations"}`;
