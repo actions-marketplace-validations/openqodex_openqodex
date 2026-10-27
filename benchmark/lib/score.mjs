@@ -205,13 +205,21 @@ export function scoreBrief(spec, brief) {
 // Every finding the developer is shown: on the change, outside it (except
 // scanner information), and the observations of a staged review (shown
 // apart, never counted toward the verdict, judged here all the same because
-// the developer reads them). Each carries `tier`: "finding" or "observation".
+// the developer reads them). Each carries its presentation tier.
+// 45. A possible item is shown apart and judged like a finding:
+//     shownFindings lists report.possible after the observations, tier possible,
+//     and an outside-change item under its floor with them, not before the
+//     observations; a report without the field scores exactly as under version 11.
 export function shownFindings(report) {
   if (!report) return [];
+  const outside = (report.outside_change ?? []).filter((f) => f.origin !== "scanner");
+  const underFloor = (f) => f.confidence != null && f.floor != null && f.confidence < f.floor;
   return [
     ...(report.findings ?? []).map((f) => ({ ...f, tier: "finding" })),
-    ...(report.outside_change ?? []).filter((f) => f.origin !== "scanner").map((f) => ({ ...f, tier: "finding" })),
+    ...outside.filter((f) => !underFloor(f)).map((f) => ({ ...f, tier: "finding" })),
     ...(report.observations ?? []).map((f) => ({ ...f, tier: "observation" })),
+    ...outside.filter(underFloor).map((f) => ({ ...f, tier: "possible" })),
+    ...(report.possible ?? []).map((f) => ({ ...f, tier: "possible" })),
   ];
 }
 
@@ -594,7 +602,8 @@ export function regressions(oldSamples, newSamples) {
 //     each marked tier "observation", so every score, board file and judge
 //     export sees it like a finding. A report without the field, or with an
 //     empty list, scores exactly as under version 9.
-export const RULES_VERSION = 11;
+// Rules version 12: possible issues are shown and judged with tier possible.
+export const RULES_VERSION = 12;
 export const AACR_LINE_K = 1;
 // The order classify() tries the rules in; the first that holds decides.
 export const OUTCOME_ORDER = ["test-gap", "accepted", "hit", "wrong-kind", "near", "false"];

@@ -68,7 +68,8 @@ const result = await reviewChange(
 
 - `status`: `complete`, `complete_blocking` (complete, with a finding at or above `block_on_severity`) or `incomplete`.
 - `reason`: why the review is incomplete, one line per missing proof. A complete review has a reason only when there was nothing to review.
-- `findings`: every finding that passed every check, in the finding shape below.
+- `findings`: counted findings that passed every check, in the finding shape below.
+- `possible`: confirmed issues with confidence at least 0.5 and below their effective floor. Each uses the same finding shape. This array is always present, including when empty. These issues never affect the verdict.
 - `dispositions`: what the reviewer did with each scanner candidate: `raised` with the finding's file and line, or `dropped` with the reason and the line that shows why.
 - `summary`: the reviewer's summary, or null.
 - `coverage`: which changed lines the reviewer was shown, and how.
@@ -86,6 +87,8 @@ const result = await reviewChange(
 - `render`: `markdown()`, `sarif()` and `json()`, the report in each format.
 
 An incomplete review keeps every finding already checked.
+
+Observations remain outside `ReviewResult.findings` and `ReviewResult.possible`. Rendered reports still include them. The second reviewer's possible issues are not merged into the primary result.
 
 ### The finding shape
 

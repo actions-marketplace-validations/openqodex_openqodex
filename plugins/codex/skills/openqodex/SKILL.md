@@ -40,6 +40,8 @@ When the file `~/.openqodex/bin/openqodex` exists, run it in place of `npx -y op
 
 3. Show the developer the receipt it printed, as printed: the verdict, one line per finding (its number, severity, category, title, file and line) and the absolute path of `report.html`. Do not reword it, shorten it or add findings of your own. Give them the `report.html` path: that page shows each changed file with each finding under its line of code. When the receipt ends with `Observations (do not count toward the verdict):` and numbered lines under it, show those lines as printed too. An observation is a style, naming, docs or test note. It is not a finding to fix unless the developer names its number.
 
+   Show the numbered Possible issues section as printed. These issues do not count toward the verdict.
+
 4. Ask the developer: "Fix all, or tell me which?" Do not change any code before they answer. If they already told you what to fix, for example "review and fix everything", do that without asking again.
 
 5. Fix only the findings they name. This prints those findings in full (where, the problem, why it matters, the fix and the source), by their numbers in the receipt:
