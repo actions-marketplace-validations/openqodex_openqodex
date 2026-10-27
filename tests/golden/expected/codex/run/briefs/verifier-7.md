@@ -246,15 +246,15 @@ Fields:
 - `severity`: impact according to the scale above.
 - `category`: `bug`, `security`, `performance`, `maintainability` or `style`: the kind of the problem as the code shows it, whatever the candidate said.
 - `confidence`: 0 to 1, set honestly from the code.
-- Findings under 0.7, or under a cited lens's floor, are shown as possible issues and never counted toward the verdict.
+- Findings at 0.7 or higher, and at a cited lens's floor, count toward the verdict. Findings from 0.5 up to the floor are shown as possible issues and never counted. Findings under 0.5 are dropped.
 - `file_path` and `line_number`: the manifestation line for a confirmed defect, or the line explaining another verdict.
 - A confirmed finding starts on an added or modified line or a deletion anchor. Overlapping the change is insufficient.
 - `line_end`: optional end of the range, at least `line_number`. It must exist and span at most 200 lines.
 - `title`: a short noun phrase naming the problem.
 - `problem`: what is wrong. `consequence`: why it matters, and to whom. `fix`: what to change.
-When you confirm, keep the candidate's cause and consequence as its claim and evidence show them.
-Name each step by its code: the call, the exception, the keyword, the field.
-Correct a detail only when you cite the line that refutes it, and say so in `reason`.
+  When you confirm, keep the candidate's cause and consequence as its claim and evidence show them.
+  Name each step by its code: the call, the exception, the keyword, the field.
+  Correct a detail only when you cite the line that refutes it, and say so in `reason`.
 - `suggested_change`: the literal replacement for the cited lines when the fix fits in them, else null.
 - `tier`: `finding` for defects, `observation` for style, naming, docs, clarity, conventions and test coverage.
 - Supply every required field for every verdict. For refuted or unresolved items, use empty problem, consequence and fix strings.

@@ -261,12 +261,12 @@ describe("verify brief", () => {
       ...batch, candidates: [{ id: "k1", kind: "finder", candidate: { ...candidate, lens: "query" }, foundBy: ["local"] }],
     });
     expect(text).toContain("Lens: query (floor 0.85)");
-    expect(text).toContain("Findings under 0.7, or under a cited lens's floor, are shown as possible issues and never counted toward the verdict.");
+    expect(text).toContain("Findings at 0.7 or higher, and at a cited lens's floor, count toward the verdict. Findings from 0.5 up to the floor are shown as possible issues and never counted. Findings under 0.5 are dropped.");
   });
 
   it("states the configured verifier floor instead of the default", () => {
     const { text } = buildVerifyBrief(args({ confidenceFloor: 0.85 }), batch);
-    expect(text).toContain("Findings under 0.85, or under a cited lens's floor, are shown as possible issues and never counted toward the verdict.");
+    expect(text).toContain("Findings at 0.85 or higher, and at a cited lens's floor, count toward the verdict. Findings from 0.5 up to the floor are shown as possible issues and never counted. Findings under 0.5 are dropped.");
     expect(text).not.toContain("Findings under 0.7");
   });
 
@@ -372,5 +372,5 @@ it("asks the finder to follow changed operations through the whole flow across h
 
 // Failure case: the verifier calibrates to findings disappearing under the floor.
 it("tells the verifier that possible issues are shown and never counted", () => {
-  expect(buildVerifyBrief(args(), batch).text).toContain("Findings under 0.7, or under a cited lens's floor, are shown as possible issues and never counted toward the verdict.");
+  expect(buildVerifyBrief(args(), batch).text).toContain("Findings at 0.7 or higher, and at a cited lens's floor, count toward the verdict. Findings from 0.5 up to the floor are shown as possible issues and never counted. Findings under 0.5 are dropped.");
 });
