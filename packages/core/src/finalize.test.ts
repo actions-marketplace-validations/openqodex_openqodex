@@ -145,12 +145,11 @@ describe("finalizeReview: citations", () => {
 });
 
 describe("finalizeReview: filters", () => {
-  it("moves a finding under 0.7 to low_confidence", () => {
+  it("shows a finding under 0.7 as possible", () => {
     const report = run(makeSubmission({ findings: [finding({ confidence: 0.65 })] }));
     expect(report.findings).toEqual([]);
-    expect(report.low_confidence).toEqual([
-      { title: "SQL built from request input", file_path: "app/search.py", confidence: 0.65, floor: 0.7 },
-    ]);
+    expect(report.possible).toEqual([expect.objectContaining({ confidence: 0.65, description: expect.any(String) })]);
+    expect(report.low_confidence).toEqual([]);
   });
 
   it("applies a lens floor above 0.7", () => {
@@ -158,7 +157,7 @@ describe("finalizeReview: filters", () => {
       makeSubmission({ findings: [finding({ source: "lens:sql-string-concatenation", candidate: null, confidence: 0.72 })] }),
     );
     expect(report.findings).toEqual([]);
-    expect(report.low_confidence[0]?.floor).toBe(0.75);
+    expect(report.possible[0]?.confidence).toBe(0.72);
   });
 
   it("moves a finding on a file outside the change to outside_change and does not count it", () => {
@@ -322,9 +321,12 @@ describe("finalizeReview: review round 1", () => {
     expect(viaDropped).not.toContain(SECRET);
   });
 
-  it("R2: redacts every string in the report, file paths and scanner reasons included", () => {
+  it("R2: redacts possible paths and text alongside hidden entries and scanner reasons", () => {
     const change = makeChange();
     const scan = makeScan();
+    change.coverage.set(`possible/${SECRET}.py`, new Set([14]));
+    change.changedPaths.push(`possible/${SECRET}.py`);
+    change.files.push({ path: `possible/${SECRET}.py`, status: "modified", oldPath: null, binary: false });
     const leakyScan = {
       ...scan,
       scanners: scan.scanners.map((s) => (s.scanner === "brakeman" ? { ...s, reason: `failed near ${SECRET}` } : s)),
@@ -337,12 +339,15 @@ describe("finalizeReview: review round 1", () => {
       submission: makeSubmission({
         findings: [
           finding({ source: null, candidate: null, file_path: `debug/${SECRET}.py` }),
-          finding({ source: null, candidate: null, file_path: `low/${SECRET}.py`, confidence: 0.5 }),
+          finding({ source: null, candidate: null, file_path: `low/${SECRET}.py`, confidence: 0.45 }),
+          finding({ source: null, candidate: null, file_path: `possible/${SECRET}.py`, description: `Exposes ${SECRET}`, confidence: 0.55 }),
         ],
       }),
     });
     expect(report.outside_change).toHaveLength(1);
     expect(report.low_confidence).toHaveLength(1);
+    expect(report.possible).toHaveLength(1);
+    expect(report.possible[0]!.description).not.toContain(SECRET);
     expect(JSON.stringify(report)).not.toContain(SECRET);
     const scanOnly = scanReport({ change, scan: leakyScan, config: makeConfig() });
     expect(JSON.stringify(scanOnly)).not.toContain(SECRET);

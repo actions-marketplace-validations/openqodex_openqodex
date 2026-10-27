@@ -42,7 +42,7 @@ From the saved reports it counts (score format 3):
 
 - The population: every review the run planned, scored by its first attempt. A review that failed or never started misses every bug of its case and adds no finding. A retry is reported apart, with its cost, and never replaces the first attempt.
 - Issue recall: planted bugs found, over planted bugs, overall and for critical and major bugs. A bug found by two findings counts once.
-- Precision, as a lower and an upper bound over every finding the developer is shown, observations included, except a request for a test on a planted case. A hit, a second hit on a bug already found and a side issue the case lists as real are correct; a finding on a clean case is false. Any other finding (one the case does not list, a near miss, a wrong kind) is unresolved until a person rules on it: the lower bound counts it as wrong, the upper as right.
+- Precision, as a lower and an upper bound over every finding the developer is shown, observations and possible issues included, except a request for a test on a planted case. A hit, a second hit on a bug already found and a side issue the case lists as real are correct; a finding on a clean case is false. Any other finding (one the case does not list, a near miss, a wrong kind) is unresolved until a person rules on it: the lower bound counts it as wrong, the upper as right.
 - Unique-issue precision counts each issue once, and redundancy is the share of findings beyond one per issue.
 - Planted-rule precision: the earlier rule, which leaves out duplicates, listed side issues and requests for a test, with the count of those requests. It is computed on planted cases only and never pooled with other numbers.
 - A location diagnostic: findings within one line of a planted bug's lines, whatever they say (the line rule of AACR-Bench). It never decides anything.
@@ -66,7 +66,7 @@ The checks run in this order, and the first that holds decides:
 
 Each finding counts for one bug at most. A review that wrote no report misses every bug. A review the product marked incomplete is scored on the findings it holds and counted as incomplete.
 
-Every score carries its rules block: the rules version (11), every constant and list above, and a hash over them and the code that applies them.
+Every score carries its rules block: the rules version (12), every constant and list above, and a hash over them and the code that applies them.
 
 - Version 6 reads pull request truth, whose comments have no kind and no severity: they are matched on the categories they name, and left out of the per-severity tally.
 - Version 7 credits a custom scanner's rule to that custom scanner, whatever its id, and reads a model review's cost and tokens from its sample record.
@@ -74,6 +74,7 @@ Every score carries its rules block: the rules version (11), every constant and 
 - Version 9 treats scanner outside advisories as information; legacy untagged findings still count.
 - Version 10 existed independently on both branches: wave8 added Greptile scoring with a fixed denominator of 50; main scored staged observations like findings, each marked with its tier.
 - Version 11 (2026-10-22) merges the two version-10 rule sets.
+- Version 12 includes possible issues after observations with tier `possible`. Reports without this field score as under version 11.
 
 A test fails when a rule changes and the version does not, and two scores whose rules differ are not compared until both are scored again with one scorer.
 
@@ -365,7 +366,7 @@ benchmark/outside/boards/aacr.sh benchmark/results/<run> [--rounds 3]
 node benchmark/score.mjs benchmark/results/<run> --outside aacr
 ```
 
-A review run of AACR cases can also be scored by AACR-Bench's own evaluation code, at the commit `benchmark/outside/boards.json` pins. `benchmark/outside/convert/aacr.mjs` writes each planned review's first attempt as one file per pull request, in the shape their reader for generic comments takes, under `<run>/outside/aacr/<config>/r<repeat>/`. The board's tool name is `openqodex-<config>-r<repeat>`. Every shown finding that passes the board conversion rule below is written once, with the path and line range our scorer reads. An observation is written like a finding, and the comment's `tier` field says which it was. A finding with no line keeps null lines, which their evaluator reads as the whole file. A failed or never-started review is written as an empty file, so it stays in their denominators. The converter refuses a run of another suite, a sample of a case outside AACR-Bench, a held-out case, and a case with an excluded licence class, before it writes anything. Unverified-licence cases convert for local judging; board submissions still refuse them. Every board step writes only in `<run>/outside/aacr/`, and refuses a link that leads out of the run.
+A review run of AACR cases can also be scored by AACR-Bench's own evaluation code, at the commit `benchmark/outside/boards.json` pins. `benchmark/outside/convert/aacr.mjs` writes each planned review's first attempt as one file per pull request, in the shape their reader for generic comments takes, under `<run>/outside/aacr/<config>/r<repeat>/`. The board's tool name is `openqodex-<config>-r<repeat>`. Every shown finding that passes the board conversion rule below is written once, with the path and line range our scorer reads. Observations and possible issues are written like findings. Each comment carries its tier: `finding`, `observation` or `possible`. A finding with no line keeps null lines, which their evaluator reads as the whole file. A failed or never-started review is written as an empty file, so it stays in their denominators. The converter refuses a run of another suite, a sample of a case outside AACR-Bench, a held-out case, and a case with an excluded licence class, before it writes anything. Unverified-licence cases convert for local judging; board submissions still refuse them. Every board step writes only in `<run>/outside/aacr/`, and refuses a link that leads out of the run.
 
 The AACR converter leaves out each finding that only asks for a test. Such a finding has the kind `maintainability` or `style`, and its title asks for a test or for coverage. The flag `excludeTestGaps` in `benchmark/outside/boards.json` turns the rule on; a board without the flag keeps every finding. `convert.json` records the flag and the number left out, in total and per folder. `score.mjs --outside aacr` compares their line counts with ours on the same reduced set. AACR's flag is true: only one of its 256 golden comments suggests a test, after a code concern. Martian's flag is false: 4 of its 173 golden comments have the category `test_gap`. Its converter does not read the flag. The reviewer, the saved reports and our own score keep every finding.
 
