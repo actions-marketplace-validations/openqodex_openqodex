@@ -331,7 +331,9 @@ export function readMartianOutside(folder, jobs, specs, options = {}) {
     need(evaluation.toolName === t.tool && evaluation.config === t.config && evaluation.repeat === t.repeat && evaluation.board?.repo === pin.repo && evaluation.board?.commit === pin.commit && evaluation.judge?.model === model, `${t.tool}: evaluation tool or board pins differ`);
     const result = readMartianEvaluation(evaluation, { findings, golden, isNative: (f) => boardConfigOf(f.config) === "control" && boardToolName(f.config, f.repeat) === evaluation.toolName });
     need(canonical(record.core) === canonical(result.official.core), `${t.tool}: eval.json core summary differs from its evaluation`);
-    perTool[t.tool] = { config: t.config, boardConfig: t.boardConfig, repeat: t.repeat, official: result.official, ours: result.ours, candidates: result.candidates, matches: result.matches, empty };
+    // A candidate's words stay in evaluation.json; in the entry an em dash becomes a comma, as in a judge reason, so the entry passes the scrub.
+    const candidates = result.candidates.map((c) => (typeof c.extractedText === "string" ? { ...c, extractedText: c.extractedText.replace(/\s*\u2014\s*/g, ", ") } : c));
+    perTool[t.tool] = { config: t.config, boardConfig: t.boardConfig, repeat: t.repeat, official: result.official, ours: result.ours, candidates, matches: result.matches, empty };
   }
   return { board: { repo: pin.repo, commit: pin.commit }, judge: evaluated.judge, profile: "core", perTool, evidenceHash: hashFolder(folder, paths).listHash };
 }

@@ -64,7 +64,8 @@ export function readGreptileOutside(folder, jobs, _specs, options = {}) {
       summary = { config: t.config, boardConfig: t.boardConfig, caught, missed: of - caught, of, planned: of - notRun, notRun, rate: value({ hit: caught, of }) };
     }
     need(canonical(evaluation.perTool[t.tool]) === canonical(summary), `${t.tool}: eval.json summary differs from its verdicts or held input`);
-    perTool[t.tool] = { ...summary, labels };
+    // A judge reason keeps its words; an em dash becomes a comma, so the score and the index entry pass the scrub.
+    perTool[t.tool] = { ...summary, labels: labels.map((v) => (typeof v.reason === "string" ? { ...v, reason: v.reason.replace(/\s*\u2014\s*/g, ", ") } : v)) };
   }
   return { board, truthSet: evaluation.truthSet, judgeModel: evaluation.judgeModel, promptHash: evaluation.promptHash, perTool, evidenceHash: hashFolder(folder, paths).listHash };
 }
